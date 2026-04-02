@@ -1,0 +1,13 @@
+{
+  "config": {
+    "enabled": true,
+    "paused": false,
+    "check_interval_seconds": 30,
+    "ws_ping_interval_seconds": 25,
+    "offset_seconds": 0,
+    "max_concurrent_tasks": 5,
+    "on_startup": true,
+    "started_at": "2026-04-02T21:12:27.742608"
+  },
+  "tasks": []
+}

@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Gungnir Backend",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "backend.core.main:app", "--host", "127.0.0.1", "--port", "8000", "--reload"],
+      "port": 8000
+    },
+    {
+      "name": "Gungnir Frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}

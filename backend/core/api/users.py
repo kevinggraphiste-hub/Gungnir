@@ -1,0 +1,126 @@
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from backend.core.db.models import User
+from backend.core.db.engine import get_session
+
+router = APIRouter()
+
+
+@router.get("/users")
+async def list_users(session: AsyncSession = Depends(get_session)):
+    """Liste tous les utilisateurs."""
+    result = await session.execute(select(User).order_by(User.created_at))
+    users = result.scalars().all()
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "display_name": u.display_name,
+            "avatar_url": u.avatar_url,
+            "is_active": u.is_active,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        }
+        for u in users
+    ]
+
+
+@router.post("/users")
+async def create_user(request: Request, session: AsyncSession = Depends(get_session)):
+    """Crée un nouvel utilisateur."""
+    import hashlib
+    body = await request.json()
+    username = body.get("username", "").strip()
+    if not username:
+        return JSONResponse({"error": "username requis"}, status_code=400)
+
+    # Check unique
+    existing = await session.execute(select(User).where(User.username == username))
+    if existing.scalars().first():
+        return JSONResponse({"error": f"L'utilisateur '{username}' existe déjà"}, status_code=409)
+
+    password_hash = None
+    if body.get("password"):
+        password_hash = hashlib.sha256(body["password"].encode()).hexdigest()
+
+    user = User(
+        username=username,
+        display_name=body.get("display_name", username),
+        password_hash=password_hash,
+        avatar_url=body.get("avatar_url", ""),
+        is_active=True,
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return {
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "avatar_url": user.avatar_url,
+        "is_active": user.is_active,
+    }
+
+
+@router.put("/users/{user_id}")
+async def update_user(user_id: int, request: Request, session: AsyncSession = Depends(get_session)):
+    """Met à jour un utilisateur."""
+    import hashlib
+    user = await session.get(User, user_id)
+    if not user:
+        return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
+
+    body = await request.json()
+    if "display_name" in body:
+        user.display_name = body["display_name"]
+    if "avatar_url" in body:
+        user.avatar_url = body["avatar_url"]
+    if "password" in body and body["password"]:
+        user.password_hash = hashlib.sha256(body["password"].encode()).hexdigest()
+    if "is_active" in body:
+        user.is_active = body["is_active"]
+
+    await session.commit()
+    return {"ok": True, "id": user.id, "display_name": user.display_name}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(user_id: int, session: AsyncSession = Depends(get_session)):
+    """Supprime un utilisateur."""
+    user = await session.get(User, user_id)
+    if not user:
+        return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
+    await session.delete(user)
+    await session.commit()
+    return {"ok": True}
+
+
+@router.post("/users/login")
+async def login_user(request: Request, session: AsyncSession = Depends(get_session)):
+    """Vérifie les identifiants d'un utilisateur."""
+    import hashlib
+    body = await request.json()
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+
+    result = await session.execute(select(User).where(User.username == username))
+    user = result.scalars().first()
+
+    if not user:
+        return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
+
+    if user.password_hash:
+        if hashlib.sha256(password.encode()).hexdigest() != user.password_hash:
+            return JSONResponse({"error": "Mot de passe incorrect"}, status_code=401)
+
+    return {
+        "ok": True,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name,
+            "avatar_url": user.avatar_url,
+        }
+    }

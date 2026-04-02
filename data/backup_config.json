@@ -1,0 +1,15 @@
+{
+  "config": {
+    "provider": "supabase",
+    "supabase_url": null,
+    "supabase_key": null,
+    "supabase_bucket": "backups",
+    "github_token": null,
+    "github_repo": null,
+    "github_branch": "main",
+    "auto_daily": false,
+    "max_backups": 30,
+    "last_backup": null
+  },
+  "history": []
+}
