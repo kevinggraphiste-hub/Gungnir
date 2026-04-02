@@ -1,0 +1,14 @@
+{
+  "name": "analytics",
+  "display_name": "Analytics",
+  "version": "1.0.0",
+  "icon": "BarChart3",
+  "route": "/analytics",
+  "sidebar_position": 3,
+  "sidebar_section": "tools",
+  "backend_routes": true,
+  "backend_prefix": "/api/plugins/analytics",
+  "enabled_by_default": true,
+  "dependencies": [],
+  "lifecycle_hooks": true
+}

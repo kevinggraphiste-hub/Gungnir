@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gungnir
+      POSTGRES_USER: gungnir
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-gungnir_dev_2024}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gungnir"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gungnir:${DB_PASSWORD:-gungnir_dev_2024}@db:5432/gungnir
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - ./backend:/app/backend
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/src:/app/src
+
+volumes:
+  pgdata:

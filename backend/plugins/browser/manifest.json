@@ -1,0 +1,14 @@
+{
+  "name": "browser",
+  "display_name": "Browser",
+  "version": "1.0.0",
+  "icon": "Globe",
+  "route": "/browser",
+  "sidebar_position": 1,
+  "sidebar_section": "tools",
+  "backend_routes": true,
+  "backend_prefix": "/api/plugins/browser",
+  "enabled_by_default": true,
+  "dependencies": [],
+  "lifecycle_hooks": false
+}

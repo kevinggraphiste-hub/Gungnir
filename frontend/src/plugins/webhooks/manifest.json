@@ -1,0 +1,14 @@
+{
+  "name": "webhooks",
+  "display_name": "Webhooks",
+  "version": "1.0.0",
+  "icon": "Webhook",
+  "route": "/webhooks",
+  "sidebar_position": 7,
+  "sidebar_section": "integrations",
+  "backend_routes": true,
+  "backend_prefix": "/api/plugins/webhooks",
+  "enabled_by_default": true,
+  "dependencies": [],
+  "lifecycle_hooks": false
+}

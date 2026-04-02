@@ -1,0 +1,14 @@
+{
+  "name": "scheduler",
+  "display_name": "Heartbeat",
+  "version": "1.0.0",
+  "icon": "Calendar",
+  "route": "/heartbeat",
+  "sidebar_position": 5,
+  "sidebar_section": "tools",
+  "backend_routes": true,
+  "backend_prefix": "/api/plugins/scheduler",
+  "enabled_by_default": true,
+  "dependencies": [],
+  "lifecycle_hooks": true
+}

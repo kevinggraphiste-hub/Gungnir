@@ -1,0 +1,14 @@
+{
+  "name": "code",
+  "display_name": "Code",
+  "version": "0.1.0",
+  "icon": "Code",
+  "route": "/code",
+  "sidebar_position": 4,
+  "sidebar_section": "tools",
+  "backend_routes": true,
+  "backend_prefix": "/api/plugins/code",
+  "enabled_by_default": false,
+  "dependencies": [],
+  "lifecycle_hooks": false
+}

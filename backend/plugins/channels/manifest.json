@@ -1,0 +1,14 @@
+{
+  "name": "channels",
+  "display_name": "Channels",
+  "version": "1.0.0",
+  "icon": "Plug",
+  "route": "/channels",
+  "sidebar_position": 6,
+  "sidebar_section": "integrations",
+  "backend_routes": true,
+  "backend_prefix": "/api/plugins/channels",
+  "enabled_by_default": true,
+  "dependencies": [],
+  "lifecycle_hooks": false
+}

@@ -1,0 +1,14 @@
+{
+  "name": "model_guide",
+  "display_name": "Modeles",
+  "version": "1.0.0",
+  "icon": "BookOpen",
+  "route": "/models",
+  "sidebar_position": 8,
+  "sidebar_section": "tools",
+  "backend_routes": true,
+  "backend_prefix": "/api/plugins/model_guide",
+  "enabled_by_default": true,
+  "dependencies": [],
+  "lifecycle_hooks": false
+}

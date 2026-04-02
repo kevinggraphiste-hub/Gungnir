@@ -1,0 +1,14 @@
+{
+  "name": "voice",
+  "display_name": "Chat Vocal",
+  "version": "1.0.0",
+  "icon": "Mic",
+  "route": "/voice",
+  "sidebar_position": 2,
+  "sidebar_section": "tools",
+  "backend_routes": true,
+  "backend_prefix": "/api/plugins/voice",
+  "enabled_by_default": true,
+  "dependencies": [],
+  "lifecycle_hooks": false
+}
