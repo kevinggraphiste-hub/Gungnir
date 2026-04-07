@@ -1085,6 +1085,8 @@ def _validate_browser_url(url: str) -> bool:
 async def _browser_navigate(url: str) -> dict:
     if not _validate_browser_url(url):
         return {"ok": False, "error": "URL scheme not allowed (only http/https)"}
+    if _is_private_url(url):
+        return {"ok": False, "error": "URL points to private/internal network (blocked for security)"}
     from backend.core.agents.tools.browser import browser_tool
     if not browser_tool.browser:
         start_result = await browser_tool.start(headless=True)
@@ -1173,6 +1175,8 @@ async def _browser_press_key(page_id: str, key: str) -> dict:
 
 
 async def _browser_crawl(url: str, max_pages: int = 10, same_domain: bool = True) -> dict:
+    if _is_private_url(url):
+        return {"ok": False, "error": "URL points to private/internal network (blocked for security)"}
     from backend.core.agents.tools.browser import browser_tool
     result = await browser_tool.crawl(url, max_pages=min(max_pages, 50), same_domain=same_domain)
     if result.get("success"):
@@ -1209,7 +1213,20 @@ def _is_private_url(url: str) -> bool:
         addr = ipaddress.ip_address(hostname)
         return addr.is_private or addr.is_loopback or addr.is_link_local
     except ValueError:
-        pass  # Not an IP, it's a hostname — allow (DNS resolution would need async)
+        # It's a hostname — resolve it to check the actual IP
+        import socket
+        try:
+            resolved_ip = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            for family, _, _, _, sockaddr in resolved_ip:
+                ip_str = sockaddr[0]
+                try:
+                    addr = ipaddress.ip_address(ip_str)
+                    if addr.is_private or addr.is_loopback or addr.is_link_local:
+                        return True
+                except ValueError:
+                    continue
+        except socket.gaierror:
+            pass  # DNS resolution failed — allow (will fail at fetch anyway)
     return False
 
 
@@ -1223,6 +1240,8 @@ async def _web_fetch(url: str, extract: str = "text") -> dict:
 
 async def _web_crawl_lite(url: str, max_pages: int = 10, same_domain: bool = True) -> dict:
     """Crawl léger — suit les liens via HTTP (pas besoin de Playwright)."""
+    if _is_private_url(url):
+        return {"ok": False, "error": "URL points to private/internal network (blocked for security)"}
     from backend.core.agents.tools.web_fetch import web_crawl_lite
     return await web_crawl_lite(url, max_pages=min(max_pages, 50), same_domain=same_domain)
 
@@ -1431,12 +1450,35 @@ async def _schedule_delete(task_id: str) -> dict:
 PROTECTED_PATHS = {"backups", "data/backups", ".git"}
 PROTECTED_PREFIXES = ("backups/", "data/backups/", ".git/")
 
+# CORE INTEGRITY — fichiers essentiels au fonctionnement de Gungnir (écriture bloquée)
+CORE_INTEGRITY_FILES = {
+    "backend/core/main.py",
+    "backend/core/api/router.py",
+    "backend/core/api/users.py",
+    "backend/core/db/engine.py",
+    "backend/core/db/models.py",
+    "backend/core/agents/security.py",
+    "backend/core/config/settings.py",
+}
+CORE_INTEGRITY_PREFIXES = (".git/", "backups/", "data/backups/", ".claude/")
+
 def _is_protected_path(path: str) -> bool:
     """Check if a path touches protected directories (backups, .git)."""
     normalized = path.replace("\\", "/").strip("/")
     if normalized in PROTECTED_PATHS:
         return True
     for prefix in PROTECTED_PREFIXES:
+        if normalized.startswith(prefix):
+            return True
+    return False
+
+
+def _is_core_integrity_file(path: str) -> bool:
+    """Check if path is a core Gungnir file protected from agent writes."""
+    normalized = path.replace("\\", "/").strip("/")
+    if normalized in CORE_INTEGRITY_FILES:
+        return True
+    for prefix in CORE_INTEGRITY_PREFIXES:
         if normalized.startswith(prefix):
             return True
     return False
@@ -1474,6 +1516,8 @@ async def _file_read(path: str, offset: int = 0, limit: int = 200) -> dict:
 async def _file_write(path: str, content: str) -> dict:
     if _is_protected_path(path):
         return {"ok": False, "error": f"INTERDIT: le chemin '{path}' est protégé (backups/système). Impossible de modifier."}
+    if _is_core_integrity_file(path):
+        return {"ok": False, "error": f"INTERDIT: '{path}' est un fichier système critique de Gungnir. Modification bloquée pour préserver l'intégrité."}
     try:
         full = _resolve_project_path(path)
         full.parent.mkdir(parents=True, exist_ok=True)
@@ -1487,6 +1531,8 @@ async def _file_write(path: str, content: str) -> dict:
 async def _file_patch(path: str, old_text: str, new_text: str) -> dict:
     if _is_protected_path(path):
         return {"ok": False, "error": f"INTERDIT: le chemin '{path}' est protégé."}
+    if _is_core_integrity_file(path):
+        return {"ok": False, "error": f"INTERDIT: '{path}' est un fichier système critique de Gungnir."}
     try:
         full = _resolve_project_path(path)
         if not full.exists():
@@ -1529,16 +1575,32 @@ async def _file_list(path: str = ".", pattern: str = "*", recursive: bool = Fals
 async def _bash_exec(command: str, timeout: int = 30, cwd: str = ".") -> dict:
     import asyncio as _asyncio
 
-    # Block dangerous commands on protected paths
-    cmd_lower = command.lower()
-    blocked_patterns = ["rm -rf /", "rm -rf ~", "format ", "mkfs", "dd if="]
-    for bp in blocked_patterns:
-        if bp in cmd_lower:
-            return {"ok": False, "error": f"Commande bloquée pour sécurité: contient '{bp}'"}
+    # Block dangerous commands
+    cmd_lower = command.lower().strip()
+    import re as _re
 
-    # Block any command that targets backups
-    if "backups" in cmd_lower and any(w in cmd_lower for w in ["rm", "del", "move", "mv", "rename"]):
-        return {"ok": False, "error": "INTERDIT: impossible de supprimer/déplacer des backups via shell."}
+    # 1. Destructive system commands (wide patterns)
+    destructive_patterns = [
+        r"rm\s+(-[a-z]*\s+)*(/|~|\$home)", r"del\s+/[sfq]",
+        r"format\s+[a-z]:", r"mkfs", r"dd\s+if=",
+        r"find\s+/\s+.*-delete", r"shred\s+", r"wipefs",
+        r">\s*/dev/sd[a-z]", r"remove-item\s+.*-recurse.*-force.*/",
+    ]
+    for pat in destructive_patterns:
+        if _re.search(pat, cmd_lower):
+            return {"ok": False, "error": f"Commande bloquée: pattern destructif détecté"}
+
+    # 2. Block any command that targets backups or .git
+    protected_dirs = ["backups", ".git", ".claude"]
+    for d in protected_dirs:
+        if d in cmd_lower and any(w in cmd_lower for w in ["rm", "del", "move", "mv", "rename", "remove", "rmdir"]):
+            return {"ok": False, "error": f"INTERDIT: impossible de modifier '{d}' via shell."}
+
+    # 3. Block modification of core integrity files via shell
+    for core_file in CORE_INTEGRITY_FILES:
+        fname = core_file.split("/")[-1]
+        if fname in cmd_lower and any(w in cmd_lower for w in ["rm", "del", "> ", "move", "mv", "rename", "remove"]):
+            return {"ok": False, "error": f"INTERDIT: '{core_file}' est protégé. Modification via shell bloquée."}
 
     try:
         project_root = Path(__file__).parent.parent.parent.parent

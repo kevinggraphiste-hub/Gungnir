@@ -1055,7 +1055,9 @@ Tu operes en mode **demande**. Comportement :
             "tool_events": tool_events if tool_events else None,
         }
     except Exception as e:
-        return {"error": str(e)}
+        import logging
+        logging.getLogger("gungnir").error(f"Chat error: {e}", exc_info=True)
+        return {"error": "Erreur interne lors du traitement du message"}
 
 
 @router.post("/conversations/{convo_id}/chat/stream")

@@ -423,7 +423,8 @@ Tu as un acces COMPLET a Internet. Ne dis JAMAIS que tu n'as pas acces au web. A
             "tool_events": tool_events if tool_events else None,
         }
     except Exception as e:
-        return {"error": str(e)}
+        import logging; logging.getLogger("gungnir").error(f"Sub-agent chat error: {e}", exc_info=True)
+        return {"error": "Erreur interne lors de la communication avec le sous-agent"}
 
 
 @router.delete("/sub-agents/{agent_name}")

@@ -145,6 +145,68 @@ async def security_headers(request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
 
+
+# ── Token auth middleware ───────────────────────────────────────────────────
+# Routes that don't require authentication
+PUBLIC_PATHS = {
+    "/api/health", "/api/doctor", "/api/users/login", "/api/plugins/status",
+}
+PUBLIC_PREFIXES = (
+    "/api/webhook/",      # Incoming webhooks (Slack, Discord, WhatsApp) have their own auth
+    "/assets/", "/static/", "/favicon",
+)
+
+
+@app.middleware("http")
+async def token_auth_middleware(request, call_next):
+    """Optional token auth: active only when users with tokens exist."""
+    from starlette.requests import Request as StarletteRequest
+
+    path = request.url.path
+
+    # Always allow public routes, OPTIONS (CORS preflight), and static files
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if path in PUBLIC_PATHS:
+        return await call_next(request)
+    for prefix in PUBLIC_PREFIXES:
+        if path.startswith(prefix):
+            return await call_next(request)
+    # Allow creating first user (POST /api/users) and serving SPA
+    if path == "/api/users" and request.method == "POST":
+        return await call_next(request)
+    if not path.startswith("/api/"):
+        return await call_next(request)
+
+    # Check if auth is enabled (at least one user has a token)
+    from backend.core.db.engine import get_session as _get_session
+    from backend.core.db.models import User
+    from sqlalchemy import select
+    async for session in _get_session():
+        result = await session.execute(
+            select(User.api_token).where(User.api_token.isnot(None)).limit(1)
+        )
+        has_tokens = result.scalar() is not None
+        if not has_tokens:
+            # No user has logged in yet — open mode (setup)
+            return await call_next(request)
+
+        # Auth is active — verify Bearer token
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse({"error": "Token requis (Authorization: Bearer <token>)"}, status_code=401)
+        token = auth_header[7:]
+        result = await session.execute(
+            select(User).where(User.api_token == token, User.is_active == True)
+        )
+        user = result.scalar()
+        if not user:
+            return JSONResponse({"error": "Token invalide ou utilisateur désactivé"}, status_code=401)
+        # Inject user info into request state for downstream use
+        request.state.user_id = user.id
+        request.state.username = user.username
+        return await call_next(request)
+
 # ── Core API routes ──────────────────────────────────────────────────────────
 from backend.core.api.router import core_router
 app.include_router(core_router, prefix="/api")

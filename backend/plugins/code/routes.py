@@ -27,6 +27,30 @@ router = APIRouter()
 
 CONFIG_FILE = Path("data/code_config.json")
 DEFAULT_WORKSPACE = Path("data/workspace")
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.resolve()
+
+# Directories allowed as workspace roots (project + user home subfolders)
+def _is_allowed_workspace(p: Path) -> bool:
+    """Restrict workspace to project tree or user home subfolders (no system dirs)."""
+    resolved = p.resolve()
+    # Always allow within project
+    if str(resolved).startswith(str(PROJECT_ROOT)):
+        return True
+    # Allow user home subfolders (e.g. ~/projects/something)
+    home = Path.home().resolve()
+    if str(resolved).startswith(str(home)):
+        # Block root of home itself and sensitive dirs
+        if resolved == home:
+            return False
+        sensitive = {".ssh", ".gnupg", ".config", "AppData", ".aws", ".azure"}
+        try:
+            rel = resolved.relative_to(home)
+            if rel.parts and rel.parts[0] in sensitive:
+                return False
+        except ValueError:
+            return False
+        return True
+    return False
 
 
 def _load_config() -> dict:
@@ -128,7 +152,9 @@ async def get_config():
 async def update_config(update: ConfigUpdate):
     cfg = _load_config()
     if update.workspace is not None:
-        p = Path(update.workspace)
+        p = Path(update.workspace).resolve()
+        if not _is_allowed_workspace(p):
+            raise HTTPException(403, "Workspace interdit: doit être dans le projet ou un sous-dossier du home utilisateur")
         p.mkdir(parents=True, exist_ok=True)
         cfg["workspace"] = str(p)
     if update.font_size is not None:
@@ -419,6 +445,20 @@ async def run_terminal(req: TerminalRequest):
     Uses create_subprocess_exec with explicit shell binary for safety."""
     if not req.command.strip():
         raise HTTPException(400, "Commande vide")
+
+    import re as _re
+    cmd_lower = req.command.lower().strip()
+    # Block destructive system-level commands
+    destructive_patterns = [
+        r"rm\s+(-[a-z]*\s+)*(/|~|\$home)", r"del\s+/[sfq]",
+        r"format\s+[a-z]:", r"mkfs", r"dd\s+if=",
+        r"find\s+/\s+.*-delete", r"shred\s+", r"wipefs",
+        r"remove-item\s+.*-recurse.*-force.*/",
+        r"net\s+user\s+.*\s+/add", r"reg\s+(add|delete)",
+    ]
+    for pat in destructive_patterns:
+        if _re.search(pat, cmd_lower):
+            raise HTTPException(403, "Commande bloquée: pattern destructif détecté")
 
     timeout = min(max(req.timeout, 1), 120)
     start = datetime.now()

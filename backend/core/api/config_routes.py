@@ -106,7 +106,8 @@ async def list_models(provider_name: str):
             return {"models": sorted(live_models)}
         return {"models": static_models}
     except Exception as e:
-        return {"models": static_models, "error": str(e)}
+        import logging; logging.getLogger("gungnir").error(f"Model fetch error: {e}")
+        return {"models": static_models, "error": "Erreur lors de la récupération des modèles"}
 
 
 @router.delete("/config/providers/{provider_name}")
@@ -265,7 +266,8 @@ async def test_service(service_name: str):
     except asyncio.TimeoutError:
         return {"ok": False, "service": service_name, "error": "Timeout — service injoignable"}
     except Exception as e:
-        return {"ok": False, "service": service_name, "error": str(e)}
+        import logging; logging.getLogger("gungnir").error(f"Service test error ({service_name}): {e}")
+        return {"ok": False, "service": service_name, "error": "Erreur de connexion au service"}
 
 
 # ── MCP Servers ───────────────────────────────────────────────────────────────
@@ -282,9 +284,37 @@ async def list_mcp_servers():
     return {"servers": configs, "status": status}
 
 
+# MCP command allowlist — only these executables can be used as MCP server commands
+MCP_ALLOWED_COMMANDS = {
+    "npx", "node", "python", "python3", "pip", "pipx", "uvx",
+    "docker", "deno", "bun", "tsx", "ts-node",
+}
+
+MCP_BLOCKED_ARGS = [
+    "rm ", "del ", "format ", "mkfs", "dd if=", "curl ", "wget ",
+    "powershell", "cmd /c", "bash -c", "sh -c", "> /dev/", "| bash",
+]
+
+
 @router.post("/mcp/servers")
 async def add_mcp_server(config: MCPServerConfig):
     """Add a new MCP server and start it."""
+    # Validate MCP command against allowlist
+    cmd_base = config.command.strip().split("/")[-1].split("\\")[-1].lower()
+    if cmd_base not in MCP_ALLOWED_COMMANDS:
+        return JSONResponse(
+            {"error": f"Commande MCP non autorisée: '{config.command}'. Commandes autorisées: {', '.join(sorted(MCP_ALLOWED_COMMANDS))}"},
+            status_code=400,
+        )
+    # Check args for injection patterns
+    args_joined = " ".join(config.args).lower()
+    for blocked in MCP_BLOCKED_ARGS:
+        if blocked in args_joined:
+            return JSONResponse(
+                {"error": f"Arguments MCP contiennent un pattern bloqué: '{blocked.strip()}'"},
+                status_code=400,
+            )
+
     settings = Settings.load()
     # Replace if same name exists
     settings.mcp_servers = [s for s in settings.mcp_servers if s.name != config.name]
@@ -298,7 +328,9 @@ async def add_mcp_server(config: MCPServerConfig):
             tools = mcp_manager.get_all_schemas()
             return {"ok": True, "tools_discovered": len(tools), "server": config.name}
         except Exception as e:
-            return {"ok": False, "error": str(e), "server": config.name}
+            import logging
+            logging.getLogger("gungnir").error(f"MCP start error for {config.name}: {e}")
+            return {"ok": False, "error": "Erreur au démarrage du serveur MCP", "server": config.name}
     return {"ok": True, "server": config.name, "status": "saved (disabled)"}
 
 

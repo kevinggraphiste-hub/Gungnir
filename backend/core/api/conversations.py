@@ -185,7 +185,7 @@ async def export_conversation(convo_id: int, fmt: str, session: AsyncSession = D
     elif fmt == "html":
         html_parts = [
             "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-            f"<title>{conv.title}</title>",
+            f"<title>{(conv.title or '').replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')}</title>",
             "<style>",
             "body{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 20px;background:#1a1a2e;color:#e0e0e0}",
             ".msg{padding:12px 16px;margin:8px 0;border-radius:12px}",
@@ -195,8 +195,8 @@ async def export_conversation(convo_id: int, fmt: str, session: AsyncSession = D
             ".time{font-size:0.75em;opacity:0.5;margin-left:8px}",
             "h1{color:#7c83fd}pre{background:#111;padding:8px;border-radius:4px;overflow-x:auto}",
             "</style></head><body>",
-            f"<h1>{conv.title}</h1>",
-            f"<p><strong>Modèle:</strong> {conv.model} | <strong>Date:</strong> {conv.created_at.strftime('%d/%m/%Y %H:%M')}</p><hr>",
+            f"<h1>{(conv.title or '').replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')}</h1>",
+            f"<p><strong>Modèle:</strong> {(conv.model or '').replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')} | <strong>Date:</strong> {conv.created_at.strftime('%d/%m/%Y %H:%M')}</p><hr>",
         ]
         for m in msgs:
             cls = "user" if m.role == "user" else "assistant"
@@ -309,7 +309,8 @@ async def generate_conversation_title(convo_id: int, session: AsyncSession = Dep
         if conv:
             conv.title = title
             await session.commit()
-        return {"title": title, "method": "fallback", "error": str(e)}
+        import logging; logging.getLogger("gungnir").error(f"Title gen error: {e}")
+        return {"title": title, "method": "fallback", "error": "Erreur lors de la génération du titre"}
 
 
 @router.post("/conversations/{convo_id}/summarize")
@@ -364,7 +365,8 @@ async def summarize_conversation(convo_id: int, request: Request, session: Async
         )
         return {"summary": resp.content, "tokens": resp.tokens_input + resp.tokens_output}
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        import logging; logging.getLogger("gungnir").error(f"Summarize error: {e}")
+        return JSONResponse({"error": "Erreur lors de la génération du résumé"}, status_code=500)
 
 
 @router.delete("/conversations")

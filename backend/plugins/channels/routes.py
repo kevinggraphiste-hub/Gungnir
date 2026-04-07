@@ -524,6 +524,29 @@ async def telegram_webhook(channel_id: str, request: Request):
 
 
 # ── Discord interactions endpoint ───────────────────────────────────
+def _verify_discord_signature(request: Request, body_bytes: bytes, public_key_hex: str) -> bool:
+    """Verify Discord Ed25519 interaction signature."""
+    signature = request.headers.get("X-Signature-Ed25519", "")
+    timestamp = request.headers.get("X-Signature-Timestamp", "")
+    if not signature or not timestamp or not public_key_hex:
+        return False
+    try:
+        # Use nacl if available, otherwise skip verification
+        from nacl.signing import VerifyKey
+        verify_key = VerifyKey(bytes.fromhex(public_key_hex))
+        verify_key.verify(f"{timestamp}{body_bytes.decode('utf-8')}".encode(), bytes.fromhex(signature))
+        return True
+    except ImportError:
+        # nacl not installed — log warning but allow (don't break the plugin)
+        import logging
+        logging.getLogger("gungnir.plugins.channels").warning(
+            "PyNaCl not installed — Discord signature verification skipped. Install with: pip install PyNaCl"
+        )
+        return True
+    except Exception:
+        return False
+
+
 @router.post("/webhook/discord/{channel_id}")
 async def discord_webhook(channel_id: str, request: Request):
     channels = _load_channels()
@@ -531,7 +554,15 @@ async def discord_webhook(channel_id: str, request: Request):
     if not ch or ch.get("type") != "discord" or not ch.get("enabled"):
         raise HTTPException(404, "Canal Discord introuvable ou désactivé")
 
-    body = await request.json()
+    body_bytes = await request.body()
+
+    # Verify Discord signature if public_key is configured
+    public_key = ch.get("config", {}).get("public_key", "")
+    if public_key:
+        if not _verify_discord_signature(request, body_bytes, public_key):
+            raise HTTPException(401, "Signature Discord invalide")
+
+    body = json.loads(body_bytes)
 
     # Discord interaction verification (type 1 = PING)
     if body.get("type") == 1:
@@ -578,6 +609,26 @@ async def _slack_process_and_reply(channel_id: str, text: str, sender_id: str, s
         _add_log(channel_id, channel_name, "out", f"Erreur envoi Slack: {e}", "error")
 
 
+def _verify_slack_signature(request: Request, body_bytes: bytes, signing_secret: str) -> bool:
+    """Verify Slack request signature (v0 HMAC-SHA256)."""
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    slack_signature = request.headers.get("X-Slack-Signature", "")
+    if not timestamp or not slack_signature:
+        return False
+    # Prevent replay attacks (> 5 min old)
+    import time
+    try:
+        if abs(time.time() - float(timestamp)) > 300:
+            return False
+    except ValueError:
+        return False
+    sig_basestring = f"v0:{timestamp}:{body_bytes.decode('utf-8')}"
+    my_signature = "v0=" + hmac.new(
+        signing_secret.encode(), sig_basestring.encode(), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(my_signature, slack_signature)
+
+
 @router.post("/webhook/slack/{channel_id}")
 async def slack_webhook(channel_id: str, request: Request):
     channels = _load_channels()
@@ -585,11 +636,18 @@ async def slack_webhook(channel_id: str, request: Request):
     if not ch or ch.get("type") != "slack" or not ch.get("enabled"):
         raise HTTPException(404, "Canal Slack introuvable ou désactivé")
 
-    body = await request.json()
+    body_bytes = await request.body()
+    body = json.loads(body_bytes)
 
-    # URL verification challenge
+    # URL verification challenge (before signature check — Slack requires it)
     if body.get("type") == "url_verification":
         return {"challenge": body.get("challenge", "")}
+
+    # Verify Slack signature if signing_secret is configured
+    signing_secret = ch.get("config", {}).get("signing_secret", "")
+    if signing_secret:
+        if not _verify_slack_signature(request, body_bytes, signing_secret):
+            raise HTTPException(401, "Signature Slack invalide")
 
     # Ignorer les retries Slack (header X-Slack-Retry-Num = retry d'un event déjà traité)
     if request.headers.get("X-Slack-Retry-Num"):
@@ -637,7 +695,17 @@ async def whatsapp_webhook(channel_id: str, request: Request):
     if not ch or ch.get("type") != "whatsapp" or not ch.get("enabled"):
         raise HTTPException(404)
 
-    body = await request.json()
+    # Verify WhatsApp HMAC-SHA256 signature if app_secret is configured
+    app_secret = ch.get("config", {}).get("app_secret", "")
+    if app_secret:
+        body_bytes = await request.body()
+        expected_sig = hmac.new(app_secret.encode(), body_bytes, hashlib.sha256).hexdigest()
+        received_sig = request.headers.get("X-Hub-Signature-256", "").replace("sha256=", "")
+        if not hmac.compare_digest(expected_sig, received_sig):
+            raise HTTPException(401, "Signature WhatsApp invalide")
+        body = json.loads(body_bytes)
+    else:
+        body = await request.json()
 
     for entry in body.get("entry", []):
         for change in entry.get("changes", []):

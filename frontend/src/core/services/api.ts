@@ -23,8 +23,30 @@ interface Conversation {
 
 const API_BASE = '/api'
 
-const apiFetch = (url: string, init?: RequestInit) =>
-  fetch(url, { ...init, cache: 'no-store' as RequestCache })
+const TOKEN_KEY = 'gungnir_auth_token'
+
+function getAuthToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY)
+}
+
+export function setAuthToken(token: string) {
+  localStorage.setItem(TOKEN_KEY, token)
+}
+
+export function clearAuthToken() {
+  localStorage.removeItem(TOKEN_KEY)
+}
+
+const apiFetch = (url: string, init?: RequestInit) => {
+  const token = getAuthToken()
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string> || {}),
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  return fetch(url, { ...init, headers, cache: 'no-store' as RequestCache })
+}
 
 const handleResponse = async (response: Response) => {
   const contentType = response.headers.get('content-type') || ''
@@ -288,7 +310,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     })
-    return handleResponse(response)
+    const result = await handleResponse(response)
+    // Store auth token if returned
+    if (result.token) {
+      setAuthToken(result.token)
+    }
+    return result
   },
 
   // ── Voice ─────────────────────────────────────────────────────────

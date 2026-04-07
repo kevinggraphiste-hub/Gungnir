@@ -92,12 +92,30 @@ function escapeHtml(s: string): string {
 }
 
 function sanitizeSvg(svg: string): string {
-  // Strip event handlers and script tags from SVG content
+  // Robust SVG sanitizer — strips all dangerous elements and attributes
   return svg
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    // Remove script tags (including nested/malformed)
+    .replace(/<script\b[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<script\b[^>]*\/?>/gi, '')
+    // Remove dangerous elements: foreignObject, iframe, embed, object, use with external refs
+    .replace(/<foreignObject\b[\s\S]*?<\/foreignObject\s*>/gi, '')
+    .replace(/<(iframe|embed|object|applet|form|input|textarea|button)\b[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<(iframe|embed|object|applet|form|input|textarea|button)\b[^>]*\/?>/gi, '')
+    // Remove animate/set that can trigger script (onbegin, onend, onrepeat)
+    .replace(/<(animate|set|animateTransform|animateMotion)\b[^>]*\bon\w+\s*=[^>]*>/gi, '')
+    // Remove ALL event handlers: on*= with quotes, without quotes, or with HTML entities
     .replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/javascript\s*:/gi, '')
-    .replace(/\bxlink:href\s*=\s*["']javascript:[^"']*["']/gi, '')
+    .replace(/\bon\w+\s*=\s*[^\s>"']+/gi, '')
+    // Remove javascript: / data: / vbscript: URIs (including HTML entity encoding)
+    .replace(/(?:java|vb)\s*(?:&#[xX]?[0-9a-fA-F]+;?)*\s*script\s*:/gi, '')
+    .replace(/j\s*a\s*v\s*a\s*s\s*c\s*r\s*i\s*p\s*t\s*:/gi, '')
+    .replace(/data\s*:\s*text\/html/gi, '')
+    // Remove xlink:href and href pointing to scripts
+    .replace(/(?:xlink:)?href\s*=\s*["'](?:javascript|data|vbscript):[^"']*["']/gi, '')
+    .replace(/(?:xlink:)?href\s*=\s*(?:javascript|data|vbscript):[^\s>]*/gi, '')
+    // Remove base64 encoded content in attributes that could hide scripts
+    .replace(/\bstyle\s*=\s*["'][^"']*expression\s*\([^"']*["']/gi, '')
+    .replace(/\bstyle\s*=\s*["'][^"']*url\s*\(\s*["']?(?:javascript|data):[^"']*["']/gi, '')
 }
 
 // ── Markdown renderer (lightweight, XSS-safe) ───────────────────────────────

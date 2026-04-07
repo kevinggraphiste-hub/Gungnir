@@ -114,7 +114,8 @@ async def create_backup_now():
         size_mb = round(zip_path.stat().st_size / (1024 * 1024), 2)
         return {"ok": True, "filename": filename, "size_mb": size_mb}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        import logging; logging.getLogger("gungnir").error(f"Backup error: {e}")
+        return {"ok": False, "error": "Erreur lors de la création du backup"}
 
 
 @router.post("/backup/restore")
@@ -173,7 +174,8 @@ async def restore_backup(data: dict):
 
         return {"ok": True, "message": f"Restauration de {filename} réussie."}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        import logging; logging.getLogger("gungnir").error(f"Restore error: {e}")
+        return {"ok": False, "error": "Erreur lors de la restauration du backup"}
 
 
 @router.delete("/backup/{filename}")

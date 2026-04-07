@@ -3,6 +3,9 @@ Gungnir — Configuration centrale
 """
 import json
 import os
+import base64
+import hashlib
+import platform
 from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -12,6 +15,35 @@ BASE_DIR = Path(__file__).parent.parent.parent.parent  # Gungnir/
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 PLUGINS_DIR = BASE_DIR / "backend" / "plugins"
+
+# ── API Key encryption (at rest) ──────────────────────────────────────────────
+# Derives a machine-specific key from hostname + install path for obfuscation.
+# Not crypto-grade (no hardware security module) but prevents plaintext leaks.
+_ENCRYPTION_SALT = b"gungnir-scarletwolf-2026"
+
+def _derive_key() -> bytes:
+    """Derive a 32-byte key from machine identity."""
+    identity = f"{platform.node()}:{BASE_DIR}".encode()
+    return hashlib.pbkdf2_hmac("sha256", identity, _ENCRYPTION_SALT, 100_000)
+
+def encrypt_value(plaintext: str) -> str:
+    """Encrypt a string value. Returns 'enc:base64data'."""
+    if not plaintext or plaintext.startswith("enc:"):
+        return plaintext
+    key = _derive_key()
+    # XOR-based stream cipher with key stretching
+    data = plaintext.encode("utf-8")
+    encrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+    return "enc:" + base64.b64encode(encrypted).decode()
+
+def decrypt_value(encrypted: str) -> str:
+    """Decrypt a value. If not encrypted (no 'enc:' prefix), return as-is."""
+    if not encrypted or not encrypted.startswith("enc:"):
+        return encrypted or ""
+    key = _derive_key()
+    data = base64.b64decode(encrypted[4:])
+    decrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+    return decrypted.decode("utf-8")
 
 
 class ProviderConfig(BaseModel):
@@ -155,6 +187,21 @@ class Settings(BaseSettings):
 
     def save(self):
         data = self.model_dump()
+        # Encrypt API keys before writing to disk
+        for pname, pconf in data.get("providers", {}).items():
+            if pconf.get("api_key") and not pconf["api_key"].startswith("enc:"):
+                pconf["api_key"] = encrypt_value(pconf["api_key"])
+        # Encrypt service tokens/keys
+        for sname, sconf in data.get("services", {}).items():
+            for field in ("api_key", "token"):
+                if sconf.get(field) and not sconf[field].startswith("enc:"):
+                    sconf[field] = encrypt_value(sconf[field])
+        # Encrypt MCP env secrets
+        for mcp in data.get("mcp_servers", []):
+            for ekey, evalue in mcp.get("env", {}).items():
+                if ("key" in ekey.lower() or "token" in ekey.lower() or "secret" in ekey.lower()):
+                    if evalue and not evalue.startswith("enc:"):
+                        mcp["env"][ekey] = encrypt_value(evalue)
         self._config_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
     @classmethod
@@ -162,6 +209,20 @@ class Settings(BaseSettings):
         config_path = DATA_DIR / "config.json"
         if config_path.exists():
             data = json.loads(config_path.read_text())
+            # Decrypt API keys transparently on load
+            for pname, pconf in data.get("providers", {}).items():
+                if isinstance(pconf, dict) and pconf.get("api_key", "").startswith("enc:"):
+                    pconf["api_key"] = decrypt_value(pconf["api_key"])
+            for sname, sconf in data.get("services", {}).items():
+                if isinstance(sconf, dict):
+                    for field in ("api_key", "token"):
+                        if sconf.get(field, "").startswith("enc:"):
+                            sconf[field] = decrypt_value(sconf[field])
+            for mcp in data.get("mcp_servers", []):
+                if isinstance(mcp, dict):
+                    for ekey, evalue in mcp.get("env", {}).items():
+                        if isinstance(evalue, str) and evalue.startswith("enc:"):
+                            mcp["env"][ekey] = decrypt_value(evalue)
             return cls(**data)
         return cls()
 

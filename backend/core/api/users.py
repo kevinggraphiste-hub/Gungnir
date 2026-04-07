@@ -128,9 +128,19 @@ async def login_user(request: Request, session: AsyncSession = Depends(get_sessi
     if user.password_hash:
         if not _verify_password(password, user.password_hash):
             return JSONResponse({"error": "Mot de passe incorrect"}, status_code=401)
+    else:
+        # Compte sans mot de passe : accepter seulement si aucun password fourni
+        if password:
+            return JSONResponse({"error": "Ce compte n'utilise pas de mot de passe"}, status_code=400)
+
+    # Générer un token d'API unique pour cette session
+    if not user.api_token:
+        user.api_token = secrets.token_hex(32)
+        await session.commit()
 
     return {
         "ok": True,
+        "token": user.api_token,
         "user": {
             "id": user.id,
             "username": user.username,
