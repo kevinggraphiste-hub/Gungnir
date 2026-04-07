@@ -211,12 +211,12 @@ class Settings(BaseSettings):
             data = json.loads(config_path.read_text())
             # Decrypt API keys transparently on load
             for pname, pconf in data.get("providers", {}).items():
-                if isinstance(pconf, dict) and pconf.get("api_key", "").startswith("enc:"):
+                if isinstance(pconf, dict) and (pconf.get("api_key") or "").startswith("enc:"):
                     pconf["api_key"] = decrypt_value(pconf["api_key"])
             for sname, sconf in data.get("services", {}).items():
                 if isinstance(sconf, dict):
                     for field in ("api_key", "token"):
-                        if sconf.get(field, "").startswith("enc:"):
+                        if (sconf.get(field) or "").startswith("enc:"):
                             sconf[field] = decrypt_value(sconf[field])
             for mcp in data.get("mcp_servers", []):
                 if isinstance(mcp, dict):

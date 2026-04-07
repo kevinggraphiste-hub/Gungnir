@@ -42,6 +42,18 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     await init_db(engine)
 
+    # 1b. Auto-migrate: ensure api_token column exists
+    try:
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            result = await conn.execute(text("PRAGMA table_info(users)"))
+            columns = [row[1] for row in result.fetchall()]
+            if "api_token" not in columns:
+                await conn.execute(text("ALTER TABLE users ADD COLUMN api_token VARCHAR(128)"))
+                logger.info("Migration: added api_token column to users table")
+    except Exception as e:
+        logger.warning(f"Migration check skipped: {e}")
+
     # 2. Reload data singletons (skills, personalities, sub-agents)
     from backend.core.agents.skills import skill_library, personality_manager, subagent_library
     skill_library.skills.clear()
@@ -179,32 +191,37 @@ async def token_auth_middleware(request, call_next):
         return await call_next(request)
 
     # Check if auth is enabled (at least one user has a token)
-    from backend.core.db.engine import get_session as _get_session
-    from backend.core.db.models import User
-    from sqlalchemy import select
-    async for session in _get_session():
-        result = await session.execute(
-            select(User.api_token).where(User.api_token.isnot(None)).limit(1)
-        )
-        has_tokens = result.scalar() is not None
-        if not has_tokens:
-            # No user has logged in yet — open mode (setup)
-            return await call_next(request)
+    try:
+        from backend.core.db.engine import get_session as _get_session
+        from backend.core.db.models import User
+        from sqlalchemy import select
+        async for session in _get_session():
+            result = await session.execute(
+                select(User.api_token).where(User.api_token.isnot(None)).limit(1)
+            )
+            has_tokens = result.scalar() is not None
+            if not has_tokens:
+                # No user has logged in yet — open mode (setup)
+                return await call_next(request)
 
-        # Auth is active — verify Bearer token
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse({"error": "Token requis (Authorization: Bearer <token>)"}, status_code=401)
-        token = auth_header[7:]
-        result = await session.execute(
-            select(User).where(User.api_token == token, User.is_active == True)
-        )
-        user = result.scalar()
-        if not user:
-            return JSONResponse({"error": "Token invalide ou utilisateur désactivé"}, status_code=401)
-        # Inject user info into request state for downstream use
-        request.state.user_id = user.id
-        request.state.username = user.username
+            # Auth is active — verify Bearer token
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                return JSONResponse({"error": "Token requis (Authorization: Bearer <token>)"}, status_code=401)
+            token = auth_header[7:]
+            result = await session.execute(
+                select(User).where(User.api_token == token, User.is_active == True)
+            )
+            user = result.scalar()
+            if not user:
+                return JSONResponse({"error": "Token invalide ou utilisateur désactivé"}, status_code=401)
+            # Inject user info into request state for downstream use
+            request.state.user_id = user.id
+            request.state.username = user.username
+            return await call_next(request)
+    except Exception as e:
+        # If DB not ready or column missing — allow request (graceful degradation)
+        logger.warning(f"Auth middleware error (allowing request): {e}")
         return await call_next(request)
 
 # ── Core API routes ──────────────────────────────────────────────────────────

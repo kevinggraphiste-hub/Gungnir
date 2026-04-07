@@ -63,8 +63,11 @@ function AppContent() {
       if (savedTheme === 'custom') {
         try {
           const colors = JSON.parse(localStorage.getItem('gungnir_custom_theme') || '{}')
+          const allowedKeys = new Set(customVars)
           for (const [key, value] of Object.entries(colors)) {
-            document.documentElement.style.setProperty(key, value as string)
+            if (allowedKeys.has(key)) {
+              document.documentElement.style.setProperty(key, value as string)
+            }
           }
         } catch { /* ignore */ }
       }
@@ -77,11 +80,19 @@ function AppContent() {
   useEffect(() => {
     const init = async () => {
       try {
-        // Load core config
+        // Load core config + sync language
         const configRes = await fetch('/api/config')
         if (configRes.ok) {
           const data = await configRes.json()
           setConfig(data)
+          // Sync i18n language with backend config
+          const savedLang = data?.app?.language
+          if (savedLang) {
+            const { default: i18n } = await import('../i18n')
+            if (i18n.language !== savedLang) {
+              i18n.changeLanguage(savedLang)
+            }
+          }
         }
 
         // Load conversations (filtered by current user if logged in)
