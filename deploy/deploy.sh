@@ -17,7 +17,7 @@ set -e
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$DEPLOY_DIR")"
-DOMAIN="gungnir.scarletwolf.fr"
+DOMAIN="gungnir.scarletwolf.cloud"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
