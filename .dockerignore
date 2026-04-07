@@ -1,0 +1,20 @@
+# Gungnir Docker ignore
+.git
+.claude
+node_modules
+frontend/node_modules
+frontend/dist
+__pycache__
+*.pyc
+*.pyo
+backups/
+deploy/certbot/
+deploy/backups/
+data/backups/*.zip
+data/gungnir.db
+data/gungnir.db-journal
+*.log
+.env
+ABOUT.md
+COMPARATIF.md
+GUIDE.md

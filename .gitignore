@@ -31,3 +31,11 @@ Thumbs.db
 
 # Docker
 pgdata/
+deploy/backups/
+deploy/certbot/
+
+# Secrets & local config
+.claude/settings.local.json
+data/config.json
+data/gungnir.db-journal
+data/backups/*.zip
