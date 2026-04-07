@@ -1,7 +1,8 @@
 {
   "app": {
-    "language": "fr",
+    "language": "en",
     "theme": "dark",
+    "agent_name": "Gungnir",
     "workspace_dir": "C:\\Users\\kevin\\OneDrive\\Bureau\\Openclaude\\data\\workspace",
     "auto_update": false,
     "update_channel": "stable"
@@ -11,7 +12,7 @@
       "enabled": true,
       "api_key": "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",
       "base_url": null,
-      "default_model": "minimax/minimax-m2.7",
+      "default_model": "xiaomi/mimo-v2-pro",
       "models": [
         "aion-labs/aion-2.0",
         "allenai/olmo-3.1-32b-instruct",
@@ -185,11 +186,11 @@
   },
   "voice": {
     "elevenlabs": {
-      "enabled": true,
+      "enabled": false,
       "provider": "elevenlabs",
       "api_key": "sk_465bd553b0dca4012b9cf6cec30e0c6983505e9093d3bd6f",
-      "voice_id": "JBFqnCBsd6RMkjVDRZzb",
-      "agent_id": null,
+      "voice_id": "2gPFXx8pN3Avh27Dw5Ma",
+      "agent_id": "agent_0701kneqsqr6fm2vbxarwkbxgkx5",
       "language": "fr"
     },
     "google": {
@@ -208,5 +209,175 @@
       "agent_id": null,
       "language": "fr"
     }
-  }
+  },
+  "services": {
+    "supabase": {
+      "enabled": true,
+      "api_key": "test_key",
+      "base_url": "https://myproject.supabase.co",
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "postgresql": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": "postgresql://localhost:5432",
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": "gungnir",
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "s3": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": "https://s3.amazonaws.com",
+      "project_id": null,
+      "region": "eu-west-1",
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "github": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": "https://api.github.com",
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "notion": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": "https://api.notion.com/v1",
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "google_drive": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": "https://www.googleapis.com/drive/v3",
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "pinecone": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": "https://api.pinecone.io",
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "qdrant": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": "http://localhost:6333",
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "slack": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": null,
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "discord": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": null,
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "n8n": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": "http://localhost:5678",
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    },
+    "redis": {
+      "enabled": false,
+      "api_key": null,
+      "base_url": "redis://localhost:6379",
+      "project_id": null,
+      "region": null,
+      "bucket": null,
+      "database": null,
+      "token": null,
+      "webhook_url": null,
+      "namespace": null,
+      "extra": {}
+    }
+  },
+  "mcp_servers": [
+    {
+      "name": "n8n",
+      "command": "npx",
+      "args": [
+        "-y",
+        "n8n-mcp-server"
+      ],
+      "env": {},
+      "enabled": false
+    }
+  ]
 }

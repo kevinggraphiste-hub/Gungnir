@@ -1,9 +1,9 @@
 {
   "name": "scheduler",
-  "display_name": "Heartbeat",
+  "display_name": "Automata",
   "version": "1.0.0",
   "icon": "Calendar",
-  "route": "/heartbeat",
+  "route": "/automata",
   "sidebar_position": 5,
   "sidebar_section": "tools",
   "backend_routes": true,

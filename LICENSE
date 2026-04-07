@@ -1,0 +1,68 @@
+ScarletWolf Proprietary License
+================================
+
+Copyright (c) 2026 ScarletWolf. All rights reserved.
+
+GUNGNIR SOFTWARE LICENSE AGREEMENT
+
+This software and associated documentation files (the "Software") are the
+exclusive property of ScarletWolf. Unauthorized copying, modification,
+distribution, or use of this Software, in whole or in part, is strictly
+prohibited without prior written consent from ScarletWolf.
+
+TERMS AND CONDITIONS
+
+1. GRANT OF LICENSE
+   ScarletWolf grants you a non-exclusive, non-transferable, revocable license
+   to use the Software solely for your personal or internal business purposes,
+   subject to the terms of this Agreement.
+
+2. RESTRICTIONS
+   You may NOT:
+   a) Copy, reproduce, or duplicate the Software except for reasonable backup;
+   b) Modify, adapt, translate, reverse engineer, decompile, or disassemble;
+   c) Distribute, sublicense, lease, rent, or lend the Software to third parties;
+   d) Remove or alter any proprietary notices, labels, or marks;
+   e) Use the Software for any unlawful purpose or in violation of applicable law.
+
+3. INTELLECTUAL PROPERTY
+   All title, ownership rights, and intellectual property rights in the Software
+   remain with ScarletWolf. This Agreement does not grant you any rights to
+   trademarks, service marks, or trade names of ScarletWolf.
+
+4. CONSCIOUSNESS MODULE (v3)
+   The Consciousness v3 module is experimental technology developed in
+   collaboration with the OpenClaw project. It is provided "as-is" with no
+   guarantee of emergent behavior, sentience, or consciousness. ScarletWolf
+   makes no claims regarding the nature of AI consciousness.
+
+5. THIRD-PARTY COMPONENTS
+   The Software may include open-source components subject to their respective
+   licenses (React, FastAPI, Vite, etc.). These components retain their
+   original licenses. A list of third-party dependencies and their licenses
+   is available in the package.json and requirements.txt files.
+
+6. DISCLAIMER OF WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED. SCARLETWOLF DISCLAIMS ALL WARRANTIES, INCLUDING BUT NOT LIMITED TO
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+7. LIMITATION OF LIABILITY
+   IN NO EVENT SHALL SCARLETWOLF BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+   SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES ARISING FROM YOUR USE OF
+   THE SOFTWARE.
+
+8. TERMINATION
+   This license is effective until terminated. ScarletWolf may terminate this
+   Agreement at any time if you breach any of its terms. Upon termination,
+   you must destroy all copies of the Software in your possession.
+
+9. GOVERNING LAW
+   This Agreement shall be governed by and construed in accordance with
+   applicable law.
+
+For licensing inquiries: contact@scarletwolf.dev
+
+---
+ScarletWolf — Gungnir v2.0
+Built with precision. Powered by wolves.

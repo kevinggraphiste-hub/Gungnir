@@ -1,0 +1,7 @@
+{
+  "agents": {
+    "coder": { "model": "anthropic/claude-sonnet-4", "maxTokens": 4096 },
+    "task": { "model": "anthropic/claude-sonnet-4", "maxTokens": 4096 },
+    "title": { "model": "anthropic/claude-sonnet-4", "maxTokens": 80 }
+  }
+}

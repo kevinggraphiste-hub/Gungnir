@@ -12,14 +12,16 @@ router = APIRouter()
 
 
 @router.get("/conversations")
-async def list_conversations(session: AsyncSession = Depends(get_session)):
-    result = await session.execute(
-        select(Conversation).order_by(Conversation.updated_at.desc()).limit(50)
-    )
+async def list_conversations(user_id: int = None, session: AsyncSession = Depends(get_session)):
+    query = select(Conversation).order_by(Conversation.updated_at.desc()).limit(50)
+    if user_id is not None:
+        query = query.where(Conversation.user_id == user_id)
+    result = await session.execute(query)
     convos = result.scalars().all()
     return [
         {
             "id": c.id,
+            "user_id": c.user_id,
             "title": c.title,
             "provider": c.provider,
             "model": c.model,
@@ -32,15 +34,33 @@ async def list_conversations(session: AsyncSession = Depends(get_session)):
 
 @router.post("/conversations")
 async def create_conversation(data: dict, session: AsyncSession = Depends(get_session)):
+    title = data.get("title", "Nouvelle conversation").strip()
+    if len(title) > 500:
+        return {"error": "Title too long (max 500 chars)"}
+    provider = data.get("provider", "openrouter")
+    if len(provider) > 100:
+        return {"error": "Invalid provider name"}
+    model = data.get("model", "anthropic/claude-3.5-sonnet")
+    if len(model) > 200:
+        return {"error": "Invalid model name"}
     conv = Conversation(
-        title=data.get("title", "Nouvelle conversation"),
-        provider=data.get("provider", "openrouter"),
-        model=data.get("model", "anthropic/claude-3.5-sonnet"),
+        title=title,
+        provider=provider,
+        model=model,
+        user_id=data.get("user_id"),
     )
     session.add(conv)
     await session.commit()
     await session.refresh(conv)
-    return {"id": conv.id, "title": conv.title}
+    return {
+        "id": conv.id,
+        "user_id": conv.user_id,
+        "title": conv.title,
+        "provider": conv.provider,
+        "model": conv.model,
+        "created_at": conv.created_at.isoformat(),
+        "updated_at": conv.updated_at.isoformat(),
+    }
 
 
 @router.delete("/conversations/{convo_id}")

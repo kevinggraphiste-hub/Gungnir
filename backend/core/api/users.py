@@ -2,11 +2,28 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import hashlib
+import secrets
 
 from backend.core.db.models import User
 from backend.core.db.engine import get_session
 
 router = APIRouter()
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 200_000)
+    return f"pbkdf2:{salt}:{dk.hex()}"
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    if hashed.startswith("pbkdf2:"):
+        _, salt, expected = hashed.split(":", 2)
+        dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 200_000)
+        return secrets.compare_digest(dk.hex(), expected)
+    # Fallback: old SHA256 hashes for migration
+    return hashlib.sha256(password.encode()).hexdigest() == hashed
 
 
 @router.get("/users")
@@ -30,7 +47,6 @@ async def list_users(session: AsyncSession = Depends(get_session)):
 @router.post("/users")
 async def create_user(request: Request, session: AsyncSession = Depends(get_session)):
     """Crée un nouvel utilisateur."""
-    import hashlib
     body = await request.json()
     username = body.get("username", "").strip()
     if not username:
@@ -43,7 +59,7 @@ async def create_user(request: Request, session: AsyncSession = Depends(get_sess
 
     password_hash = None
     if body.get("password"):
-        password_hash = hashlib.sha256(body["password"].encode()).hexdigest()
+        password_hash = _hash_password(body["password"])
 
     user = User(
         username=username,
@@ -67,7 +83,6 @@ async def create_user(request: Request, session: AsyncSession = Depends(get_sess
 @router.put("/users/{user_id}")
 async def update_user(user_id: int, request: Request, session: AsyncSession = Depends(get_session)):
     """Met à jour un utilisateur."""
-    import hashlib
     user = await session.get(User, user_id)
     if not user:
         return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
@@ -78,7 +93,7 @@ async def update_user(user_id: int, request: Request, session: AsyncSession = De
     if "avatar_url" in body:
         user.avatar_url = body["avatar_url"]
     if "password" in body and body["password"]:
-        user.password_hash = hashlib.sha256(body["password"].encode()).hexdigest()
+        user.password_hash = _hash_password(body["password"])
     if "is_active" in body:
         user.is_active = body["is_active"]
 
@@ -100,7 +115,6 @@ async def delete_user(user_id: int, session: AsyncSession = Depends(get_session)
 @router.post("/users/login")
 async def login_user(request: Request, session: AsyncSession = Depends(get_session)):
     """Vérifie les identifiants d'un utilisateur."""
-    import hashlib
     body = await request.json()
     username = body.get("username", "").strip()
     password = body.get("password", "")
@@ -112,7 +126,7 @@ async def login_user(request: Request, session: AsyncSession = Depends(get_sessi
         return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
 
     if user.password_hash:
-        if hashlib.sha256(password.encode()).hexdigest() != user.password_hash:
+        if not _verify_password(password, user.password_hash):
             return JSONResponse({"error": "Mot de passe incorrect"}, status_code=401)
 
     return {

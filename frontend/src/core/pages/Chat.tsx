@@ -1,0 +1,851 @@
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18n from '../../i18n'
+import { useStore } from '../stores/appStore'
+import { api } from '../services/api'
+import {
+  Send, Plus, User, Mic, MicOff, ChevronDown, Bot,
+  Search, Sparkles, MessageSquare, Star,
+  Code, FileText, Globe, BarChart3, Radio,
+  ChevronLeft, ChevronRight, Pencil, Check, X, Key,
+  Paperclip, Image as ImageIcon
+} from 'lucide-react'
+import VoiceModal from '../components/VoiceModal'
+import ApiKeysModal from '../components/ApiKeysModal'
+import UserModal from '../components/UserModal'
+import ConversationMenu from '../components/ConversationMenu'
+
+function AgentAvatar({ size = 32 }: { size?: number }) {
+  return (
+    <img src="/logo.png" alt="Agent" width={size} height={size}
+      className="rounded-full flex-shrink-0 object-contain" />
+  )
+}
+
+function AgentIcon({ size = 16 }: { size?: number }) {
+  return <img src="/logo.png" alt="Agent" width={size} height={size} className="object-contain" />
+}
+
+export default function Chat() {
+  const { t } = useTranslation()
+  const {
+    config, agentName,
+    messages, currentConversation, setCurrentConversation,
+    conversations, setConversations, isLoading, setLoading,
+    selectedProvider, setSelectedProvider, selectedModel, setSelectedModel,
+    setMessages, addMessage,
+    activePersonality, setActivePersonality
+  } = useStore()
+
+  const [input, setInput] = useState('')
+  const [showModelMenu, setShowModelMenu] = useState(false)
+  const [personalities, setPersonalities] = useState<any[]>([])
+  const [showPersonaMenu, setShowPersonaMenu] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [stats, setStats] = useState({ tokens: 0, messages: 0, cost: 0 })
+  const [providerModelsMap, setProviderModelsMap] = useState<Record<string, string[]>>({})
+  const [modelSearch, setModelSearch] = useState('')
+  const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set())
+
+  // Favoris modèles (max 5, partagé via localStorage)
+  const [favoriteModels, setFavoriteModels] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('gungnir_favorite_models') || '[]') } catch { return [] }
+  })
+  const toggleFavorite = (provider: string, model: string) => {
+    const key = `${provider}::${model}`
+    setFavoriteModels(prev => {
+      const next = prev.includes(key) ? prev.filter(f => f !== key) : prev.length >= 5 ? prev : [...prev, key]
+      localStorage.setItem('gungnir_favorite_models', JSON.stringify(next))
+      return next
+    })
+  }
+
+  // Skills favorites
+  const [favoriteSkills, setFavoriteSkills] = useState<any[]>([])
+
+  // File/image attachments
+  const [attachedFiles, setAttachedFiles] = useState<{ name: string; type: string; dataUrl: string; preview?: string }[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+    Array.from(files).forEach(file => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = reader.result as string
+        setAttachedFiles(prev => [...prev, {
+          name: file.name,
+          type: file.type,
+          dataUrl,
+          preview: file.type.startsWith('image/') ? dataUrl : undefined,
+        }])
+      }
+      reader.readAsDataURL(file)
+    })
+    e.target.value = ''
+  }
+
+  const removeAttachment = (idx: number) => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))
+
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Chat sidebar collapse (Ctrl+B via custom event)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    return localStorage.getItem('gungnir_chat_sidebar') === 'true'
+  })
+
+  const [editingTitleId, setEditingTitleId] = useState<number | null>(null)
+  const [editTitleValue, setEditTitleValue] = useState('')
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [hasGeneratedTitle, setHasGeneratedTitle] = useState(() => {
+    const saved = localStorage.getItem('gungnir_titles_generated')
+    return new Set(JSON.parse(saved || '[]'))
+  })
+
+  const [showApiKeysModal, setShowApiKeysModal] = useState(false)
+  const [showUserModal, setShowUserModal] = useState(false)
+  const [currentUser, setCurrentUser] = useState<any>(() => {
+    const saved = localStorage.getItem('gungnir_current_user')
+    return saved ? JSON.parse(saved) : null
+  })
+
+  const [showVoiceModal, setShowVoiceModal] = useState(false)
+  const [pttStatus, setPttStatus] = useState<'idle' | 'recording' | 'processing'>('idle')
+  const recognitionRef = useRef<any>(null)
+
+  const startPTT = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) return
+    if (recognitionRef.current) return
+    const recognition = new SpeechRecognition()
+    recognition.lang = i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+    recognition.continuous = false
+    recognition.onstart = () => setPttStatus('recording')
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0]?.[0]?.transcript || ''
+      if (transcript) { setInput(prev => (prev ? prev + ' ' : '') + transcript); setTimeout(() => inputRef.current?.focus(), 50) }
+    }
+    recognition.onerror = () => { setPttStatus('idle'); recognitionRef.current = null }
+    recognition.onend = () => { setPttStatus('idle'); recognitionRef.current = null }
+    recognitionRef.current = recognition
+    recognition.start()
+  }, [])
+
+  const stopPTT = useCallback(() => {
+    if (recognitionRef.current) { setPttStatus('processing'); recognitionRef.current.stop() }
+  }, [])
+
+  // Listen for Ctrl+B custom event from useKeyboard hook
+  const toggleSidebar = useCallback(() => {
+    setIsSidebarCollapsed(prev => {
+      const newVal = !prev
+      localStorage.setItem('gungnir_chat_sidebar', String(newVal))
+      return newVal
+    })
+  }, [])
+
+  useEffect(() => {
+    const handler = () => toggleSidebar()
+    window.addEventListener('gungnir:toggle-chat-sidebar', handler)
+    return () => window.removeEventListener('gungnir:toggle-chat-sidebar', handler)
+  }, [toggleSidebar])
+
+  // ─── Reload conversations when user changes ───────────────────────
+  useEffect(() => {
+    const loadUserConversations = async () => {
+      try {
+        const convos = await api.getConversations(currentUser?.id)
+        setConversations(convos)
+        // Reset current conversation if it doesn't belong to this user
+        if (currentConversation && !convos.find((c: any) => c.id === currentConversation)) {
+          setCurrentConversation(null)
+          setMessages([])
+        }
+      } catch { /* ignore */ }
+    }
+    loadUserConversations()
+  }, [currentUser?.id])
+
+  // ─── Conversation operations ───────────────────────────────────────
+  const handleDeleteConversation = async (id: number, confirm: boolean) => {
+    if (!confirm) { setDeletingId(null); return }
+    try {
+      await api.deleteConversation(id)
+      setConversations(conversations.filter(c => c.id !== id))
+      if (currentConversation === id) { setCurrentConversation(null); setMessages([]) }
+    } catch (err) { console.error('Delete error:', err) }
+    finally { setDeletingId(null) }
+  }
+
+  const handleStartEditing = (convo: any) => { setEditingTitleId(convo.id); setEditTitleValue(convo.title) }
+
+  const handleSaveTitle = async (id: number) => {
+    const newTitle = editTitleValue.trim()
+    if (!newTitle) { setEditingTitleId(null); return }
+    try {
+      await api.updateConversation(id, { title: newTitle })
+      setConversations(conversations.map(c => c.id === id ? { ...c, title: newTitle } : c))
+    } catch (err) { console.error('Update title error:', err) }
+    finally { setEditingTitleId(null) }
+  }
+
+  const handleCancelEdit = () => { setEditingTitleId(null); setEditTitleValue('') }
+
+  const generateTitleForConversation = useCallback(async (conversationId: number, userMessage: string) => {
+    if (hasGeneratedTitle.has(conversationId)) return
+    try {
+      const result = await api.generateTitle(conversationId)
+      const newTitle = result.title || userMessage.substring(0, 50).trim()
+      setConversations(useStore.getState().conversations.map(c => c.id === conversationId ? { ...c, title: newTitle } : c))
+      const updatedSet = new Set(hasGeneratedTitle); updatedSet.add(conversationId)
+      setHasGeneratedTitle(updatedSet)
+      localStorage.setItem('gungnir_titles_generated', JSON.stringify([...updatedSet]))
+    } catch (err) { console.error('Auto-title generation error:', err) }
+  }, [hasGeneratedTitle])
+
+  // ─── Model loading ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!config?.providers) return
+    const initialMap: Record<string, string[]> = {}
+    Object.entries(config.providers).forEach(([name, p]) => {
+      const prov = p as any
+      if (prov.enabled && prov.models?.length > 0) initialMap[name] = prov.models
+    })
+    if (Object.keys(initialMap).length > 0) setProviderModelsMap(initialMap)
+
+    const enabledNames = Object.entries(config.providers).filter(([, p]) => (p as any).enabled).map(([name]) => name)
+    Promise.all(
+      enabledNames.map(async (name) => {
+        try { const res = await fetch(`/api/models/${name}`); const data = await res.json(); return { name, models: (data.models || []) as string[] } }
+        catch { return { name, models: [] } }
+      })
+    ).then(results => {
+      setProviderModelsMap(prev => {
+        const next = { ...prev }
+        results.forEach(({ name, models }) => { if (models.length > 0) next[name] = models })
+        return next
+      })
+    })
+  }, [config])
+
+  const groupedProviders = Object.entries(providerModelsMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, models]) => {
+      const defaultModel = (config?.providers?.[name] as any)?.default_model as string | undefined
+      const sorted = [...models].sort((a, b) => a.localeCompare(b))
+      const filtered = modelSearch.trim() ? sorted.filter(m => m.toLowerCase().includes(modelSearch.toLowerCase())) : sorted
+      return { name, models: filtered, allModels: sorted, defaultModel }
+    })
+    .filter(p => p.allModels.length > 0)
+
+  useEffect(() => {
+    api.getPersonalities().then((data: any) => {
+      if (Array.isArray(data)) setPersonalities(data)
+      else if (data && Array.isArray(data.personalities)) setPersonalities(data.personalities)
+      const list = Array.isArray(data) ? data : (data?.personalities || [])
+      const active = list.find((p: any) => p.active)
+      if (active) setActivePersonality(active.name)
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    api.getSkills().then((data: any) => {
+      const list = Array.isArray(data) ? data : []
+      setFavoriteSkills(list.filter((s: any) => s.is_favorite))
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  useEffect(() => { if (currentConversation) loadMessages() }, [currentConversation])
+  useEffect(() => {
+    const totalMsgs = messages.length
+    const totalTokens = messages.reduce((acc, m) => acc + (m.content.length / 4), 0)
+    setStats({ tokens: Math.round(totalTokens), messages: totalMsgs, cost: totalTokens * 0.00001 })
+  }, [messages])
+
+  const loadMessages = async () => {
+    if (!currentConversation) return
+    try { const msgs = await api.getMessages(currentConversation); setMessages(msgs) }
+    catch (err) { console.error('Load messages error:', err) }
+  }
+
+  const handleNewChat = async () => {
+    try {
+      const payload = { title: 'Nouveau chat', provider: selectedProvider, model: selectedModel || 'minimax/minimax-m2.7', user_id: currentUser?.id }
+      const newConvo = await api.createConversation(payload)
+      const fullConvo = {
+        ...payload,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        ...newConvo,
+      }
+      setConversations([fullConvo, ...conversations])
+      setCurrentConversation(fullConvo.id)
+      setMessages([])
+    } catch (err) { console.error('New chat error:', err) }
+  }
+
+  const handleNewChatWithSummary = async (summary: string) => {
+    try {
+      const payload = { title: 'Suite de conversation', provider: selectedProvider, model: selectedModel || 'minimax/minimax-m2.7', user_id: currentUser?.id }
+      const newConvo = await api.createConversation(payload)
+      const fullConvo = {
+        ...payload,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        ...newConvo,
+      }
+      setConversations([fullConvo, ...conversations])
+      setCurrentConversation(fullConvo.id)
+      setMessages([])
+      setInput(`Voici le résumé de notre conversation précédente pour contexte :\n\n${summary}\n\nOn peut continuer à partir de là.`)
+    } catch (err) { console.error('New chat with summary error:', err) }
+  }
+
+  const handleSend = async () => {
+    if ((!input.trim() && attachedFiles.length === 0) || isLoading) return
+
+    // Auto-create conversation if none selected
+    let convoId: number | null = currentConversation
+    if (!convoId) {
+      try {
+        const payload = { title: 'Nouveau chat', provider: selectedProvider, model: selectedModel || 'minimax/minimax-m2.7', user_id: currentUser?.id }
+        const newConvo = await api.createConversation(payload)
+        const fullConvo = {
+          ...payload,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          ...newConvo,
+        }
+        setConversations([fullConvo, ...conversations])
+        setCurrentConversation(fullConvo.id)
+        convoId = fullConvo.id
+      } catch (err) {
+        console.error('Auto-create conversation error:', err)
+        return
+      }
+    }
+
+    const userMessage = input.trim()
+    const currentImages = attachedFiles.filter(f => f.type.startsWith('image/')).map(f => f.dataUrl)
+    const currentDocs = attachedFiles.filter(f => !f.type.startsWith('image/'))
+    // Pour les documents non-image, ajouter le contenu texte au message
+    let fullMessage = userMessage
+    if (currentDocs.length > 0) {
+      const docTexts = currentDocs.map(d => {
+        // Pour les fichiers texte, extraire le contenu base64
+        if (d.type.startsWith('text/') || d.type === 'application/json') {
+          try {
+            const b64 = d.dataUrl.split(',')[1]
+            return `\n\n--- Fichier: ${d.name} ---\n${atob(b64)}\n--- Fin ${d.name} ---`
+          } catch { return '' }
+        }
+        return `\n[Fichier joint: ${d.name} (${d.type})]`
+      })
+      fullMessage += docTexts.join('')
+    }
+    setInput('')
+    setAttachedFiles([])
+    setLoading(true)
+    // Afficher le message user avec miniatures des images jointes
+    const displayContent = currentImages.length > 0
+      ? userMessage + currentImages.map(() => '\n[Image jointe]').join('')
+      : fullMessage
+    addMessage({ id: Date.now(), role: 'user', content: displayContent, created_at: new Date().toISOString(), images: currentImages })
+    try {
+      const response = await api.chat(convoId!, {
+        message: fullMessage, provider: selectedProvider, model: selectedModel,
+        ...(currentImages.length > 0 ? { images: currentImages } : {}),
+      })
+      if (response.error) {
+        addMessage({ id: Date.now() + 1, role: 'assistant', content: `[Erreur: ${response.error}]`, created_at: new Date().toISOString() })
+      } else {
+        addMessage({
+          id: Date.now() + 1, role: 'assistant', content: response.content,
+          created_at: new Date().toISOString(),
+          model: response.model, provider: response.provider,
+          tokens_input: response.tokens_input, tokens_output: response.tokens_output,
+        })
+      }
+      if (messages.length === 0) generateTitleForConversation(convoId!, userMessage)
+    } catch (err) { console.error('Chat error:', err) }
+    setLoading(false)
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+  }
+
+  const formatModelName = (modelId: string) => { if (!modelId) return '—'; const parts = modelId.split('/'); return parts[parts.length - 1] || modelId }
+  const formatCost = (cost: number) => `$${cost.toFixed(4)}`
+  const filteredConversations = conversations.filter(c => (c.title || '').toLowerCase().includes(searchQuery.toLowerCase()))
+
+  return (
+    <div className="flex h-full" style={{ background: 'var(--bg-primary)' }}>
+
+      {/* ── CHAT SIDEBAR ── */}
+      <aside className={`flex-shrink-0 flex flex-col transition-all duration-300 ease-in-out ${isSidebarCollapsed ? 'w-16' : 'w-[280px]'}`}
+        style={{ background: 'var(--bg-primary)', borderRight: '1px solid var(--border-subtle)' }}>
+        <div className={`flex flex-col h-full ${isSidebarCollapsed ? 'items-center px-2' : ''}`}>
+          <div className={`flex items-center justify-between ${isSidebarCollapsed ? 'px-2 py-4' : 'px-4 py-4'}`} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+            {!isSidebarCollapsed ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <AgentAvatar size={28} />
+                  <span className="font-bold text-base tracking-wide gradient-text" style={{ color: 'var(--text-primary)' }}>{agentName.toUpperCase()}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={handleNewChat} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors" style={{ color: 'var(--text-muted)' }} title={t('chat.newChat')}>
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <button onClick={toggleSidebar} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors" style={{ color: 'var(--text-muted)' }} title={`${t('nav.collapse')} (Ctrl+B)`}>
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button onClick={toggleSidebar} className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
+                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)' }} title="Ouvrir (Ctrl+B)">
+                <ChevronRight className="w-4 h-4" style={{ color: 'var(--text-primary)' }} />
+              </button>
+            )}
+          </div>
+
+          {!isSidebarCollapsed && (
+            <>
+              <div className="px-3 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+                  <Search className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                  <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                    placeholder={t('chat.search')} className="flex-1 bg-transparent text-sm placeholder-[#555] outline-none" style={{ color: 'var(--text-primary)' }} />
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto py-2">
+                <div className="px-3 py-1 mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Conversations</span>
+                </div>
+                {filteredConversations.map(convo => {
+                  const isActive = currentConversation === convo.id
+                  const isEditing = editingTitleId === convo.id
+                  return (
+                    <div key={convo.id} onClick={() => !isEditing && setCurrentConversation(convo.id)}
+                      className="group mx-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all mb-0.5 flex items-center justify-between"
+                      style={{ background: isEditing ? 'var(--border)' : isActive ? 'var(--bg-elevated)' : undefined, border: isEditing ? '1px solid var(--border)' : undefined }}>
+                      <div className="flex-1 min-w-0">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <input type="text" value={editTitleValue} onChange={e => setEditTitleValue(e.target.value)}
+                              className="flex-1 text-sm rounded px-2 py-1 outline-none" autoFocus
+                              style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+                              onClick={e => e.stopPropagation()}
+                              onKeyDown={e => { if (e.key === 'Enter') handleSaveTitle(convo.id); if (e.key === 'Escape') handleCancelEdit() }} />
+                            <button onClick={(e) => { e.stopPropagation(); handleSaveTitle(convo.id) }} className="p-0.5" style={{ color: 'var(--accent-success)' }}><Check className="w-3 h-3" /></button>
+                            <button onClick={(e) => { e.stopPropagation(); handleCancelEdit() }} className="p-0.5" style={{ color: 'var(--accent-primary)' }}><X className="w-3 h-3" /></button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{convo.title}</div>
+                            <div className="text-xs truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>{formatModelName(convo.model)}</div>
+                          </>
+                        )}
+                      </div>
+                      {!isEditing && (
+                        <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>$0.000</span>
+                          <ConversationMenu conversationId={convo.id} conversationTitle={convo.title}
+                            provider={selectedProvider} model={selectedModel}
+                            onTitleUpdated={(id, title) => setConversations(conversations.map(c => c.id === id ? { ...c, title } : c))}
+                            onDelete={(id) => handleDeleteConversation(id, true)}
+                            onStartEdit={() => handleStartEditing(convo)}
+                            onNewChatWithSummary={handleNewChatWithSummary} />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="p-3 space-y-1" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                <div className="flex items-center justify-between text-xs px-1" style={{ color: 'var(--text-muted)' }}>
+                  <span>{t('chat.tokensUsed')}</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>{stats.tokens > 999 ? `${(stats.tokens/1000).toFixed(1)}K` : stats.tokens}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs px-1" style={{ color: 'var(--text-muted)' }}>
+                  <span>{t('chat.sessionCost')}</span>
+                  <span style={{ color: 'var(--accent-success)' }}>{formatCost(stats.cost)}</span>
+                </div>
+              </div>
+            </>
+          )}
+
+          {isSidebarCollapsed && (
+            <div className="flex-1 flex flex-col items-center justify-center py-4">
+              <button onClick={handleNewChat} className="w-10 h-10 rounded-lg flex items-center justify-center transition-colors"
+                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-muted)' }} title={t('chat.newChat')}>
+                <Plus className="w-5 h-5" />
+              </button>
+              <div className="mt-8 space-y-3">
+                {filteredConversations.slice(0, 3).map(convo => {
+                  const initial = convo.title.charAt(0).toUpperCase() || '?'
+                  return (
+                    <button key={convo.id} onClick={() => setCurrentConversation(convo.id)} title={convo.title}
+                      className="w-10 h-10 rounded-lg flex items-center justify-center font-medium text-sm transition-all"
+                      style={currentConversation === convo.id
+                        ? { background: 'linear-gradient(to right, var(--scarlet), var(--ember))', color: 'var(--text-primary)' }
+                        : { background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>
+                      {initial}
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="mt-auto mb-4">
+                <div className="w-2.5 h-2.5 rounded-full" style={{ background: 'linear-gradient(to right, var(--scarlet), var(--ember))' }} />
+              </div>
+            </div>
+          )}
+        </div>
+      </aside>
+
+      {/* ── MAIN CHAT ── */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top bar */}
+        <div className="flex items-center justify-between px-5 py-3" style={{ background: 'var(--bg-primary)', borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <AgentIcon size={14} />
+              <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{formatModelName(selectedModel)}</span>
+            </div>
+            <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
+              style={{ background: 'color-mix(in srgb, var(--accent-primary) 15%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 25%, transparent)' }}>
+              {selectedProvider}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button onClick={() => setShowPersonaMenu(!showPersonaMenu)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
+                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                <Bot className="w-3.5 h-3.5" /><span className="capitalize">{activePersonality}</span>
+                <ChevronDown className={`w-3 h-3 transition-transform ${showPersonaMenu ? 'rotate-180' : ''}`} />
+              </button>
+              {showPersonaMenu && (
+                <div className="absolute top-full right-0 mt-1 w-52 rounded-xl shadow-2xl z-50 p-1.5" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+                  <div className="text-[9px] font-bold uppercase tracking-widest px-2 py-1 mb-1" style={{ color: 'var(--text-muted)' }}>Personnalité</div>
+                  {personalities.map((p: any) => (
+                    <button key={p.name} onClick={async () => {
+                      await api.setPersonality(p.name); setActivePersonality(p.name)
+                      setPersonalities(prev => prev.map(pp => ({ ...pp, active: pp.name === p.name }))); setShowPersonaMenu(false)
+                    }}
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-2"
+                      style={p.active || p.name === activePersonality
+                        ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' }
+                        : { color: 'var(--text-secondary)' }}>
+                      <Bot className="w-3 h-3 flex-shrink-0" /><span className="capitalize">{p.name}</span>
+                      <span className="ml-auto text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{p.description}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <button onClick={() => setShowApiKeysModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
+              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+              <Key className="w-3.5 h-3.5" /> {t('common.apiKeys')}
+            </button>
+            <button onClick={() => setShowUserModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
+              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+              {currentUser ? (
+                <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold"
+                  style={{ background: 'linear-gradient(to bottom right, var(--scarlet), var(--ember))', color: 'var(--text-primary)' }}>
+                  {currentUser.display_name?.charAt(0)?.toUpperCase() || 'U'}
+                </div>
+              ) : <User className="w-3.5 h-3.5" />}
+              {currentUser?.display_name || t('common.user')}
+            </button>
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-4">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <div className="w-16 h-16 rounded-2xl mb-5 flex items-center justify-center"
+                style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 12%, transparent), color-mix(in srgb, var(--ember) 8%, transparent))' }}>
+                <AgentIcon size={32} />
+              </div>
+              <h3 className="text-lg font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>{t('chat.helpIntro')}</h3>
+              <p className="text-sm max-w-sm mb-6" style={{ color: 'var(--text-muted)' }}>{agentName}{t('chat.helpDesc')}</p>
+              <div className="flex flex-wrap gap-2 justify-center max-w-md">
+                {[t('chat.codeHelp'), t('chat.explainConcept'), t('chat.writeText'), t('chat.analyzeData')].map((s, i) => (
+                  <button key={i} onClick={() => setInput(s)} className="px-3 py-1.5 rounded-lg text-xs transition-colors"
+                    style={{ color: 'var(--text-secondary)', background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {messages.map((msg) => (
+            <div key={msg.id} className={`flex gap-3 animate-fade-in ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+              {msg.role === 'assistant' ? (
+                <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                  style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 10%, var(--bg-primary)), color-mix(in srgb, var(--scarlet) 15%, var(--bg-primary)))', border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)' }}>
+                  <AgentIcon size={14} />
+                </div>
+              ) : currentUser?.avatar_url ? (
+                <img src={currentUser.avatar_url} alt={currentUser.display_name || 'User'} className="w-8 h-8 rounded-full flex-shrink-0 mt-0.5 object-cover" style={{ border: '1px solid var(--border)' }} />
+              ) : (
+                <div className="w-8 h-8 rounded-full flex-shrink-0 mt-0.5 flex items-center justify-center text-xs font-bold"
+                  style={{ background: 'linear-gradient(to bottom right, var(--scarlet), var(--ember))', color: 'var(--text-primary)', border: '1px solid var(--border)' }}>
+                  {currentUser?.display_name?.charAt(0)?.toUpperCase() || 'U'}
+                </div>
+              )}
+
+              <div className={`flex flex-col gap-1 max-w-[70%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                  <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                    {msg.role === 'user' ? (currentUser?.display_name || t('common.user')) : formatModelName((msg as any).model || selectedModel)}
+                  </span>
+                  {msg.role === 'assistant' && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
+                      style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 15%, transparent)' }}>
+                      {(msg as any).provider || selectedProvider}
+                    </span>
+                  )}
+                </div>
+
+                {msg.role === 'assistant' && (msg as any).tool_events?.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-1">
+                    {(msg as any).tool_events.map((evt: any, i: number) => (
+                      <div key={i} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium"
+                        style={{
+                          background: evt.result?.ok !== false ? 'color-mix(in srgb, var(--accent-success) 8%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 8%, transparent)',
+                          border: `1px solid ${evt.result?.ok !== false ? 'color-mix(in srgb, var(--accent-success) 20%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 20%, transparent)'}`,
+                          color: evt.result?.ok !== false ? 'var(--accent-success)' : 'var(--accent-danger, var(--accent-primary-light))',
+                        }}>
+                        <Sparkles className="w-2.5 h-2.5 flex-shrink-0" /><span>{evt.tool}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+                  style={msg.role === 'assistant' ? {
+                    background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 4%, transparent), color-mix(in srgb, var(--ember) 2%, transparent))',
+                    border: '1px solid color-mix(in srgb, var(--scarlet) 10%, transparent)', color: 'var(--text-primary)',
+                  } : { background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                  {/* Images jointes */}
+                  {msg.images && msg.images.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {msg.images.map((img: string, i: number) => (
+                        <img key={i} src={img} alt={`Image ${i + 1}`} className="max-h-48 rounded-lg border border-[var(--border)] cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() => window.open(img, '_blank')} />
+                      ))}
+                    </div>
+                  )}
+                  {msg.content.replace(/\n\[Image jointe\]/g, '')}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {isLoading && (
+            <div className="flex gap-3">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 10%, var(--bg-primary)), color-mix(in srgb, var(--scarlet) 15%, var(--bg-primary)))', border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)' }}>
+                <AgentIcon size={14} />
+              </div>
+              <div className="rounded-2xl px-4 py-3 text-sm rounded-tl-sm"
+                style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 4%, transparent), color-mix(in srgb, var(--ember) 2%, transparent))', border: '1px solid color-mix(in srgb, var(--scarlet) 10%, transparent)' }}>
+                <div className="flex gap-1.5">
+                  <div className="w-2 h-2 rounded-full animate-bounce" style={{ background: 'color-mix(in srgb, var(--accent-primary) 60%, transparent)', animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 rounded-full animate-bounce" style={{ background: 'color-mix(in srgb, var(--accent-primary) 60%, transparent)', animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 rounded-full animate-bounce" style={{ background: 'color-mix(in srgb, var(--accent-primary) 60%, transparent)', animationDelay: '300ms' }} />
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input area */}
+        <div className="px-5 py-4" style={{ background: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)' }}>
+          <div className="flex items-end gap-3 max-w-4xl mx-auto">
+            <div className="relative">
+              <button onClick={() => setShowModelMenu(!showModelMenu)}
+                className="flex items-center gap-1.5 px-3 rounded-xl text-xs transition-colors whitespace-nowrap"
+                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', height: '44px' }}>
+                <AgentIcon size={12} /><span>{formatModelName(selectedModel)}</span>
+                <ChevronDown className={`w-3 h-3 transition-transform ${showModelMenu ? 'rotate-180' : ''}`} />
+              </button>
+              {showModelMenu && (
+                <div className="absolute bottom-full left-0 mb-2 w-80 rounded-xl shadow-2xl z-50 max-h-80 flex flex-col"
+                  style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+                  <div className="p-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <input type="text" value={modelSearch} onChange={e => setModelSearch(e.target.value)}
+                      placeholder="Rechercher un modèle..." className="w-full rounded-lg px-3 py-1.5 text-xs placeholder-[#555] outline-none"
+                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  </div>
+                  <div className="overflow-y-auto p-1.5">
+                    {/* Favoris */}
+                    {favoriteModels.length > 0 && !modelSearch.trim() && (
+                      <div className="mb-2 pb-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <div className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1" style={{ color: 'var(--accent-tertiary)' }}>
+                          <Star className="w-2.5 h-2.5" /> Favoris
+                        </div>
+                        {favoriteModels.map(fav => {
+                          const [prov, mod] = fav.split('::')
+                          return (
+                            <button key={fav} onClick={() => { setSelectedModel(mod); setSelectedProvider(prov); setShowModelMenu(false); setModelSearch('') }}
+                              className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between"
+                              style={selectedModel === mod && selectedProvider === prov ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
+                              <span className="truncate">{mod.split('/').pop()} <span style={{ color: 'var(--text-muted)' }}>({prov})</span></span>
+                              <Star className="w-3 h-3 flex-shrink-0 fill-current" style={{ color: 'var(--accent-tertiary)' }}
+                                onClick={e => { e.stopPropagation(); toggleFavorite(prov, mod) }} />
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {groupedProviders.map(group => {
+                      const isSearching = !!modelSearch.trim()
+                      const isExpanded = expandedProviders.has(group.name)
+                      const limit = isSearching ? 50 : (isExpanded ? group.models.length : 20)
+                      const displayModels = group.models.slice(0, limit)
+                      const hasMore = group.models.length > limit
+                      return (
+                      <div key={group.name}>
+                        <div className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest flex items-center justify-between" style={{ color: 'var(--text-muted)' }}>
+                          <span>{group.name}</span>
+                          <span className="text-[8px] font-normal">{group.models.length}</span>
+                        </div>
+                        {displayModels.map(m => {
+                          const isFav = favoriteModels.includes(`${group.name}::${m}`)
+                          return (
+                            <button key={m} onClick={() => { setSelectedModel(m); setSelectedProvider(group.name); setShowModelMenu(false); setModelSearch('') }}
+                              className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between group"
+                              style={selectedModel === m ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
+                              <span className="truncate">{m}</span>
+                              <Star className={`w-3 h-3 flex-shrink-0 cursor-pointer transition-colors ${isFav ? 'fill-current' : ''}`}
+                                style={{ color: isFav ? 'var(--accent-tertiary)' : 'var(--border)' }}
+                                onClick={e => { e.stopPropagation(); toggleFavorite(group.name, m) }} />
+                            </button>
+                          )
+                        })}
+                        {hasMore && (
+                          <button onClick={() => setExpandedProviders(prev => { const next = new Set(prev); next.add(group.name); return next })}
+                            className="w-full text-center py-1.5 text-[10px] transition-colors rounded-lg"
+                            style={{ color: 'var(--accent-primary)' }}>
+                            + {group.models.length - limit} modèles...
+                          </button>
+                        )}
+                      </div>
+                    )})}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Bouton fichier */}
+            <input ref={fileInputRef} type="file" multiple accept="image/*,.txt,.md,.json,.csv,.xml,.html,.py,.js,.ts,.tsx,.jsx,.css,.yaml,.yml,.log,.sql,.sh,.bat" className="hidden"
+              onChange={handleFileSelect} />
+            <button onClick={() => fileInputRef.current?.click()}
+              className="flex items-center justify-center rounded-xl transition-colors flex-shrink-0"
+              style={{ width: '44px', height: '44px', background: attachedFiles.length > 0 ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'var(--bg-secondary)', border: `1px solid ${attachedFiles.length > 0 ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border)'}`, color: attachedFiles.length > 0 ? 'var(--accent-primary)' : 'var(--text-muted)' }}
+              title={t('chat.attachFile')}>
+              <Paperclip className="w-4 h-4" />
+            </button>
+
+            <div className="flex-1 relative">
+              {/* Aperçu fichiers joints */}
+              {attachedFiles.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {attachedFiles.map((f, i) => (
+                    <div key={i} className="relative group rounded-lg overflow-hidden border border-[var(--border)]"
+                      style={{ background: 'var(--bg-secondary)' }}>
+                      {f.preview ? (
+                        <img src={f.preview} alt={f.name} className="h-16 w-16 object-cover" />
+                      ) : (
+                        <div className="h-16 w-16 flex items-center justify-center">
+                          <FileText className="w-5 h-5" style={{ color: 'var(--text-muted)' }} />
+                        </div>
+                      )}
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5">
+                        <span className="text-[8px] text-white truncate block">{f.name}</span>
+                      </div>
+                      <button onClick={() => removeAttachment(i)}
+                        className="absolute top-0 right-0 p-0.5 bg-black/60 rounded-bl opacity-0 group-hover:opacity-100 transition-opacity">
+                        <X className="w-3 h-3 text-white" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+                placeholder={t('chat.placeholder')} rows={1}
+                className="w-full rounded-xl px-4 py-3 pr-12 text-sm placeholder-[#555] outline-none resize-none transition-colors"
+                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', minHeight: '44px', maxHeight: '200px' }}
+                onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px' }} />
+            </div>
+
+            <button onClick={() => pttStatus === 'recording' ? stopPTT() : startPTT()}
+              className="flex items-center justify-center rounded-xl transition-colors"
+              style={pttStatus === 'recording'
+                ? { width: '44px', height: '44px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
+                : { width: '44px', height: '44px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+              title={t('chat.speak')}>
+              {pttStatus === 'recording' ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+
+            <button onClick={() => setShowVoiceModal(true)} className="flex items-center justify-center rounded-xl transition-colors"
+              style={showVoiceModal
+                ? { width: '44px', height: '44px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
+                : { width: '44px', height: '44px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+              title={t('chat.realtime')}>
+              <Radio className="w-4 h-4" />
+            </button>
+
+            <button onClick={handleSend} disabled={(!input.trim() && attachedFiles.length === 0) || isLoading} className="flex items-center justify-center rounded-xl disabled:opacity-30 transition-all"
+              style={{ width: '44px', height: '44px', background: (input.trim() || attachedFiles.length > 0) && !isLoading ? 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
+              <Send className="w-4 h-4" />
+            </button>
+          </div>
+          {/* Favorite skills bar */}
+          {favoriteSkills.length > 0 && (
+            <div className="flex items-center gap-2 max-w-4xl mx-auto mt-2 overflow-x-auto">
+              <Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--accent-tertiary)' }} />
+              {favoriteSkills.map((skill: any) => (
+                <button
+                  key={skill.name}
+                  onClick={() => {
+                    setInput(prev => prev ? prev : `/skill ${skill.name} `)
+                    inputRef.current?.focus()
+                  }}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] whitespace-nowrap transition-all hover:scale-105"
+                  style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent)', color: 'var(--text-secondary)' }}
+                  title={skill.description}
+                >
+                  <Code className="w-3 h-3" style={{ color: 'var(--accent-primary)' }} />
+                  {skill.name.replace(/_/g, ' ')}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Modals */}
+      <VoiceModal isOpen={showVoiceModal} onClose={() => setShowVoiceModal(false)} />
+      <ApiKeysModal isOpen={showApiKeysModal} onClose={() => setShowApiKeysModal(false)} config={config}
+        onConfigUpdate={(newConfig) => useStore.getState().setConfig(newConfig)} />
+      <UserModal isOpen={showUserModal} onClose={() => setShowUserModal(false)} currentUser={currentUser} onUserChange={setCurrentUser} />
+    </div>
+  )
+}

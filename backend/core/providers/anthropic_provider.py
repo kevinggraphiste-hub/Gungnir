@@ -55,7 +55,22 @@ class AnthropicProvider(LLMProvider):
                     })
                 chat_msgs.append({"role": "assistant", "content": content_blocks})
             else:
-                chat_msgs.append({"role": m.role, "content": m.content})
+                if m.images and m.role == "user":
+                    content_parts = []
+                    if m.content:
+                        content_parts.append({"type": "text", "text": m.content})
+                    for img in m.images:
+                        if img.startswith("data:"):
+                            parts = img.split(",", 1)
+                            media_type = parts[0].split(":")[1].split(";")[0]
+                            b64_data = parts[1] if len(parts) > 1 else ""
+                            content_parts.append({
+                                "type": "image",
+                                "source": {"type": "base64", "media_type": media_type, "data": b64_data}
+                            })
+                    chat_msgs.append({"role": "user", "content": content_parts})
+                else:
+                    chat_msgs.append({"role": m.role, "content": m.content})
 
         # Construire les params de l'appel
         create_params = {
@@ -118,6 +133,20 @@ class AnthropicProvider(LLMProvider):
         for m in messages:
             if m.role == "system":
                 system_msg = m.content
+            elif m.images and m.role == "user":
+                content_parts = []
+                if m.content:
+                    content_parts.append({"type": "text", "text": m.content})
+                for img in m.images:
+                    if img.startswith("data:"):
+                        parts = img.split(",", 1)
+                        media_type = parts[0].split(":")[1].split(";")[0]
+                        b64_data = parts[1] if len(parts) > 1 else ""
+                        content_parts.append({
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": media_type, "data": b64_data}
+                        })
+                chat_msgs.append({"role": "user", "content": content_parts})
             else:
                 chat_msgs.append({"role": m.role, "content": m.content})
 
@@ -131,4 +160,13 @@ class AnthropicProvider(LLMProvider):
                 yield text
 
     async def list_models(self) -> list[str]:
-        return ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"]
+        return [
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5-20250514",
+            "claude-haiku-4-5-20251001",
+            "claude-3-7-sonnet-20250219",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
+            "claude-3-opus-20240229",
+        ]

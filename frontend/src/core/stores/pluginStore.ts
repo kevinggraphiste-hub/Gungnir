@@ -19,6 +19,7 @@ export interface PluginManifest {
 
 interface PluginState {
   plugins: PluginManifest[]
+  pluginsLoaded: boolean
   setPlugins: (plugins: PluginManifest[]) => void
   togglePlugin: (name: string) => void
   isPluginEnabled: (name: string) => boolean
@@ -27,6 +28,7 @@ interface PluginState {
 
 export const usePluginStore = create<PluginState>((set, get) => ({
   plugins: [],
+  pluginsLoaded: false,
   setPlugins: (plugins) => set({ plugins }),
 
   togglePlugin: (name) =>
@@ -45,10 +47,13 @@ export const usePluginStore = create<PluginState>((set, get) => ({
       const res = await fetch('/api/plugins/status')
       if (res.ok) {
         const data = await res.json()
-        set({ plugins: data.plugins || [] })
+        set({ plugins: data.plugins || [], pluginsLoaded: true })
+      } else {
+        set({ pluginsLoaded: true })
       }
     } catch (err) {
       console.warn('Failed to load plugins:', err)
+      set({ pluginsLoaded: true })
     }
   },
 }))

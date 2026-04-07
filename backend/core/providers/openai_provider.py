@@ -23,7 +23,7 @@ class OpenAIProvider(LLMProvider):
     ) -> ChatResponse:
         resp = await self.client.chat.completions.create(
             model=model,
-            messages=[m.model_dump(exclude_none=True) for m in messages],
+            messages=[m.to_openai_format() for m in messages],
             stream=False,
             **kwargs,
         )
@@ -44,7 +44,7 @@ class OpenAIProvider(LLMProvider):
     ) -> AsyncGenerator[str, None]:
         stream = await self.client.chat.completions.create(
             model=model,
-            messages=[m.model_dump(exclude_none=True) for m in messages],
+            messages=[m.to_openai_format() for m in messages],
             stream=True,
             **kwargs,
         )

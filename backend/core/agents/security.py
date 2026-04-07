@@ -24,6 +24,9 @@ class SecurityScanner:
                 r"eval\s*\(",
                 r"exec\s*\(",
                 r"__import__\s*\(\s*[\"']os[\"']",
+                r"__import__\s*\(\s*[\"']subprocess[\"']",
+                r"importlib\.import_module",
+                r"getattr\s*\(\s*__builtins__",
             ],
             "severity": "critical",
             "description": "Shell injection vulnerability"
@@ -58,6 +61,10 @@ class SecurityScanner:
                 r"import\s+socket",
                 r"from\s+os\s+import",
                 r"from\s+subprocess\s+import",
+                r"importlib",
+                r"__import__",
+                r"from\s+ctypes\s+import",
+                r"from\s+multiprocessing\s+import",
             ],
             "severity": "medium",
             "description": "Potentially dangerous import"
@@ -79,10 +86,28 @@ class SecurityScanner:
                 r"eval\(",
                 r"compile\(",
                 r"__builtins__",
+                r"globals\s*\(\s*\)",
+                r"locals\s*\(\s*\)",
+                r"getattr\s*\(",
+                r"setattr\s*\(",
+                r"delattr\s*\(",
+                r"type\s*\(\s*['\"]",
             ],
             "severity": "critical",
             "description": "Code execution capability"
-        }
+        },
+        "encoding_bypass": {
+            "patterns": [
+                r"\\x[0-9a-fA-F]{2}",
+                r"\\u[0-9a-fA-F]{4}",
+                r"base64\.b64decode",
+                r"codecs\.decode",
+                r"bytes\.fromhex",
+                r"chr\s*\(\s*\d+\s*\)",
+            ],
+            "severity": "high",
+            "description": "Potential encoding-based bypass"
+        },
     }
 
     def __init__(self, workspace: Path = None):
@@ -180,10 +205,13 @@ class SecurityScanner:
                     "pattern": pattern,
                 })
         
+        weights = {"critical": 30, "high": 15, "medium": 5, "low": 1}
+        score = max(0.0, 100.0 - sum(weights.get(v["severity"], 10) for v in violations))
         return {
             "safe": len([v for v in violations if v["severity"] == "critical"]) == 0,
             "violations": violations,
             "approved": len([v for v in violations if v["severity"] in ["critical", "high"]]) == 0,
+            "score": score,
         }
 
     def check_workspace_access(self, path: str) -> bool:

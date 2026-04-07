@@ -1,0 +1,75 @@
+{
+  "name": "spearcode",
+  "version": "0.1.0",
+  "description": "AI coding agent for the terminal — 51 tools, 31 models, Gungnir integration",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "spearcode": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "ai",
+    "coding",
+    "agent",
+    "cli",
+    "terminal",
+    "claude",
+    "gpt",
+    "openrouter",
+    "llm",
+    "code-assistant",
+    "developer-tools",
+    "gungnir"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spearcode/spearcode"
+  },
+  "homepage": "https://spearcode.dev",
+  "bugs": {
+    "url": "https://github.com/spearcode/spearcode/issues"
+  },
+  "license": "MIT",
+  "author": "SpearCode",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "start": "node dist/cli/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/**/*.test.ts",
+    "lint": "eslint src/",
+    "prepublishOnly": "npm run build",
+    "release:patch": "npm version patch && npm publish",
+    "release:minor": "npm version minor && npm publish",
+    "release:major": "npm version major && npm publish"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "better-sqlite3": "^11.7.0",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "glob": "^11.0.1",
+    "ink": "^5.1.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.12.0",
+    "@types/react": "^19.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "os": ["darwin", "linux", "win32"],
+  "preferGlobal": true
+}

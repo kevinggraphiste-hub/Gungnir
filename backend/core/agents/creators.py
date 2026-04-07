@@ -21,10 +21,17 @@ class SkillCreator:
         prompt: str,
         tools: list[str] = [],
         code: str = None,
-        category: str = "custom"
+        category: str = "custom",
+        tags: list[str] = [],
+        version: str = "1.0.0",
+        author: str = "user",
+        license: str = "MIT",
+        examples: list[dict] = [],
+        output_format: str = "text",
+        annotations: dict = {},
     ) -> dict:
         security_result = security_scanner.scan_skill(prompt, code)
-        
+
         if not security_result["approved"]:
             return {
                 "success": False,
@@ -32,12 +39,12 @@ class SkillCreator:
                 "violations": security_result["violations"],
                 "severity": "high"
             }
-        
+
         skill_id = str(uuid.uuid4())[:8]
-        
+
         if not name.startswith("custom_"):
             name = f"custom_{name}"
-        
+
         skill = Skill(
             id=skill_id,
             name=name,
@@ -45,13 +52,21 @@ class SkillCreator:
             prompt=prompt,
             tools=tools,
             category=category,
-            created_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
+            version=version,
+            author=author,
+            tags=tags,
+            license=license,
+            examples=examples,
+            output_format=output_format,
+            annotations=annotations,
+            compatibility=["gungnir"],
         )
-        
+
         skill_library.add_skill(skill)
-        
+
         self._save_skill_file(skill, code)
-        
+
         return {
             "success": True,
             "skill_id": skill_id,
@@ -88,7 +103,14 @@ class SkillCreator:
             prompt=skill_data["prompt"],
             tools=skill_data.get("tools", []),
             code=skill_data.get("code"),
-            category=skill_data.get("category", "imported")
+            category=skill_data.get("category", "imported"),
+            tags=skill_data.get("tags", []),
+            version=skill_data.get("version", "1.0.0"),
+            author=skill_data.get("author", "imported"),
+            license=skill_data.get("license", "MIT"),
+            examples=skill_data.get("examples", []),
+            output_format=skill_data.get("output_format", "text"),
+            annotations=skill_data.get("annotations", {}),
         )
 
     async def validate_all_skills(self) -> dict:
@@ -113,7 +135,10 @@ class SkillCreator:
             "action_required": safe_count < len(results)
         }
 
-    async def update_skill(self, name: str, description: str = None, prompt: str = None, tools: list = None, category: str = None) -> dict:
+    async def update_skill(self, name: str, description: str = None, prompt: str = None,
+                           tools: list = None, category: str = None, tags: list = None,
+                           version: str = None, examples: list = None,
+                           output_format: str = None, annotations: dict = None) -> dict:
         skill = skill_library.get_skill(name)
         if not skill:
             return {"success": False, "error": "Skill introuvable"}
@@ -128,6 +153,17 @@ class SkillCreator:
             skill.tools = tools
         if category is not None:
             skill.category = category
+        if tags is not None:
+            skill.tags = tags
+        if version is not None:
+            skill.version = version
+        if examples is not None:
+            skill.examples = examples
+        if output_format is not None:
+            skill.output_format = output_format
+        if annotations is not None:
+            skill.annotations = annotations
+        skill_library._save()
         self._save_skill_file(skill)
         return {"success": True}
 

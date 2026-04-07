@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "icon": "BarChart3",
   "route": "/analytics",
-  "sidebar_position": 3,
+  "sidebar_position": 99,
   "sidebar_section": "tools",
   "backend_routes": true,
   "backend_prefix": "/api/plugins/analytics",

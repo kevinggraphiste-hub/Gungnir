@@ -4,8 +4,8 @@
     {
       "name": "Gungnir Backend",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "uvicorn", "backend.core.main:app", "--host", "127.0.0.1", "--port", "8000", "--reload"],
-      "port": 8000
+      "runtimeArgs": ["-m", "uvicorn", "backend.core.main:app", "--host", "127.0.0.1", "--port", "8001"],
+      "port": 8001
     },
     {
       "name": "Gungnir Frontend",

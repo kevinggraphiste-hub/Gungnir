@@ -1,0 +1,178 @@
+[
+  {
+    "id": "ebb98ba7",
+    "provider": "elevenlabs",
+    "messages": [
+      {
+        "role": "assistant",
+        "text": "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
+        "ts": 1775390626718
+      },
+      {
+        "role": "user",
+        "text": "Est-ce que tu m'entends ?",
+        "ts": 1775390631698
+      },
+      {
+        "role": "assistant",
+        "text": "...",
+        "ts": 1775390631788
+      },
+      {
+        "role": "user",
+        "text": "Tu m'entends maintenant ou pas ?",
+        "ts": 1775390634104
+      },
+      {
+        "role": "assistant",
+        "text": "Oui, je vous entends maintenant. Comment puis-je vous aider ?",
+        "ts": 1775390634516
+      },
+      {
+        "role": "user",
+        "text": "Parfait, c'est cool.",
+        "ts": 1775390639704
+      },
+      {
+        "role": "assistant",
+        "text": "[heureux] Je suis...",
+        "ts": 1775390640558
+      },
+      {
+        "role": "user",
+        "text": "Ça a l'air de bien fonctionner.",
+        "ts": 1775390642851
+      },
+      {
+        "role": "assistant",
+        "text": "[heureux] Je suis... content que vous le pensiez. Y a-t-il quelque chose de spécifique pour lequel je peux vous aider aujourd'hui ?",
+        "ts": 1775390644471
+      }
+    ],
+    "duration_seconds": 31,
+    "created_at": "2026-04-05T13:04:11.504092",
+    "title": "Bonjour ! Comment puis-je vous aider aujourd'hui ?"
+  },
+  {
+    "id": "e46d27fd",
+    "provider": "elevenlabs",
+    "messages": [
+      {
+        "role": "assistant",
+        "text": "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
+        "ts": 1775390293509
+      }
+    ],
+    "duration_seconds": 17,
+    "created_at": "2026-04-05T12:58:25.881270",
+    "title": "Bonjour ! Comment puis-je vous aider aujourd'hui ?"
+  },
+  {
+    "id": "aa9b7625",
+    "provider": "elevenlabs",
+    "messages": [
+      {
+        "role": "assistant",
+        "text": "Salut ! Je suis Gungnir. Comment je peux t'aider ?",
+        "ts": 1775388126196
+      }
+    ],
+    "duration_seconds": 60,
+    "created_at": "2026-04-05T12:22:52.243572",
+    "title": "Salut ! Je suis Gungnir. Comment je peux t'aider ?"
+  },
+  {
+    "id": "4b355fd4",
+    "provider": "elevenlabs",
+    "messages": [
+      {
+        "role": "assistant",
+        "text": "Salut ! Je suis Gungnir. Comment je peux t'aider ?",
+        "ts": 1775388094825
+      }
+    ],
+    "duration_seconds": 22,
+    "created_at": "2026-04-05T12:21:50.510153",
+    "title": "Salut ! Je suis Gungnir. Comment je peux t'aider ?"
+  },
+  {
+    "id": "c6c1d3ef",
+    "provider": "google",
+    "messages": [
+      {
+        "role": "assistant",
+        "text": "Salut ! Je suis Gungnir. Comment je peux t'aider ?",
+        "ts": 1775387864502
+      }
+    ],
+    "duration_seconds": 117,
+    "created_at": "2026-04-05T12:19:37.041149",
+    "title": "Salut ! Je suis Gungnir. Comment je peux t'aider ?"
+  },
+  {
+    "id": "9a4402ee",
+    "provider": "google",
+    "messages": [
+      {
+        "role": "assistant",
+        "text": "Salut ! Je suis Gungnir. Comment je peux t'aider ?",
+        "ts": 1775387864502
+      }
+    ],
+    "duration_seconds": 112,
+    "created_at": "2026-04-05T12:19:32.910088",
+    "title": "Salut ! Je suis Gungnir. Comment je peux t'aider ?"
+  },
+  {
+    "id": "38f4a2b6",
+    "provider": "elevenlabs",
+    "messages": [
+      {
+        "role": "assistant",
+        "text": "Salut ! Je suis Gungnir. Comment je peux t'aider ?",
+        "ts": 1775387852609
+      },
+      {
+        "role": "assistant",
+        "text": "Salut ! Je suis Gungnir. Comment je peux t'aider ?",
+        "ts": 1775387856823
+      }
+    ],
+    "duration_seconds": 7,
+    "created_at": "2026-04-05T12:17:37.147332",
+    "title": "Salut ! Je suis Gungnir. Comment je peux t'aider ?"
+  },
+  {
+    "id": "e521349e",
+    "provider": "elevenlabs",
+    "messages": [
+      {
+        "role": "assistant",
+        "text": "Salut ! Je suis Gungnir. Comment je peux t'aider ?",
+        "ts": 1775387835786
+      }
+    ],
+    "duration_seconds": 17,
+    "created_at": "2026-04-05T12:17:21.371069",
+    "title": "Salut ! Je suis Gungnir. Comment je peux t'aider ?"
+  },
+  {
+    "id": "d6b5ee50",
+    "provider": "elevenlabs",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Bonjour",
+        "ts": 1234
+      },
+      {
+        "role": "assistant",
+        "text": "Salut!",
+        "ts": 1235
+      }
+    ],
+    "duration_seconds": 15,
+    "created_at": "2026-04-05T12:06:51.743686",
+    "title": "Test session"
+  }
+]

@@ -19,11 +19,12 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     title = Column(String(255), default="Nouvelle conversation")
     provider = Column(String(100))
     model = Column(String(255))
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), onupdate=datetime.utcnow)
     is_pinned = Column(Boolean, default=False)
     metadata_json = Column(JSON, default=dict)
 
@@ -72,6 +73,43 @@ class AgentTask(Base):
     completed_at = Column(DateTime, nullable=True)
 
 
+# ── Cost & Budget ───────────────────────────────────────────────────────────
+
+class CostAnalytics(Base):
+    __tablename__ = "cost_analytics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, nullable=False)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=True)
+    model = Column(String(255), nullable=False)
+    tokens_input = Column(Integer, default=0)
+    tokens_output = Column(Integer, default=0)
+    cost = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
+
+
+class BudgetSettings(Base):
+    __tablename__ = "budget_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    monthly_limit = Column(Float, nullable=True)
+    weekly_limit = Column(Float, nullable=True)
+    alert_80 = Column(Boolean, default=True)
+    alert_90 = Column(Boolean, default=True)
+    alert_100 = Column(Boolean, default=True)
+    block_on_limit = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
+
+
+class ProviderBudget(Base):
+    __tablename__ = "provider_budgets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(String(100), unique=True, nullable=False)
+    monthly_limit = Column(Float, nullable=True)
+    weekly_limit = Column(Float, nullable=True)
+
+
 # ── Plugin registry ──────────────────────────────────────────────────────────
 
 class PluginRegistry(Base):
@@ -90,3 +128,13 @@ class PluginRegistry(Base):
 async def init_db(engine):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Migrate: add user_id column to conversations if missing
+        try:
+            await conn.execute(
+                __import__("sqlalchemy").text(
+                    "ALTER TABLE conversations ADD COLUMN user_id INTEGER REFERENCES users(id)"
+                )
+            )
+            print("[DB] Migration: added user_id to conversations")
+        except Exception:
+            pass  # Column already exists

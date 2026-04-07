@@ -98,7 +98,7 @@
   --accent-tertiary: #F59E0B;
   --accent-success: #2563EB;
   --accent-warning: #F59E0B;
-  --accent-danger: #E07820;
+  --accent-danger: #D946EF;
 
   --shadow-glow: 0 0 40px rgba(37, 99, 235, 0.15);
 }
@@ -133,6 +133,36 @@
   --accent-danger: #CC1B1B;
 
   --shadow-glow: 0 0 40px rgba(204, 27, 27, 0.1);
+}
+
+/* ── Thème : Custom (base = dark-scarlet, variables surchargées via JS) ── */
+[data-theme="custom"] {
+  --bg-primary: #080808;
+  --bg-secondary: #111111;
+  --bg-tertiary: #1a1a1a;
+  --bg-card: #131313;
+  --bg-elevated: #1e1e1e;
+  --border: #2a2a2a;
+  --border-subtle: #1e1e1e;
+  --text-primary: #f5f5f5;
+  --text-secondary: #a3a3a3;
+  --text-muted: #666666;
+
+  --scarlet: var(--accent-primary, #dc2626);
+  --scarlet-light: var(--accent-primary, #ef4444);
+  --scarlet-dark: var(--accent-primary, #b91c1c);
+  --ember: var(--accent-secondary, #f97316);
+  --amber: #f59e0b;
+  --wolf-gray: #78716c;
+  --wolf-silver: #d6d3d1;
+
+  --accent-primary-light: var(--accent-primary, #ef4444);
+  --accent-tertiary: #f59e0b;
+  --accent-success: #22c55e;
+  --accent-warning: #f59e0b;
+  --accent-danger: #ef4444;
+
+  --shadow-glow: 0 0 40px rgba(220, 38, 38, 0.15);
 }
 
 /* ── Taille de texte ──────────────────────────── */
@@ -175,6 +205,27 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
+}
+
+/* Select & option — themed dropdowns */
+select {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+select option,
+select optgroup {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+input, textarea {
+  color-scheme: dark;
+}
+
+[data-theme="light"] input,
+[data-theme="light"] textarea {
+  color-scheme: light;
 }
 
 /* Glass effect */

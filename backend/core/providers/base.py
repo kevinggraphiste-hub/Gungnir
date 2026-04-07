@@ -8,6 +8,26 @@ class ChatMessage(BaseModel):
     content: str = ""
     tool_calls: Optional[list[dict]] = None
     tool_call_id: Optional[str] = None
+    images: list[str] = []  # base64-encoded images (data:image/...;base64,...)
+
+    def to_openai_format(self) -> dict:
+        """Convert to OpenAI-compatible message format, with multimodal support."""
+        base = {"role": self.role}
+        if self.tool_calls:
+            base["tool_calls"] = self.tool_calls
+        if self.tool_call_id:
+            base["tool_call_id"] = self.tool_call_id
+
+        if self.images:
+            parts: list[dict] = []
+            if self.content:
+                parts.append({"type": "text", "text": self.content})
+            for img in self.images:
+                parts.append({"type": "image_url", "image_url": {"url": img}})
+            base["content"] = parts
+        else:
+            base["content"] = self.content
+        return {k: v for k, v in base.items() if v is not None}
 
 
 class ChatResponse(BaseModel):

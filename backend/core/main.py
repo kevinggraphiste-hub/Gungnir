@@ -4,6 +4,7 @@ Gungnir — Main FastAPI application
 Core app with dynamic plugin loading.
 """
 import sys
+import asyncio
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -14,12 +15,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
 from backend.core.db.engine import engine
 from backend.core.db.models import init_db
-from backend.core.config.settings import PLUGINS_DIR
+from backend.core.config.settings import PLUGINS_DIR, Settings
 from backend.core.services.plugin_loader import (
     discover_plugins, mount_plugin_routes, call_plugin_lifecycle,
 )
@@ -31,31 +31,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gungnir")
 
-# ── Plugin state (populated at startup) ──────────────────────────────────────
+# ── Plugin state ─────────────────────────────────────────────────────────────
 _loaded_plugins = []
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
-    global _loaded_plugins
-
     # 1. Initialize database
     logger.info("Initializing database...")
     await init_db(engine)
 
-    # 2. Discover and mount plugins
-    logger.info("Discovering plugins...")
-    manifests = discover_plugins(PLUGINS_DIR)
-    for manifest in manifests:
-        if manifest.enabled_by_default:
-            success = mount_plugin_routes(app, manifest)
-            if success:
-                _loaded_plugins.append(manifest)
+    # 2. Reload data singletons (skills, personalities, sub-agents)
+    from backend.core.agents.skills import skill_library, personality_manager, subagent_library
+    skill_library.skills.clear()
+    skill_library._load()
+    personality_manager.personalities.clear()
+    personality_manager._load()
+    subagent_library.agents.clear()
+    subagent_library._load()
 
     # 3. Call plugin on_startup hooks
     for manifest in _loaded_plugins:
         call_plugin_lifecycle(manifest, "on_startup", app=app)
+
+    # 4. Start MCP servers
+    from backend.core.agents.mcp_client import mcp_manager
+    settings = Settings.load()
+    if settings.mcp_servers:
+        mcp_configs = [s.model_dump() for s in settings.mcp_servers]
+        await mcp_manager.start_all(mcp_configs)
+        mcp_tools = mcp_manager.get_all_schemas()
+        if mcp_tools:
+            logger.info(f"MCP: {len(mcp_tools)} tools from {len(mcp_manager.clients)} server(s)")
+
+    # 5. Start auto-backup scheduler
+    auto_backup_task = asyncio.create_task(_auto_backup_loop())
 
     logger.info(
         f"Gungnir started — {len(_loaded_plugins)} plugins loaded: "
@@ -65,25 +76,86 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    auto_backup_task.cancel()
+    await mcp_manager.stop_all()
     for manifest in _loaded_plugins:
         call_plugin_lifecycle(manifest, "on_shutdown")
     logger.info("Gungnir stopped.")
 
 
+async def _auto_backup_loop():
+    """Background loop: runs daily backup at midnight if enabled."""
+    from backend.core.api.backup_routes import _load_config, BACKUPS_DIR, BACKUP_TARGETS, PROJECT_ROOT, _enforce_max_backups
+    import zipfile
+    from datetime import datetime, timedelta
+
+    while True:
+        try:
+            now = datetime.now()
+            next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            wait_seconds = (next_midnight - now).total_seconds()
+            logger.info(f"Auto-backup: next check at midnight ({int(wait_seconds)}s)")
+        except Exception:
+            wait_seconds = 3600
+
+        await asyncio.sleep(wait_seconds)
+
+        try:
+            cfg = _load_config()
+            if not cfg.get("auto_daily"):
+                continue
+
+            BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"gungnir_backup_{timestamp}.zip"
+            zip_path = BACKUPS_DIR / filename
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for target in BACKUP_TARGETS:
+                    if target.exists():
+                        zf.write(target, str(target.relative_to(PROJECT_ROOT)))
+            _enforce_max_backups(cfg.get("max_backups", 10))
+            logger.info(f"Auto-backup created at midnight: {filename}")
+        except Exception as e:
+            logger.warning(f"Auto-backup error: {e}")
+
+
 # ── App ──────────────────────────────────────────────────────────────────────
-app = FastAPI(title="Gungnir API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="Gungnir API", version="2.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
 # ── Core API routes ──────────────────────────────────────────────────────────
 from backend.core.api.router import core_router
 app.include_router(core_router, prefix="/api")
+
+# ── Discover and mount plugins at module level (before catch-all) ────────────
+logger.info("Discovering plugins...")
+_manifests = discover_plugins(PLUGINS_DIR)
+for _manifest in _manifests:
+    if _manifest.enabled_by_default:
+        if mount_plugin_routes(app, _manifest):
+            _loaded_plugins.append(_manifest)
 
 
 # ── Plugin status endpoint ───────────────────────────────────────────────────
@@ -107,31 +179,50 @@ async def plugins_status():
     }
 
 
-# ── Frontend SPA serving ─────────────────────────────────────────────────────
+# ── Frontend SPA serving (middleware — never conflicts with API routes) ──────
 frontend_dist = PROJECT_ROOT / "frontend" / "dist"
+
 if frontend_dist.exists():
-    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request
+    from starlette.responses import Response
 
-    # Serve static files (logo, favicon, etc.)
-    @app.get("/logo.png")
-    async def serve_logo():
-        logo_path = frontend_dist / "logo.png"
-        if logo_path.exists():
-            return FileResponse(str(logo_path))
-        return JSONResponse({"error": "not found"}, status_code=404)
+    class SPAMiddleware(BaseHTTPMiddleware):
+        """Serves SPA files for non-API routes. API routes pass through."""
+        async def dispatch(self, request: Request, call_next) -> Response:
+            path = request.url.path
 
-    @app.get("/")
-    async def serve_frontend():
-        return FileResponse(str(frontend_dist / "index.html"))
+            # Let API routes pass through to FastAPI router
+            if path.startswith("/api"):
+                return await call_next(request)
 
-    @app.get("/{path:path}")
-    async def serve_frontend_files(path: str):
-        if path.startswith("api"):
-            return JSONResponse({"error": "Route not found"}, status_code=404)
-        file_path = frontend_dist / path
-        if file_path.exists() and file_path.is_file():
-            return FileResponse(str(file_path))
-        return FileResponse(str(frontend_dist / "index.html"))
+            # Serve static assets
+            if path == "/logo.png":
+                logo_path = (frontend_dist / "logo.png").resolve()
+                if not str(logo_path).startswith(str(frontend_dist.resolve())):
+                    return Response(status_code=403)
+                if logo_path.exists():
+                    return FileResponse(str(logo_path))
+
+            if path.startswith("/assets/"):
+                file_path = (frontend_dist / path.lstrip("/")).resolve()
+                if not str(file_path).startswith(str(frontend_dist.resolve())):
+                    return Response(status_code=403)
+                if file_path.exists() and file_path.is_file():
+                    return FileResponse(str(file_path))
+
+            # Serve actual files from dist
+            if path != "/":
+                file_path = (frontend_dist / path.lstrip("/")).resolve()
+                if not str(file_path).startswith(str(frontend_dist.resolve())):
+                    return Response(status_code=403)
+                if file_path.exists() and file_path.is_file():
+                    return FileResponse(str(file_path))
+
+            # SPA fallback
+            return FileResponse(str(frontend_dist / "index.html"))
+
+    app.add_middleware(SPAMiddleware)
 
 
 if __name__ == "__main__":

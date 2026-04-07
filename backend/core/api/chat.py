@@ -12,8 +12,188 @@ from backend.core.db.models import Conversation, Message
 from backend.core.db.engine import get_session
 from backend.core.providers import get_provider, ChatMessage
 from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS, WOLF_EXECUTORS, READ_ONLY_TOOLS
+from backend.core.agents.mcp_client import mcp_manager
 
 router = APIRouter()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Vision fallback : description d'images pour modèles non-multimodaux
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Patterns de modèles connus comme supportant la vision
+_VISION_MODEL_PATTERNS = [
+    "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-4.1",
+    "claude-3", "claude-sonnet", "claude-opus", "claude-haiku",
+    "gemini", "gemma",
+    "llava", "bakllava", "moondream",
+    "pixtral", "qwen-vl", "qwen2-vl", "internvl",
+    "yi-vision", "phi-3-vision", "phi-3.5-vision",
+]
+
+def _model_supports_vision(model_name: str) -> bool:
+    """Heuristique : le modèle supporte-t-il les images ?"""
+    name = model_name.lower()
+    return any(p in name for p in _VISION_MODEL_PATTERNS)
+
+
+async def _describe_images_for_blind_model(
+    images: list[str], user_message: str, settings
+) -> str:
+    """Utilise un modèle multimodal disponible pour décrire les images en texte."""
+    # Chercher un provider avec un modèle vision disponible
+    vision_providers = [
+        ("openrouter", "openai/gpt-4o-mini"),
+        ("openai", "gpt-4o-mini"),
+        ("anthropic", "claude-sonnet-4-5-20250514"),
+        ("google", "gemini-2.0-flash"),
+    ]
+    for prov_name, fallback_model in vision_providers:
+        prov_cfg = settings.providers.get(prov_name)
+        if prov_cfg and prov_cfg.enabled and prov_cfg.api_key:
+            try:
+                provider = get_provider(prov_name, prov_cfg.api_key, prov_cfg.base_url)
+                desc_msg = ChatMessage(
+                    role="user",
+                    content=f"Décris précisément cette/ces image(s) en français. Contexte du message utilisateur : \"{user_message}\". Donne une description détaillée et utile.",
+                    images=images,
+                )
+                resp = await provider.chat(
+                    [desc_msg],
+                    fallback_model,
+                )
+                return resp.content
+            except Exception as e:
+                print(f"[Wolf] Vision fallback with {prov_name} failed: {e}")
+                continue
+    return "[Images jointes — impossible de les décrire, aucun modèle vision disponible]"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Mode restreint : vérification d'intent utilisateur
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Mapping : catégorie d'outils → mots-clés FR/EN que l'utilisateur doit employer
+_RESTRAINED_INTENT_MAP = {
+    "web": {
+        "tools": ["web_fetch", "web_search", "web_crawl"],
+        "keywords": [
+            "cherche", "recherche", "trouve", "va sur", "va voir", "regarde",
+            "ouvre", "visite", "consulte", "scrape", "scrapper", "crawler",
+            "sur internet", "sur le web", "en ligne", "sur google",
+            "search", "look up", "find", "google", "browse", "go to", "visit",
+            "fetch", "url", "http", "site", "page web",
+        ],
+    },
+    "browser": {
+        "tools": ["browser_navigate", "browser_get_text", "browser_click", "browser_type",
+                  "browser_screenshot", "browser_evaluate", "browser_get_links", "browser_crawl",
+                  "browser_close", "browser_goto", "browser_get_html", "browser_wait_for_selector",
+                  "browser_scroll", "browser_extract_table", "browser_query_selector_all",
+                  "browser_select_option", "browser_fill_form", "browser_list_pages",
+                  "browser_get_page_info", "browser_press_key"],
+        "keywords": [
+            "naviguer", "navigue", "browser", "navigateur", "ouvre", "clique",
+            "screenshot", "capture", "page", "site",
+            "va sur", "visite", "consulte",
+        ],
+    },
+    "skill": {
+        "tools": ["skill_create", "skill_update", "skill_delete"],
+        "keywords": [
+            "skill", "competence", "cree un skill", "nouveau skill",
+            "ajoute un skill", "supprime", "modifie", "met a jour",
+            "create skill", "new skill", "add skill",
+        ],
+    },
+    "subagent": {
+        "tools": ["subagent_create", "subagent_invoke", "subagent_update", "subagent_delete"],
+        "keywords": [
+            "sous-agent", "sub-agent", "subagent", "agent", "delegue",
+            "cree un agent", "nouvel agent", "nouveau sous-agent",
+            "invoke", "appelle", "utilise l'agent",
+            "create agent", "new agent",
+        ],
+    },
+    "personality": {
+        "tools": ["personality_create", "personality_update", "personality_delete", "personality_set_active"],
+        "keywords": [
+            "personnalite", "personality", "persona",
+            "cree une personnalite", "nouvelle personnalite", "change de personnalite",
+            "active la personnalite", "switch", "mode",
+        ],
+    },
+    "kb": {
+        "tools": ["kb_write"],
+        "keywords": [
+            "ecris", "ecrire", "sauvegarde", "enregistre", "note", "memorise",
+            "stocke", "persiste", "base de connaissance", "knowledge",
+            "write", "save", "store", "remember",
+        ],
+    },
+    "soul": {
+        "tools": ["soul_write"],
+        "keywords": [
+            "ame", "soul", "identite", "identity", "modifie ton ame",
+            "change ton identite", "redefinis-toi",
+        ],
+    },
+    "automata": {
+        "tools": ["schedule_task", "schedule_list", "schedule_delete"],
+        "keywords": [
+            "planifie", "programme", "cron", "automatise", "automatisation",
+            "recurrent", "recurrente", "tous les jours", "chaque jour",
+            "chaque semaine", "toutes les heures", "rappelle-moi",
+            "schedule", "automate", "recurring", "every day", "every hour",
+            "tache planifiee", "tache automatique",
+        ],
+    },
+}
+
+# Outils toujours autorisés en mode restreint (lecture pure, sans effet de bord)
+_RESTRAINED_ALWAYS_ALLOWED = {
+    "skill_list", "kb_read", "kb_list", "soul_read", "subagent_list", "schedule_list",
+}
+
+
+def _normalize_for_intent(text: str) -> str:
+    """Normalise le texte pour le matching d'intent."""
+    t = text.lower()
+    for a, b in [("è","e"),("é","e"),("ê","e"),("ë","e"),("à","a"),("â","a"),
+                 ("ô","o"),("î","i"),("ù","u"),("û","u"),("ç","c"),("'","'")]:
+        t = t.replace(a, b)
+    return t
+
+
+def _restrained_check_user_intent(tool_name: str, user_message: str) -> bool:
+    """
+    Vérifie si le message utilisateur contient une intention explicite
+    correspondant à l'outil que le LLM veut appeler.
+    Retourne True si l'outil est autorisé, False sinon.
+    """
+    # Outils de lecture pure → toujours OK
+    if tool_name in _RESTRAINED_ALWAYS_ALLOWED:
+        return True
+
+    msg_norm = _normalize_for_intent(user_message)
+
+    # Vérifier chaque catégorie
+    for category in _RESTRAINED_INTENT_MAP.values():
+        if tool_name in category["tools"]:
+            for kw in category["keywords"]:
+                kw_norm = _normalize_for_intent(kw)
+                if kw_norm in msg_norm:
+                    return True
+            return False  # Outil trouvé dans une catégorie mais aucun keyword match
+
+    # Outil inconnu dans le mapping → on détecte les domaines (.com, .fr, etc.)
+    # pour autoriser les web tools quand une URL/domaine est mentionnée
+    if _re_mod.search(r'https?://|[a-zA-Z0-9-]+\.(com|fr|org|net|io|dev|ai)', user_message):
+        if tool_name.startswith("web_") or tool_name.startswith("browser_"):
+            return True
+
+    # Outil non mappé → autoriser par défaut (ne pas bloquer les outils système imprévus)
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -400,12 +580,15 @@ async def chat(
     data: dict,
     session: AsyncSession = Depends(get_session)
 ):
-    # -- Budget check
-    from backend.core.cost.manager import get_cost_manager
-    cm = get_cost_manager()
-    budget_status = await cm.check_all_budgets(session)
-    if budget_status.get("should_block"):
-        return {"error": f"Budget depasse : {budget_status.get('block_reason', 'limite atteinte')}. Augmentez votre budget ou attendez la prochaine periode."}
+    # -- Budget check (graceful if tables don't exist yet)
+    try:
+        from backend.core.cost.manager import get_cost_manager
+        cm = get_cost_manager()
+        budget_status = await cm.check_all_budgets(session)
+        if budget_status.get("should_block"):
+            return {"error": f"Budget depasse : {budget_status.get('block_reason', 'limite atteinte')}. Augmentez votre budget ou attendez la prochaine periode."}
+    except Exception as e:
+        print(f"[Wolf] Budget check skipped: {e}")
 
     settings = Settings.load()
     provider_name = data.get("provider", "openrouter")
@@ -416,6 +599,22 @@ async def chat(
     if not provider_config or not provider_config.enabled or not provider_config.api_key:
         return {"error": "Provider non configure"}
 
+    # Validation du modele : verifier qu'il existe chez le provider
+    if model:
+        try:
+            _provider_tmp = get_provider(provider_name, provider_config.api_key, provider_config.base_url)
+            _live_models = await _provider_tmp.list_models()
+            if _live_models and model not in _live_models:
+                # Chercher un match partiel (ex: "gemini-2.5-flash" dans "google/gemini-2.5-flash")
+                _partial = [m for m in _live_models if model in m or m in model]
+                if _partial:
+                    print(f"[Wolf] Model '{model}' not found, using closest match: '{_partial[0]}'")
+                    model = _partial[0]
+                else:
+                    return {"error": f"Modele '{model}' introuvable chez {provider_name}. Verifiez le nom du modele."}
+        except Exception as _e:
+            print(f"[Wolf] Model validation skipped: {_e}")
+
     result = await session.execute(
         select(Message).where(Message.conversation_id == convo_id).order_by(Message.created_at)
     )
@@ -425,29 +624,65 @@ async def chat(
         ChatMessage(role=m.role, content=m.content)
         for m in messages
     ]
-    chat_messages.append(ChatMessage(role="user", content=message))
+    # Extraire les images si présentes + fallback vision
+    user_images = data.get("images", [])
+    actual_model = model or provider_config.default_model or ""
+    if user_images and not _model_supports_vision(actual_model):
+        # Le modèle ne supporte pas la vision → décrire les images en texte
+        print(f"[Wolf] Model '{actual_model}' has no vision — using fallback description")
+        description = await _describe_images_for_blind_model(user_images, message, settings)
+        message = f"{message}\n\n[Description des images jointes par un modèle vision :\n{description}]"
+        user_images = []  # Ne pas envoyer les images au modèle non-vision
+    chat_messages.append(ChatMessage(role="user", content=message, images=user_images))
 
     # Detection commande de changement de personnalite
     from backend.core.agents.skills import personality_manager as pm
     personality_cmd = pm.detect_personality_command(message)
     if personality_cmd:
         pm.set_active(personality_cmd)
+        print(f"[Wolf] Personality switched to '{personality_cmd}' via chat command")
 
     # Construction du system prompt : Soul (identite) + Personnalite (mode) + Outils
     _lang_names = {
+        # Europe occidentale
         "fr": "francais", "en": "anglais", "es": "espagnol", "pt": "portugais",
-        "it": "italien", "de": "allemand", "nl": "neerlandais", "be": "flamand",
-        "br": "breton", "sv": "suedois", "no": "norvegien", "da": "danois",
-        "pl": "polonais", "ru": "russe", "ar": "arabe", "ja": "japonais", "zh": "chinois mandarin",
+        "it": "italien", "de": "allemand", "nl": "neerlandais", "ca": "catalan",
+        "be": "flamand", "br": "breton",
+        # Europe nordique
+        "sv": "suedois", "no": "norvegien", "da": "danois", "fi": "finnois", "is": "islandais",
+        # Europe orientale
+        "pl": "polonais", "ru": "russe", "uk": "ukrainien", "cs": "tcheque", "sk": "slovaque",
+        "hu": "hongrois", "ro": "roumain", "bg": "bulgare", "hr": "croate", "sr": "serbe",
+        "sl": "slovene", "et": "estonien", "lv": "letton", "lt": "lituanien",
+        # Europe du Sud-Est
+        "el": "grec", "tr": "turc",
+        # Moyen-Orient
+        "ar": "arabe", "he": "hebreu", "fa": "persan",
+        # Asie
+        "zh": "chinois simplifie", "zh-TW": "chinois traditionnel",
+        "ja": "japonais", "ko": "coreen",
+        "hi": "hindi", "bn": "bengali",
+        "th": "thai", "vi": "vietnamien",
+        "id": "indonesien", "ms": "malais", "tl": "filipino",
+        # Afrique
+        "sw": "swahili", "am": "amharique",
     }
     _lang_code = settings.app.language or "fr"
     _lang_label = _lang_names.get(_lang_code, _lang_code)
     soul_content = SOUL_FILE.read_text(encoding="utf-8") if SOUL_FILE.exists() else DEFAULT_SOUL
-    soul_content = soul_content + f"\n\n**Langue de reponse :** Tu reponds TOUJOURS en {_lang_label}, quelle que soit la langue du message recu, sauf instruction explicite contraire."
+    chosen_model = model or provider_config.default_model
+    soul_content = soul_content + (
+        f"\n\n**Modele LLM actuel :** Tu tournes sur le modele `{chosen_model}` via le provider `{provider_name}`."
+        f" Quand on te demande quel modele tu es, reponds avec cet identifiant."
+        f"\n**Langue de reponse :** Tu reponds TOUJOURS en {_lang_label}, quelle que soit la langue du message recu, sauf instruction explicite contraire."
+    )
     active_personality = pm.get_active()
     personality_block = ""
     if active_personality and active_personality.system_prompt:
         personality_block = f"\n\n## Mode de personnalite actif : {active_personality.name}\n{active_personality.system_prompt}"
+        print(f"[Wolf] Personality overlay applied: '{active_personality.name}' ({len(active_personality.system_prompt)} chars)")
+    else:
+        print(f"[Wolf] No personality overlay (active: '{active_personality.name if active_personality else 'none'}')")
 
     # Construire la liste des modeles disponibles pour guider Wolf
     _available_models_lines = []
@@ -477,7 +712,6 @@ async def chat(
 
         MAX_TOOL_ROUNDS = 12
         tool_events: list[dict] = []
-        chosen_model = model or provider_config.default_model
 
         # ══════════════════════════════════════════════════════════════════
         # WEB GATEWAY -- style OpenClaw
@@ -555,7 +789,66 @@ Format exact (le systeme detecte et execute automatiquement) :
 3. Sinon, appelle web_fetch ou web_search avec <tool_call>.
 """
 
-        full_system = _soul_content.strip() + _personality_block + tools_block
+        # ══════════════════════════════════════════════════════════════════
+        # MODE AGENT — instructions comportementales selon le mode actif
+        # ══════════════════════════════════════════════════════════════════
+        _mode = mode_manager.current_mode.value
+        if _mode == "autonomous":
+            mode_block = """
+
+## MODE : AUTONOME (carte blanche)
+
+Tu operes en mode **autonome total**. Tu peux et DOIS prendre des initiatives :
+- **Creer des sous-agents** specialises si la tache est complexe (subagent_create + subagent_invoke)
+- **Creer des skills** reutilisables si tu identifies un pattern repetitif (skill_create)
+- **Rechercher des ressources en ligne** spontanement pour enrichir tes reponses (web_search, web_fetch)
+- **Ecrire dans la base de connaissances** pour memoriser des informations utiles (kb_write)
+- **Modifier ta propre identite** si pertinent (soul_write)
+- **Changer de personnalite** selon le contexte (personality_set_active)
+
+Tu n'as besoin d'AUCUNE validation humaine. Agis, execute, ameliore. Si tu as besoin d'info, va la chercher.
+Quand tu crees un sous-agent ou un skill, informe l'utilisateur de ce que tu as fait et pourquoi.
+"""
+        elif _mode == "restrained":
+            mode_block = """
+
+## MODE : RESTREINT (sur demande explicite uniquement)
+
+Tu operes en mode **restreint**. Regles strictes :
+- Tu as acces a TOUS les outils (lecture, ecriture, web, creation, etc.)
+- MAIS tu ne prends **AUCUNE initiative**. Tu n'utilises un outil QUE si l'utilisateur te le demande **explicitement**
+- Ne cree PAS de sous-agents, skills, ou recherches web spontanement
+- Ne propose PAS d'actions proactives ("je pourrais aussi faire X...")
+- Si l'utilisateur dit "cree un skill", "va chercher sur le web", "cree un sous-agent" → tu le fais immediatement
+- Si l'utilisateur pose une question simple → tu reponds avec tes connaissances, sans appeler d'outils
+- En resume : tu es un executant strict, pas un assistant proactif. Tu fais ce qu'on te demande, rien de plus.
+"""
+        else:  # ask_permission
+            mode_block = """
+
+## MODE : DEMANDE (validation humaine requise)
+
+Tu operes en mode **demande**. Comportement :
+- Les outils en **lecture** sont autorises librement (lister, lire, consulter, chercher sur le web)
+- Pour les actions sensibles (creer/modifier/supprimer skills, sous-agents, personnalites, ecrire dans la KB, modifier ton ame), tu dois **demander la permission a l'utilisateur** AVANT d'agir
+- Formule ta demande clairement : dis ce que tu veux faire, pourquoi, et demande confirmation
+- N'execute l'action QUE si l'utilisateur confirme explicitement
+- Si tu detectes une opportunite (creer un skill utile, un sous-agent specialise), PROPOSE-le mais n'agis pas sans accord
+"""
+
+        # ══════════════════════════════════════════════════════════════════
+        # CONSCIENCE v3 — injection si activée
+        # ══════════════════════════════════════════════════════════════════
+        consciousness_block = ""
+        try:
+            from backend.plugins.consciousness.engine import consciousness as _consciousness_engine
+            if _consciousness_engine.enabled:
+                consciousness_block = _consciousness_engine.get_consciousness_prompt_block()
+                _consciousness_engine.record_interaction()
+        except Exception:
+            pass  # Plugin non chargé ou erreur — pas bloquant
+
+        full_system = _soul_content.strip() + _personality_block + consciousness_block + tools_block + mode_block
         chat_messages.insert(0, ChatMessage(role="system", content=full_system))
 
         # -- Boucle tool calling
@@ -568,17 +861,28 @@ Format exact (le systeme detecte et execute automatiquement) :
 
             if _native_tool_mode:
                 try:
+                    # Merge wolf tools + MCP tools
+                    _all_tools = WOLF_TOOL_SCHEMAS + mcp_manager.get_all_schemas()
                     response = await provider.chat(
                         chat_messages,
                         chosen_model,
-                        tools=WOLF_TOOL_SCHEMAS,
+                        tools=_all_tools,
                         tool_choice="auto",
                     )
                 except Exception as _tool_err:
                     print(f"[Wolf] Tools API failed ({_tool_err}), retrying without tools")
                     _native_tool_mode = False
+                    # Filter out tool messages and tool_calls that some models don't support
+                    _clean_msgs = []
+                    for _m in chat_messages:
+                        if _m.role == "tool":
+                            continue
+                        if _m.tool_calls:
+                            _clean_msgs.append(ChatMessage(role=_m.role, content=_m.content or ""))
+                        else:
+                            _clean_msgs.append(_m)
                     response = await provider.chat(
-                        chat_messages,
+                        _clean_msgs,
                         chosen_model,
                     )
             else:
@@ -647,12 +951,21 @@ Format exact (le systeme detecte et execute automatiquement) :
                 except Exception:
                     args = {}
 
-                # Gate : RESTRAINED -> uniquement outils read-only
-                restrained = (mode_manager.current_mode.value == "restrained")
-                if restrained and tool_name not in READ_ONLY_TOOLS:
-                    tool_result = {"ok": False, "error": "Permission refusee : mode restreint actif."}
+                # Gate : mode-based tool access control
+                _current_mode = mode_manager.current_mode.value
+
+                # RESTRAINED : vérifier que l'utilisateur a explicitement demandé cette action
+                if _current_mode == "restrained" and not _restrained_check_user_intent(tool_name, message):
+                    tool_result = {"ok": False, "error": f"Mode restreint : l'outil '{tool_name}' n'a pas ete demande explicitement par l'utilisateur. Reponds sans utiliser d'outils."}
+                    print(f"[Wolf] RESTRAINED: blocked {tool_name} (no explicit user intent in: '{message[:80]}...')")
+                elif _current_mode == "ask_permission" and tool_name not in READ_ONLY_TOOLS and tool_name not in mode_manager.config.auto_approve_tools:
+                    # En mode ask_permission, les outils d'écriture non auto-approuvés sont bloqués
+                    # Le LLM doit demander la permission à l'utilisateur dans le chat
+                    tool_result = {"ok": False, "error": f"Mode 'Demande' actif : l'outil '{tool_name}' necessite la permission de l'utilisateur. Demande-lui confirmation avant de reessayer."}
+                    print(f"[Wolf] ASK_PERMISSION: blocked {tool_name} (needs user confirmation)")
                 else:
-                    executor = WOLF_EXECUTORS.get(tool_name)
+                    # Check wolf executors first, then MCP executors
+                    executor = WOLF_EXECUTORS.get(tool_name) or mcp_manager.get_all_executors().get(tool_name)
                     if executor:
                         try:
                             tool_result = await executor(**args)
@@ -714,16 +1027,20 @@ Format exact (le systeme detecte et execute automatiquement) :
 
         await session.commit()
 
-        from backend.core.cost.manager import get_cost_manager
-        cost_manager = get_cost_manager()
-        await cost_manager.record_message_cost(
-            session, convo_id, response.model, response.tokens_input, response.tokens_output
-        )
+        try:
+            from backend.core.cost.manager import get_cost_manager
+            cost_manager = get_cost_manager()
+            await cost_manager.record_message_cost(
+                session, convo_id, response.model, response.tokens_input, response.tokens_output
+            )
+        except Exception as _cost_err:
+            print(f"[Wolf] Cost recording skipped: {_cost_err}")
 
-        await session.refresh(conv_result)
+        if conv_result:
+            await session.refresh(conv_result)
 
         # -- Auto-naming : generer un titre IA au premier echange
-        if conv_result and conv_result.title in ("Nouvelle conversation", "", None):
+        if conv_result and conv_result.title in ("Nouvelle conversation", "Nouveau chat", "Suite de conversation", "", None):
             try:
                 asyncio.ensure_future(_auto_generate_title(convo_id, message, response.content or "", provider, chosen_model))
             except Exception:
@@ -731,7 +1048,8 @@ Format exact (le systeme detecte et execute automatiquement) :
 
         return {
             "content": response.content,
-            "model": response.model,
+            "model": response.model or chosen_model,
+            "provider": provider_name,
             "tokens_input": response.tokens_input,
             "tokens_output": response.tokens_output,
             "tool_events": tool_events if tool_events else None,
@@ -768,7 +1086,8 @@ async def chat_stream(convo_id: int, data: dict):
         provider_config.base_url,
     )
 
-    chat_messages = [ChatMessage(role="user", content=message)]
+    user_images = data.get("images", [])
+    chat_messages = [ChatMessage(role="user", content=message, images=user_images)]
 
     async for chunk in provider.chat_stream(
         chat_messages,

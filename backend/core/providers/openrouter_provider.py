@@ -30,7 +30,7 @@ class OpenRouterProvider(LLMProvider):
     ) -> ChatResponse:
         payload = {
             "model": model,
-            "messages": [m.model_dump(exclude_none=True) for m in messages],
+            "messages": [m.to_openai_format() for m in messages],
             "stream": False,
             **kwargs,
         }
@@ -54,7 +54,7 @@ class OpenRouterProvider(LLMProvider):
     ) -> AsyncGenerator[str, None]:
         payload = {
             "model": model,
-            "messages": [m.model_dump(exclude_none=True) for m in messages],
+            "messages": [m.to_openai_format() for m in messages],
             "stream": True,
             **kwargs,
         }

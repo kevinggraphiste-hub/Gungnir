@@ -10,6 +10,7 @@ from backend.core.api.conversations import router as conversations_router
 from backend.core.api.chat import router as chat_router
 from backend.core.api.users import router as users_router
 from backend.core.api.agent_routes import router as agent_router
+from backend.core.api.backup_routes import router as backup_router
 
 core_router = APIRouter()
 
@@ -18,9 +19,18 @@ core_router = APIRouter()
 async def health():
     return {"status": "ok", "app": "Gungnir", "version": "2.0.0"}
 
+
+# Doctor — diagnostic complet
+@core_router.get("/doctor")
+async def doctor(scope: str = "full"):
+    """Run a full system diagnostic."""
+    from backend.core.agents.wolf_tools import _doctor_check
+    return await _doctor_check(scope)
+
 # Mount core route modules
 core_router.include_router(config_router, tags=["Config"])
 core_router.include_router(conversations_router, tags=["Conversations"])
 core_router.include_router(chat_router, tags=["Chat"])
 core_router.include_router(users_router, tags=["Users"])
 core_router.include_router(agent_router, tags=["Agent"])
+core_router.include_router(backup_router, tags=["Backup"])

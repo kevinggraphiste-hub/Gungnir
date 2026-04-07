@@ -1,7 +1,9 @@
 from enum import Enum
+from pathlib import Path
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+import json
 
 
 class AgentMode(str, Enum):
@@ -31,10 +33,15 @@ class AgentModeConfig(BaseModel):
 
 
 class ModeManager:
+    _MODE_FILE = Path(__file__).parent.parent.parent.parent / "data" / "agent_mode.json"
+
     def __init__(self):
-        self.current_mode = AgentMode.ASK_PERMISSION
         self.config = AgentModeConfig()
         self.pending_requests: dict[str, PermissionRequest] = {}
+        # Charger le mode persisté ou utiliser le défaut
+        saved_mode = self._load_mode()
+        self.current_mode = saved_mode
+        self.set_mode(saved_mode)
 
     # Outils Wolf en lecture seule (toujours autorisés)
     WOLF_READ_TOOLS = ["skill_list", "kb_read", "kb_list", "soul_read", "subagent_list"]
@@ -46,8 +53,24 @@ class ModeManager:
         "kb_write", "soul_write",
     ]
 
+    def _load_mode(self) -> AgentMode:
+        try:
+            if self._MODE_FILE.exists():
+                data = json.loads(self._MODE_FILE.read_text())
+                return AgentMode(data.get("mode", "ask_permission"))
+        except Exception:
+            pass
+        return AgentMode.ASK_PERMISSION
+
+    def _save_mode(self):
+        try:
+            self._MODE_FILE.write_text(json.dumps({"mode": self.current_mode.value}, indent=2))
+        except Exception:
+            pass
+
     def set_mode(self, mode: AgentMode):
         self.current_mode = mode
+        self._save_mode()
 
         if mode == AgentMode.AUTONOMOUS:
             self.config.auto_approve_tools = (
@@ -55,13 +78,21 @@ class ModeManager:
                 + self.WOLF_READ_TOOLS + self.WOLF_WRITE_TOOLS
             )
         elif mode == AgentMode.ASK_PERMISSION:
+            # En mode demande, seuls les outils en lecture sont auto-approuvés
+            # Les outils d'écriture nécessitent une confirmation de l'utilisateur dans le chat
             self.config.auto_approve_tools = (
                 ["read_file", "list_dir", "git_status", "git_log"]
-                + self.WOLF_READ_TOOLS + self.WOLF_WRITE_TOOLS
+                + self.WOLF_READ_TOOLS
             )
         elif mode == AgentMode.RESTRAINED:
-            self.config.auto_approve_tools = ["read_file"] + self.WOLF_READ_TOOLS
-            self.config.require_confirmation_for = ["delete", "write", "execute", "run_command", "git_push", "git_commit"]
+            # Mode restreint : tous les outils sont disponibles, mais le LLM
+            # ne doit les utiliser QUE sur demande explicite de l'utilisateur.
+            # Le contrôle est dans le system prompt, pas dans un blocage technique.
+            self.config.auto_approve_tools = (
+                ["read_file", "write_file", "list_dir", "run_command", "git_status", "git_log"]
+                + self.WOLF_READ_TOOLS + self.WOLF_WRITE_TOOLS
+            )
+            self.config.require_confirmation_for = []
 
     def needs_permission(self, action: str, tool: str = None) -> bool:
         if self.current_mode == AgentMode.AUTONOMOUS:

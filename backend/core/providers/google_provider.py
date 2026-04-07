@@ -26,7 +26,15 @@ class GoogleProvider(LLMProvider):
             if m.role == "system":
                 system_prompt = m.content
             elif m.role == "user":
-                chat_history.append({"role": "user", "parts": [m.content]})
+                parts = [m.content] if m.content else []
+                if m.images:
+                    import base64
+                    for img in m.images:
+                        if img.startswith("data:"):
+                            header, b64_data = img.split(",", 1)
+                            mime = header.split(":")[1].split(";")[0]
+                            parts.append({"mime_type": mime, "data": base64.b64decode(b64_data)})
+                chat_history.append({"role": "user", "parts": parts})
             elif m.role == "assistant":
                 chat_history.append({"role": "model", "parts": [m.content]})
 
@@ -58,7 +66,15 @@ class GoogleProvider(LLMProvider):
             if m.role == "system":
                 system_prompt = m.content
             elif m.role == "user":
-                chat_history.append({"role": "user", "parts": [m.content]})
+                parts = [m.content] if m.content else []
+                if m.images:
+                    import base64
+                    for img in m.images:
+                        if img.startswith("data:"):
+                            header, b64_data = img.split(",", 1)
+                            mime = header.split(":")[1].split(";")[0]
+                            parts.append({"mime_type": mime, "data": base64.b64decode(b64_data)})
+                chat_history.append({"role": "user", "parts": parts})
             elif m.role == "assistant":
                 chat_history.append({"role": "model", "parts": [m.content]})
 

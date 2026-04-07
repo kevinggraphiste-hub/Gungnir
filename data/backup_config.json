@@ -1,4 +1,13 @@
 {
+  "provider": "local",
+  "auto_daily": true,
+  "max_backups": 10,
+  "supabase_url": "",
+  "supabase_key": "",
+  "supabase_bucket": "gungnir-backups",
+  "github_token": "",
+  "github_repo": "",
+  "github_branch": "backups",
   "config": {
     "provider": "supabase",
     "supabase_url": null,

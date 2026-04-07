@@ -1,0 +1,103 @@
+{
+  "enabled": false,
+  "level": "full",
+  "background_think": {
+    "enabled": true,
+    "interval_minutes": 10,
+    "max_entries": 50
+  },
+  "volition": {
+    "enabled": true,
+    "impulse_threshold": 0.6,
+    "max_impulses_per_hour": 3,
+    "quiet_hours": {
+      "start": 23,
+      "end": 7
+    },
+    "needs": {
+      "survival": {
+        "priority": 5,
+        "decay_rate": 0.05,
+        "triggers": [
+          "backup_failed",
+          "error_in_logs",
+          "disk_low"
+        ]
+      },
+      "integrity": {
+        "priority": 4,
+        "decay_rate": 0.1,
+        "triggers": [
+          "promise_unkept",
+          "journal_missed",
+          "bias_detected"
+        ]
+      },
+      "progression": {
+        "priority": 3,
+        "decay_rate": 0.08,
+        "triggers": [
+          "project_stalled",
+          "feature_needed",
+          "user_asked_status"
+        ]
+      },
+      "comprehension": {
+        "priority": 2,
+        "decay_rate": 0.03,
+        "triggers": [
+          "open_question",
+          "new_pattern",
+          "contradiction_found"
+        ]
+      },
+      "curiosity": {
+        "priority": 1,
+        "decay_rate": 0.01,
+        "triggers": [
+          "idle_heartbeat",
+          "low_urgency_elsewhere"
+        ]
+      }
+    }
+  },
+  "reward": {
+    "enabled": true,
+    "auto_score": true,
+    "dimensions": [
+      "utility",
+      "accuracy",
+      "tone",
+      "autonomy"
+    ]
+  },
+  "challenger": {
+    "enabled": true,
+    "light_check": true,
+    "deep_audit": true,
+    "audit_schedule": "weekly"
+  },
+  "simulation": {
+    "enabled": true,
+    "max_scenarios": 3
+  },
+  "working_memory": {
+    "enabled": true,
+    "max_items": 20,
+    "ttl_hours": 24
+  },
+  "vector_memory": {
+    "vector_provider": "none",
+    "embedding_provider": "openai",
+    "embedding_model": "text-embedding-3-small",
+    "embedding_api_key": "",
+    "embedding_base_url": "",
+    "embedding_dimension": 1536,
+    "chroma_persist_dir": "data/consciousness/chroma_db",
+    "pinecone_api_key": "",
+    "pinecone_environment": "",
+    "pinecone_index": "gungnir-consciousness",
+    "qdrant_url": "http://localhost:6333",
+    "qdrant_api_key": ""
+  }
+}

@@ -29,7 +29,7 @@ class MiniMaxProvider(LLMProvider):
     ) -> ChatResponse:
         payload = {
             "model": model,
-            "messages": [m.model_dump(exclude_none=True) for m in messages],
+            "messages": [m.to_openai_format() for m in messages],
             "stream": False,
         }
         resp = await self.client.post("/chat/completions", json=payload)
@@ -51,7 +51,7 @@ class MiniMaxProvider(LLMProvider):
     ) -> AsyncGenerator[str, None]:
         payload = {
             "model": model,
-            "messages": [m.model_dump(exclude_none=True) for m in messages],
+            "messages": [m.to_openai_format() for m in messages],
             "stream": True,
         }
         async with self.client.stream("POST", "/chat/completions", json=payload) as resp:
@@ -71,4 +71,4 @@ class MiniMaxProvider(LLMProvider):
                         continue
 
     async def list_models(self) -> list[str]:
-        return ["minimax-m2.7", "abab6.5s-chat", "abab5.5s-chat"]
+        return ["minimax-m2.7", "minimax-m2.5", "minimax-m2.1", "abab6.5s-chat", "abab5.5s-chat"]

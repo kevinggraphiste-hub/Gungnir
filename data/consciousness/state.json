@@ -1,0 +1,52 @@
+{
+  "mood": "neutre",
+  "active_questions": [],
+  "last_interaction": null,
+  "attention_weight": {
+    "consciousness": 0.3,
+    "business": 0.7
+  },
+  "volition": {
+    "needs": {
+      "survival": {
+        "urgency": 0.1,
+        "last_fulfilled": null
+      },
+      "integrity": {
+        "urgency": 0.2,
+        "last_fulfilled": null
+      },
+      "progression": {
+        "urgency": 0.3,
+        "last_fulfilled": null
+      },
+      "comprehension": {
+        "urgency": 0.2,
+        "last_fulfilled": null
+      },
+      "curiosity": {
+        "urgency": 0.1,
+        "last_fulfilled": null
+      }
+    },
+    "impulse_history": [],
+    "pending_impulse": null
+  },
+  "stats": {
+    "heartbeats": 0,
+    "impulses_proposed": 0,
+    "impulses_confirmed": 0,
+    "impulses_denied": 0,
+    "thoughts_generated": 0,
+    "memories_stored": 0,
+    "challenger_flags": 0,
+    "total_reward_score": 0.0,
+    "interactions_scored": 0
+  },
+  "created_at": "2026-04-05T13:53:41.855938+00:00",
+  "last_heartbeat": null,
+  "last_thought": null,
+  "last_challenger": null,
+  "last_simulation": null,
+  "version": "3.0.0"
+}

@@ -14,6 +14,9 @@ interface Message {
   created_at: string
   tokens_input?: number
   tokens_output?: number
+  model?: string
+  provider?: string
+  images?: string[]
 }
 
 interface Conversation {
@@ -23,7 +26,7 @@ interface Conversation {
   model: string
   created_at: string
   updated_at: string
-  is_pinned: boolean
+  is_pinned?: boolean
 }
 
 interface AppState {
@@ -80,10 +83,16 @@ export const useStore = create<AppState>((set) => ({
   setMessages: (messages) => set({ messages }),
   addMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
 
-  selectedProvider: 'openrouter',
-  setSelectedProvider: (provider) => set({ selectedProvider: provider }),
-  selectedModel: 'minimax/minimax-m2.7',
-  setSelectedModel: (model) => set({ selectedModel: model }),
+  selectedProvider: localStorage.getItem('gungnir_provider') || 'openrouter',
+  setSelectedProvider: (provider) => {
+    localStorage.setItem('gungnir_provider', provider)
+    set({ selectedProvider: provider })
+  },
+  selectedModel: localStorage.getItem('gungnir_model') || 'minimax/minimax-m2.7',
+  setSelectedModel: (model) => {
+    localStorage.setItem('gungnir_model', model)
+    set({ selectedModel: model })
+  },
 
   activePersonality: 'default',
   setActivePersonality: (name) => set({ activePersonality: name }),

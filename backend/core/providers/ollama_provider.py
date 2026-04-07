@@ -23,7 +23,7 @@ class OllamaProvider(LLMProvider):
     ) -> ChatResponse:
         payload = {
             "model": model,
-            "messages": [m.model_dump(exclude_none=True) for m in messages],
+            "messages": [m.to_openai_format() for m in messages],
             "stream": False,
         }
         resp = await self.client.post("/chat/completions", json=payload)
@@ -45,7 +45,7 @@ class OllamaProvider(LLMProvider):
     ) -> AsyncGenerator[str, None]:
         payload = {
             "model": model,
-            "messages": [m.model_dump(exclude_none=True) for m in messages],
+            "messages": [m.to_openai_format() for m in messages],
             "stream": True,
         }
         async with self.client.stream("POST", "/chat/completions", json=payload) as resp:

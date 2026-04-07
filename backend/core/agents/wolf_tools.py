@@ -629,6 +629,142 @@ WOLF_TOOL_SCHEMAS = [
             }
         }
     },
+    # ── Automata (tâches planifiées) ──────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_task",
+            "description": "Crée une tâche planifiée qui sera exécutée automatiquement. Utilise ceci quand l'utilisateur demande d'automatiser, planifier, ou répéter une action (ex: 'vérifie mes backups tous les jours', 'rappelle-moi chaque lundi').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name":        {"type": "string", "description": "Nom court de la tâche (ex: 'verif-backups')"},
+                    "description": {"type": "string", "description": "Description courte pour l'utilisateur"},
+                    "prompt":      {"type": "string", "description": "Prompt complet qui sera envoyé au LLM pour exécuter la tâche. Sois précis et détaillé."},
+                    "task_type":   {"type": "string", "description": "Type: 'cron' (récurrent via expression cron), 'interval' (toutes les N secondes), 'once' (exécution unique)", "default": "cron"},
+                    "cron_expression": {"type": "string", "description": "Expression cron 5 champs: minute heure jour mois jour_semaine. Ex: '0 9 * * 1-5' = 9h du lundi au vendredi"},
+                    "interval_seconds": {"type": "integer", "description": "Intervalle en secondes (pour type=interval). Ex: 3600 = toutes les heures"},
+                    "run_at":      {"type": "string", "description": "Date/heure ISO pour exécution unique (type=once). Ex: '2026-04-05T14:00:00'"},
+                },
+                "required": ["name", "description", "prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_list",
+            "description": "Liste les tâches planifiées existantes. Utilise ceci quand l'utilisateur demande de voir ses automatisations ou tâches programmées.",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_delete",
+            "description": "Supprime une tâche planifiée par son ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "ID de la tâche à supprimer"}
+                },
+                "required": ["task_id"]
+            }
+        }
+    },
+    # ── Filesystem & Shell (auto-modification) ─────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "file_read",
+            "description": "Lit le contenu d'un fichier du projet Gungnir. Utilise ceci pour consulter le code source, la config, les données. Chemin relatif depuis la racine du projet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Chemin relatif (ex: 'backend/core/main.py', 'data/config.json')"},
+                    "offset": {"type": "integer", "description": "Ligne de départ (0 = début)", "default": 0},
+                    "limit": {"type": "integer", "description": "Nombre de lignes max à lire", "default": 200},
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_write",
+            "description": "Écrit du contenu dans un fichier du projet Gungnir. ATTENTION: ceci modifie le code source. Utilise avec prudence. Les backups et le dossier backups/ sont protégés et ne peuvent pas être modifiés.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Chemin relatif (ex: 'backend/plugins/code/routes.py')"},
+                    "content": {"type": "string", "description": "Contenu complet du fichier"},
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_patch",
+            "description": "Applique un remplacement ciblé dans un fichier (cherche old_text et le remplace par new_text). Plus sûr que file_write car ne touche que la partie ciblée.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Chemin relatif du fichier"},
+                    "old_text": {"type": "string", "description": "Texte exact à remplacer (doit être unique dans le fichier)"},
+                    "new_text": {"type": "string", "description": "Nouveau texte de remplacement"},
+                },
+                "required": ["path", "old_text", "new_text"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_list",
+            "description": "Liste les fichiers et dossiers dans un répertoire du projet Gungnir.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Chemin relatif du dossier (ex: 'backend/plugins/', 'frontend/src/')", "default": "."},
+                    "pattern": {"type": "string", "description": "Filtre glob optionnel (ex: '*.py', '*.tsx')", "default": "*"},
+                    "recursive": {"type": "boolean", "description": "Lister récursivement", "default": False},
+                },
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "bash_exec",
+            "description": "Exécute une commande shell. ATTENTION: ceci peut modifier le système. Interdit de toucher au dossier backups/. Utilise pour: installer des packages, lancer des scripts, git, npm, etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Commande bash à exécuter"},
+                    "timeout": {"type": "integer", "description": "Timeout en secondes", "default": 30},
+                    "cwd": {"type": "string", "description": "Répertoire de travail (relatif au projet)", "default": "."},
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    # ── Doctor (auto-diagnostic) ─────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "doctor_check",
+            "description": "Lance un diagnostic complet de Gungnir : plugins, services, dépendances, config, MCP, backup. Utilise ceci quand l'utilisateur demande un checkup, diagnostic, ou si quelque chose ne fonctionne pas.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "description": "Portée: 'full' (tout), 'plugins', 'services', 'dependencies', 'config', 'mcp', 'backup'", "default": "full"},
+                },
+            }
+        }
+    },
 ]
 
 # ── Exécuteurs ─────────────────────────────────────────────────────────────────
@@ -939,7 +1075,16 @@ async def _kb_list(subdir: str = "knowledge") -> dict:
     return {"files": files, "directory": f"data/{subdir_clean}/"}
 
 
+def _validate_browser_url(url: str) -> bool:
+    """Only allow http/https URLs for browser navigation."""
+    url_lower = url.lower().strip()
+    allowed_schemes = ("http://", "https://")
+    return url_lower.startswith(allowed_schemes)
+
+
 async def _browser_navigate(url: str) -> dict:
+    if not _validate_browser_url(url):
+        return {"ok": False, "error": "URL scheme not allowed (only http/https)"}
     from backend.core.agents.tools.browser import browser_tool
     if not browser_tool.browser:
         start_result = await browser_tool.start(headless=True)
@@ -1039,8 +1184,39 @@ async def _browser_crawl(url: str, max_pages: int = 10, same_domain: bool = True
     return {"ok": False, "error": result.get("error", "Erreur crawl")}
 
 
+def _is_private_url(url: str) -> bool:
+    """Block SSRF attempts to private/internal networks."""
+    from urllib.parse import urlparse
+    import ipaddress
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    # Block obvious private hostnames
+    if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+        return True
+    if hostname.startswith("169.254."):  # AWS metadata
+        return True
+    if hostname.startswith("10.") or hostname.startswith("192.168."):
+        return True
+    if hostname.startswith("172."):
+        try:
+            second_octet = int(hostname.split(".")[1])
+            if 16 <= second_octet <= 31:
+                return True
+        except (ValueError, IndexError):
+            pass
+    # Try resolving to check for DNS rebinding
+    try:
+        addr = ipaddress.ip_address(hostname)
+        return addr.is_private or addr.is_loopback or addr.is_link_local
+    except ValueError:
+        pass  # Not an IP, it's a hostname — allow (DNS resolution would need async)
+    return False
+
+
 async def _web_fetch(url: str, extract: str = "text") -> dict:
     """Fetch léger — HTTP GET + extraction de contenu (pas besoin de Playwright)."""
+    if _is_private_url(url):
+        return {"ok": False, "error": "URL points to private/internal network (blocked for security)"}
     from backend.core.agents.tools.web_fetch import web_fetch
     return await web_fetch(url, extract=extract)
 
@@ -1069,6 +1245,8 @@ async def _web_search(query: str, num_results: int = 10) -> dict:
 
 
 async def _browser_goto(page_id: str, url: str) -> dict:
+    if not _validate_browser_url(url):
+        return {"ok": False, "error": "URL scheme not allowed (only http/https)"}
     from backend.core.agents.tools.browser import browser_tool
     result = await browser_tool.goto(page_id, url)
     if result.get("success"):
@@ -1161,6 +1339,351 @@ async def _soul_write(content: str) -> dict:
     return {"ok": True, "message": "soul.md mis à jour. Prendra effet à la prochaine conversation."}
 
 
+# ── Automata executors ────────────────────────────────────────────────────────
+
+AUTOMATA_FILE = DATA_DIR / "automata.json"
+
+def _load_automata() -> dict:
+    if AUTOMATA_FILE.exists():
+        try:
+            return json.loads(AUTOMATA_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"tasks": [], "history": []}
+
+def _save_automata(data: dict):
+    AUTOMATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    AUTOMATA_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+
+async def _schedule_task(
+    name: str, description: str, prompt: str,
+    task_type: str = "cron", cron_expression: str = None,
+    interval_seconds: int = None, run_at: str = None
+) -> dict:
+    data = _load_automata()
+    task_id = str(uuid.uuid4())[:8]
+    now = datetime.utcnow().isoformat()
+
+    task = {
+        "id": task_id,
+        "name": name,
+        "description": description,
+        "prompt": prompt,
+        "task_type": task_type,
+        "cron_expression": cron_expression,
+        "interval_seconds": interval_seconds,
+        "run_at": run_at,
+        "enabled": True,
+        "created_at": now,
+        "updated_at": now,
+        "last_run": None,
+        "run_count": 0,
+        "last_status": None,
+        "last_result": None,
+    }
+
+    data["tasks"].append(task)
+    _save_automata(data)
+
+    schedule_desc = cron_expression or (f"toutes les {interval_seconds}s" if interval_seconds else run_at or "non défini")
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "message": f"Tâche '{name}' créée avec succès. Planning: {schedule_desc}. L'utilisateur peut la gérer depuis le dashboard Automata.",
+    }
+
+async def _schedule_list() -> dict:
+    data = _load_automata()
+    tasks = data.get("tasks", [])
+    if not tasks:
+        return {"ok": True, "message": "Aucune tâche planifiée.", "tasks": []}
+    summary = []
+    for t in tasks:
+        summary.append({
+            "id": t["id"],
+            "name": t["name"],
+            "description": t["description"],
+            "type": t["task_type"],
+            "enabled": t["enabled"],
+            "schedule": t.get("cron_expression") or (f"{t.get('interval_seconds')}s" if t.get("interval_seconds") else t.get("run_at", "—")),
+            "run_count": t.get("run_count", 0),
+            "last_run": t.get("last_run"),
+        })
+    return {"ok": True, "tasks": summary, "total": len(summary)}
+
+async def _schedule_delete(task_id: str) -> dict:
+    data = _load_automata()
+    before = len(data["tasks"])
+    removed_name = None
+    for t in data["tasks"]:
+        if t["id"] == task_id:
+            removed_name = t["name"]
+    data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id]
+    if len(data["tasks"]) == before:
+        return {"ok": False, "error": f"Tâche '{task_id}' introuvable."}
+    _save_automata(data)
+    return {"ok": True, "message": f"Tâche '{removed_name}' ({task_id}) supprimée."}
+
+
+# ── Filesystem & Shell executors ──────────────────────────────────────────────
+
+# PROTECTED PATHS — l'agent ne peut JAMAIS y écrire/supprimer
+PROTECTED_PATHS = {"backups", "data/backups", ".git"}
+PROTECTED_PREFIXES = ("backups/", "data/backups/", ".git/")
+
+def _is_protected_path(path: str) -> bool:
+    """Check if a path touches protected directories (backups, .git)."""
+    normalized = path.replace("\\", "/").strip("/")
+    if normalized in PROTECTED_PATHS:
+        return True
+    for prefix in PROTECTED_PREFIXES:
+        if normalized.startswith(prefix):
+            return True
+    return False
+
+def _resolve_project_path(rel_path: str) -> Path:
+    """Resolve a relative path to absolute, ensuring it stays within the project."""
+    project_root = Path(__file__).parent.parent.parent.parent
+    resolved = (project_root / rel_path).resolve()
+    if not str(resolved).startswith(str(project_root.resolve())):
+        raise ValueError(f"Chemin hors du projet interdit: {rel_path}")
+    return resolved
+
+
+async def _file_read(path: str, offset: int = 0, limit: int = 200) -> dict:
+    try:
+        full = _resolve_project_path(path)
+        if not full.exists():
+            return {"ok": False, "error": f"Fichier introuvable: {path}"}
+        if full.is_dir():
+            return {"ok": False, "error": f"C'est un dossier, utilise file_list: {path}"}
+        text = full.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()
+        selected = lines[offset:offset + limit]
+        return {
+            "ok": True,
+            "path": path,
+            "total_lines": len(lines),
+            "offset": offset,
+            "content": "\n".join(f"{offset + i + 1}: {l}" for i, l in enumerate(selected)),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+async def _file_write(path: str, content: str) -> dict:
+    if _is_protected_path(path):
+        return {"ok": False, "error": f"INTERDIT: le chemin '{path}' est protégé (backups/système). Impossible de modifier."}
+    try:
+        full = _resolve_project_path(path)
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+        lines = content.count("\n") + 1
+        return {"ok": True, "path": path, "lines_written": lines, "message": f"Fichier '{path}' écrit ({lines} lignes)."}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+async def _file_patch(path: str, old_text: str, new_text: str) -> dict:
+    if _is_protected_path(path):
+        return {"ok": False, "error": f"INTERDIT: le chemin '{path}' est protégé."}
+    try:
+        full = _resolve_project_path(path)
+        if not full.exists():
+            return {"ok": False, "error": f"Fichier introuvable: {path}"}
+        content = full.read_text(encoding="utf-8")
+        count = content.count(old_text)
+        if count == 0:
+            return {"ok": False, "error": "Texte à remplacer introuvable dans le fichier."}
+        if count > 1:
+            return {"ok": False, "error": f"Texte trouvé {count} fois — doit être unique. Fournis plus de contexte."}
+        new_content = content.replace(old_text, new_text, 1)
+        full.write_text(new_content, encoding="utf-8")
+        return {"ok": True, "path": path, "message": f"Patch appliqué dans '{path}'."}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+async def _file_list(path: str = ".", pattern: str = "*", recursive: bool = False) -> dict:
+    try:
+        full = _resolve_project_path(path)
+        if not full.exists():
+            return {"ok": False, "error": f"Dossier introuvable: {path}"}
+        if not full.is_dir():
+            return {"ok": False, "error": f"Ce n'est pas un dossier: {path}"}
+
+        entries = []
+        glob_func = full.rglob if recursive else full.glob
+        for p in sorted(glob_func(pattern))[:100]:  # Max 100 entries
+            rel = p.relative_to(full)
+            entries.append({
+                "name": str(rel),
+                "type": "dir" if p.is_dir() else "file",
+                "size": p.stat().st_size if p.is_file() else None,
+            })
+        return {"ok": True, "path": path, "entries": entries, "count": len(entries)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+async def _bash_exec(command: str, timeout: int = 30, cwd: str = ".") -> dict:
+    import asyncio as _asyncio
+
+    # Block dangerous commands on protected paths
+    cmd_lower = command.lower()
+    blocked_patterns = ["rm -rf /", "rm -rf ~", "format ", "mkfs", "dd if="]
+    for bp in blocked_patterns:
+        if bp in cmd_lower:
+            return {"ok": False, "error": f"Commande bloquée pour sécurité: contient '{bp}'"}
+
+    # Block any command that targets backups
+    if "backups" in cmd_lower and any(w in cmd_lower for w in ["rm", "del", "move", "mv", "rename"]):
+        return {"ok": False, "error": "INTERDIT: impossible de supprimer/déplacer des backups via shell."}
+
+    try:
+        project_root = Path(__file__).parent.parent.parent.parent
+        work_dir = (project_root / cwd).resolve()
+
+        proc = await _asyncio.create_subprocess_exec(
+            "cmd", "/c", command,
+            stdout=_asyncio.subprocess.PIPE,
+            stderr=_asyncio.subprocess.PIPE,
+            cwd=str(work_dir),
+        )
+        try:
+            stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except _asyncio.TimeoutError:
+            proc.kill()
+            return {"ok": False, "error": f"Timeout après {timeout}s", "command": command}
+
+        out = stdout.decode("utf-8", errors="replace")[:5000]
+        err = stderr.decode("utf-8", errors="replace")[:2000]
+
+        return {
+            "ok": proc.returncode == 0,
+            "exit_code": proc.returncode,
+            "stdout": out,
+            "stderr": err if err else None,
+            "command": command,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+# ── Doctor (auto-diagnostic) ─────────────────────────────────────────────────
+
+async def _doctor_check(scope: str = "full") -> dict:
+    results = {"ok": True, "checks": [], "warnings": [], "errors": []}
+    project_root = Path(__file__).parent.parent.parent.parent
+
+    def add_check(name: str, status: str, detail: str = ""):
+        entry = {"name": name, "status": status, "detail": detail}
+        results["checks"].append(entry)
+        if status == "warning":
+            results["warnings"].append(f"{name}: {detail}")
+        elif status == "error":
+            results["errors"].append(f"{name}: {detail}")
+            results["ok"] = False
+
+    # ── Config
+    if scope in ("full", "config"):
+        try:
+            from backend.core.config.settings import Settings
+            settings = Settings.load()
+            add_check("Config chargée", "ok", "config.json trouvé")
+
+            enabled_providers = [n for n, p in settings.providers.items() if p.enabled and p.api_key]
+            if enabled_providers:
+                add_check("Providers LLM", "ok", f"{len(enabled_providers)} actifs: {', '.join(enabled_providers)}")
+            else:
+                add_check("Providers LLM", "warning", "Aucun provider LLM activé avec clé API")
+
+            enabled_services = [n for n, s in settings.services.items() if s.enabled]
+            add_check("Services", "ok" if enabled_services else "info", f"{len(enabled_services)} services activés")
+        except Exception as e:
+            add_check("Config", "error", str(e)[:200])
+
+    # ── Plugins
+    if scope in ("full", "plugins"):
+        plugins_dir = project_root / "backend" / "plugins"
+        if plugins_dir.exists():
+            for pdir in sorted(plugins_dir.iterdir()):
+                manifest = pdir / "manifest.json"
+                routes = pdir / "routes.py"
+                if manifest.exists():
+                    try:
+                        import json as _json
+                        m = _json.loads(manifest.read_text())
+                        has_routes = routes.exists()
+                        has_frontend = (project_root / "frontend" / "src" / "plugins" / pdir.name / "index.tsx").exists()
+                        status = "ok" if has_routes and has_frontend else "warning"
+                        detail = f"v{m.get('version', '?')}"
+                        if not has_routes: detail += " [routes.py manquant]"
+                        if not has_frontend: detail += " [frontend manquant]"
+                        add_check(f"Plugin: {m.get('display_name', pdir.name)}", status, detail)
+                    except Exception as e:
+                        add_check(f"Plugin: {pdir.name}", "error", str(e)[:100])
+
+    # ── Dependencies
+    if scope in ("full", "dependencies"):
+        import shutil as _shutil
+        for pkg in ["fastapi", "uvicorn", "httpx", "pydantic", "websockets"]:
+            try:
+                __import__(pkg)
+                add_check(f"Python: {pkg}", "ok")
+            except ImportError:
+                add_check(f"Python: {pkg}", "error", "Non installé")
+        if _shutil.which("npx"):
+            add_check("Node.js: npx", "ok")
+        else:
+            add_check("Node.js: npx", "warning", "npx non trouvé — MCP servers ne pourront pas démarrer")
+
+    # ── MCP
+    if scope in ("full", "mcp"):
+        try:
+            from backend.core.agents.mcp_client import mcp_manager
+            status_list = mcp_manager.get_server_status()
+            if status_list:
+                total_tools = sum(s.get("tools", 0) for s in status_list)
+                add_check("MCP Servers", "ok", f"{len(status_list)} serveurs, {total_tools} outils")
+            else:
+                add_check("MCP Servers", "info", "Aucun serveur MCP actif")
+        except Exception as e:
+            add_check("MCP", "error", str(e)[:200])
+
+    # ── Backup
+    if scope in ("full", "backup"):
+        backups_dir = project_root / "data" / "backups"
+        if backups_dir.exists():
+            backup_files = list(backups_dir.rglob("*.zip"))
+            add_check("Backup système", "ok", f"{len(backup_files)} backups trouvés")
+            if backup_files:
+                latest = max(backup_files, key=lambda f: f.stat().st_mtime)
+                from datetime import datetime as _dt
+                age_hours = (_dt.now().timestamp() - latest.stat().st_mtime) / 3600
+                if age_hours > 48:
+                    add_check("Dernier backup", "warning", f"Il y a {age_hours:.0f}h — pensez à faire un backup")
+                else:
+                    add_check("Dernier backup", "ok", f"Il y a {age_hours:.1f}h: {latest.name}")
+        else:
+            add_check("Backup système", "warning", "Aucun backup trouvé")
+
+    # ── Database
+    if scope in ("full", "config"):
+        db_path = project_root / "data" / "gungnir.db"
+        if db_path.exists():
+            size_mb = db_path.stat().st_size / (1024 * 1024)
+            add_check("Base de données", "ok", f"gungnir.db — {size_mb:.1f} Mo")
+        else:
+            add_check("Base de données", "warning", "gungnir.db introuvable")
+
+    # Summary
+    total = len(results["checks"])
+    ok_count = sum(1 for c in results["checks"] if c["status"] == "ok")
+    results["summary"] = f"{ok_count}/{total} checks OK, {len(results['warnings'])} avertissements, {len(results['errors'])} erreurs"
+    return results
+
+
 # ── Registre final ─────────────────────────────────────────────────────────────
 
 WOLF_EXECUTORS: dict[str, Any] = {
@@ -1209,6 +1732,18 @@ WOLF_EXECUTORS: dict[str, Any] = {
     "browser_fill_form":          _browser_fill_form,
     "browser_download":           _browser_download,
     "browser_list_pages":         _browser_list_pages,
+    # Automata
+    "schedule_task":              _schedule_task,
+    "schedule_list":              _schedule_list,
+    "schedule_delete":            _schedule_delete,
+    # Filesystem & Shell (auto-modification)
+    "file_read":                  _file_read,
+    "file_write":                 _file_write,
+    "file_patch":                 _file_patch,
+    "file_list":                  _file_list,
+    "bash_exec":                  _bash_exec,
+    # Doctor
+    "doctor_check":               _doctor_check,
 }
 
 # Outils en lecture seule (autorisés même en mode restreint)
@@ -1221,4 +1756,6 @@ READ_ONLY_TOOLS = {
     "web_search", "browser_goto", "browser_get_html", "browser_wait_for_selector",
     "browser_scroll", "browser_extract_table", "browser_query_selector_all",
     "browser_select_option", "browser_fill_form", "browser_list_pages",
+    # Lecture seule filesystem + doctor
+    "file_read", "file_list", "doctor_check",
 }

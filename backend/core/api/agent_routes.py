@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from pathlib import Path
 import json
+import re
 import uuid as _uuid_mod
 
 from backend.core.config.settings import Settings
@@ -68,6 +69,15 @@ async def list_skills(category: str = None):
             "category": s.category,
             "tools": s.tools,
             "usage_count": s.usage_count,
+            "version": s.version,
+            "author": s.author,
+            "tags": s.tags,
+            "license": s.license,
+            "examples": s.examples,
+            "output_format": s.output_format,
+            "annotations": s.annotations,
+            "compatibility": s.compatibility,
+            "is_favorite": s.is_favorite,
         }
         for s in skills
     ]
@@ -75,19 +85,33 @@ async def list_skills(category: str = None):
 
 @router.post("/skills")
 async def create_skill(data: dict):
+    name = data.get("name", "").strip()
+    if not re.match(r'^[a-z][a-z0-9_]{1,50}$', name):
+        return {"error": "Nom invalide (snake_case, 2-50 chars, commence par une lettre)"}
     from backend.core.agents.creators import skill_creator
     result = await skill_creator.create_skill(
-        name=data.get("name", ""),
+        name=name,
         description=data.get("description", ""),
         prompt=data.get("prompt", ""),
         tools=data.get("tools", []),
         code=data.get("code"),
+        category=data.get("category", "custom"),
+        tags=data.get("tags", []),
+        version=data.get("version", "1.0.0"),
+        author=data.get("author", "user"),
+        license=data.get("license", "MIT"),
+        examples=data.get("examples", []),
+        output_format=data.get("output_format", "text"),
+        annotations=data.get("annotations", {}),
     )
     return result
 
 
 @router.post("/skills/import")
 async def import_skill(data: dict):
+    name = data.get("name", "").strip()
+    if name and not re.match(r'^[a-z][a-z0-9_]{1,50}$', name):
+        return {"error": "Nom invalide (snake_case, 2-50 chars, commence par une lettre)"}
     from backend.core.agents.creators import skill_creator
     return await skill_creator.import_skill(data)
 
@@ -96,6 +120,37 @@ async def import_skill(data: dict):
 async def validate_skills():
     from backend.core.agents.creators import skill_creator
     return await skill_creator.validate_all_skills()
+
+
+@router.put("/skills/reorder")
+async def reorder_skills(data: dict):
+    """Reorder skills list by drag-and-drop order."""
+    from backend.core.agents.skills import skill_library
+    order = data.get("order", [])
+    if not order:
+        return {"success": False, "error": "Empty order"}
+    reordered = {}
+    for name in order:
+        if name in skill_library.skills:
+            reordered[name] = skill_library.skills[name]
+    for name, s in skill_library.skills.items():
+        if name not in reordered:
+            reordered[name] = s
+    skill_library.skills = reordered
+    skill_library._save()
+    return {"success": True}
+
+
+@router.put("/skills/favorite/{skill_name}")
+async def toggle_skill_favorite(skill_name: str):
+    """Toggle favorite status of a skill."""
+    from backend.core.agents.skills import skill_library
+    skill = skill_library.get_skill(skill_name)
+    if not skill:
+        return {"success": False, "error": "Skill not found"}
+    skill.is_favorite = not skill.is_favorite
+    skill_library._save()
+    return {"success": True, "is_favorite": skill.is_favorite}
 
 
 @router.put("/skills/{skill_name}")
@@ -107,6 +162,11 @@ async def update_skill(skill_name: str, data: dict):
         prompt=data.get("prompt"),
         tools=data.get("tools"),
         category=data.get("category"),
+        tags=data.get("tags"),
+        version=data.get("version"),
+        examples=data.get("examples"),
+        output_format=data.get("output_format"),
+        annotations=data.get("annotations"),
     )
 
 
@@ -149,6 +209,36 @@ async def create_sub_agent(data: dict):
         tools=data.get("tools", []),
         created_at=__import__("datetime").datetime.utcnow(),
     )
+    subagent_library.add_agent(agent)
+    return {"success": True, "name": name}
+
+
+@router.post("/sub-agents/import")
+async def import_sub_agent(data: dict):
+    """Import a sub-agent from JSON, reuses create logic."""
+    from backend.core.agents.skills import subagent_library, SubAgent
+    import uuid as _uuid
+    name = data.get("name", "").strip()
+    if not name:
+        return {"success": False, "error": "Missing name"}
+    # Strip agent_ prefix for validation, then re-add
+    raw_name = name[6:] if name.startswith("agent_") else name
+    if not re.match(r'^[a-z][a-z0-9_]{1,50}$', raw_name):
+        return {"success": False, "error": "Nom invalide (snake_case, 2-50 chars, commence par une lettre)"}
+    if not name.startswith("agent_"):
+        name = f"agent_{name}"
+    agent = SubAgent(
+        id=str(_uuid.uuid4())[:8],
+        name=name,
+        role=data.get("role", ""),
+        expertise=data.get("expertise", ""),
+        system_prompt=data.get("system_prompt", ""),
+        tools=data.get("tools", []),
+        created_at=__import__("datetime").datetime.utcnow(),
+    )
+    for field in ("provider", "model", "description", "tags", "version", "author", "max_iterations"):
+        if field in data and data[field] is not None:
+            setattr(agent, field, data[field])
     subagent_library.add_agent(agent)
     return {"success": True, "name": name}
 
@@ -397,10 +487,33 @@ async def list_personalities():
     ]
 
 
+@router.put("/personality/reorder")
+async def reorder_personalities(data: dict):
+    """Reorder personalities list by drag-and-drop order."""
+    from backend.core.agents.skills import personality_manager
+    order = data.get("order", [])
+    if not order:
+        return {"success": False, "error": "Empty order"}
+    reordered = {}
+    for name in order:
+        if name in personality_manager.personalities:
+            reordered[name] = personality_manager.personalities[name]
+    # Add any remaining ones not in the order list
+    for name, p in personality_manager.personalities.items():
+        if name not in reordered:
+            reordered[name] = p
+    personality_manager.personalities = reordered
+    personality_manager._save()
+    return {"success": True}
+
+
 @router.post("/personality/{name}")
 async def set_personality(name: str):
     from backend.core.agents.skills import personality_manager
-    personality_manager.set_active(name)
+    result = personality_manager.set_active(name)
+    if not result:
+        return {"success": False, "error": f"Personnalité '{name}' introuvable"}
+    print(f"[Wolf] Personality set to '{name}' via API")
     return {"success": True, "active_personality": name}
 
 
