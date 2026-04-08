@@ -37,13 +37,22 @@ def encrypt_value(plaintext: str) -> str:
     return "enc:" + base64.b64encode(encrypted).decode()
 
 def decrypt_value(encrypted: str) -> str:
-    """Decrypt a value. If not encrypted (no 'enc:' prefix), return as-is."""
+    """Decrypt a value. If not encrypted (no 'enc:' prefix), return as-is.
+    If decryption fails (wrong machine key), strip the encrypted value and return empty."""
     if not encrypted or not encrypted.startswith("enc:"):
         return encrypted or ""
-    key = _derive_key()
-    data = base64.b64decode(encrypted[4:])
-    decrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
-    return decrypted.decode("utf-8")
+    try:
+        key = _derive_key()
+        data = base64.b64decode(encrypted[4:])
+        decrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+        return decrypted.decode("utf-8")
+    except (UnicodeDecodeError, Exception):
+        # Wrong machine key — encrypted on a different host
+        import logging
+        logging.getLogger("gungnir").warning(
+            "Failed to decrypt value (different machine key?) — clearing encrypted value"
+        )
+        return ""
 
 
 class ProviderConfig(BaseModel):
