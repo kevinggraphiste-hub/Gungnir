@@ -102,6 +102,8 @@ class AppSettings(BaseModel):
     workspace_dir: str = str(DATA_DIR / "workspace")
     auto_update: bool = False
     update_channel: str = "stable"
+    active_provider: str = "openrouter"
+    active_model: str = "minimax/minimax-m2.7"
 
 
 class Settings(BaseSettings):

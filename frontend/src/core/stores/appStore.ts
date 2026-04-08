@@ -62,6 +62,10 @@ interface AppState {
   // Loading
   isLoading: boolean
   setLoading: (loading: boolean) => void
+
+  // Auth
+  onLogout: (() => void) | null
+  setOnLogout: (fn: (() => void) | null) => void
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -87,11 +91,23 @@ export const useStore = create<AppState>((set) => ({
   setSelectedProvider: (provider) => {
     localStorage.setItem('gungnir_provider', provider)
     set({ selectedProvider: provider })
+    // Sync to backend for channels/external integrations
+    fetch('/api/config/app', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active_provider: provider }),
+    }).catch(() => {})
   },
   selectedModel: localStorage.getItem('gungnir_model') || 'minimax/minimax-m2.7',
   setSelectedModel: (model) => {
     localStorage.setItem('gungnir_model', model)
     set({ selectedModel: model })
+    // Sync to backend for channels/external integrations
+    fetch('/api/config/app', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active_model: model }),
+    }).catch(() => {})
   },
 
   activePersonality: 'default',
@@ -99,4 +115,7 @@ export const useStore = create<AppState>((set) => ({
 
   isLoading: false,
   setLoading: (loading) => set({ isLoading: loading }),
+
+  onLogout: null,
+  setOnLogout: (fn) => set({ onLogout: fn }),
 }))

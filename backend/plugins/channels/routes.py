@@ -510,20 +510,25 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
         from pathlib import Path as _Path
         settings = Settings.load()
 
-        # Trouver un provider actif
-        provider_name = None
-        provider_config = None
-        for pname, pcfg in settings.providers.items():
-            if pcfg.enabled and pcfg.api_key:
-                provider_name = pname
-                provider_config = pcfg
-                break
+        # Use the same provider/model selected in the chat frontend
+        provider_name = settings.app.active_provider or "openrouter"
+        provider_config = settings.providers.get(provider_name)
+
+        # Fallback: if selected provider has no key, find any active provider
+        if not provider_config or not provider_config.enabled or not provider_config.api_key:
+            provider_name = None
+            provider_config = None
+            for pname, pcfg in settings.providers.items():
+                if pcfg.enabled and pcfg.api_key:
+                    provider_name = pname
+                    provider_config = pcfg
+                    break
 
         if not provider_name or not provider_config:
             return "Aucun provider LLM configuré."
 
         provider = get_provider(provider_name, provider_config.api_key, provider_config.base_url)
-        model = provider_config.default_model
+        model = settings.app.active_model or provider_config.default_model
 
         # ── Build system prompt like the main chat ──
         # Soul (identity)
