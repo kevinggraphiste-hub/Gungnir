@@ -11,6 +11,7 @@ from backend.core.api.chat import router as chat_router
 from backend.core.api.users import router as users_router
 from backend.core.api.agent_routes import router as agent_router
 from backend.core.api.backup_routes import router as backup_router
+from backend.core.api.heartbeat_routes import router as heartbeat_router
 
 core_router = APIRouter()
 
@@ -34,3 +35,4 @@ core_router.include_router(chat_router, tags=["Chat"])
 core_router.include_router(users_router, tags=["Users"])
 core_router.include_router(agent_router, tags=["Agent"])
 core_router.include_router(backup_router, tags=["Backup"])
+core_router.include_router(heartbeat_router, tags=["Heartbeat"])

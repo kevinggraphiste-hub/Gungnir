@@ -80,6 +80,20 @@ async def lifespan(app: FastAPI):
     # 5. Start auto-backup scheduler
     auto_backup_task = asyncio.create_task(_auto_backup_loop())
 
+    # 6. Start heartbeat if on_startup is enabled
+    try:
+        from backend.core.api.heartbeat_routes import _load as _hb_load, _ensure_loop as _hb_start
+        hb_data = _hb_load()
+        if hb_data.get("config", {}).get("on_startup"):
+            hb_data["config"]["enabled"] = True
+            hb_data["config"]["paused"] = False
+            from backend.core.api.heartbeat_routes import _save as _hb_save
+            _hb_save(hb_data)
+            _hb_start()
+            logger.info("Heartbeat auto-started on startup")
+    except Exception as e:
+        logger.warning(f"Heartbeat startup skipped: {e}")
+
     logger.info(
         f"Gungnir started — {len(_loaded_plugins)} plugins loaded: "
         f"{', '.join(p.name for p in _loaded_plugins)}"
@@ -161,7 +175,7 @@ async def security_headers(request, call_next):
 # ── Token auth middleware ───────────────────────────────────────────────────
 # Routes that don't require authentication
 PUBLIC_PATHS = {
-    "/api/health", "/api/doctor", "/api/users/login", "/api/plugins/status",
+    "/api/health", "/api/doctor", "/api/users/login", "/api/users/me", "/api/plugins/status",
 }
 PUBLIC_PREFIXES = (
     "/api/webhook/",      # Incoming webhooks (Slack, Discord, WhatsApp) have their own auth
