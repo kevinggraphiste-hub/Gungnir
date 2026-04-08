@@ -637,11 +637,15 @@ async def telegram_webhook(channel_id: str, request: Request):
         bot_token = ch.get("config", {}).get("bot_token", "")
         try:
             async with httpx.AsyncClient() as client:
-                await client.post(
+                # Try plain text first (safest), Markdown can break on LLM output
+                resp = await client.post(
                     f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                    json={"chat_id": chat_id, "text": str(response_text), "parse_mode": "Markdown"},
+                    json={"chat_id": chat_id, "text": str(response_text)},
                     timeout=30,
                 )
+                if resp.status_code != 200:
+                    _add_log(channel_id, ch.get("name", ""), "out",
+                             f"Telegram sendMessage error: {resp.text[:200]}", "error")
         except Exception as e:
             _add_log(channel_id, ch.get("name", ""), "out", f"Erreur envoi Telegram: {e}", "error")
 
