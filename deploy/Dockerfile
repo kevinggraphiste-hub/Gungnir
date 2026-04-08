@@ -18,10 +18,16 @@ RUN npm run build
 # ── Stage 2: Python backend + static frontend ──────────────────────────────
 FROM python:3.12-slim AS production
 
-# System deps
+# System deps + Node.js (needed for MCP servers via npx)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js for MCP (npx) support
+COPY --from=frontend-build /usr/local/bin/node /usr/local/bin/node
+COPY --from=frontend-build /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Create non-root user
 RUN useradd -m -s /bin/bash gungnir
