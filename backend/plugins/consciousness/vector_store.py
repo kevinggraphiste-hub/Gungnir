@@ -60,14 +60,20 @@ class EmbeddingGenerator:
             return [item["embedding"] for item in data["data"]]
 
     async def _embed_google(self, texts: list[str]) -> list[list[float]]:
-        """Google Generative AI embedding API."""
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:batchEmbedContents?key={self.api_key}"
-        requests_body = [{"model": f"models/{self.model}", "content": {"parts": [{"text": t}]}} for t in texts]
+        """Google Generative AI embedding API (v1 + v1beta fallback)."""
+        model = self.model
+        requests_body = [{"model": f"models/{model}", "content": {"parts": [{"text": t}]}} for t in texts]
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json={"requests": requests_body})
-            resp.raise_for_status()
-            data = resp.json()
-            return [item["values"] for item in data["embeddings"]]
+            # Try v1 first, then v1beta
+            for version in ("v1", "v1beta"):
+                url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:batchEmbedContents?key={self.api_key}"
+                resp = await client.post(url, json={"requests": requests_body})
+                if resp.status_code == 404:
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                return [item["values"] for item in data["embeddings"]]
+            raise ValueError(f"Modèle embedding Google '{model}' introuvable (v1 et v1beta)")
 
     async def embed_single(self, text: str) -> list[float]:
         """Embed a single text."""

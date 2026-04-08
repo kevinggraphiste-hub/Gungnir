@@ -83,8 +83,8 @@ DEFAULT_CONFIG = {
     },
     "vector_memory": {
         "vector_provider": "none",
-        "embedding_provider": "openai",
-        "embedding_model": "text-embedding-3-small",
+        "embedding_provider": "google",
+        "embedding_model": "text-embedding-004",
         "embedding_api_key": "",
         "embedding_base_url": "",
         "embedding_dimension": 1536,
