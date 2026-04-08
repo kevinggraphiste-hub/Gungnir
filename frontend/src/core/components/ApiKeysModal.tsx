@@ -43,8 +43,9 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
     setSaving(providerName)
     setMessage(null)
     try {
-      const data: any = { enabled: prov.enabled }
-      if (prov.api_key) data.api_key = prov.api_key
+      // Si une nouvelle clé est saisie, activer automatiquement le provider
+      const data: any = { enabled: prov.api_key ? true : prov.enabled }
+      if (prov.api_key) data.api_key = prov.api_key.trim()
       if (prov.default_model) data.default_model = prov.default_model
       await api.saveProvider(providerName, data)
       const newConfig = await api.getConfig()
