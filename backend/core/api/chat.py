@@ -580,11 +580,13 @@ async def chat(
     data: dict,
     session: AsyncSession = Depends(get_session)
 ):
-    # -- Budget check (graceful if tables don't exist yet)
+    # -- Budget check (graceful — uses separate session to avoid corrupting main transaction)
     try:
         from backend.core.cost.manager import get_cost_manager
+        from backend.core.db.engine import async_session as _budget_session_maker
         cm = get_cost_manager()
-        budget_status = await cm.check_all_budgets(session)
+        async with _budget_session_maker() as _budget_session:
+            budget_status = await cm.check_all_budgets(_budget_session)
         if budget_status.get("should_block"):
             return {"error": f"Budget depasse : {budget_status.get('block_reason', 'limite atteinte')}. Augmentez votre budget ou attendez la prochaine periode."}
     except Exception as e:
