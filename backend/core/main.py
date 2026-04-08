@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from backend.core.db.engine import engine
+from backend.core.db.engine import engine, DATABASE_URL
 from backend.core.db.models import init_db
 from backend.core.config.settings import PLUGINS_DIR, Settings
 from backend.core.services.plugin_loader import (
@@ -46,9 +46,18 @@ async def lifespan(app: FastAPI):
     try:
         from sqlalchemy import text
         async with engine.begin() as conn:
-            result = await conn.execute(text("PRAGMA table_info(users)"))
-            columns = [row[1] for row in result.fetchall()]
-            if "api_token" not in columns:
+            # Detect database type — use appropriate introspection
+            if "postgresql" in DATABASE_URL or "asyncpg" in DATABASE_URL:
+                result = await conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'users' AND column_name = 'api_token'"
+                ))
+                has_column = result.fetchone() is not None
+            else:
+                result = await conn.execute(text("PRAGMA table_info(users)"))
+                columns = [row[1] for row in result.fetchall()]
+                has_column = "api_token" in columns
+            if not has_column:
                 await conn.execute(text("ALTER TABLE users ADD COLUMN api_token VARCHAR(128)"))
                 logger.info("Migration: added api_token column to users table")
     except Exception as e:
