@@ -923,7 +923,7 @@ function VectorTab() {
       await fetch(`${API}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vector_memory: config }),
+        body: JSON.stringify({ updates: { vector_memory: config } }),
       })
       // Re-init vector memory with new config
       await fetch(`${API}/vector/init`, { method: 'POST' })
@@ -1077,7 +1077,7 @@ function VectorTab() {
                   <div>
                     <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Modèle</label>
                     <input value={config.embedding_model || ''} onChange={e => updateField('embedding_model', e.target.value)} style={inputStyle}
-                      placeholder={config.embedding_provider === 'google' ? 'text-embedding-004' : 'text-embedding-3-small'} />
+                      placeholder={config.embedding_provider === 'google' ? 'gemini-embedding-001' : 'text-embedding-3-small'} />
                   </div>
                   <div>
                     <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-muted)' }}>API Key embedding</label>
