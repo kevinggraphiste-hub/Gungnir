@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 logger = logging.getLogger("gungnir.heartbeat")
 
@@ -119,6 +119,7 @@ async def get_heartbeat():
 
     return {
         "status": status,
+        "running": cfg.get("enabled", False) and not cfg.get("paused", False),
         "config": cfg,
         "tasks": data.get("tasks", []),
         "loop_active": running,
@@ -126,8 +127,9 @@ async def get_heartbeat():
 
 
 @router.put("/heartbeat/config")
-async def update_heartbeat_config(request_data: dict):
+async def update_heartbeat_config(request: Request):
     """Met à jour la configuration du heartbeat."""
+    request_data = await request.json()
     data = _load()
     cfg = data.get("config", {})
 
