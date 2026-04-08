@@ -18,6 +18,7 @@ async def get_config():
         "providers": {
             name: {
                 "enabled": p.enabled,
+                "has_api_key": bool(p.api_key),
                 "default_model": p.default_model,
                 "models": p.models,
             }
@@ -47,6 +48,9 @@ async def get_config():
 
 @router.post("/config/providers/{provider_name}")
 async def configure_provider(provider_name: str, config: ProviderConfig):
+    # Strip whitespace from API key (common copy-paste issue)
+    if config.api_key:
+        config.api_key = config.api_key.strip()
     settings = Settings.load()
     existing = settings.providers.get(provider_name)
     if existing:

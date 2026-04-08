@@ -196,6 +196,14 @@ class Settings(BaseSettings):
 
     def save(self):
         data = self.model_dump()
+        # Strip whitespace from API keys before saving
+        for pname, pconf in data.get("providers", {}).items():
+            if pconf.get("api_key"):
+                pconf["api_key"] = pconf["api_key"].strip()
+        for sname, sconf in data.get("services", {}).items():
+            for field in ("api_key", "token"):
+                if sconf.get(field):
+                    sconf[field] = sconf[field].strip()
         # Encrypt API keys before writing to disk
         for pname, pconf in data.get("providers", {}).items():
             if pconf.get("api_key") and not pconf["api_key"].startswith("enc:"):
@@ -218,10 +226,12 @@ class Settings(BaseSettings):
         config_path = DATA_DIR / "config.json"
         if config_path.exists():
             data = json.loads(config_path.read_text())
-            # Decrypt API keys transparently on load
+            # Decrypt API keys transparently on load + strip whitespace
             for pname, pconf in data.get("providers", {}).items():
                 if isinstance(pconf, dict) and (pconf.get("api_key") or "").startswith("enc:"):
                     pconf["api_key"] = decrypt_value(pconf["api_key"])
+                if isinstance(pconf, dict) and pconf.get("api_key"):
+                    pconf["api_key"] = pconf["api_key"].strip()
             for sname, sconf in data.get("services", {}).items():
                 if isinstance(sconf, dict):
                     for field in ("api_key", "token"):
