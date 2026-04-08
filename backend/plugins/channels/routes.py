@@ -503,10 +503,11 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
 
     _add_log(channel_id, ch.get("name", ""), "in", f"[{sender_name}] {text[:100]}", "ok")
 
-    # Appel LLM via le provider core
+    # Appel LLM via le pipeline complet (soul + personnalité + consciousness)
     try:
         from backend.core.config.settings import Settings
         from backend.core.providers import get_provider, ChatMessage
+        from pathlib import Path as _Path
         settings = Settings.load()
 
         # Trouver un provider actif
@@ -524,10 +525,48 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
         provider = get_provider(provider_name, provider_config.api_key, provider_config.base_url)
         model = provider_config.default_model
 
+        # ── Build system prompt like the main chat ──
+        # Soul (identity)
+        _data_dir = _Path(__file__).parent.parent.parent.parent / "data"
+        _soul_file = _data_dir / "soul.md"
+        soul = _soul_file.read_text(encoding="utf-8") if _soul_file.exists() else (
+            "Tu es **Wolf**, un super-assistant IA développé par ScarletWolf.\n"
+            "Tu es intelligent, proactif, précis et loyal envers ton utilisateur."
+        )
+
+        # Personality overlay
+        personality_block = ""
+        try:
+            from backend.core.agents.skills import personality_manager
+            active = personality_manager.get_active()
+            if active and active.system_prompt:
+                personality_block = f"\n\n## Mode de personnalité actif : {active.name}\n{active.system_prompt}"
+        except Exception:
+            pass
+
+        # Consciousness context (memories)
+        consciousness_block = ""
+        try:
+            from backend.plugins.consciousness.engine import consciousness
+            if consciousness.enabled:
+                memories = await consciousness.recall(text, limit=3)
+                if memories:
+                    consciousness_block = "\n\n## Souvenirs pertinents\n" + "\n".join(
+                        f"- {m.get('content', '')[:200]}" for m in memories
+                    )
+        except Exception:
+            pass
+
+        _lang = settings.app.language or "fr"
         system_prompt = (
-            f"Tu es Gungnir, un assistant IA. Tu réponds via le canal '{ch.get('name', ch['type'])}'.\n"
-            f"Expéditeur : {sender_name} ({sender_id}).\n"
-            f"Réponds de manière concise et utile. Langue : {settings.app.language or 'fr'}."
+            f"{soul}"
+            f"{personality_block}"
+            f"{consciousness_block}"
+            f"\n\n## Contexte canal"
+            f"\nTu réponds via le canal externe '{ch.get('name', ch['type'])}' (type: {ch.get('type', 'inconnu')})."
+            f"\nExpéditeur : {sender_name} ({sender_id})."
+            f"\nRéponds de manière concise et adaptée à une messagerie. Langue : {_lang}."
+            f"\nNe mentionne PAS tes outils internes (browser, bash, etc.) — tu es en mode conversation externe."
         )
 
         messages = [
@@ -536,6 +575,17 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
         ]
 
         response_text = await provider.chat(messages, model=model)
+
+        # Store in consciousness
+        try:
+            from backend.plugins.consciousness.engine import consciousness
+            if consciousness.enabled:
+                await consciousness.store_interaction(
+                    f"[{ch.get('type', 'channel')}:{sender_name}] {text}",
+                    str(response_text),
+                )
+        except Exception:
+            pass
 
         # Update outgoing stats
         channels = _load_channels()
