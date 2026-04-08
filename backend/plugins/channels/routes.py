@@ -66,6 +66,57 @@ def _mask_secret(value: str | None) -> str | None:
     return value[:4] + "•" * (len(value) - 8) + value[-4:]
 
 
+def _get_public_base_url(request: Request) -> str:
+    """Reconstruct the public base URL from reverse proxy headers.
+
+    Inside Docker, request.base_url returns http://127.0.0.1:8000.
+    Nginx forwards X-Forwarded-Proto and Host headers that give us
+    the real public URL (e.g. https://gungnir.scarletwolf.cloud).
+    """
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host", request.url.netloc)
+    return f"{proto}://{host}"
+
+
+async def _register_telegram_webhook(channel_id: str, ch: dict, base_url: str) -> dict:
+    """Register (or delete) Telegram webhook. Returns result dict."""
+    import httpx
+    bot_token = ch.get("config", {}).get("bot_token", "")
+    if not bot_token or "•" in bot_token:
+        return {"ok": False, "error": "Token bot manquant"}
+
+    enabled = ch.get("enabled", False)
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        if enabled:
+            webhook_url = f"{base_url}/api/plugins/channels/webhook/telegram/{channel_id}"
+            secret = ch.get("config", {}).get("webhook_secret", "")
+            payload = {"url": webhook_url}
+            if secret:
+                payload["secret_token"] = secret
+            r = await client.post(
+                f"https://api.telegram.org/bot{bot_token}/setWebhook",
+                json=payload,
+            )
+            data = r.json()
+            if data.get("ok"):
+                _add_log(channel_id, ch.get("name", ""), "system",
+                         f"Webhook Telegram enregistré → {webhook_url}", "ok")
+                return {"ok": True, "webhook_url": webhook_url}
+            else:
+                _add_log(channel_id, ch.get("name", ""), "system",
+                         f"Erreur setWebhook: {data.get('description', '')}", "error")
+                return {"ok": False, "error": data.get("description", "Erreur setWebhook")}
+        else:
+            # Disable = delete webhook
+            r = await client.post(
+                f"https://api.telegram.org/bot{bot_token}/deleteWebhook",
+            )
+            data = r.json()
+            _add_log(channel_id, ch.get("name", ""), "system", "Webhook Telegram supprimé", "ok")
+            return {"ok": True, "deleted": True}
+
+
 # ── Channel catalog ────────────────────────────────────────────────
 CHANNEL_CATALOG = {
     "telegram": {
@@ -364,7 +415,7 @@ async def get_channel(channel_id: str):
 
 
 @router.put("/{channel_id}")
-async def update_channel(channel_id: str, data: dict):
+async def update_channel(channel_id: str, data: dict, request: Request):
     channels = _load_channels()
     if channel_id not in channels:
         raise HTTPException(404, "Canal introuvable")
@@ -382,7 +433,19 @@ async def update_channel(channel_id: str, data: dict):
     channels[channel_id] = ch
     _save_channels(channels)
 
-    return {"ok": True, "channel": ch}
+    # Auto-register webhook if channel has a token and is enabled
+    webhook_result = None
+    ch_type = ch.get("type", "")
+    if ch_type == "telegram" and ch.get("enabled"):
+        bot_token = ch.get("config", {}).get("bot_token", "")
+        if bot_token and "•" not in bot_token:
+            try:
+                base_url = _get_public_base_url(request)
+                webhook_result = await _register_telegram_webhook(channel_id, ch, base_url)
+            except Exception as e:
+                webhook_result = {"ok": False, "error": str(e)}
+
+    return {"ok": True, "channel": ch, "webhook": webhook_result}
 
 
 @router.delete("/{channel_id}")
@@ -398,7 +461,7 @@ async def delete_channel(channel_id: str):
 
 
 @router.post("/{channel_id}/toggle")
-async def toggle_channel(channel_id: str):
+async def toggle_channel(channel_id: str, request: Request):
     channels = _load_channels()
     if channel_id not in channels:
         raise HTTPException(404, "Canal introuvable")
@@ -408,7 +471,19 @@ async def toggle_channel(channel_id: str):
     _save_channels(channels)
     status = "activé" if ch["enabled"] else "désactivé"
     _add_log(channel_id, ch.get("name", ""), "system", f"Canal {status}", "ok")
-    return {"ok": True, "enabled": ch["enabled"]}
+
+    # Auto-register/unregister webhook for supported channel types
+    webhook_result = None
+    base_url = _get_public_base_url(request)
+    ch_type = ch.get("type", "")
+    if ch_type == "telegram":
+        try:
+            webhook_result = await _register_telegram_webhook(channel_id, ch, base_url)
+        except Exception as e:
+            webhook_result = {"ok": False, "error": str(e)}
+            _add_log(channel_id, ch.get("name", ""), "system", f"Erreur webhook: {e}", "error")
+
+    return {"ok": True, "enabled": ch["enabled"], "webhook": webhook_result}
 
 
 # ── Incoming message handler (generic) ──────────────────────────────
@@ -783,7 +858,7 @@ async def get_widget_snippet(channel_id: str, request: Request):
     if not ch or ch.get("type") != "web_widget":
         raise HTTPException(404, "Canal Widget introuvable")
 
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _get_public_base_url(request)
     title = ch.get("config", {}).get("widget_title", "Gungnir Assistant")
     color = ch.get("config", {}).get("widget_color", "#dc2626")
     welcome = ch.get("config", {}).get("welcome_message", "Bonjour ! Comment puis-je vous aider ?")
@@ -832,7 +907,7 @@ async def get_webhook_url(channel_id: str, request: Request):
     if not ch:
         raise HTTPException(404, "Canal introuvable")
 
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _get_public_base_url(request)
     ch_type = ch.get("type", "")
 
     urls = {}
@@ -851,6 +926,27 @@ async def get_webhook_url(channel_id: str, request: Request):
         urls["incoming_url"] = f"{base_url}/api/plugins/channels/incoming/{channel_id}"
 
     return {"channel_id": channel_id, "type": ch_type, "urls": urls}
+
+
+@router.post("/{channel_id}/register-webhook")
+async def register_webhook(channel_id: str, request: Request):
+    """Manually register the webhook for a channel (Telegram, etc.)."""
+    channels = _load_channels()
+    ch = channels.get(channel_id)
+    if not ch:
+        raise HTTPException(404, "Canal introuvable")
+
+    ch_type = ch.get("type", "")
+    base_url = _get_public_base_url(request)
+
+    if ch_type == "telegram":
+        try:
+            result = await _register_telegram_webhook(channel_id, ch, base_url)
+            return result
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    else:
+        return {"ok": False, "error": f"Type '{ch_type}' ne supporte pas l'enregistrement automatique de webhook"}
 
 
 # ── Logs ────────────────────────────────────────────────────────────
@@ -891,7 +987,12 @@ async def test_channel(channel_id: str):
                 data = r.json()
                 if data.get("ok"):
                     bot = data["result"]
-                    return {"ok": True, "info": f"@{bot.get('username', '')} ({bot.get('first_name', '')})"}
+                    # Also check webhook status
+                    wh_r = await client.get(f"https://api.telegram.org/bot{bot_token}/getWebhookInfo")
+                    wh_data = wh_r.json()
+                    wh_url = wh_data.get("result", {}).get("url", "")
+                    wh_info = f" | Webhook: {'✓ actif' if wh_url else '✗ non configuré'}"
+                    return {"ok": True, "info": f"@{bot.get('username', '')} ({bot.get('first_name', '')}){wh_info}"}
                 return {"ok": False, "error": data.get("description", "Erreur inconnue")}
 
             elif ch_type == "discord":

@@ -128,10 +128,23 @@ export default function ChannelsPlugin() {
     }
   }
 
+  const [webhookMsg, setWebhookMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
   const handleToggle = async (id: string) => {
     try {
-      await apiFetch(`${API}/${id}/toggle`, { method: 'POST' })
+      const res = await apiFetch(`${API}/${id}/toggle`, { method: 'POST' })
       loadChannels()
+      // Show webhook registration result
+      if (res.webhook) {
+        if (res.webhook.ok) {
+          setWebhookMsg({ ok: true, text: res.webhook.webhook_url
+            ? `Webhook enregistré ✓`
+            : 'Webhook supprimé' })
+        } else {
+          setWebhookMsg({ ok: false, text: `Webhook: ${res.webhook.error}` })
+        }
+        setTimeout(() => setWebhookMsg(null), 5000)
+      }
     } catch (e) {
       console.error('Toggle error:', e)
     }
@@ -162,7 +175,7 @@ export default function ChannelsPlugin() {
     if (!editingChannel) return
     setSaving(true)
     try {
-      await apiFetch(`${API}/${editingChannel.id}`, {
+      const res = await apiFetch(`${API}/${editingChannel.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -170,6 +183,15 @@ export default function ChannelsPlugin() {
           config: editForm,
         }),
       })
+      // Show webhook registration result
+      if (res.webhook) {
+        if (res.webhook.ok) {
+          setWebhookMsg({ ok: true, text: 'Webhook enregistré automatiquement ✓' })
+        } else {
+          setWebhookMsg({ ok: false, text: `Webhook: ${res.webhook.error}` })
+        }
+        setTimeout(() => setWebhookMsg(null), 5000)
+      }
       setEditingChannel(null)
       loadChannels()
     } catch (e) {
@@ -245,6 +267,19 @@ export default function ChannelsPlugin() {
           </button>
         </div>
       </div>
+
+      {/* Webhook feedback */}
+      {webhookMsg && (
+        <div className="mx-6 mt-3 px-4 py-2.5 rounded-lg text-sm flex items-center gap-2"
+          style={{
+            background: webhookMsg.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+            color: webhookMsg.ok ? '#22c55e' : '#ef4444',
+            border: webhookMsg.ok ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(239,68,68,0.3)',
+          }}>
+          {webhookMsg.ok ? <Check className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+          {webhookMsg.text}
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
@@ -577,6 +612,21 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
   const fields = catEntry.fields || []
   const color = TYPE_COLORS[channel.type] || '#6366f1'
   const Icon = getIcon(catEntry.icon)
+  const [registering, setRegistering] = useState(false)
+  const [registerResult, setRegisterResult] = useState<any>(null)
+
+  const handleRegisterWebhook = async () => {
+    setRegistering(true)
+    setRegisterResult(null)
+    try {
+      const res = await apiFetch(`${API}/${channel.id}/register-webhook`, { method: 'POST' })
+      setRegisterResult(res)
+    } catch (e) {
+      setRegisterResult({ ok: false, error: String(e) })
+    } finally {
+      setRegistering(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
@@ -670,6 +720,37 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Register webhook button (Telegram, etc.) */}
+          {['telegram', 'slack', 'whatsapp'].includes(channel.type) && (
+            <div className="pt-2">
+              <button
+                onClick={handleRegisterWebhook}
+                disabled={registering}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                style={{ background: `${color}20`, color }}
+              >
+                {registering
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Zap className="w-3.5 h-3.5" />
+                }
+                {registering ? 'Enregistrement...' : 'Enregistrer le Webhook'}
+              </button>
+              {registerResult && (
+                <div
+                  className="mt-2 p-2.5 rounded-lg text-xs"
+                  style={{
+                    background: registerResult.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                    color: registerResult.ok ? '#22c55e' : '#ef4444',
+                  }}
+                >
+                  {registerResult.ok
+                    ? `Webhook enregistré ✓${registerResult.webhook_url ? ` → ${registerResult.webhook_url}` : ''}`
+                    : `Erreur — ${registerResult.error}`}
+                </div>
+              )}
             </div>
           )}
 
