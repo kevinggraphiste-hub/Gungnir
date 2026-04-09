@@ -765,6 +765,80 @@ WOLF_TOOL_SCHEMAS = [
             }
         }
     },
+    # ── Channel management (setup wizard) ─────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "channel_manage",
+            "description": (
+                "Gère les canaux de communication (Telegram, Discord, Slack, WhatsApp, Email, Widget, API). "
+                "Utilise cet outil quand l'utilisateur veut connecter, configurer, activer, désactiver ou supprimer un canal. "
+                "Actions: 'list' (lister), 'catalog' (types disponibles), 'create' (créer), 'update' (modifier/ajouter token), "
+                "'toggle' (activer/désactiver), 'delete' (supprimer), 'test' (tester connexion)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "catalog", "create", "update", "toggle", "delete", "test"],
+                               "description": "Action à effectuer"},
+                    "channel_type": {"type": "string", "description": "Type: telegram, discord, slack, whatsapp, email, web_widget, api"},
+                    "channel_id": {"type": "string", "description": "ID du canal (pour update/toggle/delete/test)"},
+                    "name": {"type": "string", "description": "Nom du canal (pour create)"},
+                    "config": {"type": "object", "description": "Configuration: {bot_token, webhook_secret, signing_secret, ...}"},
+                    "enabled": {"type": "boolean", "description": "Activer/désactiver"},
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    # ── Provider API key management ───────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "provider_manage",
+            "description": (
+                "Gère les providers LLM (clés API, activation). "
+                "Utilise cet outil quand l'utilisateur veut configurer, ajouter ou supprimer une clé API pour un provider (OpenRouter, Anthropic, OpenAI, Google, MiniMax, Ollama). "
+                "Actions: 'list' (lister les providers et leur statut), 'save' (sauvegarder une clé API), 'delete' (supprimer un provider)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "save", "delete"], "description": "Action à effectuer"},
+                    "provider": {"type": "string", "description": "Nom du provider: openrouter, anthropic, openai, google, minimax, ollama"},
+                    "api_key": {"type": "string", "description": "Clé API à sauvegarder"},
+                    "base_url": {"type": "string", "description": "URL de base custom (optionnel)"},
+                    "enabled": {"type": "boolean", "description": "Activer/désactiver", "default": True},
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    # ── MCP server management ─────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "mcp_manage",
+            "description": (
+                "Gère les serveurs MCP (Model Context Protocol). "
+                "Utilise cet outil quand l'utilisateur veut ajouter, lister ou supprimer un serveur MCP. "
+                "Les serveurs MCP ajoutent des outils externes (n8n, GitHub, bases de données, etc.). "
+                "Actions: 'list' (lister serveurs et outils), 'add' (ajouter un serveur), 'delete' (supprimer)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "add", "delete"], "description": "Action à effectuer"},
+                    "name": {"type": "string", "description": "Nom unique du serveur MCP"},
+                    "command": {"type": "string", "description": "Commande: npx, node, python, etc."},
+                    "args": {"type": "array", "items": {"type": "string"}, "description": "Arguments de la commande"},
+                    "env": {"type": "object", "description": "Variables d'environnement {clé: valeur}"},
+                    "enabled": {"type": "boolean", "description": "Activer au démarrage", "default": True},
+                },
+                "required": ["action"]
+            }
+        }
+    },
 ]
 
 # ── Exécuteurs ─────────────────────────────────────────────────────────────────
@@ -1632,6 +1706,178 @@ async def _bash_exec(command: str, timeout: int = 30, cwd: str = ".") -> dict:
         return {"ok": False, "error": str(e)[:300]}
 
 
+# ── Channel management ───────────────────────────────────────────────────────
+
+async def _channel_manage(action: str, channel_type: str = None, channel_id: str = None,
+                          name: str = None, config: dict = None, enabled: bool = None) -> dict:
+    """Manage communication channels via internal API."""
+    import httpx
+    base = "http://127.0.0.1:8000/api/plugins/channels"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            if action == "catalog":
+                r = await client.get(f"{base}/catalog")
+                data = r.json()
+                # Simplify for the agent
+                return {"ok": True, "types": list(data.get("channels", {}).keys()),
+                        "details": {k: {"name": v["display_name"], "complexity": v.get("complexity", ""),
+                                        "description": v["description"][:100]}
+                                    for k, v in data.get("channels", {}).items()}}
+
+            elif action == "list":
+                r = await client.get(f"{base}/list")
+                channels = r.json().get("channels", [])
+                return {"ok": True, "count": len(channels),
+                        "channels": [{"id": c["id"], "type": c.get("type"), "name": c.get("name"),
+                                      "enabled": c.get("enabled", False)} for c in channels]}
+
+            elif action == "create":
+                if not channel_type or not name:
+                    return {"ok": False, "error": "channel_type et name requis pour create"}
+                import uuid as _uuid
+                payload = {"id": str(_uuid.uuid4())[:8], "type": channel_type, "name": name,
+                           "config": config or {}, "enabled": enabled if enabled is not None else False}
+                r = await client.post(f"{base}/create", json=payload)
+                result = r.json()
+                if result.get("ok"):
+                    ch = result.get("channel", {})
+                    return {"ok": True, "channel_id": ch.get("id"), "type": channel_type, "name": name,
+                            "message": f"Canal '{name}' créé. Configure le token/clé puis active-le."}
+                return {"ok": False, "error": result.get("detail", "Erreur création")}
+
+            elif action == "update":
+                if not channel_id:
+                    return {"ok": False, "error": "channel_id requis pour update"}
+                payload = {}
+                if name: payload["name"] = name
+                if enabled is not None: payload["enabled"] = enabled
+                if config: payload["config"] = config
+                r = await client.put(f"{base}/{channel_id}", json=payload)
+                result = r.json()
+                webhook_info = result.get("webhook")
+                msg = "Canal mis à jour."
+                if webhook_info and webhook_info.get("ok"):
+                    msg += f" Webhook enregistré: {webhook_info.get('webhook_url', '')}"
+                elif webhook_info and not webhook_info.get("ok"):
+                    msg += f" Webhook erreur: {webhook_info.get('error', '')}"
+                return {"ok": result.get("ok", True), "message": msg, "webhook": webhook_info}
+
+            elif action == "toggle":
+                if not channel_id:
+                    return {"ok": False, "error": "channel_id requis pour toggle"}
+                r = await client.post(f"{base}/{channel_id}/toggle")
+                result = r.json()
+                return {"ok": True, "enabled": result.get("enabled"),
+                        "webhook": result.get("webhook"),
+                        "message": f"Canal {'activé' if result.get('enabled') else 'désactivé'}"}
+
+            elif action == "delete":
+                if not channel_id:
+                    return {"ok": False, "error": "channel_id requis pour delete"}
+                r = await client.delete(f"{base}/{channel_id}")
+                return {"ok": True, "message": "Canal supprimé"}
+
+            elif action == "test":
+                if not channel_id:
+                    return {"ok": False, "error": "channel_id requis pour test"}
+                r = await client.post(f"{base}/{channel_id}/test")
+                return r.json()
+
+            else:
+                return {"ok": False, "error": f"Action inconnue: {action}. Actions: list, catalog, create, update, toggle, delete, test"}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+# ── Provider API key management ──────────────────────────────────────────────
+
+async def _provider_manage(action: str, provider: str = None, api_key: str = None,
+                           base_url: str = None, enabled: bool = True) -> dict:
+    """Manage LLM provider API keys."""
+    import httpx
+    base = "http://127.0.0.1:8000/api/config"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            if action == "list":
+                r = await client.get(f"{base}")
+                data = r.json()
+                providers = data.get("providers", {})
+                return {"ok": True, "providers": {
+                    name: {"enabled": p["enabled"], "has_key": p["has_api_key"],
+                           "default_model": p.get("default_model", "")}
+                    for name, p in providers.items()
+                }}
+
+            elif action == "save":
+                if not provider or not api_key:
+                    return {"ok": False, "error": "provider et api_key requis pour save"}
+                payload = {"api_key": api_key, "enabled": enabled}
+                if base_url:
+                    payload["base_url"] = base_url
+                r = await client.post(f"{base}/user/providers/{provider}",
+                                      json=payload, headers={"Content-Type": "application/json"})
+                if r.status_code == 200:
+                    return {"ok": True, "message": f"Clé API {provider} sauvegardée et activée."}
+                return {"ok": False, "error": r.text[:200]}
+
+            elif action == "delete":
+                if not provider:
+                    return {"ok": False, "error": "provider requis pour delete"}
+                r = await client.delete(f"{base}/user/providers/{provider}")
+                return {"ok": True, "message": f"Provider {provider} supprimé."}
+
+            else:
+                return {"ok": False, "error": f"Action inconnue: {action}. Actions: list, save, delete"}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+# ── MCP server management ────────────────────────────────────────────────────
+
+async def _mcp_manage(action: str, name: str = None, command: str = None,
+                      args: list = None, env: dict = None, enabled: bool = True) -> dict:
+    """Manage MCP servers."""
+    import httpx
+    base = "http://127.0.0.1:8000/api/mcp/servers"
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            if action == "list":
+                r = await client.get(base)
+                data = r.json()
+                servers = data.get("servers", [])
+                status = data.get("status", [])
+                return {"ok": True, "count": len(servers),
+                        "servers": [{"name": s.get("name"), "command": s.get("command"),
+                                     "enabled": s.get("enabled", False)} for s in servers],
+                        "status": status}
+
+            elif action == "add":
+                if not name or not command:
+                    return {"ok": False, "error": "name et command requis pour add"}
+                payload = {"name": name, "command": command,
+                           "args": args or [], "env": env or {}, "enabled": enabled}
+                r = await client.post(base, json=payload, headers={"Content-Type": "application/json"})
+                result = r.json()
+                if result.get("ok"):
+                    tools = result.get("tools_discovered", 0)
+                    return {"ok": True, "message": f"Serveur MCP '{name}' ajouté. {tools} outils découverts."}
+                return {"ok": False, "error": result.get("error", r.text[:200])}
+
+            elif action == "delete":
+                if not name:
+                    return {"ok": False, "error": "name requis pour delete"}
+                r = await client.delete(f"{base}/{name}")
+                return {"ok": True, "message": f"Serveur MCP '{name}' supprimé."}
+
+            else:
+                return {"ok": False, "error": f"Action inconnue: {action}. Actions: list, add, delete"}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 # ── Doctor (auto-diagnostic) ─────────────────────────────────────────────────
 
 async def _doctor_check(scope: str = "full") -> dict:
@@ -1822,6 +2068,10 @@ WOLF_EXECUTORS: dict[str, Any] = {
     "bash_exec":                  _bash_exec,
     # Doctor
     "doctor_check":               _doctor_check,
+    # Setup wizard tools
+    "channel_manage":             _channel_manage,
+    "provider_manage":            _provider_manage,
+    "mcp_manage":                 _mcp_manage,
 }
 
 # Outils en lecture seule (autorisés même en mode restreint)
@@ -1834,6 +2084,7 @@ READ_ONLY_TOOLS = {
     "web_search", "browser_goto", "browser_get_html", "browser_wait_for_selector",
     "browser_scroll", "browser_extract_table", "browser_query_selector_all",
     "browser_select_option", "browser_fill_form", "browser_list_pages",
-    # Lecture seule filesystem + doctor
+    # Lecture seule filesystem + doctor + setup
     "file_read", "file_list", "doctor_check",
+    "channel_manage", "provider_manage", "mcp_manage",
 }
