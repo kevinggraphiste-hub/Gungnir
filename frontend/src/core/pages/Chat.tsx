@@ -370,6 +370,12 @@ export default function Chat() {
           model: response.model, provider: response.provider,
           tokens_input: response.tokens_input, tokens_output: response.tokens_output,
         })
+        // If agent switched provider/model, update the frontend selection
+        if (response.switch_provider) {
+          const sw = response.switch_provider
+          if (sw.provider) setSelectedProvider(sw.provider)
+          if (sw.model) setSelectedModel(sw.model)
+        }
       }
       if (messages.length === 0) generateTitleForConversation(convoId!, userMessage)
     } catch (err) { console.error('Chat error:', err) }

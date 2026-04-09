@@ -813,7 +813,7 @@ Format exact (le systeme detecte et execute automatiquement) :
 **Browser :** browser_navigate, browser_get_text, browser_click, browser_type, browser_screenshot, browser_evaluate, browser_get_links, browser_crawl, browser_close
 **Identite :** soul_read, soul_write(content)
 **Channels :** channel_manage(action,channel_type,channel_id,name,config,enabled) — actions: list, catalog, create, update, toggle, delete, test
-**Providers :** provider_manage(action,provider,api_key,base_url,enabled) — actions: list, save, delete
+**Providers :** provider_manage(action,provider,api_key,base_url,model,enabled) — actions: list, save, delete, switch (changer le modèle actif)
 **MCP :** mcp_manage(action,name,command,args,env,enabled) — actions: list, add, delete
 **Diagnostic :** doctor_check(scope)
 
@@ -1095,6 +1095,15 @@ Tu operes en mode **demande**. Comportement :
             except Exception:
                 pass
 
+        # Check if agent switched provider/model during this turn
+        _switch_info = None
+        for _evt in tool_events:
+            if _evt.get("tool") == "provider_manage":
+                _res = _evt.get("result", {})
+                if isinstance(_res, dict) and _res.get("switched"):
+                    _switch_info = {"provider": _res["provider"], "model": _res["model"]}
+                    break
+
         return {
             "content": response.content,
             "model": response.model or chosen_model,
@@ -1102,6 +1111,7 @@ Tu operes en mode **demande**. Comportement :
             "tokens_input": response.tokens_input,
             "tokens_output": response.tokens_output,
             "tool_events": tool_events if tool_events else None,
+            **({"switch_provider": _switch_info} if _switch_info else {}),
         }
     except Exception as e:
         import logging

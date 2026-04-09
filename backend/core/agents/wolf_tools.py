@@ -797,17 +797,19 @@ WOLF_TOOL_SCHEMAS = [
         "function": {
             "name": "provider_manage",
             "description": (
-                "Gère les providers LLM (clés API, activation). "
-                "Utilise cet outil quand l'utilisateur veut configurer, ajouter ou supprimer une clé API pour un provider (OpenRouter, Anthropic, OpenAI, Google, MiniMax, Ollama). "
-                "Actions: 'list' (lister les providers et leur statut), 'save' (sauvegarder une clé API), 'delete' (supprimer un provider)."
+                "Gère les providers LLM (clés API, activation, changement de modèle). "
+                "Utilise cet outil quand l'utilisateur veut configurer, ajouter, supprimer une clé API, ou CHANGER de provider/modèle LLM en cours de conversation. "
+                "Actions: 'list' (lister les providers et leur statut), 'save' (sauvegarder une clé API), 'delete' (supprimer un provider), "
+                "'switch' (changer le provider/modèle actif — nécessite provider et optionnellement model)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "save", "delete"], "description": "Action à effectuer"},
+                    "action": {"type": "string", "enum": ["list", "save", "delete", "switch"], "description": "Action à effectuer"},
                     "provider": {"type": "string", "description": "Nom du provider: openrouter, anthropic, openai, google, minimax, ollama"},
                     "api_key": {"type": "string", "description": "Clé API à sauvegarder"},
                     "base_url": {"type": "string", "description": "URL de base custom (optionnel)"},
+                    "model": {"type": "string", "description": "Modèle à activer (pour action switch, ex: 'gpt-4.1', 'claude-sonnet-4-6')"},
                     "enabled": {"type": "boolean", "description": "Activer/désactiver", "default": True},
                 },
                 "required": ["action"]
@@ -1793,8 +1795,8 @@ async def _channel_manage(action: str, channel_type: str = None, channel_id: str
 # ── Provider API key management ──────────────────────────────────────────────
 
 async def _provider_manage(action: str, provider: str = None, api_key: str = None,
-                           base_url: str = None, enabled: bool = True) -> dict:
-    """Manage LLM provider API keys."""
+                           base_url: str = None, model: str = None, enabled: bool = True) -> dict:
+    """Manage LLM provider API keys and switch active model."""
     import httpx
     base = "http://127.0.0.1:8000/api/config"
     try:
@@ -1805,7 +1807,8 @@ async def _provider_manage(action: str, provider: str = None, api_key: str = Non
                 providers = data.get("providers", {})
                 return {"ok": True, "providers": {
                     name: {"enabled": p["enabled"], "has_key": p["has_api_key"],
-                           "default_model": p.get("default_model", "")}
+                           "default_model": p.get("default_model", ""),
+                           "models": p.get("models", [])}
                     for name, p in providers.items()
                 }}
 
@@ -1827,8 +1830,33 @@ async def _provider_manage(action: str, provider: str = None, api_key: str = Non
                 r = await client.delete(f"{base}/user/providers/{provider}")
                 return {"ok": True, "message": f"Provider {provider} supprimé."}
 
+            elif action == "switch":
+                if not provider:
+                    return {"ok": False, "error": "provider requis pour switch"}
+                # Verify the provider is configured
+                r = await client.get(f"{base}")
+                data = r.json()
+                prov_info = data.get("providers", {}).get(provider)
+                if not prov_info:
+                    return {"ok": False, "error": f"Provider '{provider}' introuvable."}
+                if not prov_info.get("has_api_key") and not prov_info.get("enabled"):
+                    return {"ok": False, "error": f"Provider '{provider}' n'a pas de clé API configurée."}
+                # Resolve model
+                target_model = model or prov_info.get("default_model", "")
+                if not target_model and prov_info.get("models"):
+                    target_model = prov_info["models"][0]
+                # Save to user app settings
+                payload = {"active_provider": provider, "active_model": target_model}
+                r = await client.post(f"{base}/user/app", json=payload,
+                                      headers={"Content-Type": "application/json"})
+                if r.status_code == 200:
+                    return {"ok": True, "switched": True,
+                            "provider": provider, "model": target_model,
+                            "message": f"Modèle changé : {provider} / {target_model}. Le prochain message utilisera ce modèle."}
+                return {"ok": False, "error": r.text[:200]}
+
             else:
-                return {"ok": False, "error": f"Action inconnue: {action}. Actions: list, save, delete"}
+                return {"ok": False, "error": f"Action inconnue: {action}. Actions: list, save, delete, switch"}
 
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}
