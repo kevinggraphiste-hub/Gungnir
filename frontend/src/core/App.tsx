@@ -3,14 +3,14 @@
  *
  * Core routes are always loaded. Plugin routes are lazy-loaded and wrapped in ErrorBoundary.
  */
-import { Suspense, useEffect } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 
 import Sidebar from './components/Sidebar'
 import { PluginErrorBoundary } from './components/ErrorBoundary'
 import { useStore } from './stores/appStore'
-import { api } from './services/api'
+import { api, clearAuthToken } from './services/api'
 import { usePluginStore } from './stores/pluginStore'
 import { useGlobalKeyboard } from './hooks/useKeyboard'
 import { getPluginComponent } from './services/pluginLoader'
@@ -19,6 +19,7 @@ import { getPluginComponent } from './services/pluginLoader'
 import Chat from './pages/Chat'
 import AgentSettings from './pages/AgentSettings'
 import Settings from './pages/Settings'
+import Login from './pages/Login'
 
 // ── Loading fallback ────────────────────────────────────────────────────────
 function PluginLoading() {
@@ -43,11 +44,18 @@ function PluginPage({ name }: { name: string }) {
 }
 
 // ── App content ─────────────────────────────────────────────────────────────
-function AppContent() {
+function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogout?: boolean }) {
   const setConfig = useStore((s) => s.setConfig)
+  const setOnLogout = useStore((s) => s.setOnLogout)
   const loadPlugins = usePluginStore((s) => s.loadPlugins)
   const plugins = usePluginStore((s) => s.plugins)
   const pluginsLoaded = usePluginStore((s) => s.pluginsLoaded)
+
+  // Register logout handler in store so Sidebar can access it
+  useEffect(() => {
+    if (showLogout && onLogout) setOnLogout(onLogout)
+    return () => setOnLogout(null)
+  }, [showLogout, onLogout])
 
   // Global keyboard shortcuts
   useGlobalKeyboard()
@@ -147,9 +155,57 @@ function AppContent() {
 }
 
 export default function App() {
+  const [authState, setAuthState] = useState<'checking' | 'logged_in' | 'needs_login' | 'no_auth'>('checking')
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        // Check if auth is even required (try accessing a protected endpoint)
+        const result = await api.checkAuth()
+        if (result.ok) {
+          setAuthState('logged_in')
+        } else {
+          setAuthState('needs_login')
+        }
+      } catch (err: any) {
+        // 401 = auth is active but no valid token
+        if (err?.message?.includes('401') || err?.message?.includes('Token')) {
+          setAuthState('needs_login')
+        } else {
+          // Backend not ready or no auth configured — allow access
+          setAuthState('no_auth')
+        }
+      }
+    }
+    checkAuth()
+  }, [])
+
+  const handleLogin = () => {
+    setAuthState('logged_in')
+  }
+
+  const handleLogout = () => {
+    clearAuthToken()
+    localStorage.removeItem('gungnir_current_user')
+    setAuthState('needs_login')
+  }
+
+  if (authState === 'checking') {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
+        <Loader2 className="w-8 h-8 animate-spin" style={{ color: 'var(--accent-primary)' }} />
+      </div>
+    )
+  }
+
+  if (authState === 'needs_login') {
+    return <Login onLogin={handleLogin} />
+  }
+
+  // logged_in or no_auth — show the app
   return (
     <BrowserRouter>
-      <AppContent />
+      <AppContent onLogout={handleLogout} showLogout={authState === 'logged_in'} />
     </BrowserRouter>
   )
 }

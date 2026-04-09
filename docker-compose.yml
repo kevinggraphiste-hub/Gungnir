@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: gungnir
-      POSTGRES_PASSWORD: gungnir
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gungnir}
       POSTGRES_DB: gungnir
     volumes:
       - pgdata:/var/lib/postgresql/data

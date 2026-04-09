@@ -992,15 +992,27 @@ Tu operes en mode **demande**. Comportement :
                 _current_mode = mode_manager.current_mode.value
 
                 # RESTRAINED : vérifier que l'utilisateur a explicitement demandé cette action
+                _blocked = False
                 if _current_mode == "restrained" and not _restrained_check_user_intent(tool_name, message):
                     tool_result = {"ok": False, "error": f"Mode restreint : l'outil '{tool_name}' n'a pas ete demande explicitement par l'utilisateur. Reponds sans utiliser d'outils."}
                     print(f"[Wolf] RESTRAINED: blocked {tool_name} (no explicit user intent in: '{message[:80]}...')")
+                    _blocked = True
                 elif _current_mode == "ask_permission" and tool_name not in READ_ONLY_TOOLS and tool_name not in mode_manager.config.auto_approve_tools:
-                    # En mode ask_permission, les outils d'écriture non auto-approuvés sont bloqués
-                    # Le LLM doit demander la permission à l'utilisateur dans le chat
-                    tool_result = {"ok": False, "error": f"Mode 'Demande' actif : l'outil '{tool_name}' necessite la permission de l'utilisateur. Demande-lui confirmation avant de reessayer."}
-                    print(f"[Wolf] ASK_PERMISSION: blocked {tool_name} (needs user confirmation)")
-                else:
+                    # En mode ask_permission, les outils d'écriture nécessitent confirmation.
+                    # Si le message utilisateur contient une confirmation explicite, on autorise.
+                    _confirm_patterns = ("oui", "yes", "ok", "go", "fais", "fait", "lance", "crée", "créer",
+                                         "connecte", "configure", "ajoute", "installe", "supprime", "active",
+                                         "d'accord", "vas-y", "valide", "confirme", "je veux", "j'aimerais",
+                                         "liste", "montre", "affiche", "donne", "met", "mets")
+                    _user_confirmed = any(p in message.lower() for p in _confirm_patterns)
+                    if not _user_confirmed:
+                        tool_result = {"ok": False, "error": f"Mode 'Demande' actif : l'outil '{tool_name}' necessite la permission de l'utilisateur. Demande-lui confirmation avant de reessayer."}
+                        print(f"[Wolf] ASK_PERMISSION: blocked {tool_name} (needs user confirmation)")
+                        _blocked = True
+                    else:
+                        print(f"[Wolf] ASK_PERMISSION: allowed {tool_name} (user confirmed in message)")
+
+                if not _blocked:
                     # Check wolf executors first, then MCP executors
                     executor = WOLF_EXECUTORS.get(tool_name) or mcp_manager.get_all_executors().get(tool_name)
                     if executor:

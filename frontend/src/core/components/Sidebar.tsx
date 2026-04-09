@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next'
 import {
   MessageSquare, Bot, Settings2, ChevronLeft, ChevronRight,
   Globe, Mic, BarChart3, Calendar, Plug, Webhook, BookOpen, Code, RadioTower, Brain,
+  LogOut,
 } from 'lucide-react'
 import { useSidebarStore } from '../stores/sidebarStore'
 import { usePluginStore, PluginManifest } from '../stores/pluginStore'
@@ -25,6 +26,7 @@ export default function Sidebar() {
   const collapsed = useSidebarStore((s) => s.collapsed)
   const toggleCollapsed = useSidebarStore((s) => s.toggleCollapsed)
   const plugins = usePluginStore((s) => s.plugins)
+  const onLogout = useStore((s) => s.onLogout)
 
   const CORE_ITEMS = [
     { path: '/', icon: MessageSquare, label: t('nav.chat') },
@@ -94,8 +96,19 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* Collapse toggle */}
-      <div className="p-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+      {/* Bottom section */}
+      <div className="p-2 border-t space-y-0.5" style={{ borderColor: 'var(--border-subtle)' }}>
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-colors hover:opacity-80"
+            style={{ color: '#ef4444' }}
+            title="Déconnexion"
+          >
+            <LogOut className="w-4 h-4" />
+            {!collapsed && <span className="text-[12px]">Déconnexion</span>}
+          </button>
+        )}
         <button
           onClick={toggleCollapsed}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-colors"
