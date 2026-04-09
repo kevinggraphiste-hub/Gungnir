@@ -28,6 +28,12 @@ export class PluginErrorBoundary extends React.Component<Props, State> {
   }
 
   handleRetry = () => {
+    // If it's a chunk loading error (stale hash after deploy), hard reload to get fresh assets
+    const msg = this.state.error?.message || ''
+    if (msg.includes('dynamically imported module') || msg.includes('Failed to fetch') || msg.includes('Loading chunk')) {
+      window.location.reload()
+      return
+    }
     this.setState({ hasError: false, error: null })
   }
 

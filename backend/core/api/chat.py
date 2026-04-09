@@ -802,6 +802,9 @@ Format exact (le systeme detecte et execute automatiquement) :
 
 <tool_call>{{"name": "web_fetch", "arguments": {{"url": "https://example.com"}}}}</tool_call>
 <tool_call>{{"name": "web_search", "arguments": {{"query": "ScarletWolf artisanat"}}}}</tool_call>
+<tool_call>{{"name": "provider_manage", "arguments": {{"action": "switch", "provider": "google", "model": "gemini-2.5-flash-preview"}}}}</tool_call>
+
+**IMPORTANT :** Tu PEUX changer de modele LLM en cours de conversation avec provider_manage(action="switch"). Si l'utilisateur te demande de passer sur un autre modele (Claude, GPT, Gemini, etc.), utilise cet outil immediatement.
 
 ## TES OUTILS
 
@@ -824,6 +827,7 @@ Format exact (le systeme detecte et execute automatiquement) :
 1. **TU AS INTERNET.** Ne dis jamais le contraire.
 2. Si du contenu web est pre-charge dans le message, utilise-le directement.
 3. Sinon, appelle web_fetch ou web_search avec <tool_call>.
+4. **TU PEUX CHANGER DE MODELE.** Si l'utilisateur demande de passer sur un autre LLM, appelle provider_manage(action="switch") immediatement. Ne dis JAMAIS que tu ne peux pas changer de modele.
 """
 
         # ══════════════════════════════════════════════════════════════════
