@@ -45,9 +45,10 @@ export default function AgentSettings() {
   const skillFileRef = useRef<HTMLInputElement>(null)
   const agentFileRef = useRef<HTMLInputElement>(null)
 
-  // Drag-and-drop (shared for personalities and skills)
-  const [draggedIdx, setDraggedIdx] = useState<number | null>(null)
+  // Drag-and-drop (shared for personalities and skills) — refs to avoid race conditions
+  const dragRef = useRef<{ idx: number; context: 'personality' | 'skill' } | null>(null)
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null)
   const [dragContext, setDragContext] = useState<'personality' | 'skill' | null>(null)
 
   // Soul editor
@@ -826,18 +827,29 @@ export default function AgentSettings() {
                 return (
                   <div key={skill.name}
                     draggable
-                    onDragStart={() => { setDraggedIdx(idx); setDragContext('skill') }}
-                    onDragOver={(e) => { e.preventDefault(); if (dragContext === 'skill') setDragOverIdx(idx) }}
-                    onDragEnd={() => { setDraggedIdx(null); setDragOverIdx(null); setDragContext(null) }}
+                    onDragStart={(e) => {
+                      dragRef.current = { idx, context: 'skill' }
+                      setDraggedIdx(idx); setDragContext('skill')
+                      e.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      if (dragRef.current?.context === 'skill') setDragOverIdx(idx)
+                    }}
+                    onDragEnd={() => {
+                      dragRef.current = null
+                      setDraggedIdx(null); setDragOverIdx(null); setDragContext(null)
+                    }}
                     onDrop={async () => {
-                      if (dragContext !== 'skill' || draggedIdx === null || draggedIdx === idx) return
+                      const drag = dragRef.current
+                      if (!drag || drag.context !== 'skill' || drag.idx === idx) return
                       const reordered = [...skills]
-                      const [moved] = reordered.splice(draggedIdx, 1)
+                      const [moved] = reordered.splice(drag.idx, 1)
                       reordered.splice(idx, 0, moved)
                       setSkills(reordered)
-                      setDraggedIdx(null)
-                      setDragOverIdx(null)
-                      setDragContext(null)
+                      dragRef.current = null
+                      setDraggedIdx(null); setDragOverIdx(null); setDragContext(null)
                       await api.reorderSkills(reordered.map((s: any) => s.name))
                     }}
                     className="rounded-xl border overflow-hidden transition-all"
@@ -1463,36 +1475,58 @@ export default function AgentSettings() {
             )}
 
             {/* Personalities list */}
-            <div className="space-y-3">
+            <div className="space-y-1">
               {personalities.map((p: any, idx: number) => {
                 const isActive = p.active
                 const isEditing = editingPersonality === p.name
+                const isDragSource = dragContext === 'personality' && draggedIdx === idx
+                const isDragTarget = dragContext === 'personality' && dragOverIdx === idx && draggedIdx !== null && draggedIdx !== idx
+                const dropAbove = isDragTarget && draggedIdx !== null && idx < draggedIdx
+                const dropBelow = isDragTarget && draggedIdx !== null && idx > draggedIdx
                 return (
-                  <div
-                    key={p.name}
-                    draggable
-                    onDragStart={() => { setDraggedIdx(idx); setDragContext('personality') }}
-                    onDragOver={(e) => { e.preventDefault(); if (dragContext === 'personality') setDragOverIdx(idx) }}
-                    onDragEnd={() => { setDraggedIdx(null); setDragOverIdx(null); setDragContext(null) }}
-                    onDrop={async () => {
-                      if (dragContext !== 'personality' || draggedIdx === null || draggedIdx === idx) return
-                      const reordered = [...personalities]
-                      const [moved] = reordered.splice(draggedIdx, 1)
-                      reordered.splice(idx, 0, moved)
-                      setPersonalities(reordered)
-                      setDraggedIdx(null)
-                      setDragOverIdx(null)
-                      setDragContext(null)
-                      await api.reorderPersonalities(reordered.map((pp: any) => pp.name))
-                    }}
-                    className="rounded-xl border transition-all"
-                    style={{
-                      ...(isActive
-                        ? { borderColor: 'color-mix(in srgb, var(--accent-primary) 40%, transparent)', background: 'color-mix(in srgb, var(--accent-primary) 5%, transparent)' }
-                        : { borderColor: 'var(--border)', background: 'var(--bg-primary)' }),
-                      ...(dragContext === 'personality' && dragOverIdx === idx && draggedIdx !== idx ? { borderColor: 'var(--accent-primary)', boxShadow: '0 0 0 1px var(--accent-primary)' } : {}),
-                      ...(dragContext === 'personality' && draggedIdx === idx ? { opacity: 0.5 } : {}),
-                    }}
+                  <div key={p.name} className="relative">
+                    {/* Drop indicator line — above */}
+                    {dropAbove && (
+                      <div className="absolute -top-1 left-4 right-4 flex items-center gap-2 z-10 pointer-events-none">
+                        <div className="w-2.5 h-2.5 rounded-full border-2 flex-shrink-0" style={{ borderColor: 'var(--accent-primary)', background: 'var(--bg-primary)' }} />
+                        <div className="flex-1 h-0.5 rounded-full" style={{ background: 'var(--accent-primary)' }} />
+                      </div>
+                    )}
+                    <div
+                      draggable
+                      onDragStart={(e) => {
+                        dragRef.current = { idx, context: 'personality' }
+                        setDraggedIdx(idx); setDragContext('personality')
+                        e.dataTransfer.effectAllowed = 'move'
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        e.dataTransfer.dropEffect = 'move'
+                        if (dragRef.current?.context === 'personality') setDragOverIdx(idx)
+                      }}
+                      onDragEnd={() => {
+                        dragRef.current = null
+                        setDraggedIdx(null); setDragOverIdx(null); setDragContext(null)
+                      }}
+                      onDrop={async () => {
+                        const drag = dragRef.current
+                        if (!drag || drag.context !== 'personality' || drag.idx === idx) return
+                        const reordered = [...personalities]
+                        const [moved] = reordered.splice(drag.idx, 1)
+                        reordered.splice(idx, 0, moved)
+                        setPersonalities(reordered)
+                        dragRef.current = null
+                        setDraggedIdx(null); setDragOverIdx(null); setDragContext(null)
+                        await api.reorderPersonalities(reordered.map((pp: any) => pp.name))
+                      }}
+                      className="rounded-xl border transition-all"
+                      style={{
+                        ...(isActive
+                          ? { borderColor: 'color-mix(in srgb, var(--accent-primary) 40%, transparent)', background: 'color-mix(in srgb, var(--accent-primary) 5%, transparent)' }
+                          : { borderColor: 'var(--border)', background: 'var(--bg-primary)' }),
+                        ...(isDragTarget ? { borderColor: 'var(--accent-primary)', boxShadow: '0 0 0 1px var(--accent-primary)' } : {}),
+                        ...(isDragSource ? { opacity: 0.4, transform: 'scale(0.98)' } : {}),
+                      }}
                   >
                     {/* Card header */}
                     <div className="flex items-center gap-3 p-4">
@@ -1602,6 +1636,14 @@ export default function AgentSettings() {
                             Sauvegarder
                           </button>
                         </div>
+                      </div>
+                    )}
+                    </div>
+                    {/* Drop indicator line — below */}
+                    {dropBelow && (
+                      <div className="absolute -bottom-1 left-4 right-4 flex items-center gap-2 z-10 pointer-events-none">
+                        <div className="w-2.5 h-2.5 rounded-full border-2 flex-shrink-0" style={{ borderColor: 'var(--accent-primary)', background: 'var(--bg-primary)' }} />
+                        <div className="flex-1 h-0.5 rounded-full" style={{ background: 'var(--accent-primary)' }} />
                       </div>
                     )}
                   </div>
