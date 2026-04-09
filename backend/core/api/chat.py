@@ -812,6 +812,10 @@ Format exact (le systeme detecte et execute automatiquement) :
 **KB :** kb_write(filename,content), kb_read(filename), kb_list
 **Browser :** browser_navigate, browser_get_text, browser_click, browser_type, browser_screenshot, browser_evaluate, browser_get_links, browser_crawl, browser_close
 **Identite :** soul_read, soul_write(content)
+**Channels :** channel_manage(action,channel_type,channel_id,name,config,enabled) — actions: list, catalog, create, update, toggle, delete, test
+**Providers :** provider_manage(action,provider,api_key,base_url,enabled) — actions: list, save, delete
+**MCP :** mcp_manage(action,name,command,args,env,enabled) — actions: list, add, delete
+**Diagnostic :** doctor_check(scope)
 
 ## Modeles LLM disponibles
 {_models_section_for_prompt}
