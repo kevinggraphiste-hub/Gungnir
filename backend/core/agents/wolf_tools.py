@@ -843,6 +843,54 @@ WOLF_TOOL_SCHEMAS = [
             }
         }
     },
+    # ── Service connections (API directes) ────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "service_connect",
+            "description": (
+                "Connecte ou met à jour un service externe (n8n, GitHub, Notion, Supabase, etc.). "
+                "Utilise cet outil quand l'utilisateur donne une URL, clé API, ou token pour un service. "
+                "Le service est sauvegardé dans la config et disponible immédiatement pour service_call. "
+                "Actions: 'connect' (ajouter/mettre à jour), 'disconnect' (désactiver), 'list' (lister), 'test' (tester la connexion)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["connect", "disconnect", "list", "test"], "description": "Action à effectuer"},
+                    "name": {"type": "string", "description": "Nom du service (n8n, github, notion, supabase, slack, discord, etc.)"},
+                    "base_url": {"type": "string", "description": "URL de base du service (ex: http://localhost:5678)"},
+                    "api_key": {"type": "string", "description": "Clé API ou token d'authentification"},
+                    "token": {"type": "string", "description": "Token OAuth/bot (alternatif à api_key)"},
+                    "extra": {"type": "object", "description": "Paramètres supplémentaires {clé: valeur}"},
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "service_call",
+            "description": (
+                "Exécute un appel API REST sur un service déjà connecté via service_connect. "
+                "Utilise cet outil pour interagir avec les services configurés : lister des workflows n8n, "
+                "créer un issue GitHub, récupérer des données Notion, etc. "
+                "Le service doit être connecté et activé au préalable."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "service": {"type": "string", "description": "Nom du service connecté (n8n, github, notion, etc.)"},
+                    "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "description": "Méthode HTTP"},
+                    "path": {"type": "string", "description": "Chemin API (ex: /api/v1/workflows). Ajouté après la base_url du service."},
+                    "body": {"type": "object", "description": "Corps de la requête (pour POST/PUT/PATCH)"},
+                    "params": {"type": "object", "description": "Query parameters"},
+                },
+                "required": ["service", "method", "path"]
+            }
+        }
+    },
 ]
 
 # ── Exécuteurs ─────────────────────────────────────────────────────────────────
@@ -1972,6 +2020,182 @@ async def _mcp_manage(action: str, name: str = None, command: str = None,
         return {"ok": False, "error": str(e)[:300]}
 
 
+# ── Service connections (API directes) ────────────────────────────────────────
+
+# Auth header patterns per service type
+_SERVICE_AUTH_HEADERS = {
+    "n8n":       lambda key: {"X-N8N-API-KEY": key},
+    "github":    lambda key: {"Authorization": f"token {key}"},
+    "gitlab":    lambda key: {"PRIVATE-TOKEN": key},
+    "notion":    lambda key: {"Authorization": f"Bearer {key}", "Notion-Version": "2022-06-28"},
+    "supabase":  lambda key: {"apikey": key, "Authorization": f"Bearer {key}"},
+    "linear":    lambda key: {"Authorization": key},
+    "slack":     lambda key: {"Authorization": f"Bearer {key}"},
+    "discord":   lambda key: {"Authorization": f"Bot {key}"},
+}
+
+# Test endpoints per service type (GET these to verify connection)
+_SERVICE_TEST_ENDPOINTS = {
+    "n8n":       "/api/v1/workflows?limit=1",
+    "github":    "/user",
+    "gitlab":    "/api/v4/user",
+    "notion":    "/v1/users/me",
+    "supabase":  "/rest/v1/",
+    "linear":    "/api/graphql",
+    "slack":     "/api/auth.test",
+}
+
+
+async def _service_connect(action: str, name: str = None, base_url: str = None,
+                           api_key: str = None, token: str = None, extra: dict = None) -> dict:
+    """Connect, disconnect, list, or test external services."""
+    from backend.core.config.settings import Settings
+
+    try:
+        settings = Settings.load()
+
+        if action == "list":
+            result = []
+            for sname, sconf in settings.services.items():
+                has_auth = bool(sconf.api_key or sconf.token)
+                result.append({
+                    "name": sname, "enabled": sconf.enabled,
+                    "base_url": sconf.base_url or "",
+                    "has_auth": has_auth,
+                })
+            return {"ok": True, "services": result, "count": len(result)}
+
+        if not name:
+            return {"ok": False, "error": "Le nom du service est requis."}
+
+        if action == "connect":
+            if not base_url and not api_key and not token:
+                return {"ok": False, "error": "Au moins base_url ou api_key/token est requis."}
+
+            sconf = settings.services.get(name)
+            if not sconf:
+                # Nouveau service dynamique
+                from backend.core.config.settings import ServiceConfig
+                sconf = ServiceConfig()
+                settings.services[name] = sconf
+
+            if base_url:
+                sconf.base_url = base_url.rstrip("/")
+            if api_key:
+                sconf.api_key = api_key.strip()
+            if token:
+                sconf.token = token.strip()
+            if extra:
+                sconf.extra.update(extra)
+            sconf.enabled = True
+            settings.save()
+            return {"ok": True, "message": f"Service '{name}' connecté et activé.",
+                    "service": name, "base_url": sconf.base_url}
+
+        elif action == "disconnect":
+            sconf = settings.services.get(name)
+            if not sconf:
+                return {"ok": False, "error": f"Service '{name}' introuvable."}
+            sconf.enabled = False
+            settings.save()
+            return {"ok": True, "message": f"Service '{name}' désactivé."}
+
+        elif action == "test":
+            sconf = settings.services.get(name)
+            if not sconf or not sconf.enabled:
+                return {"ok": False, "error": f"Service '{name}' non connecté ou désactivé."}
+            if not sconf.base_url:
+                return {"ok": False, "error": f"Service '{name}' n'a pas de base_url configurée."}
+
+            key = sconf.api_key or sconf.token or ""
+            auth_fn = _SERVICE_AUTH_HEADERS.get(name, lambda k: {"Authorization": f"Bearer {k}"})
+            headers = auth_fn(key) if key else {}
+            test_path = _SERVICE_TEST_ENDPOINTS.get(name, "/")
+            url = f"{sconf.base_url}{test_path}"
+
+            import httpx
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.get(url, headers=headers)
+                if r.status_code < 400:
+                    return {"ok": True, "message": f"Connexion à '{name}' réussie.",
+                            "status": r.status_code, "url": sconf.base_url}
+                else:
+                    return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+
+        else:
+            return {"ok": False, "error": f"Action inconnue: {action}. Actions: connect, disconnect, list, test"}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+# Blocked URL patterns for service_call
+_BLOCKED_URL_PATTERNS = [
+    "169.254.169.254",  # Cloud metadata
+    "metadata.google",
+    "/etc/", "/proc/", "/sys/",
+]
+
+async def _service_call(service: str, method: str, path: str,
+                        body: dict = None, params: dict = None) -> dict:
+    """Execute a REST API call on a connected service."""
+    from backend.core.config.settings import Settings
+    import httpx
+
+    try:
+        settings = Settings.load()
+        sconf = settings.services.get(service)
+
+        if not sconf:
+            return {"ok": False, "error": f"Service '{service}' inconnu. Utilise service_connect pour le configurer."}
+        if not sconf.enabled:
+            return {"ok": False, "error": f"Service '{service}' désactivé. Utilise service_connect(action='connect') d'abord."}
+        if not sconf.base_url:
+            return {"ok": False, "error": f"Service '{service}' n'a pas de base_url. Utilise service_connect pour la configurer."}
+
+        # Security: block metadata/internal URLs
+        full_url = f"{sconf.base_url}{path}"
+        for blocked in _BLOCKED_URL_PATTERNS:
+            if blocked in full_url.lower():
+                return {"ok": False, "error": f"URL bloquée pour raison de sécurité."}
+
+        # Build auth headers
+        key = sconf.api_key or sconf.token or ""
+        auth_fn = _SERVICE_AUTH_HEADERS.get(service, lambda k: {"Authorization": f"Bearer {k}"})
+        headers = auth_fn(key) if key else {}
+        headers["Content-Type"] = "application/json"
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.request(
+                method=method.upper(),
+                url=full_url,
+                headers=headers,
+                json=body if body and method.upper() in ("POST", "PUT", "PATCH") else None,
+                params=params,
+            )
+
+            # Parse response
+            try:
+                data = r.json()
+            except Exception:
+                data = r.text[:2000]
+
+            if r.status_code < 400:
+                # Truncate large responses
+                import json as _json
+                text = _json.dumps(data, ensure_ascii=False) if isinstance(data, (dict, list)) else str(data)
+                if len(text) > 4000:
+                    text = text[:4000] + "\n... (tronqué)"
+                return {"ok": True, "status": r.status_code, "data": data if len(str(data)) < 4000 else text}
+            else:
+                return {"ok": False, "status": r.status_code, "error": str(data)[:500]}
+
+    except httpx.TimeoutException:
+        return {"ok": False, "error": f"Timeout sur {service} ({method} {path})"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 # ── Doctor (auto-diagnostic) ─────────────────────────────────────────────────
 
 async def _doctor_check(scope: str = "full") -> dict:
@@ -2166,6 +2390,9 @@ WOLF_EXECUTORS: dict[str, Any] = {
     "channel_manage":             _channel_manage,
     "provider_manage":            _provider_manage,
     "mcp_manage":                 _mcp_manage,
+    # Service connections (API directes)
+    "service_connect":            _service_connect,
+    "service_call":               _service_call,
 }
 
 # Outils en lecture seule (autorisés même en mode restreint)
@@ -2181,4 +2408,6 @@ READ_ONLY_TOOLS = {
     # Lecture seule filesystem + doctor + setup
     "file_read", "file_list", "doctor_check",
     "channel_manage", "provider_manage", "mcp_manage",
+    # service_connect est read-only pour list/test, service_call est lecture
+    "service_connect", "service_call",
 }
