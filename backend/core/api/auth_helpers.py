@@ -78,16 +78,21 @@ async def enforce_conversation_owner(convo_id: int, request: Request, session: A
     if not convo:
         return None
 
-    # If conversation has no user_id (legacy) or user is admin, allow
+    # No auth active (open mode / setup) → allow all
+    if not user_id:
+        return convo
+
+    # Conversation has no owner (legacy) → allow
     if convo.user_id is None:
         return convo
-    if user_id and convo.user_id == user_id:
+
+    # Owner match
+    if convo.user_id == user_id:
         return convo
 
     # Check admin
-    if user_id:
-        user = await session.get(User, user_id)
-        if user and user.is_admin:
-            return convo
+    user = await session.get(User, user_id)
+    if user and user.is_admin:
+        return convo
 
     return None  # Unauthorized
