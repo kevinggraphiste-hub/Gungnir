@@ -305,11 +305,28 @@ async def get_user_providers(request: Request, session: AsyncSession = Depends(g
 
 @router.post("/config/user/providers/{provider_name}")
 async def save_user_provider(provider_name: str, request: Request, session: AsyncSession = Depends(get_session)):
-    """Save a provider API key for the current user."""
+    """Save a provider API key for the current user. Fallback to global config if no auth."""
     user_id = getattr(request.state, "user_id", None)
-    if not user_id:
-        return JSONResponse({"error": "Non authentifié"}, status_code=401)
     body = await request.json()
+
+    # No auth (open mode / setup) → save to global config like before
+    if not user_id:
+        config = ProviderConfig(**body) if isinstance(body, dict) else ProviderConfig()
+        if body.get("api_key"):
+            config.api_key = body["api_key"].strip()
+            config.enabled = True
+        settings = Settings.load()
+        existing = settings.providers.get(provider_name)
+        if existing:
+            if not config.api_key:
+                config.api_key = existing.api_key
+            if not config.models:
+                config.models = existing.models
+            if not config.base_url:
+                config.base_url = existing.base_url
+        settings.providers[provider_name] = config
+        settings.save()
+        return {"status": "saved"}
     user_settings = await get_user_settings(user_id, session)
 
     provider_keys = dict(user_settings.provider_keys or {})
@@ -335,7 +352,12 @@ async def delete_user_provider(provider_name: str, request: Request, session: As
     """Remove a user's provider key."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
-        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+        # Fallback: delete from global config
+        settings = Settings.load()
+        if provider_name in settings.providers:
+            del settings.providers[provider_name]
+            settings.save()
+        return {"ok": True}
     user_settings = await get_user_settings(user_id, session)
     provider_keys = dict(user_settings.provider_keys or {})
     if provider_name in provider_keys:
