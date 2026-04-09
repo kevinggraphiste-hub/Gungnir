@@ -565,6 +565,9 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
         _lang = settings.app.language or "fr"
         system_prompt = (
             f"{soul}"
+            f"\n\n**Modele LLM actuel :** Tu tournes sur le modele `{model}` via le provider `{provider_name}`."
+            f" Quand on te demande quel modele tu es, reponds avec cet identifiant."
+            f" Tu n'es PAS GPT-4o, PAS Claude, PAS un autre modele — tu es `{model}`."
             f"{personality_block}"
             f"{consciousness_block}"
             f"\n\n## Contexte canal"
