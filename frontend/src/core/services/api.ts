@@ -467,7 +467,7 @@ export const api = {
 
   saveSoul: async (content: string) => {
     const response = await apiFetch(`${API_BASE}/agent/soul`, {
-      method: 'PUT',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     })

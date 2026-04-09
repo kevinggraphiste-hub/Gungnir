@@ -164,9 +164,13 @@ export default function AgentSettings() {
   const loadSoul = async () => {
     try {
       const res = await api.getSoul() as any
-      setSoulContent(res.content || '')
+      const content = res.content || ''
+      setSoulContent(content)
       setSoulLoaded(true)
-    } catch {
+    } catch (err) {
+      console.error('Failed to load soul:', err)
+      // Show default placeholder so user can still edit
+      setSoulContent(`# Identité de ${agentName}\n\nTu es **${agentName}**, un super-assistant IA.\nTu es intelligent, proactif, précis et loyal envers ton utilisateur.\nTu parles en français par défaut.\nTu es honnête : tu admets clairement quand tu ne sais pas quelque chose.`)
       setSoulLoaded(true)
     }
   }
