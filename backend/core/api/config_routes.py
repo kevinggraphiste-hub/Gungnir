@@ -1,9 +1,12 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config.settings import Settings, ProviderConfig, VoiceConfig, MCPServerConfig, ServiceConfig
+from backend.core.config.settings import Settings, ProviderConfig, VoiceConfig, MCPServerConfig, ServiceConfig, encrypt_value, decrypt_value
 from backend.core.providers import get_provider
 from backend.core.agents.mcp_client import mcp_manager
+from backend.core.db.engine import get_session
+from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
 
 router = APIRouter()
 
@@ -272,6 +275,147 @@ async def test_service(service_name: str):
     except Exception as e:
         import logging; logging.getLogger("gungnir").error(f"Service test error ({service_name}): {e}")
         return {"ok": False, "service": service_name, "error": "Erreur de connexion au service"}
+
+
+# ── Per-User API Keys ────────────────────────────────────────────────────────
+# Each user manages their own provider and service keys.
+# Global config (above) is admin-only for system-level settings.
+
+@router.get("/config/user/providers")
+async def get_user_providers(request: Request, session: AsyncSession = Depends(get_session)):
+    """Get the current user's provider keys (masked)."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        return {"providers": {}}
+    user_settings = await get_user_settings(user_id, session)
+    settings = Settings.load()
+    result = {}
+    for name, pcfg in settings.providers.items():
+        user_prov = (user_settings.provider_keys or {}).get(name, {})
+        has_key = bool(user_prov.get("api_key"))
+        result[name] = {
+            "enabled": user_prov.get("enabled", False),
+            "has_api_key": has_key,
+            "default_model": pcfg.default_model,
+            "models": pcfg.models,
+            "base_url": user_prov.get("base_url") or pcfg.base_url,
+        }
+    return {"providers": result}
+
+
+@router.post("/config/user/providers/{provider_name}")
+async def save_user_provider(provider_name: str, request: Request, session: AsyncSession = Depends(get_session)):
+    """Save a provider API key for the current user."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+    body = await request.json()
+    user_settings = await get_user_settings(user_id, session)
+
+    provider_keys = dict(user_settings.provider_keys or {})
+    existing = provider_keys.get(provider_name, {})
+
+    # Update fields
+    if body.get("api_key"):
+        existing["api_key"] = encrypt_value(body["api_key"].strip())
+        existing["enabled"] = True  # Auto-enable on key save
+    if "enabled" in body:
+        existing["enabled"] = body["enabled"]
+    if body.get("base_url"):
+        existing["base_url"] = body["base_url"]
+
+    provider_keys[provider_name] = existing
+    user_settings.provider_keys = provider_keys
+    await session.commit()
+    return {"status": "saved", "provider": provider_name}
+
+
+@router.delete("/config/user/providers/{provider_name}")
+async def delete_user_provider(provider_name: str, request: Request, session: AsyncSession = Depends(get_session)):
+    """Remove a user's provider key."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+    user_settings = await get_user_settings(user_id, session)
+    provider_keys = dict(user_settings.provider_keys or {})
+    if provider_name in provider_keys:
+        del provider_keys[provider_name]
+        user_settings.provider_keys = provider_keys
+        await session.commit()
+    return {"ok": True}
+
+
+@router.get("/config/user/services")
+async def get_user_services(request: Request, session: AsyncSession = Depends(get_session)):
+    """Get the current user's service keys (masked)."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        return {"services": {}}
+    user_settings = await get_user_settings(user_id, session)
+    settings = Settings.load()
+    result = {}
+    for name, scfg in settings.services.items():
+        user_svc = (user_settings.service_keys or {}).get(name, {})
+        result[name] = {
+            "enabled": user_svc.get("enabled", False),
+            "has_api_key": bool(user_svc.get("api_key")),
+            "has_token": bool(user_svc.get("token")),
+            "base_url": user_svc.get("base_url") or scfg.base_url,
+            "label": SERVICE_LABELS.get(name, name),
+        }
+    return {"services": result, "categories": SERVICE_CATEGORIES, "labels": SERVICE_LABELS}
+
+
+@router.post("/config/user/services/{service_name}")
+async def save_user_service(service_name: str, request: Request, session: AsyncSession = Depends(get_session)):
+    """Save a service config for the current user."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+    body = await request.json()
+    user_settings = await get_user_settings(user_id, session)
+
+    service_keys = dict(user_settings.service_keys or {})
+    existing = service_keys.get(service_name, {})
+
+    # Update all provided fields, encrypt secrets
+    for field in ("base_url", "project_id", "region", "bucket", "database", "namespace", "webhook_url"):
+        if field in body and body[field]:
+            existing[field] = body[field]
+    for secret_field in ("api_key", "token"):
+        if body.get(secret_field) and body[secret_field] != "***":
+            existing[secret_field] = encrypt_value(body[secret_field].strip())
+    if "enabled" in body:
+        existing["enabled"] = body["enabled"]
+
+    service_keys[service_name] = existing
+    user_settings.service_keys = service_keys
+    await session.commit()
+    return {"status": "saved", "service": service_name}
+
+
+@router.post("/config/user/app")
+async def save_user_app_settings(request: Request, session: AsyncSession = Depends(get_session)):
+    """Save per-user app preferences (active provider/model)."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        # Fallback to global config for non-auth mode
+        body = await request.json()
+        settings = Settings.load()
+        for key, value in body.items():
+            if hasattr(settings.app, key):
+                setattr(settings.app, key, value)
+        settings.save()
+        return {"status": "saved"}
+
+    body = await request.json()
+    user_settings = await get_user_settings(user_id, session)
+    if "active_provider" in body:
+        user_settings.active_provider = body["active_provider"]
+    if "active_model" in body:
+        user_settings.active_model = body["active_model"]
+    await session.commit()
+    return {"status": "saved"}
 
 
 # ── MCP Servers ───────────────────────────────────────────────────────────────

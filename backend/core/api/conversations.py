@@ -4,15 +4,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from backend.core.config.settings import Settings
-from backend.core.db.models import Conversation, Message
+from backend.core.db.models import Conversation, Message, User
 from backend.core.db.engine import get_session
 from backend.core.providers import get_provider, ChatMessage
+from backend.core.api.auth_helpers import enforce_conversation_owner
 
 router = APIRouter()
 
 
 @router.get("/conversations")
-async def list_conversations(user_id: int = None, session: AsyncSession = Depends(get_session)):
+async def list_conversations(request: Request, user_id: int = None, session: AsyncSession = Depends(get_session)):
+    # Server-side enforcement: always filter by authenticated user
+    auth_user_id = getattr(request.state, "user_id", None)
+    if auth_user_id:
+        # Admin can see all, regular user sees only their own
+        user = await session.get(User, auth_user_id)
+        if not (user and user.is_admin):
+            user_id = auth_user_id  # Force filter to own conversations
     query = select(Conversation).order_by(Conversation.updated_at.desc()).limit(50)
     if user_id is not None:
         query = query.where(Conversation.user_id == user_id)
@@ -33,7 +41,7 @@ async def list_conversations(user_id: int = None, session: AsyncSession = Depend
 
 
 @router.post("/conversations")
-async def create_conversation(data: dict, session: AsyncSession = Depends(get_session)):
+async def create_conversation(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     title = data.get("title", "Nouvelle conversation").strip()
     if len(title) > 500:
         return {"error": "Title too long (max 500 chars)"}
@@ -43,11 +51,13 @@ async def create_conversation(data: dict, session: AsyncSession = Depends(get_se
     model = data.get("model", "anthropic/claude-3.5-sonnet")
     if len(model) > 200:
         return {"error": "Invalid model name"}
+    # Always use authenticated user's ID, not client-provided
+    auth_user_id = getattr(request.state, "user_id", None)
     conv = Conversation(
         title=title,
         provider=provider,
         model=model,
-        user_id=data.get("user_id"),
+        user_id=auth_user_id or data.get("user_id"),
     )
     session.add(conv)
     await session.commit()
@@ -64,11 +74,10 @@ async def create_conversation(data: dict, session: AsyncSession = Depends(get_se
 
 
 @router.delete("/conversations/{convo_id}")
-async def delete_conversation(convo_id: int, session: AsyncSession = Depends(get_session)):
-    result = await session.execute(select(Conversation).where(Conversation.id == convo_id))
-    convo = result.scalar_one_or_none()
+async def delete_conversation(convo_id: int, request: Request, session: AsyncSession = Depends(get_session)):
+    convo = await enforce_conversation_owner(convo_id, request, session)
     if not convo:
-        return {"error": "Conversation introuvable"}
+        return JSONResponse({"error": "Conversation introuvable ou non autorisé"}, status_code=403)
 
     await session.delete(convo)
     await session.commit()
@@ -76,11 +85,10 @@ async def delete_conversation(convo_id: int, session: AsyncSession = Depends(get
 
 
 @router.put("/conversations/{convo_id}")
-async def update_conversation(convo_id: int, data: dict, session: AsyncSession = Depends(get_session)):
-    result = await session.execute(select(Conversation).where(Conversation.id == convo_id))
-    convo = result.scalar_one_or_none()
+async def update_conversation(convo_id: int, request: Request, data: dict, session: AsyncSession = Depends(get_session)):
+    convo = await enforce_conversation_owner(convo_id, request, session)
     if not convo:
-        return {"error": "Conversation introuvable"}
+        return JSONResponse({"error": "Conversation introuvable ou non autorisé"}, status_code=403)
 
     if "title" in data:
         convo.title = data["title"]
@@ -96,7 +104,7 @@ async def update_conversation(convo_id: int, data: dict, session: AsyncSession =
 
 
 @router.get("/conversations/{convo_id}/messages")
-async def get_messages(convo_id: int, session: AsyncSession = Depends(get_session)):
+async def get_messages(convo_id: int, request: Request, session: AsyncSession = Depends(get_session)):
     result = await session.execute(
         select(Message).where(Message.conversation_id == convo_id).order_by(Message.created_at)
     )

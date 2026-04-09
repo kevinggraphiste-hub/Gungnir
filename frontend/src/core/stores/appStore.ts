@@ -91,10 +91,13 @@ export const useStore = create<AppState>((set) => ({
   setSelectedProvider: (provider) => {
     localStorage.setItem('gungnir_provider', provider)
     set({ selectedProvider: provider })
-    // Sync to backend for channels/external integrations
-    fetch('/api/config/app', {
+    // Sync to backend (per-user endpoint, fallback to global)
+    const token = localStorage.getItem('gungnir_auth_token')
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    fetch('/api/config/user/app', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ active_provider: provider }),
     }).catch(() => {})
   },
@@ -102,10 +105,13 @@ export const useStore = create<AppState>((set) => ({
   setSelectedModel: (model) => {
     localStorage.setItem('gungnir_model', model)
     set({ selectedModel: model })
-    // Sync to backend for channels/external integrations
-    fetch('/api/config/app', {
+    // Sync to backend (per-user endpoint, fallback to global)
+    const token = localStorage.getItem('gungnir_auth_token')
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    fetch('/api/config/user/app', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ active_model: model }),
     }).catch(() => {})
   },

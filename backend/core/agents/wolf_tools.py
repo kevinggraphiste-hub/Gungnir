@@ -1677,7 +1677,10 @@ async def _doctor_check(scope: str = "full") -> dict:
                         import json as _json
                         m = _json.loads(manifest.read_text())
                         has_routes = routes.exists()
-                        has_frontend = (project_root / "frontend" / "src" / "plugins" / pdir.name / "index.tsx").exists()
+                        # Check frontend: source (dev) OR built dist/ (prod/Docker)
+                        has_frontend_src = (project_root / "frontend" / "src" / "plugins" / pdir.name / "index.tsx").exists()
+                        has_frontend_dist = (project_root / "frontend" / "dist" / "index.html").exists()
+                        has_frontend = has_frontend_src or has_frontend_dist
                         status = "ok" if has_routes and has_frontend else "warning"
                         detail = f"v{m.get('version', '?')}"
                         if not has_routes: detail += " [routes.py manquant]"
@@ -1732,12 +1735,25 @@ async def _doctor_check(scope: str = "full") -> dict:
 
     # ── Database
     if scope in ("full", "config"):
-        db_path = project_root / "data" / "gungnir.db"
-        if db_path.exists():
-            size_mb = db_path.stat().st_size / (1024 * 1024)
-            add_check("Base de données", "ok", f"gungnir.db — {size_mb:.1f} Mo")
+        from backend.core.db.engine import DATABASE_URL
+        if DATABASE_URL and "postgresql" in DATABASE_URL:
+            # PostgreSQL — test actual connectivity
+            try:
+                from backend.core.db.engine import async_session
+                async with async_session() as session:
+                    result = await session.execute(__import__('sqlalchemy').text("SELECT 1"))
+                    result.scalar()
+                add_check("Base de données", "ok", "PostgreSQL connecté")
+            except Exception as e:
+                add_check("Base de données", "error", f"PostgreSQL inaccessible: {str(e)[:100]}")
         else:
-            add_check("Base de données", "warning", "gungnir.db introuvable")
+            # SQLite fallback
+            db_path = project_root / "data" / "gungnir.db"
+            if db_path.exists():
+                size_mb = db_path.stat().st_size / (1024 * 1024)
+                add_check("Base de données", "ok", f"gungnir.db — {size_mb:.1f} Mo")
+            else:
+                add_check("Base de données", "warning", "gungnir.db introuvable")
 
     # Summary
     total = len(results["checks"])

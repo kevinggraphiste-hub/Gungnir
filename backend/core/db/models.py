@@ -56,8 +56,29 @@ class User(Base):
     api_token = Column(String(128), nullable=True, unique=True)
     avatar_url = Column(Text, default="")
     is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    settings = relationship("UserSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
+
+
+class UserSettings(Base):
+    """Per-user API keys and preferences. Each user brings their own keys."""
+    __tablename__ = "user_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    # JSON blob: {"openrouter": {"api_key": "enc:...", "enabled": true}, ...}
+    provider_keys = Column(JSON, default=dict)
+    # JSON blob: {"qdrant": {"api_key": "enc:...", "base_url": "..."}, ...}
+    service_keys = Column(JSON, default=dict)
+    # User preferences (active provider/model)
+    active_provider = Column(String(100), default="openrouter")
+    active_model = Column(String(255), default="")
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="settings")
 
 
 class AgentTask(Base):
@@ -129,13 +150,15 @@ class PluginRegistry(Base):
 async def init_db(engine):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Migrate: add user_id column to conversations if missing
-        try:
-            await conn.execute(
-                __import__("sqlalchemy").text(
-                    "ALTER TABLE conversations ADD COLUMN user_id INTEGER REFERENCES users(id)"
-                )
-            )
-            print("[DB] Migration: added user_id to conversations")
-        except Exception:
-            pass  # Column already exists
+        # Migrations — each wrapped in try/except (column already exists → skip)
+        _text = __import__("sqlalchemy").text
+        migrations = [
+            ("ALTER TABLE conversations ADD COLUMN user_id INTEGER REFERENCES users(id)", "user_id → conversations"),
+            ("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE", "is_admin → users"),
+        ]
+        for sql, label in migrations:
+            try:
+                await conn.execute(_text(sql))
+                print(f"[DB] Migration: {label}")
+            except Exception:
+                pass  # Already exists

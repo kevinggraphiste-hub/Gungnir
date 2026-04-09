@@ -2,6 +2,7 @@
 Gungnir — Backup & Restore API Routes
 """
 import json
+import logging
 import shutil
 import zipfile
 from datetime import datetime
@@ -9,6 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter
 
 router = APIRouter()
+logger = logging.getLogger("gungnir")
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
@@ -16,17 +18,26 @@ BACKEND_DATA_DIR = PROJECT_ROOT / "backend" / "data"
 BACKUPS_DIR = DATA_DIR / "backups"
 CONFIG_FILE = DATA_DIR / "backup_config.json"
 
-# Files to include in backups
+# Files to include in backups (gungnir.db only if SQLite is used)
 BACKUP_TARGETS = [
     DATA_DIR / "config.json",
     DATA_DIR / "agent_mode.json",
     DATA_DIR / "agents.json",
     DATA_DIR / "heartbeat.json",
     DATA_DIR / "personalities.json",
-    DATA_DIR / "gungnir.db",
     BACKEND_DATA_DIR / "skills.json",
     BACKEND_DATA_DIR / "personalities.json",
 ]
+
+# Add SQLite DB only if not using PostgreSQL
+def _get_backup_targets() -> list[Path]:
+    targets = list(BACKUP_TARGETS)
+    from backend.core.db.engine import DATABASE_URL
+    if "postgresql" not in DATABASE_URL and "asyncpg" not in DATABASE_URL:
+        db_path = DATA_DIR / "gungnir.db"
+        if db_path.exists():
+            targets.append(db_path)
+    return targets
 
 
 def _load_config() -> dict:
@@ -102,7 +113,7 @@ async def create_backup_now():
         zip_path = BACKUPS_DIR / filename
 
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for target in BACKUP_TARGETS:
+            for target in _get_backup_targets():
                 if target.exists():
                     arcname = str(target.relative_to(PROJECT_ROOT))
                     zf.write(target, arcname)

@@ -338,6 +338,7 @@ class ChannelConfig(BaseModel):
     name: str
     config: dict = Field(default_factory=dict)
     enabled: bool = False
+    user_id: Optional[int] = None  # Owner of this channel — uses their API keys
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     stats: dict = Field(default_factory=lambda: {"messages_in": 0, "messages_out": 0, "last_activity": None})
 
@@ -368,10 +369,27 @@ async def get_catalog():
 
 # ── CRUD Channels ───────────────────────────────────────────────────
 @router.get("/list")
-async def list_channels():
+async def list_channels(request: Request):
     channels = _load_channels()
+    # Filter by authenticated user — admin sees all, others see only their own
+    auth_user_id = getattr(request.state, "user_id", None)
+    is_admin = False
+    if auth_user_id:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.db.models import User
+            async with async_session() as session:
+                user = await session.get(User, auth_user_id)
+                is_admin = user and user.is_admin
+        except Exception:
+            pass
+
     result = []
     for cid, ch in channels.items():
+        # Show channel if: no user_id (legacy), user is admin, or user owns it
+        ch_owner = ch.get("user_id")
+        if auth_user_id and not is_admin and ch_owner is not None and ch_owner != auth_user_id:
+            continue
         safe = {**ch}
         # Masquer les secrets
         if "config" in safe:
@@ -389,11 +407,16 @@ async def list_channels():
 
 
 @router.post("/create")
-async def create_channel(data: ChannelConfig):
+async def create_channel(data: ChannelConfig, request: Request):
     if data.type not in CHANNEL_CATALOG:
         raise HTTPException(400, f"Type inconnu: {data.type}")
 
     channels = _load_channels()
+
+    # Assign channel to authenticated user
+    auth_user_id = getattr(request.state, "user_id", None)
+    if auth_user_id:
+        data.user_id = auth_user_id
 
     # Générer une API key si type API et pas fournie
     if data.type == "api" and not data.config.get("api_key"):
@@ -510,25 +533,58 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
         from pathlib import Path as _Path
         settings = Settings.load()
 
-        # Use the same provider/model selected in the chat frontend
-        provider_name = settings.app.active_provider or "openrouter"
-        provider_config = settings.providers.get(provider_name)
+        # Resolve provider: per-user keys first (channel owner), then global fallback
+        provider_name = None
+        provider_config = None
+        model = None
+        channel_owner_id = ch.get("user_id")
 
-        # Fallback: if selected provider has no key, find any active provider
-        if not provider_config or not provider_config.enabled or not provider_config.api_key:
-            provider_name = None
-            provider_config = None
-            for pname, pcfg in settings.providers.items():
-                if pcfg.enabled and pcfg.api_key:
-                    provider_name = pname
-                    provider_config = pcfg
-                    break
+        if channel_owner_id:
+            try:
+                from backend.core.db.engine import async_session as _ch_session_maker
+                from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
+                async with _ch_session_maker() as _us_session:
+                    user_settings = await get_user_settings(channel_owner_id, _us_session)
+                    # Use user's active provider/model
+                    _user_prov_name = user_settings.active_provider or "openrouter"
+                    _user_prov = get_user_provider_key(user_settings, _user_prov_name)
+                    if _user_prov and _user_prov.get("api_key"):
+                        from backend.core.config.settings import ProviderConfig
+                        _base = settings.providers.get(_user_prov_name)
+                        provider_name = _user_prov_name
+                        provider_config = ProviderConfig(
+                            enabled=True,
+                            api_key=_user_prov["api_key"],
+                            base_url=_user_prov.get("base_url") or (_base.base_url if _base else None),
+                            default_model=_base.default_model if _base else None,
+                            models=_base.models if _base else [],
+                        )
+                        model = user_settings.active_model or (provider_config.default_model if provider_config else None)
+            except Exception as _e:
+                import logging
+                logging.getLogger("gungnir").warning(f"Channel user key lookup failed: {_e}")
+
+        # Fallback to global config
+        if not provider_config:
+            provider_name = settings.app.active_provider or "openrouter"
+            provider_config = settings.providers.get(provider_name)
+            if not provider_config or not provider_config.enabled or not provider_config.api_key:
+                provider_name = None
+                provider_config = None
+                for pname, pcfg in settings.providers.items():
+                    if pcfg.enabled and pcfg.api_key:
+                        provider_name = pname
+                        provider_config = pcfg
+                        break
+            if provider_config:
+                model = settings.app.active_model or provider_config.default_model
 
         if not provider_name or not provider_config:
-            return "Aucun provider LLM configuré."
+            return "Aucun provider LLM configuré. Ajoutez votre clé API dans les paramètres."
 
         provider = get_provider(provider_name, provider_config.api_key, provider_config.base_url)
-        model = settings.app.active_model or provider_config.default_model
+        if not model:
+            model = provider_config.default_model
 
         # ── Build system prompt like the main chat ──
         # Soul (identity)

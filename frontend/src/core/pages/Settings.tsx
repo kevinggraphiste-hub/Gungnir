@@ -1208,9 +1208,37 @@ export default function Settings() {
               </p>
 
               {/* Editing modal */}
-              {editingService && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setEditingService(null)}>
-                  <div className="w-full max-w-lg rounded-xl border p-6 space-y-4" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }} onClick={e => e.stopPropagation()}>
+              {editingService && (() => {
+                // Show only relevant fields per service
+                const serviceFields: Record<string, string[]> = {
+                  supabase: ['base_url', 'api_key', 'project_id'],
+                  postgresql: ['base_url', 'database'],
+                  s3: ['base_url', 'api_key', 'region', 'bucket'],
+                  github: ['base_url', 'token'],
+                  notion: ['base_url', 'token'],
+                  google_drive: ['base_url', 'api_key'],
+                  pinecone: ['base_url', 'api_key', 'namespace'],
+                  qdrant: ['base_url', 'api_key', 'namespace'],
+                  slack: ['token', 'webhook_url'],
+                  discord: ['token', 'webhook_url'],
+                  n8n: ['base_url', 'api_key'],
+                  redis: ['base_url'],
+                }
+                const fieldDefs: Record<string, { label: string; placeholder: string; type?: string }> = {
+                  base_url: { label: 'URL de base', placeholder: 'https://...' },
+                  api_key: { label: 'Clé API', placeholder: services[editingService]?.api_key === '***' ? '••• (déjà configurée)' : 'Clé API', type: 'password' },
+                  token: { label: 'Token', placeholder: services[editingService]?.token === '***' ? '••• (déjà configuré)' : 'Token OAuth / Bot', type: 'password' },
+                  project_id: { label: 'Project ID', placeholder: 'ID du projet' },
+                  database: { label: 'Base de données', placeholder: 'Nom de la BDD' },
+                  region: { label: 'Région', placeholder: 'eu-west-1' },
+                  bucket: { label: 'Bucket', placeholder: 'Nom du bucket' },
+                  namespace: { label: 'Namespace', placeholder: 'Collection / namespace' },
+                  webhook_url: { label: 'Webhook URL', placeholder: 'https://...' },
+                }
+                const fields = (serviceFields[editingService] || Object.keys(fieldDefs))
+                return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setEditingService(null)}>
+                  <div className="w-full max-w-md rounded-xl border p-5 space-y-3 max-h-[80vh] overflow-y-auto" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }} onClick={e => e.stopPropagation()}>
                     <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
                       {serviceLabels[editingService] || editingService}
                     </h3>
@@ -1222,26 +1250,20 @@ export default function Settings() {
                       <span style={{ color: 'var(--text-secondary)' }}>Activé</span>
                     </label>
 
-                    {/* Fields */}
-                    {[
-                      { key: 'base_url', label: 'URL de base', placeholder: 'https://...' },
-                      { key: 'api_key', label: 'Clé API', placeholder: services[editingService]?.api_key === '***' ? '••• (déjà configurée)' : 'Clé API', type: 'password' },
-                      { key: 'token', label: 'Token', placeholder: services[editingService]?.token === '***' ? '••• (déjà configuré)' : 'Token OAuth / Bot', type: 'password' },
-                      { key: 'project_id', label: 'Project ID', placeholder: 'ID du projet' },
-                      { key: 'database', label: 'Base de données', placeholder: 'Nom de la BDD' },
-                      { key: 'region', label: 'Région', placeholder: 'eu-west-1' },
-                      { key: 'bucket', label: 'Bucket', placeholder: 'Nom du bucket' },
-                      { key: 'namespace', label: 'Namespace', placeholder: 'Collection / namespace' },
-                      { key: 'webhook_url', label: 'Webhook URL', placeholder: 'https://...' },
-                    ].map(f => (
-                      <div key={f.key}>
-                        <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>{f.label}</label>
-                        <input type={f.type || 'text'} value={serviceForm[f.key] || ''} placeholder={f.placeholder}
-                          onChange={e => setServiceForm(prev => ({ ...prev, [f.key]: e.target.value }))}
-                          className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm focus:outline-none"
-                          style={{ color: 'var(--text-primary)' }} />
-                      </div>
-                    ))}
+                    {/* Fields — only relevant ones per service */}
+                    {fields.map(key => {
+                      const f = fieldDefs[key]
+                      if (!f) return null
+                      return (
+                        <div key={key}>
+                          <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>{f.label}</label>
+                          <input type={f.type || 'text'} value={serviceForm[key] || ''} placeholder={f.placeholder}
+                            onChange={e => setServiceForm(prev => ({ ...prev, [key]: e.target.value }))}
+                            className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm focus:outline-none"
+                            style={{ color: 'var(--text-primary)' }} />
+                        </div>
+                      )
+                    })}
 
                     <div className="flex gap-2 pt-2">
                       <button onClick={handleSaveService} disabled={serviceSaving}
@@ -1257,7 +1279,8 @@ export default function Settings() {
                     </div>
                   </div>
                 </div>
-              )}
+                )
+              })()}
 
               {/* Service cards by category */}
               {Object.entries(serviceCategories).map(([cat, serviceNames]) => {

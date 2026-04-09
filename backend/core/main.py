@@ -42,24 +42,36 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     await init_db(engine)
 
-    # 1b. Auto-migrate: ensure api_token column exists
+    # 1b. Auto-migrations
     try:
         from sqlalchemy import text
         async with engine.begin() as conn:
-            # Detect database type — use appropriate introspection
-            if "postgresql" in DATABASE_URL or "asyncpg" in DATABASE_URL:
-                result = await conn.execute(text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = 'users' AND column_name = 'api_token'"
-                ))
-                has_column = result.fetchone() is not None
-            else:
-                result = await conn.execute(text("PRAGMA table_info(users)"))
-                columns = [row[1] for row in result.fetchall()]
-                has_column = "api_token" in columns
-            if not has_column:
+            _is_pg = "postgresql" in DATABASE_URL or "asyncpg" in DATABASE_URL
+
+            # Helper to check if column exists
+            async def _has_col(table: str, column: str) -> bool:
+                if _is_pg:
+                    r = await conn.execute(text(
+                        f"SELECT column_name FROM information_schema.columns "
+                        f"WHERE table_name = '{table}' AND column_name = '{column}'"
+                    ))
+                    return r.fetchone() is not None
+                else:
+                    r = await conn.execute(text(f"PRAGMA table_info({table})"))
+                    return column in [row[1] for row in r.fetchall()]
+
+            # Migration: api_token on users
+            if not await _has_col("users", "api_token"):
                 await conn.execute(text("ALTER TABLE users ADD COLUMN api_token VARCHAR(128)"))
-                logger.info("Migration: added api_token column to users table")
+                logger.info("Migration: added api_token column to users")
+
+            # Migration: is_admin on users
+            if not await _has_col("users", "is_admin"):
+                await conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE"))
+                # Set first user (id=1) as admin
+                await conn.execute(text("UPDATE users SET is_admin = TRUE WHERE id = 1"))
+                logger.info("Migration: added is_admin column, user #1 set as admin")
+
     except Exception as e:
         logger.warning(f"Migration check skipped: {e}")
 

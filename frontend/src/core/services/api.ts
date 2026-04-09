@@ -134,11 +134,31 @@ export const api = {
   // ── Config ────────────────────────────────────────────────────────
   getConfig: async () => {
     const response = await apiFetch(`${API_BASE}/config`)
-    return handleResponse(response)
+    const config = await handleResponse(response)
+    // Merge per-user provider keys over global config
+    try {
+      const userProvResp = await apiFetch(`${API_BASE}/config/user/providers`)
+      if (userProvResp.ok) {
+        const userProvData = await userProvResp.json()
+        if (userProvData.providers) {
+          for (const [name, uprov] of Object.entries(userProvData.providers) as any) {
+            if (config.providers[name]) {
+              // User has a key → show as configured
+              if (uprov.has_api_key) {
+                config.providers[name].has_api_key = true
+                config.providers[name].enabled = uprov.enabled
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+    return config
   },
 
   saveProvider: async (provider: string, data: { enabled?: boolean; api_key?: string; default_model?: string }) => {
-    const response = await apiFetch(`${API_BASE}/config/providers/${provider}`, {
+    // Save to per-user endpoint (each user manages their own keys)
+    const response = await apiFetch(`${API_BASE}/config/user/providers/${provider}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -147,7 +167,17 @@ export const api = {
   },
 
   deleteProvider: async (provider: string) => {
-    const response = await apiFetch(`${API_BASE}/config/providers/${provider}`, { method: 'DELETE' })
+    const response = await apiFetch(`${API_BASE}/config/user/providers/${provider}`, { method: 'DELETE' })
+    return handleResponse(response)
+  },
+
+  // Admin-only: global provider config
+  saveGlobalProvider: async (provider: string, data: Record<string, any>) => {
+    const response = await apiFetch(`${API_BASE}/config/providers/${provider}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
     return handleResponse(response)
   },
 
@@ -316,6 +346,11 @@ export const api = {
       setAuthToken(result.token)
     }
     return result
+  },
+
+  checkAuth: async () => {
+    const response = await apiFetch(`${API_BASE}/users/me`)
+    return handleResponse(response)
   },
 
   // ── Voice ─────────────────────────────────────────────────────────

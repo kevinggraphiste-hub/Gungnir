@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pathlib import Path
@@ -7,7 +7,7 @@ import asyncio
 import re as _re_mod
 import uuid as _uuid_mod
 
-from backend.core.config.settings import Settings
+from backend.core.config.settings import Settings, ProviderConfig
 from backend.core.db.models import Conversation, Message
 from backend.core.db.engine import get_session
 from backend.core.providers import get_provider, ChatMessage
@@ -577,9 +577,16 @@ Tu n'es pas Claude, GPT ou un autre assistant generique -- tu es Wolf.
 @router.post("/conversations/{convo_id}/chat")
 async def chat(
     convo_id: int,
+    request: Request,
     data: dict,
     session: AsyncSession = Depends(get_session)
 ):
+    # -- Ownership check
+    from backend.core.api.auth_helpers import enforce_conversation_owner, get_user_settings, get_user_provider_key
+    convo_check = await enforce_conversation_owner(convo_id, request, session)
+    if not convo_check:
+        return {"error": "Conversation non autorisée"}
+
     # -- Budget check (graceful — uses separate session to avoid corrupting main transaction)
     try:
         from backend.core.cost.manager import get_cost_manager
@@ -597,9 +604,33 @@ async def chat(
     model = data.get("model")
     message = data.get("message", "")
 
+    # -- Resolve API key: per-user keys first, fallback to global config
     provider_config = settings.providers.get(provider_name)
-    if not provider_config or not provider_config.enabled or not provider_config.api_key:
-        return {"error": "Provider non configure"}
+    user_id = getattr(request.state, "user_id", None)
+    _user_api_key = None
+    _user_base_url = None
+    if user_id:
+        try:
+            user_settings = await get_user_settings(user_id, session)
+            user_prov = get_user_provider_key(user_settings, provider_name)
+            if user_prov and user_prov.get("api_key"):
+                _user_api_key = user_prov["api_key"]
+                _user_base_url = user_prov.get("base_url")
+        except Exception as e:
+            print(f"[Wolf] User key lookup skipped: {e}")
+
+    if _user_api_key:
+        # User has their own key — use it
+        if not provider_config:
+            provider_config = ProviderConfig(enabled=True, api_key=_user_api_key, base_url=_user_base_url)
+        else:
+            provider_config = provider_config.model_copy()
+            provider_config.api_key = _user_api_key
+            provider_config.enabled = True
+            if _user_base_url:
+                provider_config.base_url = _user_base_url
+    elif not provider_config or not provider_config.enabled or not provider_config.api_key:
+        return {"error": "Provider non configuré. Ajoutez votre clé API dans les paramètres."}
 
     # Validation du modele : verifier qu'il existe chez le provider
     if model:

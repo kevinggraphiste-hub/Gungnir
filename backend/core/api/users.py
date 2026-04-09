@@ -61,12 +61,17 @@ async def create_user(request: Request, session: AsyncSession = Depends(get_sess
     if body.get("password"):
         password_hash = _hash_password(body["password"])
 
+    # First user ever created becomes admin automatically
+    user_count = await session.execute(select(User))
+    is_first_user = len(user_count.scalars().all()) == 0
+
     user = User(
         username=username,
         display_name=body.get("display_name", username),
         password_hash=password_hash,
         avatar_url=body.get("avatar_url", ""),
         is_active=True,
+        is_admin=is_first_user,
     )
     session.add(user)
     await session.commit()
@@ -77,6 +82,7 @@ async def create_user(request: Request, session: AsyncSession = Depends(get_sess
         "display_name": user.display_name,
         "avatar_url": user.avatar_url,
         "is_active": user.is_active,
+        "is_admin": bool(user.is_admin),
     }
 
 
@@ -110,6 +116,29 @@ async def delete_user(user_id: int, session: AsyncSession = Depends(get_session)
     await session.delete(user)
     await session.commit()
     return {"ok": True}
+
+
+@router.get("/users/me")
+async def get_current_user(request: Request, session: AsyncSession = Depends(get_session)):
+    """Renvoie l'utilisateur courant à partir du Bearer token."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+    token = auth_header[7:]
+    result = await session.execute(select(User).where(User.api_token == token, User.is_active == True))
+    user = result.scalars().first()
+    if not user:
+        return JSONResponse({"error": "Token invalide"}, status_code=401)
+    return {
+        "ok": True,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name,
+            "avatar_url": user.avatar_url,
+            "is_admin": bool(user.is_admin),
+        }
+    }
 
 
 @router.post("/users/login")
@@ -146,5 +175,6 @@ async def login_user(request: Request, session: AsyncSession = Depends(get_sessi
             "username": user.username,
             "display_name": user.display_name,
             "avatar_url": user.avatar_url,
+            "is_admin": bool(user.is_admin),
         }
     }
