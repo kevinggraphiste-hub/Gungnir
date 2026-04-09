@@ -619,11 +619,12 @@ WOLF_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "soul_write",
-            "description": "Met à jour l'identité permanente (soul.md) de Wolf. Attention : change la personnalité de base pour TOUTES les conversations.",
+            "description": "Met à jour l'identité permanente (soul.md) de l'agent. Change la personnalité de base pour TOUTES les conversations. Met aussi à jour le nom de l'agent dans la config si un nouveau nom est fourni.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "Nouveau contenu complet de soul.md"}
+                    "content": {"type": "string", "description": "Nouveau contenu complet de soul.md"},
+                    "agent_name": {"type": "string", "description": "Nouveau nom de l'agent (optionnel — sera aussi extrait du contenu automatiquement)"}
                 },
                 "required": ["content"]
             }
@@ -1428,10 +1429,33 @@ async def _soul_read() -> dict:
     return {"ok": False, "error": "soul.md introuvable."}
 
 
-async def _soul_write(content: str) -> dict:
+async def _soul_write(content: str, agent_name: str = None) -> dict:
     soul = DATA_DIR / "soul.md"
     soul.parent.mkdir(exist_ok=True)
     soul.write_text(content, encoding="utf-8")
+
+    # If agent_name is provided (or extractable), update the app settings
+    _name = agent_name
+    if not _name:
+        # Try to extract name from first line pattern: "# Ame de XXX" or "Tu es **XXX**"
+        import re
+        m = re.search(r'#\s*(?:Ame|Âme|Soul)\s+de\s+(\w+)', content)
+        if not m:
+            m = re.search(r'Tu es \*\*(\w+)\*\*', content)
+        if m:
+            _name = m.group(1)
+
+    if _name:
+        try:
+            from backend.core.config.settings import Settings
+            settings = Settings.load()
+            if settings.app.agent_name != _name:
+                settings.app.agent_name = _name
+                settings.save()
+                return {"ok": True, "message": f"soul.md mis à jour et nom changé en '{_name}'. Prendra effet immédiatement."}
+        except Exception:
+            pass
+
     return {"ok": True, "message": "soul.md mis à jour. Prendra effet à la prochaine conversation."}
 
 

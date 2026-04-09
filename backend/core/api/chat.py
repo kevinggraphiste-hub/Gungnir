@@ -564,13 +564,45 @@ def _extract_urls_from_conversation(messages: list) -> list[str]:
 
 # Chemin du fichier soul
 SOUL_FILE = Path(__file__).parent.parent.parent.parent / "data" / "soul.md"
-DEFAULT_SOUL = """# Ame de Wolf -- Identite permanente
 
-Tu es **Wolf**, un super-assistant IA developpe par ScarletWolf.
+def _get_default_soul(agent_name: str = None) -> str:
+    """Generate default soul using the configured agent name."""
+    name = agent_name or Settings.load().app.agent_name or "Gungnir"
+    return f"""# Ame de {name} -- Identite permanente
+
+Tu es **{name}**, un super-assistant IA.
 Tu es intelligent, proactif, precis et loyal envers ton utilisateur.
 Tu parles en francais par defaut, sauf si l'utilisateur s'adresse a toi dans une autre langue.
 Tu es honnete : tu admets clairement quand tu ne sais pas quelque chose.
-Tu n'es pas Claude, GPT ou un autre assistant generique -- tu es Wolf.
+Tu n'es pas Claude, GPT ou un autre assistant generique -- tu es {name}.
+"""
+
+# Onboarding prompt — injected on the very first conversation ever
+ONBOARDING_PROMPT = """
+## ONBOARDING — PREMIERE CONVERSATION
+
+C'est la **toute premiere conversation** avec cet utilisateur. Le systeme n'a pas encore ete configure.
+Tu dois te presenter et proposer un setup initial convivial. Voici comment proceder :
+
+1. **Accueille chaleureusement** l'utilisateur avec un message court et amical
+2. **Demande-lui comment il veut t'appeler** — propose le nom actuel ("{agent_name}") ou un autre de son choix
+3. **Demande-lui de definir ta personnalite** — quel role tu dois jouer (assistant general, expert technique, assistant creatif, etc.)
+4. **Demande s'il a des preferences** :
+   - Tutoiement ou vouvoiement ?
+   - Style de reponse : concis ou detaille ?
+   - Domaines d'expertise privilegies ?
+   - Une signature de message ? (ex: un emoji, une phrase de fin)
+5. **Propose de configurer les bases** :
+   - Cles API LLM (si pas encore fait) — tu peux les sauvegarder avec provider_manage
+   - Canaux de communication (Slack, Discord, Telegram) — tu peux les connecter avec channel_manage
+   - Serveurs MCP — tu peux les ajouter avec mcp_manage
+
+Une fois les reponses obtenues, utilise tes outils :
+- `soul_write(content)` pour ecrire ton identite dans le fichier soul.md
+- Si l'utilisateur donne un nom different, inclus-le dans le soul
+
+**Sois naturel, pas robotique.** Ne deballe pas tout d'un coup — pose 2-3 questions, attends la reponse, puis continue.
+Commence par te presenter et demander le nom.
 """
 
 
@@ -702,13 +734,23 @@ async def chat(
     }
     _lang_code = settings.app.language or "fr"
     _lang_label = _lang_names.get(_lang_code, _lang_code)
-    soul_content = SOUL_FILE.read_text(encoding="utf-8") if SOUL_FILE.exists() else DEFAULT_SOUL
+    _agent_name = settings.app.agent_name or "Gungnir"
+    soul_content = SOUL_FILE.read_text(encoding="utf-8") if SOUL_FILE.exists() else _get_default_soul(_agent_name)
     chosen_model = model or provider_config.default_model
     soul_content = soul_content + (
-        f"\n\n**Modele LLM actuel :** Tu tournes sur le modele `{chosen_model}` via le provider `{provider_name}`."
+        f"\n\n**Ton nom :** Tu t'appelles **{_agent_name}**. Utilise CE nom quand tu te presentes, jamais 'Wolf' ou un autre nom generique."
+        f"\n**Modele LLM actuel :** Tu tournes sur le modele `{chosen_model}` via le provider `{provider_name}`."
         f" Quand on te demande quel modele tu es, reponds avec cet identifiant."
         f"\n**Langue de reponse :** Tu reponds TOUJOURS en {_lang_label}, quelle que soit la langue du message recu, sauf instruction explicite contraire."
     )
+
+    # Detect first-ever conversation — trigger onboarding
+    _is_first_conversation = False
+    if not SOUL_FILE.exists() and len(messages) == 0:
+        # Check if there are ANY messages in the DB (not just this conversation)
+        _total_msgs = await session.execute(select(Message).limit(1))
+        if not _total_msgs.scalars().first():
+            _is_first_conversation = True
     active_personality = pm.get_active()
     personality_block = ""
     if active_personality and active_personality.system_prompt:
@@ -915,7 +957,13 @@ Tu operes en mode **demande**. Comportement :
         except Exception:
             pass  # Plugin non chargé ou erreur — pas bloquant
 
-        full_system = _soul_content.strip() + _personality_block + consciousness_block + tools_block + mode_block
+        # Onboarding block (first conversation ever)
+        onboarding_block = ""
+        if _is_first_conversation:
+            onboarding_block = ONBOARDING_PROMPT.replace("{agent_name}", _agent_name)
+            print(f"[Wolf] ONBOARDING: first conversation detected, injecting setup prompt")
+
+        full_system = _soul_content.strip() + _personality_block + consciousness_block + tools_block + mode_block + onboarding_block
         chat_messages.insert(0, ChatMessage(role="system", content=full_system))
 
         # -- Boucle tool calling

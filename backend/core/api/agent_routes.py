@@ -17,7 +17,7 @@ from backend.core.api.chat import (
     _extract_urls_from_conversation,
     _prefetch_urls_in_message,
     SOUL_FILE,
-    DEFAULT_SOUL,
+    _get_default_soul,
 )
 
 
@@ -459,7 +459,7 @@ async def scan_skill(data: dict):
 
 @router.get("/soul")
 async def get_soul():
-    content = SOUL_FILE.read_text(encoding="utf-8") if SOUL_FILE.exists() else DEFAULT_SOUL
+    content = SOUL_FILE.read_text(encoding="utf-8") if SOUL_FILE.exists() else _get_default_soul()
     return {"content": content}
 
 
@@ -470,6 +470,23 @@ async def save_soul(data: dict):
         return {"success": False, "error": "Contenu vide"}
     SOUL_FILE.parent.mkdir(exist_ok=True)
     SOUL_FILE.write_text(content, encoding="utf-8")
+
+    # Try to extract and update agent name from soul content
+    import re
+    m = re.search(r'#\s*(?:Ame|Âme|Soul)\s+de\s+(\w+)', content)
+    if not m:
+        m = re.search(r'Tu es \*\*(\w+)\*\*', content)
+    if m:
+        new_name = m.group(1)
+        try:
+            from backend.core.config.settings import Settings
+            settings = Settings.load()
+            if settings.app.agent_name != new_name:
+                settings.app.agent_name = new_name
+                settings.save()
+        except Exception:
+            pass
+
     return {"success": True}
 
 
