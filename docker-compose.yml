@@ -1,16 +1,33 @@
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gungnir
+      POSTGRES_PASSWORD: gungnir
+      POSTGRES_DB: gungnir
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
   app:
     build:
       context: .
       dockerfile: deploy/Dockerfile
     ports:
       - "8000:8000"
+    depends_on:
+      - db
     environment:
       - GUNGNIR_SECRET_KEY=${GUNGNIR_SECRET_KEY}
-      - DATABASE_URL=${DATABASE_URL:-}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://gungnir:gungnir@db:5432/gungnir}
     env_file:
       - .env
     volumes:
       - ./data:/app/data
       - ./backend/plugins:/app/backend/plugins
       - ./backend/data:/app/backend/data
+
+volumes:
+  pgdata:
