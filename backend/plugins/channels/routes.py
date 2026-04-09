@@ -579,7 +579,8 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
             ChatMessage(role="user", content=text),
         ]
 
-        response_text = await provider.chat(messages, model=model)
+        response = await provider.chat(messages, model=model)
+        response_text = response.content if hasattr(response, 'content') else str(response)
 
         # Store in consciousness
         try:
@@ -587,7 +588,7 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
             if consciousness.enabled:
                 await consciousness.store_interaction(
                     f"[{ch.get('type', 'channel')}:{sender_name}] {text}",
-                    str(response_text),
+                    response_text,
                 )
         except Exception:
             pass
