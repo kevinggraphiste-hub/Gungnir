@@ -774,12 +774,13 @@ WOLF_TOOL_SCHEMAS = [
                 "Gère les canaux de communication (Telegram, Discord, Slack, WhatsApp, Email, Widget, API). "
                 "Utilise cet outil quand l'utilisateur veut connecter, configurer, activer, désactiver ou supprimer un canal. "
                 "Actions: 'list' (lister), 'catalog' (types disponibles), 'create' (créer), 'update' (modifier/ajouter token), "
-                "'toggle' (activer/désactiver), 'delete' (supprimer), 'test' (tester connexion)."
+                "'toggle' (activer/désactiver), 'delete' (supprimer), 'test' (tester), "
+                "'oauth_url' (générer un lien OAuth pour que l'utilisateur autorise en 1 clic — Slack/Discord)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "catalog", "create", "update", "toggle", "delete", "test"],
+                    "action": {"type": "string", "enum": ["list", "catalog", "create", "update", "toggle", "delete", "test", "oauth_url"],
                                "description": "Action à effectuer"},
                     "channel_type": {"type": "string", "description": "Type: telegram, discord, slack, whatsapp, email, web_widget, api"},
                     "channel_id": {"type": "string", "description": "ID du canal (pour update/toggle/delete/test)"},
@@ -1788,8 +1789,21 @@ async def _channel_manage(action: str, channel_type: str = None, channel_id: str
                 r = await client.post(f"{base}/{channel_id}/test")
                 return r.json()
 
+            elif action == "oauth_url":
+                if not channel_id or not channel_type:
+                    return {"ok": False, "error": "channel_id et channel_type requis pour oauth_url"}
+                if channel_type not in ("slack", "discord"):
+                    return {"ok": False, "error": f"OAuth non supporté pour {channel_type}. Seuls Slack et Discord supportent OAuth."}
+                r = await client.get(f"{base}/oauth/{channel_type}/start/{channel_id}")
+                if r.status_code == 200:
+                    data = r.json()
+                    return {"ok": True, "oauth_url": data.get("oauth_url", ""),
+                            "message": f"Lien OAuth généré. Envoie ce lien à l'utilisateur pour qu'il autorise l'app. "
+                                       f"Une fois qu'il clique et autorise, le canal sera automatiquement configuré et activé."}
+                return {"ok": False, "error": r.text[:300]}
+
             else:
-                return {"ok": False, "error": f"Action inconnue: {action}. Actions: list, catalog, create, update, toggle, delete, test"}
+                return {"ok": False, "error": f"Action inconnue: {action}. Actions: list, catalog, create, update, toggle, delete, test, oauth_url"}
 
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}

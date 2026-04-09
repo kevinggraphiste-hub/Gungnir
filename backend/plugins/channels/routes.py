@@ -1176,3 +1176,198 @@ async def test_channel(channel_id: str):
 
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OAuth flows — allow agent to set up channels with minimal user interaction
+# User only needs to click 1 link to authorize, callback does the rest
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Slack OAuth ────────────────────────────────────────────────────────
+SLACK_SCOPES = "channels:history,channels:read,chat:write,im:history,im:read,im:write,app_mentions:read,users:read"
+
+@router.get("/oauth/slack/start/{channel_id}")
+async def slack_oauth_start(channel_id: str, request: Request):
+    """Generate Slack OAuth authorization URL. User clicks this to install the app."""
+    channels = _load_channels()
+    ch = channels.get(channel_id)
+    if not ch or ch.get("type") != "slack":
+        raise HTTPException(404, "Canal Slack introuvable")
+
+    client_id = ch.get("config", {}).get("client_id", "")
+    if not client_id:
+        raise HTTPException(400, "client_id manquant dans la config du canal. Créez d'abord une app Slack.")
+
+    base_url = _get_public_base_url(request)
+    redirect_uri = f"{base_url}/api/plugins/channels/oauth/slack/callback/{channel_id}"
+
+    oauth_url = (
+        f"https://slack.com/oauth/v2/authorize"
+        f"?client_id={client_id}"
+        f"&scope={SLACK_SCOPES}"
+        f"&redirect_uri={redirect_uri}"
+    )
+    return {"ok": True, "oauth_url": oauth_url, "redirect_uri": redirect_uri,
+            "message": "Envoyez ce lien à l'utilisateur pour qu'il autorise l'app Slack."}
+
+
+@router.get("/oauth/slack/callback/{channel_id}")
+async def slack_oauth_callback(channel_id: str, request: Request):
+    """Slack OAuth callback — receives the code, exchanges for bot token, saves to channel."""
+    code = request.query_params.get("code")
+    error = request.query_params.get("error")
+
+    if error:
+        return Response(
+            content=f"<html><body><h2>Autorisation refusée</h2><p>{error}</p></body></html>",
+            media_type="text/html"
+        )
+    if not code:
+        return Response(
+            content="<html><body><h2>Erreur</h2><p>Code d'autorisation manquant.</p></body></html>",
+            media_type="text/html"
+        )
+
+    channels = _load_channels()
+    ch = channels.get(channel_id)
+    if not ch or ch.get("type") != "slack":
+        return Response(
+            content="<html><body><h2>Erreur</h2><p>Canal introuvable.</p></body></html>",
+            media_type="text/html"
+        )
+
+    client_id = ch.get("config", {}).get("client_id", "")
+    client_secret = ch.get("config", {}).get("client_secret", "")
+    if not client_id or not client_secret:
+        return Response(
+            content="<html><body><h2>Erreur</h2><p>client_id ou client_secret manquant.</p></body></html>",
+            media_type="text/html"
+        )
+
+    base_url = _get_public_base_url(request)
+    redirect_uri = f"{base_url}/api/plugins/channels/oauth/slack/callback/{channel_id}"
+
+    # Exchange code for bot token
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post("https://slack.com/api/oauth.v2.access", data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri,
+            })
+            data = r.json()
+
+        if not data.get("ok"):
+            return Response(
+                content=f"<html><body><h2>Erreur Slack</h2><p>{data.get('error', 'unknown')}</p></body></html>",
+                media_type="text/html"
+            )
+
+        # Extract tokens
+        bot_token = data.get("access_token", "")
+        team_name = data.get("team", {}).get("name", "")
+        bot_user_id = data.get("bot_user_id", "")
+
+        # Save to channel config
+        ch.setdefault("config", {})
+        ch["config"]["bot_token"] = bot_token
+        ch["config"]["team_name"] = team_name
+        ch["config"]["bot_user_id"] = bot_user_id
+        ch["enabled"] = True
+        channels[channel_id] = ch
+        _save_channels(channels)
+
+        _add_log(channel_id, ch.get("name", ""), "system",
+                 f"OAuth Slack réussi — workspace: {team_name}, bot activé", "ok")
+
+        return Response(
+            content=(
+                f"<html><head><style>body{{font-family:system-ui;background:#1a1a2e;color:#eee;display:flex;"
+                f"align-items:center;justify-content:center;height:100vh;margin:0}}"
+                f".card{{background:#16213e;padding:2rem;border-radius:1rem;text-align:center;max-width:400px}}"
+                f"h2{{color:#dc2626}}p{{color:#aaa}}</style></head>"
+                f"<body><div class='card'>"
+                f"<h2>✅ Slack connecté !</h2>"
+                f"<p>Workspace : <strong>{team_name}</strong></p>"
+                f"<p>Le bot est maintenant actif. Vous pouvez fermer cette page.</p>"
+                f"</div></body></html>"
+            ),
+            media_type="text/html"
+        )
+    except Exception as e:
+        return Response(
+            content=f"<html><body><h2>Erreur</h2><p>{str(e)}</p></body></html>",
+            media_type="text/html"
+        )
+
+
+# ── Discord OAuth ──────────────────────────────────────────────────────
+DISCORD_SCOPES = "bot applications.commands"
+DISCORD_BOT_PERMISSIONS = "2048"  # Send Messages
+
+@router.get("/oauth/discord/start/{channel_id}")
+async def discord_oauth_start(channel_id: str, request: Request):
+    """Generate Discord OAuth bot invite URL."""
+    channels = _load_channels()
+    ch = channels.get(channel_id)
+    if not ch or ch.get("type") != "discord":
+        raise HTTPException(404, "Canal Discord introuvable")
+
+    application_id = ch.get("config", {}).get("application_id", "")
+    if not application_id:
+        raise HTTPException(400, "application_id manquant dans la config du canal.")
+
+    base_url = _get_public_base_url(request)
+    redirect_uri = f"{base_url}/api/plugins/channels/oauth/discord/callback/{channel_id}"
+
+    oauth_url = (
+        f"https://discord.com/api/oauth2/authorize"
+        f"?client_id={application_id}"
+        f"&permissions={DISCORD_BOT_PERMISSIONS}"
+        f"&scope={DISCORD_SCOPES.replace(' ', '%20')}"
+        f"&redirect_uri={redirect_uri}"
+        f"&response_type=code"
+    )
+    return {"ok": True, "oauth_url": oauth_url,
+            "message": "Envoyez ce lien à l'utilisateur pour inviter le bot Discord."}
+
+
+@router.get("/oauth/discord/callback/{channel_id}")
+async def discord_oauth_callback(channel_id: str, request: Request):
+    """Discord OAuth callback — confirms bot was added to guild."""
+    code = request.query_params.get("code")
+    guild_id = request.query_params.get("guild_id")
+    error = request.query_params.get("error")
+
+    if error:
+        return Response(
+            content=f"<html><body><h2>Autorisation refusée</h2><p>{error}</p></body></html>",
+            media_type="text/html"
+        )
+
+    channels = _load_channels()
+    ch = channels.get(channel_id)
+    if ch:
+        if guild_id:
+            ch.setdefault("config", {})["guild_id"] = guild_id
+        ch["enabled"] = True
+        channels[channel_id] = ch
+        _save_channels(channels)
+        _add_log(channel_id, ch.get("name", ""), "system",
+                 f"OAuth Discord réussi — guild: {guild_id}", "ok")
+
+    return Response(
+        content=(
+            f"<html><head><style>body{{font-family:system-ui;background:#1a1a2e;color:#eee;display:flex;"
+            f"align-items:center;justify-content:center;height:100vh;margin:0}}"
+            f".card{{background:#16213e;padding:2rem;border-radius:1rem;text-align:center;max-width:400px}}"
+            f"h2{{color:#dc2626}}p{{color:#aaa}}</style></head>"
+            f"<body><div class='card'>"
+            f"<h2>✅ Discord connecté !</h2>"
+            f"<p>Le bot a été ajouté au serveur. Vous pouvez fermer cette page.</p>"
+            f"</div></body></html>"
+        ),
+        media_type="text/html"
+    )
