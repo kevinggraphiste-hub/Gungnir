@@ -1720,10 +1720,13 @@ async def _channel_manage(action: str, channel_type: str = None, channel_id: str
             if action == "catalog":
                 r = await client.get(f"{base}/catalog")
                 data = r.json()
-                # Simplify for the agent
+                # Include setup_guide + required fields so agent can guide the user
                 return {"ok": True, "types": list(data.get("channels", {}).keys()),
                         "details": {k: {"name": v["display_name"], "complexity": v.get("complexity", ""),
-                                        "description": v["description"][:100]}
+                                        "description": v["description"][:150],
+                                        "required_fields": [f["key"] for f in v.get("fields", []) if f.get("required")],
+                                        "all_fields": [f["key"] for f in v.get("fields", [])],
+                                        "setup_guide": v.get("setup_guide", "")}
                                     for k, v in data.get("channels", {}).items()}}
 
             elif action == "list":
