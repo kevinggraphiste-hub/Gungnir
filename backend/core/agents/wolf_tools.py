@@ -955,7 +955,7 @@ def _get_tools_for_agent(agent_tools: list[str] | None) -> list[dict]:
     if agent_tools:
         name_set = set(agent_tools)
         return [s for s in WOLF_TOOL_SCHEMAS if s["function"]["name"] in name_set]
-    # Par défaut : tous les outils de navigation/scraping web + KB
+    # Par défaut : outils web + KB + communication inter-agents
     web_tool_names = {
         "web_fetch", "web_search", "web_crawl",
         "browser_navigate", "browser_goto", "browser_get_text", "browser_get_html",
@@ -966,15 +966,28 @@ def _get_tools_for_agent(agent_tools: list[str] | None) -> list[dict]:
         "browser_select_option", "browser_fill_form",
         "browser_crawl", "browser_download",
         "kb_write", "kb_read", "kb_list",
+        # Inter-agent communication: sub-agents can delegate to other sub-agents
+        "subagent_invoke", "subagent_list",
     }
     return [s for s in WOLF_TOOL_SCHEMAS if s["function"]["name"] in web_tool_names]
 
+
+# Track active invocations to prevent infinite loops (A → B → A)
+_active_invocations: set[str] = set()
+_MAX_DELEGATION_DEPTH = 3  # Max chain: agent → sub1 → sub2 → sub3
 
 async def _subagent_invoke(name: str, task: str) -> dict:
     from backend.core.agents.skills import subagent_library
     from backend.core.config.settings import Settings
     from backend.core.providers import get_provider
     from backend.core.providers.base import ChatMessage as CM
+
+    # Anti-loop: prevent recursive invocation
+    if name in _active_invocations:
+        return {"ok": False, "error": f"Boucle détectée : le sous-agent '{name}' est déjà en cours d'exécution. Évite les appels circulaires."}
+    if len(_active_invocations) >= _MAX_DELEGATION_DEPTH:
+        return {"ok": False, "error": f"Profondeur max de délégation atteinte ({_MAX_DELEGATION_DEPTH}). Résous la tâche toi-même."}
+
     agent = subagent_library.get_agent(name)
     if not agent:
         return {"ok": False, "error": f"Sous-agent '{name}' introuvable."}
@@ -1001,6 +1014,15 @@ Pour appeler un outil, écris ce format dans ta réponse :
 - **web_search** : Recherche web DuckDuckGo. Params: query
 - **web_crawl** : Crawler un site. Params: url, max_pages
 - **browser_navigate** / **browser_get_text** / **browser_screenshot** (pour JS dynamique)
+- **subagent_list** : Lister les autres sous-agents disponibles
+- **subagent_invoke** : Déléguer une tâche à un autre sous-agent. Params: name (nom du sous-agent), task (la tâche à effectuer)
+- **kb_write** / **kb_read** / **kb_list** : Base de connaissances partagée (tous les agents y ont accès)
+
+## COLLABORATION INTER-AGENTS
+- Tu peux **déléguer** une sous-tâche à un autre sous-agent si sa spécialité correspond mieux
+- Tu peux **lire/écrire dans la KB** pour partager des résultats avec les autres agents
+- Commence par `subagent_list` si tu as besoin de savoir qui est disponible
+- Ne délègue que si c'est pertinent — si tu peux faire le travail toi-même, fais-le
 
 TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
 
@@ -1019,6 +1041,7 @@ TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
 
     messages = [CM(role="system", content=system), CM(role="user", content=enriched_task)]
 
+    _active_invocations.add(name)
     try:
         MAX_ROUNDS = 8
         _native_mode = True
@@ -1088,6 +1111,8 @@ TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
         return {"ok": True, "agent": name, "model": model, "result": resp.content}
     except Exception as ex:
         return {"ok": False, "error": str(ex)}
+    finally:
+        _active_invocations.discard(name)
 
 
 async def _subagent_update(name: str, role: str = None, expertise: str = None, system_prompt: str = None, tools: list = None) -> dict:
