@@ -5,6 +5,11 @@ services:
       dockerfile: deploy/Dockerfile
     ports:
       - "8000:8000"
+    environment:
+      - GUNGNIR_SECRET_KEY=${GUNGNIR_SECRET_KEY}
+      - DATABASE_URL=${DATABASE_URL:-}
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
       - ./backend/plugins:/app/backend/plugins

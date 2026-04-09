@@ -17,13 +17,18 @@ DATA_DIR.mkdir(exist_ok=True)
 PLUGINS_DIR = BASE_DIR / "backend" / "plugins"
 
 # ── API Key encryption (at rest) ──────────────────────────────────────────────
-# Derives a machine-specific key from hostname + install path for obfuscation.
-# Not crypto-grade (no hardware security module) but prevents plaintext leaks.
+# Uses GUNGNIR_SECRET_KEY env var if set (stable across Docker rebuilds),
+# otherwise falls back to machine identity (hostname + path).
+# Set GUNGNIR_SECRET_KEY once in docker-compose.yml or .env and never change it.
 _ENCRYPTION_SALT = b"gungnir-scarletwolf-2026"
 
 def _derive_key() -> bytes:
-    """Derive a 32-byte key from machine identity."""
-    identity = f"{platform.node()}:{BASE_DIR}".encode()
+    """Derive a 32-byte encryption key. Prefers GUNGNIR_SECRET_KEY env var for stability."""
+    secret = os.getenv("GUNGNIR_SECRET_KEY", "")
+    if secret:
+        identity = secret.encode()
+    else:
+        identity = f"{platform.node()}:{BASE_DIR}".encode()
     return hashlib.pbkdf2_hmac("sha256", identity, _ENCRYPTION_SALT, 100_000)
 
 def encrypt_value(plaintext: str) -> str:
