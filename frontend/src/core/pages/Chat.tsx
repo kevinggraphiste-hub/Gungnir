@@ -260,6 +260,20 @@ export default function Chat() {
   // Folders (classification des conversations) — placé après currentUser pour éviter TDZ
   const [folders, setFolders] = useState<any[]>([])
   const [folderFilter, setFolderFilter] = useState<number | null | 'all'>('all')
+  // Drag & drop état : convo en cours de drag + cible survolée
+  const [draggedConvoId, setDraggedConvoId] = useState<number | null>(null)
+  const [dropTargetFolder, setDropTargetFolder] = useState<number | null | 'none' | undefined>(undefined)
+  const handleDropOnFolder = async (convoId: number, folderId: number | null) => {
+    // Optimistic update
+    const current = useStore.getState().conversations
+    setConversations(current.map(c => c.id === convoId ? { ...c, folder_id: folderId } : c))
+    try {
+      await api.moveConversationToFolder(convoId, folderId)
+    } catch (err) {
+      console.error('Drop move error:', err)
+      reloadConversations() // revert
+    }
+  }
   const reloadFolders = useCallback(async () => {
     try { setFolders(await api.listFolders()) } catch { /* ignore */ }
   }, [])
@@ -443,11 +457,17 @@ export default function Chat() {
     try {
       const payload = { title: 'Nouveau chat', provider: selectedProvider, model: selectedModel || 'minimax/minimax-m2.7', user_id: currentUser?.id }
       const newConvo = await api.createConversation(payload)
+      // Si un dossier précis est filtré, la nouvelle conversation y atterrit automatiquement
+      const targetFolder = typeof folderFilter === 'number' ? folderFilter : null
+      if (targetFolder !== null && newConvo.id) {
+        try { await api.moveConversationToFolder(newConvo.id, targetFolder) } catch { /* ignore */ }
+      }
       const fullConvo = {
         ...payload,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         ...newConvo,
+        folder_id: targetFolder,
       }
       setConversations([fullConvo, ...conversations])
       setCurrentConversation(fullConvo.id)
@@ -459,11 +479,16 @@ export default function Chat() {
     try {
       const payload = { title: 'Suite de conversation', provider: selectedProvider, model: selectedModel || 'minimax/minimax-m2.7', user_id: currentUser?.id }
       const newConvo = await api.createConversation(payload)
+      const targetFolder = typeof folderFilter === 'number' ? folderFilter : null
+      if (targetFolder !== null && newConvo.id) {
+        try { await api.moveConversationToFolder(newConvo.id, targetFolder) } catch { /* ignore */ }
+      }
       const fullConvo = {
         ...payload,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         ...newConvo,
+        folder_id: targetFolder,
       }
       setConversations([fullConvo, ...conversations])
       setCurrentConversation(fullConvo.id)
@@ -481,11 +506,16 @@ export default function Chat() {
       try {
         const payload = { title: 'Nouveau chat', provider: selectedProvider, model: selectedModel || 'minimax/minimax-m2.7', user_id: currentUser?.id }
         const newConvo = await api.createConversation(payload)
+        const targetFolder = typeof folderFilter === 'number' ? folderFilter : null
+        if (targetFolder !== null && newConvo.id) {
+          try { await api.moveConversationToFolder(newConvo.id, targetFolder) } catch { /* ignore */ }
+        }
         const fullConvo = {
           ...payload,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           ...newConvo,
+          folder_id: targetFolder,
         }
         setConversations([fullConvo, ...conversations])
         setCurrentConversation(fullConvo.id)
@@ -618,25 +648,42 @@ export default function Chat() {
                     <span className="ml-auto text-[9px]">{conversations.length}</span>
                   </button>
                   <button onClick={() => setFolderFilter(null)}
+                    onDragOver={(e) => { if (draggedConvoId !== null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTargetFolder('none') } }}
+                    onDragLeave={() => setDropTargetFolder(undefined)}
+                    onDrop={(e) => { e.preventDefault(); if (draggedConvoId !== null) handleDropOnFolder(draggedConvoId, null); setDropTargetFolder(undefined); setDraggedConvoId(null) }}
                     className="w-full flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors"
-                    style={{ background: folderFilter === null ? 'var(--bg-elevated)' : undefined, color: folderFilter === null ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                    style={{
+                      background: dropTargetFolder === 'none' ? 'color-mix(in srgb, var(--accent-primary) 20%, transparent)' : folderFilter === null ? 'var(--bg-elevated)' : undefined,
+                      border: dropTargetFolder === 'none' ? '1px dashed var(--accent-primary)' : '1px solid transparent',
+                      color: folderFilter === null ? 'var(--text-primary)' : 'var(--text-muted)'
+                    }}>
                     <FolderMinus className="w-3 h-3" /> Sans dossier
                   </button>
-                  {folders.map(f => (
-                    <div key={f.id} className="group/folder flex items-center">
-                      <button onClick={() => setFolderFilter(f.id)}
-                        className="flex-1 flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors min-w-0"
-                        style={{ background: folderFilter === f.id ? 'var(--bg-elevated)' : undefined, color: folderFilter === f.id ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                        <Folder className="w-3 h-3 flex-shrink-0" style={{ color: f.color || 'var(--accent-primary)' }} />
-                        <span className="truncate">{f.name}</span>
-                      </button>
-                      <button onClick={(e) => { e.stopPropagation(); handleDeleteFolder(f.id) }}
-                        className="opacity-0 group-hover/folder:opacity-100 px-1 transition-opacity" title="Supprimer"
-                        style={{ color: 'var(--text-muted)' }}>
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
+                  {folders.map(f => {
+                    const isDropTarget = dropTargetFolder === f.id
+                    return (
+                      <div key={f.id} className="group/folder flex items-center">
+                        <button onClick={() => setFolderFilter(f.id)}
+                          onDragOver={(e) => { if (draggedConvoId !== null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTargetFolder(f.id) } }}
+                          onDragLeave={() => setDropTargetFolder(undefined)}
+                          onDrop={(e) => { e.preventDefault(); if (draggedConvoId !== null) handleDropOnFolder(draggedConvoId, f.id); setDropTargetFolder(undefined); setDraggedConvoId(null) }}
+                          className="flex-1 flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors min-w-0"
+                          style={{
+                            background: isDropTarget ? 'color-mix(in srgb, var(--accent-primary) 20%, transparent)' : folderFilter === f.id ? 'var(--bg-elevated)' : undefined,
+                            border: isDropTarget ? '1px dashed var(--accent-primary)' : '1px solid transparent',
+                            color: folderFilter === f.id ? 'var(--text-primary)' : 'var(--text-muted)'
+                          }}>
+                          <Folder className="w-3 h-3 flex-shrink-0" style={{ color: f.color || 'var(--accent-primary)' }} />
+                          <span className="truncate">{f.name}</span>
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); handleDeleteFolder(f.id) }}
+                          className="opacity-0 group-hover/folder:opacity-100 px-1 transition-opacity" title="Supprimer"
+                          style={{ color: 'var(--text-muted)' }}>
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )
+                  })}
                 </div>
 
                 <div className="px-3 py-1 mb-1">
@@ -645,10 +692,18 @@ export default function Chat() {
                 {filteredConversations.map(convo => {
                   const isActive = currentConversation === convo.id
                   const isEditing = editingTitleId === convo.id
+                  const isDragging = draggedConvoId === convo.id
                   return (
                     <div key={convo.id} onClick={() => !isEditing && setCurrentConversation(convo.id)}
+                      draggable={!isEditing}
+                      onDragStart={(e) => { setDraggedConvoId(convo.id); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(convo.id)) }}
+                      onDragEnd={() => { setDraggedConvoId(null); setDropTargetFolder(undefined) }}
                       className="group mx-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all mb-0.5 flex items-center justify-between"
-                      style={{ background: isEditing ? 'var(--border)' : isActive ? 'var(--bg-elevated)' : undefined, border: isEditing ? '1px solid var(--border)' : undefined }}>
+                      style={{
+                        background: isEditing ? 'var(--border)' : isActive ? 'var(--bg-elevated)' : undefined,
+                        border: isEditing ? '1px solid var(--border)' : undefined,
+                        opacity: isDragging ? 0.4 : 1,
+                      }}>
                       <div className="flex-1 min-w-0">
                         {isEditing ? (
                           <div className="flex items-center gap-2">
