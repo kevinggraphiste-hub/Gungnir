@@ -261,8 +261,19 @@ export default function Chat() {
   const [folders, setFolders] = useState<any[]>([])
   const [folderFilter, setFolderFilter] = useState<number | null | 'all'>('all')
   // Drag & drop état : convo en cours de drag + cible survolée
+  // useRef pour éviter les closures stales sur les handlers (le dragover doit
+  // pouvoir preventDefault() immédiatement, sans attendre un re-render React).
+  const draggedConvoRef = useRef<number | null>(null)
   const [draggedConvoId, setDraggedConvoId] = useState<number | null>(null)
   const [dropTargetFolder, setDropTargetFolder] = useState<number | null | 'none' | undefined>(undefined)
+  const [foldersCollapsed, setFoldersCollapsed] = useState(() => localStorage.getItem('gungnir_folders_collapsed') === 'true')
+  const toggleFoldersCollapsed = () => {
+    setFoldersCollapsed(prev => {
+      const next = !prev
+      localStorage.setItem('gungnir_folders_collapsed', String(next))
+      return next
+    })
+  }
   const handleDropOnFolder = async (convoId: number, folderId: number | null) => {
     // Optimistic update
     const current = useStore.getState().conversations
@@ -635,12 +646,18 @@ export default function Chat() {
               <div className="flex-1 overflow-y-auto py-2">
                 {/* Dossiers */}
                 <div className="px-3 py-1 mb-1 flex items-center justify-between">
-                  <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Dossiers</span>
+                  <button onClick={toggleFoldersCollapsed}
+                    className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest transition-colors"
+                    style={{ color: 'var(--text-muted)' }} title={foldersCollapsed ? 'Déplier' : 'Replier'}>
+                    <ChevronRight className="w-3 h-3 transition-transform" style={{ transform: foldersCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }} />
+                    Dossiers
+                    {folders.length > 0 && <span className="ml-1 normal-case tracking-normal">({folders.length})</span>}
+                  </button>
                   <button onClick={handleCreateFolder} className="p-0.5 rounded transition-colors" title="Nouveau dossier" style={{ color: 'var(--text-muted)' }}>
                     <Plus className="w-3 h-3" />
                   </button>
                 </div>
-                <div className="px-2 mb-2 space-y-0.5">
+                <div className="px-2 mb-2 space-y-0.5" style={{ display: foldersCollapsed ? 'none' : undefined }}>
                   <button onClick={() => setFolderFilter('all')}
                     className="w-full flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors"
                     style={{ background: folderFilter === 'all' ? 'var(--bg-elevated)' : undefined, color: folderFilter === 'all' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
@@ -648,9 +665,9 @@ export default function Chat() {
                     <span className="ml-auto text-[9px]">{conversations.length}</span>
                   </button>
                   <button onClick={() => setFolderFilter(null)}
-                    onDragOver={(e) => { if (draggedConvoId !== null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTargetFolder('none') } }}
+                    onDragOver={(e) => { if (draggedConvoRef.current !== null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dropTargetFolder !== 'none') setDropTargetFolder('none') } }}
                     onDragLeave={() => setDropTargetFolder(undefined)}
-                    onDrop={(e) => { e.preventDefault(); if (draggedConvoId !== null) handleDropOnFolder(draggedConvoId, null); setDropTargetFolder(undefined); setDraggedConvoId(null) }}
+                    onDrop={(e) => { e.preventDefault(); const id = draggedConvoRef.current; if (id !== null) handleDropOnFolder(id, null); draggedConvoRef.current = null; setDropTargetFolder(undefined); setDraggedConvoId(null) }}
                     className="w-full flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors"
                     style={{
                       background: dropTargetFolder === 'none' ? 'color-mix(in srgb, var(--accent-primary) 20%, transparent)' : folderFilter === null ? 'var(--bg-elevated)' : undefined,
@@ -664,9 +681,9 @@ export default function Chat() {
                     return (
                       <div key={f.id} className="group/folder flex items-center">
                         <button onClick={() => setFolderFilter(f.id)}
-                          onDragOver={(e) => { if (draggedConvoId !== null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTargetFolder(f.id) } }}
+                          onDragOver={(e) => { if (draggedConvoRef.current !== null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dropTargetFolder !== f.id) setDropTargetFolder(f.id) } }}
                           onDragLeave={() => setDropTargetFolder(undefined)}
-                          onDrop={(e) => { e.preventDefault(); if (draggedConvoId !== null) handleDropOnFolder(draggedConvoId, f.id); setDropTargetFolder(undefined); setDraggedConvoId(null) }}
+                          onDrop={(e) => { e.preventDefault(); const id = draggedConvoRef.current; if (id !== null) handleDropOnFolder(id, f.id); draggedConvoRef.current = null; setDropTargetFolder(undefined); setDraggedConvoId(null) }}
                           className="flex-1 flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors min-w-0"
                           style={{
                             background: isDropTarget ? 'color-mix(in srgb, var(--accent-primary) 20%, transparent)' : folderFilter === f.id ? 'var(--bg-elevated)' : undefined,
@@ -696,8 +713,8 @@ export default function Chat() {
                   return (
                     <div key={convo.id} onClick={() => !isEditing && setCurrentConversation(convo.id)}
                       draggable={!isEditing}
-                      onDragStart={(e) => { setDraggedConvoId(convo.id); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(convo.id)) }}
-                      onDragEnd={() => { setDraggedConvoId(null); setDropTargetFolder(undefined) }}
+                      onDragStart={(e) => { draggedConvoRef.current = convo.id; setDraggedConvoId(convo.id); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(convo.id)) }}
+                      onDragEnd={() => { draggedConvoRef.current = null; setDraggedConvoId(null); setDropTargetFolder(undefined) }}
                       className="group mx-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all mb-0.5 flex items-center justify-between"
                       style={{
                         background: isEditing ? 'var(--border)' : isActive ? 'var(--bg-elevated)' : undefined,
