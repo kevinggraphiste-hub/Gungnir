@@ -206,18 +206,26 @@ class PluginRegistry(Base):
 # ── DB init ──────────────────────────────────────────────────────────────────
 
 async def init_db(engine):
+    # 1) create_all dans une transaction isolée
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Migrations — each wrapped in try/except (column already exists → skip)
-        _text = __import__("sqlalchemy").text
-        migrations = [
-            ("ALTER TABLE conversations ADD COLUMN user_id INTEGER REFERENCES users(id)", "user_id → conversations"),
-            ("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE", "is_admin → users"),
-            ("ALTER TABLE conversations ADD COLUMN folder_id INTEGER REFERENCES conversation_folders(id)", "folder_id → conversations"),
-        ]
-        for sql, label in migrations:
-            try:
+
+    # 2) Migrations ALTER TABLE — CHACUNE dans sa propre transaction, sinon sur
+    # PostgreSQL un échec (colonne déjà présente) poisonne la transaction et
+    # les migrations suivantes sont silencieusement ignorées.
+    _text = __import__("sqlalchemy").text
+    migrations = [
+        ("ALTER TABLE conversations ADD COLUMN user_id INTEGER REFERENCES users(id)", "user_id → conversations"),
+        ("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE", "is_admin → users"),
+        ("ALTER TABLE conversations ADD COLUMN folder_id INTEGER REFERENCES conversation_folders(id)", "folder_id → conversations"),
+    ]
+    for sql, label in migrations:
+        try:
+            async with engine.begin() as conn:
                 await conn.execute(_text(sql))
-                print(f"[DB] Migration: {label}")
-            except Exception:
-                pass  # Already exists
+            print(f"[DB] Migration: {label}")
+        except Exception as e:
+            # Colonne déjà existante → skip. Autre erreur → log pour debug.
+            msg = str(e).lower()
+            if "already exists" not in msg and "duplicate column" not in msg:
+                print(f"[DB] Migration skipped ({label}): {e}")
