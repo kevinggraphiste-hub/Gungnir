@@ -57,9 +57,13 @@ function CopyButton({ text, label, compact = false }: { text: string; label?: st
 }
 
 // Barre d'actions sous chaque message (copie, etc.) — toujours visible, style Claude
-function MessageActions({ content, align = 'start' }: { content: string; align?: 'start' | 'end' }) {
+// Icône de copie flottante — sticky en haut de la bulle, apparait au survol
+// Le wrapper sticky (h-0) reste collé en haut du scroll container tant que la bulle
+// est visible, donc le bouton reste accessible même sur un message très long.
+function FloatingCopyButton({ content, side = 'right' }: { content: string; side?: 'left' | 'right' }) {
   const [copied, setCopied] = useState(false)
-  const handleCopy = async () => {
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation()
     try {
       await navigator.clipboard.writeText(content)
       setCopied(true)
@@ -67,21 +71,22 @@ function MessageActions({ content, align = 'start' }: { content: string; align?:
     } catch {}
   }
   return (
-    <div className={`flex items-center gap-1.5 mt-2 ${align === 'end' ? 'self-end' : 'self-start'}`}>
+    <div className="sticky top-2 h-0 z-10 pointer-events-none">
       <button
         onClick={handleCopy}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all hover:scale-105 shadow-sm"
+        className={`pointer-events-auto absolute -top-1 ${side === 'right' ? 'right-0' : 'left-0'} p-1.5 rounded-md transition-all opacity-0 group-hover:opacity-100 hover:scale-110`}
         style={{
           background: copied
-            ? 'color-mix(in srgb, var(--accent-success) 20%, transparent)'
-            : 'color-mix(in srgb, var(--scarlet) 12%, var(--bg-secondary))',
+            ? 'color-mix(in srgb, var(--accent-success) 25%, var(--bg-primary))'
+            : 'color-mix(in srgb, var(--scarlet) 20%, var(--bg-primary))',
           color: copied ? 'var(--accent-success)' : 'var(--accent-primary-light, #ff6b6b)',
-          border: `1px solid ${copied ? 'color-mix(in srgb, var(--accent-success) 50%, transparent)' : 'color-mix(in srgb, var(--scarlet) 40%, transparent)'}`,
+          border: `1px solid ${copied ? 'color-mix(in srgb, var(--accent-success) 50%, transparent)' : 'color-mix(in srgb, var(--scarlet) 45%, transparent)'}`,
+          backdropFilter: 'blur(6px)',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
         }}
-        title="Copier le message"
+        title={copied ? 'Copié !' : 'Copier le message'}
       >
-        {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-        <span>{copied ? 'Copié !' : 'Copier'}</span>
+        {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
       </button>
     </div>
   )
@@ -769,11 +774,16 @@ export default function Chat() {
                   </div>
                 )}
 
-                <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+                <div className={`group relative rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
                   style={msg.role === 'assistant' ? {
                     background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 4%, transparent), color-mix(in srgb, var(--ember) 2%, transparent))',
                     border: '1px solid color-mix(in srgb, var(--scarlet) 10%, transparent)', color: 'var(--text-primary)',
                   } : { background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                  {/* Bouton de copie flottant (sticky en haut, apparait au survol) */}
+                  <FloatingCopyButton
+                    content={msg.content.replace(/\n\[Image jointe\]/g, '')}
+                    side={msg.role === 'user' ? 'left' : 'right'}
+                  />
                   {/* Images jointes */}
                   {msg.images && msg.images.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
@@ -785,9 +795,6 @@ export default function Chat() {
                   )}
                   <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
                 </div>
-
-                {/* Barre d'actions sous le message (copie, etc.) */}
-                <MessageActions content={msg.content.replace(/\n\[Image jointe\]/g, '')} align={msg.role === 'user' ? 'end' : 'start'} />
               </div>
             </div>
           ))}
