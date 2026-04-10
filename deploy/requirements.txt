@@ -25,6 +25,9 @@ duckduckgo-search>=7.0.0
 trafilatura>=2.0.0
 beautifulsoup4>=4.12.0
 
+# Browser automation
+playwright>=1.49.0
+
 # Utils
 python-dotenv>=1.0.0
 python-multipart>=0.0.18
