@@ -49,11 +49,11 @@ def _is_night_time(cfg: dict) -> bool:
     hour = datetime.now().hour
     day_start = int(cfg.get("day_start_hour", 7))
     night_start = int(cfg.get("night_start_hour", 22))
-    # Nuit traverse minuit si night_start > day_start (cas normal)
+    # Cas normal : jour (ex 7h) puis nuit (ex 22h) qui traverse minuit
     if night_start > day_start:
         return hour >= night_start or hour < day_start
-    # Inverse (rare) — nuit entre day_start et night_start
-    return day_start <= hour < night_start
+    # Cas inverse (rare) : nuit en fenêtre continue entre night_start et day_start
+    return night_start <= hour < day_start
 
 
 def _effective_config(cfg: dict) -> dict:
