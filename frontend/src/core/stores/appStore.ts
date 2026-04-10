@@ -27,6 +27,8 @@ interface Conversation {
   created_at: string
   updated_at: string
   is_pinned?: boolean
+  folder_id?: number | null
+  tags?: { id: number; name: string; color: string }[]
 }
 
 interface AppState {

@@ -31,3 +31,6 @@ playwright>=1.49.0
 # Utils
 python-dotenv>=1.0.0
 python-multipart>=0.0.18
+
+# PDF export
+reportlab>=4.2.0

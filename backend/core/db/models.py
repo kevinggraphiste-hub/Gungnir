@@ -27,8 +27,66 @@ class Conversation(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), onupdate=datetime.utcnow)
     is_pinned = Column(Boolean, default=False)
     metadata_json = Column(JSON, default=dict)
+    # Classement
+    folder_id = Column(Integer, ForeignKey("conversation_folders.id"), nullable=True)
 
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
+    tasks = relationship("ConversationTask", back_populates="conversation", cascade="all, delete-orphan")
+
+
+class ConversationFolder(Base):
+    """Dossier pour regrouper des conversations. Supporte une arborescence via parent_id."""
+    __tablename__ = "conversation_folders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    name = Column(String(255), nullable=False)
+    parent_id = Column(Integer, ForeignKey("conversation_folders.id"), nullable=True)
+    color = Column(String(20), default="#dc2626")
+    icon = Column(String(50), default="folder")
+    position = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ConversationTag(Base):
+    """Étiquette transversale — une conversation peut avoir plusieurs tags."""
+    __tablename__ = "conversation_tags"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    name = Column(String(100), nullable=False)
+    color = Column(String(20), default="#6366f1")
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ConversationTagLink(Base):
+    """Table de liaison many-to-many Conversation ↔ Tag."""
+    __tablename__ = "conversation_tag_links"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    tag_id = Column(Integer, ForeignKey("conversation_tags.id", ondelete="CASCADE"), nullable=False)
+
+
+class ConversationTask(Base):
+    """
+    Tâche de projet liée à une conversation — modèle todo-list façon Claude Code.
+    L'agent et l'utilisateur peuvent créer, cocher, réordonner ces tâches.
+    """
+    __tablename__ = "conversation_tasks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    content = Column(Text, nullable=False)       # Forme impérative ("Écrire la doc")
+    active_form = Column(Text, nullable=True)    # Forme continue ("Écriture de la doc")
+    status = Column(String(20), default="pending")  # pending | in_progress | completed
+    position = Column(Integer, default=0)
+    created_by = Column(String(20), default="user")  # user | agent
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    conversation = relationship("Conversation", back_populates="tasks")
 
 
 class Message(Base):
@@ -155,6 +213,7 @@ async def init_db(engine):
         migrations = [
             ("ALTER TABLE conversations ADD COLUMN user_id INTEGER REFERENCES users(id)", "user_id → conversations"),
             ("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE", "is_admin → users"),
+            ("ALTER TABLE conversations ADD COLUMN folder_id INTEGER REFERENCES conversation_folders(id)", "folder_id → conversations"),
         ]
         for sql, label in migrations:
             try:

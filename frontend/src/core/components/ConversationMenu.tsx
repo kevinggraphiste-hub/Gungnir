@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   MoreHorizontal, Download, FileText, FileCode, Globe, Brain,
-  Trash2, Pencil, Loader2
+  Trash2, Pencil, Loader2, FileType, Folder, FolderMinus
 } from 'lucide-react'
 import { api } from '../services/api'
 
@@ -14,16 +14,35 @@ interface Props {
   onDelete: (id: number) => void
   onStartEdit: () => void
   onNewChatWithSummary: (summary: string) => void
+  onFolderChanged?: () => void
 }
 
 export default function ConversationMenu({
   conversationId, conversationTitle, provider, model,
-  onTitleUpdated, onDelete, onStartEdit, onNewChatWithSummary
+  onTitleUpdated, onDelete, onStartEdit, onNewChatWithSummary, onFolderChanged
 }: Props) {
   const [isOpen, setIsOpen] = useState(false)
   const [loading, setLoading] = useState<string | null>(null)
+  const [folders, setFolders] = useState<any[]>([])
+  const [showFolderMenu, setShowFolderMenu] = useState(false)
 
-  const handleExport = async (format: 'json' | 'txt' | 'md' | 'html') => {
+  useEffect(() => {
+    if (!isOpen || folders.length > 0) return
+    api.listFolders().then(setFolders).catch(() => {})
+  }, [isOpen])
+
+  const handleMoveToFolder = async (folderId: number | null) => {
+    setLoading('folder')
+    try {
+      await api.moveConversationToFolder(conversationId, folderId)
+      onFolderChanged?.()
+    } catch (err) { console.error('Move error:', err) }
+    setLoading(null)
+    setShowFolderMenu(false)
+    setIsOpen(false)
+  }
+
+  const handleExport = async (format: 'json' | 'txt' | 'md' | 'html' | 'pdf') => {
     setLoading(`export-${format}`)
     try {
       const blob = await api.exportConversation(conversationId, format)
@@ -76,16 +95,17 @@ export default function ConversationMenu({
 
             <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Export</div>
 
-            {(['md', 'html', 'json', 'txt'] as const).map(fmt => (
+            {(['pdf', 'md', 'html', 'json', 'txt'] as const).map(fmt => (
               <button key={fmt} onClick={() => handleExport(fmt)} disabled={!!loading}
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors disabled:opacity-50"
                 style={{ color: 'var(--text-secondary)' }}>
                 {loading === `export-${fmt}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+                  fmt === 'pdf' ? <FileType className="w-3.5 h-3.5" style={{ color: 'var(--accent-primary-light, #ff6b6b)' }} /> :
                   fmt === 'md' ? <FileText className="w-3.5 h-3.5" /> :
                   fmt === 'html' ? <Globe className="w-3.5 h-3.5" /> :
                   fmt === 'json' ? <FileCode className="w-3.5 h-3.5" /> :
                   <Download className="w-3.5 h-3.5" />}
-                {fmt === 'md' ? 'Markdown (.md)' : fmt === 'html' ? 'HTML (.html)' : fmt === 'json' ? 'JSON (.json)' : 'Texte brut (.txt)'}
+                {fmt === 'pdf' ? 'PDF (.pdf)' : fmt === 'md' ? 'Markdown (.md)' : fmt === 'html' ? 'HTML (.html)' : fmt === 'json' ? 'JSON (.json)' : 'Texte brut (.txt)'}
               </button>
             ))}
 
@@ -105,6 +125,32 @@ export default function ConversationMenu({
               {loading === 'title' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pencil className="w-3.5 h-3.5" />}
               Renommer par IA
             </button>
+
+            <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
+            <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Dossier</div>
+
+            <button onClick={(e) => { e.stopPropagation(); setShowFolderMenu(!showFolderMenu) }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors" style={{ color: 'var(--text-secondary)' }}>
+              {loading === 'folder' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Folder className="w-3.5 h-3.5" />}
+              Déplacer vers…
+            </button>
+            {showFolderMenu && (
+              <div className="max-h-40 overflow-y-auto" style={{ background: 'var(--bg-tertiary, var(--bg-primary))' }}>
+                <button onClick={() => handleMoveToFolder(null)}
+                  className="w-full flex items-center gap-2.5 px-5 py-1.5 text-[11px] transition-colors" style={{ color: 'var(--text-muted)' }}>
+                  <FolderMinus className="w-3 h-3" /> Aucun dossier
+                </button>
+                {folders.map(f => (
+                  <button key={f.id} onClick={() => handleMoveToFolder(f.id)}
+                    className="w-full flex items-center gap-2.5 px-5 py-1.5 text-[11px] transition-colors" style={{ color: 'var(--text-secondary)' }}>
+                    <Folder className="w-3 h-3" style={{ color: f.color || 'var(--accent-primary)' }} /> {f.name}
+                  </button>
+                ))}
+                {folders.length === 0 && (
+                  <div className="px-5 py-1.5 text-[10px] italic" style={{ color: 'var(--text-muted)' }}>Aucun dossier créé</div>
+                )}
+              </div>
+            )}
 
             <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
 

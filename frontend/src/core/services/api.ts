@@ -111,7 +111,7 @@ export const api = {
   },
 
   // ── Export conversations ──────────────────────────────────────────
-  exportConversation: async (id: number, format: 'json' | 'txt' | 'md' | 'html') => {
+  exportConversation: async (id: number, format: 'json' | 'txt' | 'md' | 'html' | 'pdf') => {
     const response = await apiFetch(`${API_BASE}/conversations/${id}/export/${format}`)
     if (!response.ok) throw new Error(`Export failed: ${response.status}`)
     return response.blob()
@@ -128,6 +128,80 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider, model }),
     })
+    return handleResponse(response)
+  },
+
+  // ── Conversation tasks (todo-list façon Claude Code) ─────────────
+  listConversationTasks: async (convoId: number) => {
+    const response = await apiFetch(`${API_BASE}/conversations/${convoId}/tasks`)
+    return handleResponse(response)
+  },
+  createConversationTask: async (convoId: number, data: { content: string; active_form?: string; status?: string }) => {
+    const response = await apiFetch(`${API_BASE}/conversations/${convoId}/tasks`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+    })
+    return handleResponse(response)
+  },
+  updateConversationTask: async (convoId: number, taskId: number, data: { content?: string; active_form?: string; status?: string; position?: number }) => {
+    const response = await apiFetch(`${API_BASE}/conversations/${convoId}/tasks/${taskId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+    })
+    return handleResponse(response)
+  },
+  deleteConversationTask: async (convoId: number, taskId: number) => {
+    const response = await apiFetch(`${API_BASE}/conversations/${convoId}/tasks/${taskId}`, { method: 'DELETE' })
+    return handleResponse(response)
+  },
+
+  // ── Folders (arborescence) ────────────────────────────────────────
+  listFolders: async () => {
+    const response = await apiFetch(`${API_BASE}/folders`)
+    return handleResponse(response)
+  },
+  createFolder: async (data: { name: string; parent_id?: number | null; color?: string; icon?: string }) => {
+    const response = await apiFetch(`${API_BASE}/folders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+    })
+    return handleResponse(response)
+  },
+  updateFolder: async (folderId: number, data: Record<string, any>) => {
+    const response = await apiFetch(`${API_BASE}/folders/${folderId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+    })
+    return handleResponse(response)
+  },
+  deleteFolder: async (folderId: number) => {
+    const response = await apiFetch(`${API_BASE}/folders/${folderId}`, { method: 'DELETE' })
+    return handleResponse(response)
+  },
+  moveConversationToFolder: async (convoId: number, folderId: number | null) => {
+    const response = await apiFetch(`${API_BASE}/conversations/${convoId}/folder`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder_id: folderId }),
+    })
+    return handleResponse(response)
+  },
+
+  // ── Tags ──────────────────────────────────────────────────────────
+  listTags: async () => {
+    const response = await apiFetch(`${API_BASE}/tags`)
+    return handleResponse(response)
+  },
+  createTag: async (data: { name: string; color?: string }) => {
+    const response = await apiFetch(`${API_BASE}/tags`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+    })
+    return handleResponse(response)
+  },
+  deleteTag: async (tagId: number) => {
+    const response = await apiFetch(`${API_BASE}/tags/${tagId}`, { method: 'DELETE' })
+    return handleResponse(response)
+  },
+  attachTagToConversation: async (convoId: number, tagId: number) => {
+    const response = await apiFetch(`${API_BASE}/conversations/${convoId}/tags/${tagId}`, { method: 'POST' })
+    return handleResponse(response)
+  },
+  detachTagFromConversation: async (convoId: number, tagId: number) => {
+    const response = await apiFetch(`${API_BASE}/conversations/${convoId}/tags/${tagId}`, { method: 'DELETE' })
     return handleResponse(response)
   },
 

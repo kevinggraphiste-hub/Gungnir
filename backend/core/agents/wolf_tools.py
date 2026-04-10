@@ -9,6 +9,19 @@ import json, uuid
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 
+# ── Contexte d'exécution (défini par chat.py avant dispatch) ──────────────────
+# Permet aux outils de connaître la conversation courante sans la passer en arg.
+_current_conv_id: int | None = None
+
+def set_conversation_context(conv_id: int | None) -> None:
+    """Appelé par chat.py juste avant d'exécuter un outil, pour que les outils
+    liés à une conversation (ex: conversation_tasks_*) sachent à quelle convo ils parlent."""
+    global _current_conv_id
+    _current_conv_id = conv_id
+
+def get_conversation_context() -> int | None:
+    return _current_conv_id
+
 # ── Schémas envoyés au LLM ─────────────────────────────────────────────────────
 
 WOLF_TOOL_SCHEMAS = [
@@ -670,6 +683,47 @@ WOLF_TOOL_SCHEMAS = [
                     "task_id": {"type": "string", "description": "ID de la tâche à supprimer"}
                 },
                 "required": ["task_id"]
+            }
+        }
+    },
+    # ── Conversation tasks (todo-list interne façon Claude Code) ─────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "conversation_tasks_list",
+            "description": "Liste les tâches internes de la conversation courante (todo-list). Utilise ceci au début d'un gros projet pour voir l'état, ou avant d'ajouter de nouvelles tâches.",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "conversation_tasks_set",
+            "description": (
+                "Remplace TOUTE la todo-list de la conversation courante en un seul appel. "
+                "C'est l'outil principal à utiliser quand l'utilisateur demande un travail multi-étapes : "
+                "tu planifies, tu envoies la liste complète, puis à chaque étape tu renvoies la liste mise à jour. "
+                "Règles : une seule tâche en 'in_progress' à la fois ; marque immédiatement 'completed' dès qu'une tâche est finie ; "
+                "garde 'content' à l'impératif ('Écrire la doc') et 'active_form' au participe ('Écriture de la doc')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "description": "Liste complète des tâches dans l'ordre souhaité. Vide = efface la liste.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content":     {"type": "string", "description": "Forme impérative (ex: 'Écrire la doc')"},
+                                "active_form": {"type": "string", "description": "Forme continue (ex: 'Écriture de la doc')"},
+                                "status":      {"type": "string", "description": "pending | in_progress | completed", "default": "pending"}
+                            },
+                            "required": ["content"]
+                        }
+                    }
+                },
+                "required": ["tasks"]
             }
         }
     },
@@ -1650,6 +1704,98 @@ async def _schedule_delete(task_id: str) -> dict:
     return {"ok": True, "message": f"Tâche '{removed_name}' ({task_id}) supprimée."}
 
 
+# ── Conversation tasks executors (todo-list façon Claude Code) ───────────────
+
+_CONV_TASK_VALID_STATUSES = {"pending", "in_progress", "completed"}
+
+
+async def _conversation_tasks_list() -> dict:
+    conv_id = get_conversation_context()
+    if conv_id is None:
+        return {"ok": False, "error": "Pas de conversation courante — cet outil ne fonctionne que depuis un chat actif."}
+    from backend.core.db.engine import async_session
+    from backend.core.db.models import ConversationTask
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(
+            select(ConversationTask)
+            .where(ConversationTask.conversation_id == conv_id)
+            .order_by(ConversationTask.position, ConversationTask.id)
+        )
+        tasks = result.scalars().all()
+        return {
+            "ok": True,
+            "conversation_id": conv_id,
+            "total": len(tasks),
+            "tasks": [
+                {
+                    "id": t.id,
+                    "content": t.content,
+                    "active_form": t.active_form,
+                    "status": t.status,
+                    "position": t.position,
+                    "created_by": t.created_by,
+                }
+                for t in tasks
+            ],
+        }
+
+
+async def _conversation_tasks_set(tasks: list | None = None) -> dict:
+    """Remplace l'intégralité de la todo-list de la conversation courante."""
+    conv_id = get_conversation_context()
+    if conv_id is None:
+        return {"ok": False, "error": "Pas de conversation courante — cet outil ne fonctionne que depuis un chat actif."}
+    if not isinstance(tasks, list):
+        return {"ok": False, "error": "Le paramètre 'tasks' doit être une liste."}
+
+    from backend.core.db.engine import async_session
+    from backend.core.db.models import ConversationTask
+    from sqlalchemy import delete as sql_delete
+
+    async with async_session() as session:
+        # Wipe
+        await session.execute(
+            sql_delete(ConversationTask).where(ConversationTask.conversation_id == conv_id)
+        )
+        # Insert
+        inserted = []
+        in_progress_count = 0
+        for i, t in enumerate(tasks):
+            if not isinstance(t, dict):
+                continue
+            content = (t.get("content") or "").strip()
+            if not content:
+                continue
+            status = t.get("status", "pending")
+            if status not in _CONV_TASK_VALID_STATUSES:
+                status = "pending"
+            if status == "in_progress":
+                in_progress_count += 1
+            row = ConversationTask(
+                conversation_id=conv_id,
+                content=content,
+                active_form=(t.get("active_form") or "").strip() or None,
+                status=status,
+                position=i,
+                created_by="agent",
+            )
+            session.add(row)
+            inserted.append({"content": content, "status": status})
+        await session.commit()
+
+    warning = None
+    if in_progress_count > 1:
+        warning = f"Attention : {in_progress_count} tâches sont 'in_progress' alors qu'il devrait n'y en avoir qu'une seule."
+    return {
+        "ok": True,
+        "conversation_id": conv_id,
+        "total": len(inserted),
+        "warning": warning,
+        "message": f"Todo-list mise à jour ({len(inserted)} tâches).",
+    }
+
+
 # ── Filesystem & Shell executors ──────────────────────────────────────────────
 
 # PROTECTED PATHS — l'agent ne peut JAMAIS y écrire/supprimer
@@ -2410,6 +2556,9 @@ WOLF_EXECUTORS: dict[str, Any] = {
     "schedule_task":              _schedule_task,
     "schedule_list":              _schedule_list,
     "schedule_delete":            _schedule_delete,
+    # Conversation tasks (todo-list)
+    "conversation_tasks_list":    _conversation_tasks_list,
+    "conversation_tasks_set":     _conversation_tasks_set,
     # Filesystem & Shell (auto-modification)
     "file_read":                  _file_read,
     "file_write":                 _file_write,
@@ -2439,6 +2588,8 @@ READ_ONLY_TOOLS = {
     "browser_select_option", "browser_fill_form", "browser_list_pages",
     # Lecture seule filesystem + doctor + setup
     "file_read", "file_list", "doctor_check",
+    # Lecture todo-list
+    "conversation_tasks_list",
     "channel_manage", "provider_manage", "mcp_manage",
     # service_connect est read-only pour list/test, service_call est lecture
     "service_connect", "service_call",

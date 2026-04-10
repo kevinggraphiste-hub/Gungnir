@@ -8,12 +8,13 @@ import {
   Search, Sparkles, MessageSquare, Star,
   Code, FileText, Globe, BarChart3, Radio,
   ChevronLeft, ChevronRight, Pencil, Check, X, Key,
-  Paperclip, Image as ImageIcon, Copy
+  Paperclip, Image as ImageIcon, Copy, ListTodo, Folder, FolderMinus
 } from 'lucide-react'
 import VoiceModal from '../components/VoiceModal'
 import ApiKeysModal from '../components/ApiKeysModal'
 import UserModal from '../components/UserModal'
 import ConversationMenu from '../components/ConversationMenu'
+import TaskPanel from '../components/TaskPanel'
 
 function AgentAvatar({ size = 32 }: { size?: number }) {
   return (
@@ -228,6 +229,19 @@ export default function Chat() {
     return localStorage.getItem('gungnir_chat_sidebar') === 'true'
   })
 
+  // Task panel (right side)
+  const [showTaskPanel, setShowTaskPanel] = useState(() => {
+    return localStorage.getItem('gungnir_task_panel') === 'true'
+  })
+
+  const toggleTaskPanel = useCallback(() => {
+    setShowTaskPanel(prev => {
+      const next = !prev
+      localStorage.setItem('gungnir_task_panel', String(next))
+      return next
+    })
+  }, [])
+
   const [editingTitleId, setEditingTitleId] = useState<number | null>(null)
   const [editTitleValue, setEditTitleValue] = useState('')
   const [deletingId, setDeletingId] = useState<number | null>(null)
@@ -242,6 +256,26 @@ export default function Chat() {
     const saved = localStorage.getItem('gungnir_current_user')
     return saved ? JSON.parse(saved) : null
   })
+
+  // Folders (classification des conversations) — placé après currentUser pour éviter TDZ
+  const [folders, setFolders] = useState<any[]>([])
+  const [folderFilter, setFolderFilter] = useState<number | null | 'all'>('all')
+  const reloadFolders = useCallback(async () => {
+    try { setFolders(await api.listFolders()) } catch { /* ignore */ }
+  }, [])
+  useEffect(() => { reloadFolders() }, [reloadFolders])
+  const reloadConversations = useCallback(async () => {
+    try { setConversations(await api.getConversations(currentUser?.id)) } catch { /* ignore */ }
+  }, [currentUser?.id, setConversations])
+  const handleCreateFolder = async () => {
+    const name = window.prompt('Nom du nouveau dossier :')?.trim()
+    if (!name) return
+    try { await api.createFolder({ name }); reloadFolders() } catch (err) { console.error('Create folder error:', err) }
+  }
+  const handleDeleteFolder = async (folderId: number) => {
+    if (!window.confirm('Supprimer ce dossier ? Les conversations qu\'il contient seront conservées (sans dossier).')) return
+    try { await api.deleteFolder(folderId); reloadFolders(); reloadConversations() } catch (err) { console.error('Delete folder error:', err) }
+  }
 
   const [showVoiceModal, setShowVoiceModal] = useState(false)
   const [pttStatus, setPttStatus] = useState<'idle' | 'recording' | 'processing'>('idle')
@@ -520,7 +554,12 @@ export default function Chat() {
 
   const formatModelName = (modelId: string) => { if (!modelId) return '—'; const parts = modelId.split('/'); return parts[parts.length - 1] || modelId }
   const formatCost = (cost: number) => `$${cost.toFixed(4)}`
-  const filteredConversations = conversations.filter(c => (c.title || '').toLowerCase().includes(searchQuery.toLowerCase()))
+  const filteredConversations = conversations.filter(c => {
+    if (!(c.title || '').toLowerCase().includes(searchQuery.toLowerCase())) return false
+    if (folderFilter === 'all') return true
+    if (folderFilter === null) return !c.folder_id
+    return c.folder_id === folderFilter
+  })
 
   return (
     <div className="flex h-full" style={{ background: 'var(--bg-primary)' }}>
@@ -564,6 +603,42 @@ export default function Chat() {
               </div>
 
               <div className="flex-1 overflow-y-auto py-2">
+                {/* Dossiers */}
+                <div className="px-3 py-1 mb-1 flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Dossiers</span>
+                  <button onClick={handleCreateFolder} className="p-0.5 rounded transition-colors" title="Nouveau dossier" style={{ color: 'var(--text-muted)' }}>
+                    <Plus className="w-3 h-3" />
+                  </button>
+                </div>
+                <div className="px-2 mb-2 space-y-0.5">
+                  <button onClick={() => setFolderFilter('all')}
+                    className="w-full flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors"
+                    style={{ background: folderFilter === 'all' ? 'var(--bg-elevated)' : undefined, color: folderFilter === 'all' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                    <MessageSquare className="w-3 h-3" /> Toutes
+                    <span className="ml-auto text-[9px]">{conversations.length}</span>
+                  </button>
+                  <button onClick={() => setFolderFilter(null)}
+                    className="w-full flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors"
+                    style={{ background: folderFilter === null ? 'var(--bg-elevated)' : undefined, color: folderFilter === null ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                    <FolderMinus className="w-3 h-3" /> Sans dossier
+                  </button>
+                  {folders.map(f => (
+                    <div key={f.id} className="group/folder flex items-center">
+                      <button onClick={() => setFolderFilter(f.id)}
+                        className="flex-1 flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors min-w-0"
+                        style={{ background: folderFilter === f.id ? 'var(--bg-elevated)' : undefined, color: folderFilter === f.id ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                        <Folder className="w-3 h-3 flex-shrink-0" style={{ color: f.color || 'var(--accent-primary)' }} />
+                        <span className="truncate">{f.name}</span>
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDeleteFolder(f.id) }}
+                        className="opacity-0 group-hover/folder:opacity-100 px-1 transition-opacity" title="Supprimer"
+                        style={{ color: 'var(--text-muted)' }}>
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
                 <div className="px-3 py-1 mb-1">
                   <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Conversations</span>
                 </div>
@@ -600,7 +675,8 @@ export default function Chat() {
                             onTitleUpdated={(id, title) => setConversations(conversations.map(c => c.id === id ? { ...c, title } : c))}
                             onDelete={(id) => handleDeleteConversation(id, true)}
                             onStartEdit={() => handleStartEditing(convo)}
-                            onNewChatWithSummary={handleNewChatWithSummary} />
+                            onNewChatWithSummary={handleNewChatWithSummary}
+                            onFolderChanged={reloadConversations} />
                         </div>
                       )}
                     </div>
@@ -692,6 +768,15 @@ export default function Chat() {
               )}
             </div>
 
+            <button onClick={toggleTaskPanel} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
+              style={{
+                background: showTaskPanel ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'var(--bg-secondary)',
+                border: `1px solid ${showTaskPanel ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border)'}`,
+                color: showTaskPanel ? 'var(--accent-primary-light, var(--accent-primary))' : 'var(--text-secondary)',
+              }}
+              title="Todo-list de la conversation">
+              <ListTodo className="w-3.5 h-3.5" /> Tâches
+            </button>
             <button onClick={() => setShowApiKeysModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
               style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
               <Key className="w-3.5 h-3.5" /> {t('common.apiKeys')}
@@ -983,6 +1068,11 @@ export default function Chat() {
           )}
         </div>
       </div>
+
+      {/* ── TASK PANEL (right side) ── */}
+      {showTaskPanel && (
+        <TaskPanel conversationId={currentConversation} onClose={() => toggleTaskPanel()} />
+      )}
 
       {/* Modals */}
       <VoiceModal isOpen={showVoiceModal} onClose={() => setShowVoiceModal(false)} />

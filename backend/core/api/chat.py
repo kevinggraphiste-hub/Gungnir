@@ -11,7 +11,7 @@ from backend.core.config.settings import Settings, ProviderConfig
 from backend.core.db.models import Conversation, Message
 from backend.core.db.engine import get_session
 from backend.core.providers import get_provider, ChatMessage
-from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS, WOLF_EXECUTORS, READ_ONLY_TOOLS
+from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS, WOLF_EXECUTORS, READ_ONLY_TOOLS, set_conversation_context
 from backend.core.agents.mcp_client import mcp_manager
 
 router = APIRouter()
@@ -972,7 +972,34 @@ Tu operes en mode **demande**. Comportement :
             onboarding_block = ONBOARDING_PROMPT.replace("{agent_name}", _agent_name)
             print(f"[Wolf] ONBOARDING: first conversation detected, injecting setup prompt")
 
-        full_system = _soul_content.strip() + _personality_block + _skill_block + consciousness_block + tools_block + mode_block + onboarding_block
+        # ══════════════════════════════════════════════════════════════════
+        # Todo-list interne de la conversation (injection si présente)
+        # ══════════════════════════════════════════════════════════════════
+        tasks_block = ""
+        try:
+            from backend.core.db.models import ConversationTask as _CT
+            from sqlalchemy import select as _select
+            _tq = await session.execute(
+                _select(_CT).where(_CT.conversation_id == convo_id).order_by(_CT.position, _CT.id)
+            )
+            _current_tasks = _tq.scalars().all()
+            if _current_tasks:
+                _lines = []
+                for t in _current_tasks:
+                    marker = {"pending": "[ ]", "in_progress": "[~]", "completed": "[x]"}.get(t.status, "[ ]")
+                    label = t.active_form if (t.status == "in_progress" and t.active_form) else t.content
+                    _lines.append(f"  {marker} {label}")
+                tasks_block = (
+                    "\n\n## Todo-list de cette conversation\n"
+                    "Tu gères une todo-list interne pour cette conversation (outils `conversation_tasks_list` / `conversation_tasks_set`). "
+                    "État actuel :\n" + "\n".join(_lines) +
+                    "\n\nMets à jour cette liste au fur et à mesure via `conversation_tasks_set` (remplacement complet). "
+                    "Une seule tâche en 'in_progress' à la fois. Marque 'completed' dès qu'une étape est finie."
+                )
+        except Exception as _e:
+            print(f"[Wolf] tasks_block injection failed: {_e}")
+
+        full_system = _soul_content.strip() + _personality_block + _skill_block + consciousness_block + tools_block + mode_block + onboarding_block + tasks_block
         chat_messages.insert(0, ChatMessage(role="system", content=full_system))
 
         # -- Boucle tool calling
@@ -1104,9 +1131,13 @@ Tu operes en mode **demande**. Comportement :
                     executor = WOLF_EXECUTORS.get(tool_name) or mcp_manager.get_all_executors().get(tool_name)
                     if executor:
                         try:
+                            # Injecte la conversation courante pour les outils liés (conversation_tasks_*)
+                            set_conversation_context(convo_id)
                             tool_result = await executor(**args)
                         except Exception as ex:
                             tool_result = {"ok": False, "error": str(ex)}
+                        finally:
+                            set_conversation_context(None)
                     else:
                         tool_result = {"ok": False, "error": f"Outil '{tool_name}' inconnu."}
 

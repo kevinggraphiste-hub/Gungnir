@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from backend.core.config.settings import Settings
-from backend.core.db.models import Conversation, Message, User
+from backend.core.db.models import Conversation, Message, User, ConversationTag, ConversationTagLink
 from backend.core.db.engine import get_session
 from backend.core.providers import get_provider, ChatMessage
 from backend.core.api.auth_helpers import enforce_conversation_owner
@@ -21,11 +21,24 @@ async def list_conversations(request: Request, user_id: int = None, session: Asy
         user = await session.get(User, auth_user_id)
         if not (user and user.is_admin):
             user_id = auth_user_id  # Force filter to own conversations
-    query = select(Conversation).order_by(Conversation.updated_at.desc()).limit(50)
+    query = select(Conversation).order_by(Conversation.updated_at.desc()).limit(200)
     if user_id is not None:
         query = query.where(Conversation.user_id == user_id)
     result = await session.execute(query)
     convos = result.scalars().all()
+
+    # Charge tous les tags liés en une seule requête pour éviter N+1
+    conv_ids = [c.id for c in convos]
+    tags_by_conv: dict[int, list] = {}
+    if conv_ids:
+        tag_result = await session.execute(
+            select(ConversationTagLink.conversation_id, ConversationTag.id, ConversationTag.name, ConversationTag.color)
+            .join(ConversationTag, ConversationTag.id == ConversationTagLink.tag_id)
+            .where(ConversationTagLink.conversation_id.in_(conv_ids))
+        )
+        for conv_id, tid, tname, tcolor in tag_result.all():
+            tags_by_conv.setdefault(conv_id, []).append({"id": tid, "name": tname, "color": tcolor})
+
     return [
         {
             "id": c.id,
@@ -35,6 +48,9 @@ async def list_conversations(request: Request, user_id: int = None, session: Asy
             "model": c.model,
             "created_at": c.created_at.isoformat(),
             "updated_at": c.updated_at.isoformat(),
+            "folder_id": c.folder_id,
+            "is_pinned": c.is_pinned,
+            "tags": tags_by_conv.get(c.id, []),
         }
         for c in convos
     ]
@@ -92,6 +108,10 @@ async def update_conversation(convo_id: int, request: Request, data: dict, sessi
 
     if "title" in data:
         convo.title = data["title"]
+        # Marque le titre comme édité manuellement pour éviter les régénérations auto
+        meta = dict(convo.metadata_json or {})
+        meta["title_manual"] = True
+        convo.metadata_json = meta
     if "provider" in data:
         convo.provider = data["provider"]
     if "model" in data:
@@ -220,30 +240,135 @@ async def export_conversation(convo_id: int, fmt: str, session: AsyncSession = D
             headers={"Content-Disposition": f'attachment; filename="conversation_{convo_id}.html"'},
         )
 
+    elif fmt == "pdf":
+        try:
+            from io import BytesIO
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import cm
+            from reportlab.lib.colors import HexColor
+            from reportlab.platypus import (
+                SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+            )
+            from reportlab.lib.enums import TA_LEFT
+        except ImportError:
+            return {"error": "reportlab non installé côté serveur"}
+
+        buf = BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=A4,
+            leftMargin=2*cm, rightMargin=2*cm,
+            topMargin=2*cm, bottomMargin=2*cm,
+            title=(conv.title or "Conversation"),
+            author="Gungnir",
+        )
+
+        base = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            "GungnirTitle", parent=base["Title"],
+            textColor=HexColor("#dc2626"), fontSize=20, leading=26, spaceAfter=6,
+        )
+        meta_style = ParagraphStyle(
+            "GungnirMeta", parent=base["Normal"],
+            textColor=HexColor("#666666"), fontSize=9, leading=12, spaceAfter=10,
+        )
+        user_label = ParagraphStyle(
+            "UserLabel", parent=base["Normal"],
+            textColor=HexColor("#1e3a8a"), fontSize=10, leading=14,
+            fontName="Helvetica-Bold", spaceBefore=8, spaceAfter=2,
+        )
+        assistant_label = ParagraphStyle(
+            "AssistantLabel", parent=base["Normal"],
+            textColor=HexColor("#b91c1c"), fontSize=10, leading=14,
+            fontName="Helvetica-Bold", spaceBefore=8, spaceAfter=2,
+        )
+        body_style = ParagraphStyle(
+            "Body", parent=base["BodyText"],
+            fontSize=10, leading=14, alignment=TA_LEFT, spaceAfter=4,
+        )
+
+        def _escape(text: str) -> str:
+            if not text:
+                return ""
+            safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            return safe.replace("\n", "<br/>")
+
+        flow = []
+        flow.append(Paragraph(_escape(conv.title or "Conversation"), title_style))
+        flow.append(Paragraph(
+            f"Modèle : {_escape(conv.model or '')} &nbsp;&nbsp;•&nbsp;&nbsp; "
+            f"Date : {conv.created_at.strftime('%d/%m/%Y %H:%M')}",
+            meta_style,
+        ))
+        flow.append(HRFlowable(width="100%", thickness=0.5, color=HexColor("#dc2626")))
+        flow.append(Spacer(1, 0.3*cm))
+
+        for m in msgs:
+            label = "Utilisateur" if m.role == "user" else "Wolf"
+            time_str = m.created_at.strftime("%H:%M:%S")
+            flow.append(Paragraph(
+                f"{label} <font size='8' color='#999999'>· {time_str}</font>",
+                user_label if m.role == "user" else assistant_label,
+            ))
+            # Paragraph par ligne/bloc pour gérer les retours à la ligne correctement
+            content = _escape(m.content or "")
+            if content:
+                flow.append(Paragraph(content, body_style))
+
+        doc.build(flow)
+        pdf_bytes = buf.getvalue()
+        buf.close()
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="conversation_{convo_id}.pdf"'},
+        )
+
     else:
-        return {"error": f"Format '{fmt}' non supporté. Formats: json, txt, md, html"}
+        return {"error": f"Format '{fmt}' non supporté. Formats: json, txt, md, html, pdf"}
 
 
 @router.post("/conversations/{convo_id}/generate-title")
 async def generate_conversation_title(convo_id: int, session: AsyncSession = Depends(get_session)):
     """
-    Génère un titre intelligent pour une conversation en utilisant le LLM.
-    Analyse les premiers messages et génère un titre court et descriptif.
+    Génère un titre intelligent basé sur le CONTENU RÉEL de la conversation.
+
+    Stratégie : on prend les 2-3 premiers messages (pour le sujet d'origine)
+    + les derniers messages (pour le sujet actuel qui a pu évoluer). Ça donne
+    un titre qui reflète le vrai contenu même sur des conversations longues.
     """
-    # Récupérer les premiers messages
+    # Charge toute la conversation
     result = await session.execute(
-        select(Message).where(Message.conversation_id == convo_id).order_by(Message.created_at).limit(6)
+        select(Message).where(Message.conversation_id == convo_id).order_by(Message.created_at)
     )
-    msgs = result.scalars().all()
-    if not msgs:
+    all_msgs = result.scalars().all()
+    if not all_msgs:
         return {"error": "Conversation vide"}
 
-    # Construire un résumé des messages
+    # Sélection intelligente : 3 premiers + derniers messages (jusqu'à 20 au total)
+    total = len(all_msgs)
+    if total <= 20:
+        sampled = all_msgs
+    else:
+        # 3 premiers pour le contexte d'ouverture + 17 derniers pour le sujet courant
+        sampled = list(all_msgs[:3]) + list(all_msgs[-17:])
+
+    # Construire un résumé compact — tronquer les messages longs
     msg_preview = ""
-    for m in msgs[:6]:
+    budget_chars = 8000  # budget total pour le contexte envoyé au LLM
+    for m in sampled:
         role = "User" if m.role == "user" else "Assistant"
-        content = (m.content or "")[:300]
-        msg_preview += f"{role}: {content}\n"
+        # Chaque message limité à ~800 chars
+        content = (m.content or "")[:800]
+        line = f"{role}: {content}\n"
+        if len(msg_preview) + len(line) > budget_chars:
+            break
+        msg_preview += line
+
+    # Marqueur si on a sauté des messages au milieu
+    if total > 20:
+        msg_preview = f"[Conversation de {total} messages — extrait : 3 premiers + derniers]\n\n" + msg_preview
+    msgs = sampled  # pour compatibilité avec le fallback en bas
 
     # Utiliser le LLM configuré pour générer le titre
     settings = Settings.load()
@@ -291,11 +416,13 @@ async def generate_conversation_title(convo_id: int, session: AsyncSession = Dep
         title_response = await provider.chat(
             [
                 ChatMessage(role="system", content=(
-                    "Tu es un générateur de titres. Génère UN SEUL titre court (max 50 caractères) "
-                    "pour cette conversation. Le titre doit résumer le sujet principal. "
+                    "Tu es un générateur de titres expert. À partir du contenu d'une conversation, "
+                    "génère UN SEUL titre court (max 50 caractères) qui reflète PRÉCISÉMENT le sujet "
+                    "principal de la discussion — pas juste le premier message, mais ce que la conversation "
+                    "traite vraiment dans l'ensemble. Si le sujet a évolué, priorise le sujet actuel. "
                     "Réponds UNIQUEMENT avec le titre, sans guillemets, sans explication, sans ponctuation finale."
                 )),
-                ChatMessage(role="user", content=f"Voici les premiers messages de la conversation :\n\n{msg_preview}"),
+                ChatMessage(role="user", content=f"Voici le contenu de la conversation :\n\n{msg_preview}"),
             ],
             title_model,
         )
@@ -319,6 +446,42 @@ async def generate_conversation_title(convo_id: int, session: AsyncSession = Dep
             await session.commit()
         import logging; logging.getLogger("gungnir").error(f"Title gen error: {e}")
         return {"title": title, "method": "fallback", "error": "Erreur lors de la génération du titre"}
+
+
+@router.post("/conversations/{convo_id}/auto-title")
+async def auto_title_if_needed(convo_id: int, session: AsyncSession = Depends(get_session)):
+    """
+    Déclenche la régénération auto du titre si et seulement si :
+    - le titre actuel est le titre par défaut (ou l'ancien titre basé sur le premier message)
+    - l'utilisateur n'a PAS édité le titre manuellement (metadata.title_manual != true)
+    - la conversation a au moins 4 messages
+
+    Utilisé par le frontend après quelques échanges pour rafraîchir un titre
+    qui serait devenu obsolète par rapport au sujet actuel.
+    """
+    conv = await session.get(Conversation, convo_id)
+    if not conv:
+        return {"ok": False, "reason": "not_found"}
+
+    meta = dict(conv.metadata_json or {})
+    if meta.get("title_manual"):
+        return {"ok": False, "reason": "manual_title"}
+
+    current_title = (conv.title or "").strip()
+    if current_title and current_title != "Nouvelle conversation":
+        # On ne régénère que si c'est encore le titre par défaut
+        # (sinon le premier auto-title a déjà eu lieu)
+        return {"ok": False, "reason": "already_titled", "title": current_title}
+
+    result = await session.execute(
+        select(Message).where(Message.conversation_id == convo_id)
+    )
+    msgs = result.scalars().all()
+    if len(msgs) < 4:
+        return {"ok": False, "reason": "too_few_messages", "count": len(msgs)}
+
+    # Délègue à la logique existante
+    return await generate_conversation_title(convo_id, session)
 
 
 @router.post("/conversations/{convo_id}/summarize")
