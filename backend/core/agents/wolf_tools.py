@@ -1029,6 +1029,7 @@ async def _subagent_invoke(name: str, task: str) -> dict:
     from backend.core.config.settings import Settings
     from backend.core.providers import get_provider
     from backend.core.providers.base import ChatMessage as CM
+    from backend.core.agents.inter_agent_log import ConversationRecorder
 
     # Anti-loop: prevent recursive invocation
     if name in _active_invocations:
@@ -1045,6 +1046,11 @@ async def _subagent_invoke(name: str, task: str) -> dict:
         return {"ok": False, "error": f"Provider '{agent.provider}' non configuré."}
     model = agent.model or provider_cfg.default_model
     llm = get_provider(agent.provider, provider_cfg.api_key, provider_cfg.base_url)
+
+    # Start recording this inter-agent conversation (context-aware: parent_id is set
+    # automatically if we're inside another sub-agent invocation).
+    _recorder = ConversationRecorder(callee=name, task=task, provider=agent.provider, model=model)
+    _recorder.__enter__()
 
     # Construire le system prompt avec les capacités web + format <tool_call>
     system = agent.system_prompt
@@ -1088,8 +1094,11 @@ TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
         print(f"[SubAgent] Gateway enriched task with {len(gw_result['web_content'])} blocks")
 
     messages = [CM(role="system", content=system), CM(role="user", content=enriched_task)]
+    _recorder.record_messages(messages)
 
     _active_invocations.add(name)
+    _tok_in_total = 0
+    _tok_out_total = 0
     try:
         MAX_ROUNDS = 8
         _native_mode = True
@@ -1103,6 +1112,8 @@ TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
                     resp = await llm.chat(messages, model)
             else:
                 resp = await llm.chat(messages, model)
+            _tok_in_total += getattr(resp, "tokens_input", 0) or 0
+            _tok_out_total += getattr(resp, "tokens_output", 0) or 0
 
             # Fallback 1: text parsing
             if not resp.tool_calls and resp.content:
@@ -1117,12 +1128,16 @@ TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
                 gw_force = WebGateway()
                 force_result = await gw_force.force_search(user_query)
                 if force_result["has_content"]:
-                    messages.append(CM(role="assistant", content="Je récupère les informations..."))
-                    messages.append(CM(role="user", content=f"[SYSTÈME — CONTENU GATEWAY]\n\n{force_result['enriched_content']}\n\n---\nRéponds avec ce contenu."))
+                    _msg_a = CM(role="assistant", content="Je récupère les informations...")
+                    _msg_u = CM(role="user", content=f"[SYSTÈME — CONTENU GATEWAY]\n\n{force_result['enriched_content']}\n\n---\nRéponds avec ce contenu.")
+                    messages.append(_msg_a); messages.append(_msg_u)
+                    _recorder.record_messages([_msg_a, _msg_u])
                     continue
 
             if not resp.tool_calls:
-                return {"ok": True, "agent": name, "model": model, "result": resp.content}
+                _recorder.record_message("assistant", resp.content or "")
+                _recorder.set_result(resp.content or "", _tok_in_total, _tok_out_total)
+                return {"ok": True, "agent": name, "model": model, "result": resp.content, "conversation_id": _recorder.conv.id}
 
             # Execute tools
             _is_text = any(tc.get("id", "").startswith("textparse-") for tc in resp.tool_calls)
@@ -1145,22 +1160,39 @@ TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
                 else:
                     tool_result = {"ok": False, "error": f"Outil '{tool_name}' inconnu."}
                 all_results.append({"tool": tool_name, "result": tool_result, "call_id": call_id})
+                _recorder.record_tool_event(tool_name, args, tool_result)
 
             if _is_text or not _native_mode:
-                messages.append(CM(role="assistant", content=resp.content or "Exécution..."))
+                _msg_a = CM(role="assistant", content=resp.content or "Exécution...")
                 parts = [f"**{r['tool']}** → {json.dumps(r['result'], ensure_ascii=False)[:6000]}" for r in all_results]
-                messages.append(CM(role="user", content="Résultats :\n\n" + "\n\n".join(parts) + "\n\nRéponds."))
+                _msg_u = CM(role="user", content="Résultats :\n\n" + "\n\n".join(parts) + "\n\nRéponds.")
+                messages.append(_msg_a); messages.append(_msg_u)
+                _recorder.record_messages([_msg_a, _msg_u])
             else:
-                messages.append(CM(role="assistant", content=resp.content or "", tool_calls=resp.tool_calls))
+                _msg_a = CM(role="assistant", content=resp.content or "", tool_calls=resp.tool_calls)
+                messages.append(_msg_a)
+                _recorder.record_messages([_msg_a])
                 for r in all_results:
-                    messages.append(CM(role="tool", content=json.dumps(r["result"], ensure_ascii=False)[:3000], tool_call_id=r["call_id"]))
+                    _msg_t = CM(role="tool", content=json.dumps(r["result"], ensure_ascii=False)[:3000], tool_call_id=r["call_id"])
+                    messages.append(_msg_t)
+                    _recorder.record_messages([_msg_t])
+            _recorder.flush()
 
         resp = await llm.chat(messages, model)
-        return {"ok": True, "agent": name, "model": model, "result": resp.content}
+        _tok_in_total += getattr(resp, "tokens_input", 0) or 0
+        _tok_out_total += getattr(resp, "tokens_output", 0) or 0
+        _recorder.record_message("assistant", resp.content or "")
+        _recorder.set_result(resp.content or "", _tok_in_total, _tok_out_total)
+        return {"ok": True, "agent": name, "model": model, "result": resp.content, "conversation_id": _recorder.conv.id}
     except Exception as ex:
-        return {"ok": False, "error": str(ex)}
+        _recorder.conv.error = str(ex)
+        return {"ok": False, "error": str(ex), "conversation_id": _recorder.conv.id}
     finally:
         _active_invocations.discard(name)
+        try:
+            _recorder.__exit__(None, None, None)
+        except Exception:
+            pass
 
 
 async def _subagent_update(name: str, role: str = None, expertise: str = None, system_prompt: str = None, tools: list = None) -> dict:
