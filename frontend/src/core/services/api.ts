@@ -305,6 +305,25 @@ export const api = {
     return handleResponse(response)
   },
 
+  getActiveSkill: async () => {
+    const response = await apiFetch(`${API_BASE}/skills/active`)
+    return handleResponse(response)
+  },
+
+  setActiveSkill: async (skillName: string) => {
+    const response = await apiFetch(`${API_BASE}/skills/active/${skillName}`, {
+      method: 'POST',
+    })
+    return handleResponse(response)
+  },
+
+  clearActiveSkill: async () => {
+    const response = await apiFetch(`${API_BASE}/skills/active`, {
+      method: 'DELETE',
+    })
+    return handleResponse(response)
+  },
+
   // ── Users ─────────────────────────────────────────────────────────
   getUsers: async () => {
     const response = await apiFetch(`${API_BASE}/users`)

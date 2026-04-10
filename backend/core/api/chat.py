@@ -759,6 +759,14 @@ async def chat(
     else:
         print(f"[Wolf] No personality overlay (active: '{active_personality.name if active_personality else 'none'}')")
 
+    # Active skill overlay (user-selected from Agent Settings)
+    from backend.core.agents.skills import skill_library as _sl
+    active_skill = _sl.get_active()
+    skill_block = ""
+    if active_skill and active_skill.prompt:
+        skill_block = f"\n\n## Skill actif : {active_skill.name}\n{active_skill.prompt}"
+        print(f"[Wolf] Skill overlay applied: '{active_skill.name}' ({len(active_skill.prompt)} chars)")
+
     # Construire la liste des modeles disponibles pour guider Wolf
     _available_models_lines = []
     for _pname, _pcfg in settings.providers.items():
@@ -772,6 +780,7 @@ async def chat(
     # Placeholder : le system prompt sera insere apres le gateway
     _soul_content = soul_content
     _personality_block = personality_block
+    _skill_block = skill_block
 
     provider = get_provider(
         provider_name,
@@ -963,7 +972,7 @@ Tu operes en mode **demande**. Comportement :
             onboarding_block = ONBOARDING_PROMPT.replace("{agent_name}", _agent_name)
             print(f"[Wolf] ONBOARDING: first conversation detected, injecting setup prompt")
 
-        full_system = _soul_content.strip() + _personality_block + consciousness_block + tools_block + mode_block + onboarding_block
+        full_system = _soul_content.strip() + _personality_block + _skill_block + consciousness_block + tools_block + mode_block + onboarding_block
         chat_messages.insert(0, ChatMessage(role="system", content=full_system))
 
         # -- Boucle tool calling

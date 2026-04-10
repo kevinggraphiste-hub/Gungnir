@@ -37,6 +37,7 @@ class Personality(BaseModel):
 class SkillLibrary:
     from pathlib import Path
     SKILLS_FILE = Path(__file__).parent.parent.parent / "data" / "skills.json"
+    ACTIVE_SKILL_FILE = Path(__file__).parent.parent.parent / "data" / "active_skill.json"
 
     DEFAULT_SKILLS = [
         {
@@ -416,7 +417,48 @@ Tu réponds de manière structurée avec tableaux, listes et étapes claires. Tu
 
     def __init__(self):
         self.skills: dict[str, Skill] = {}
+        self._active_skill_name: str | None = None
         self._load()
+        self._load_active()
+
+    # ── Active skill (persisted) ──────────────────────────────────────────
+    def _load_active(self):
+        import json
+        try:
+            if self.ACTIVE_SKILL_FILE.exists():
+                data = json.loads(self.ACTIVE_SKILL_FILE.read_text(encoding="utf-8"))
+                name = data.get("active")
+                if name and name in self.skills:
+                    self._active_skill_name = name
+        except Exception:
+            self._active_skill_name = None
+
+    def _save_active(self):
+        import json
+        self.ACTIVE_SKILL_FILE.parent.mkdir(exist_ok=True)
+        self.ACTIVE_SKILL_FILE.write_text(
+            json.dumps({"active": self._active_skill_name}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def set_active(self, name: str | None) -> bool:
+        if name is None:
+            self._active_skill_name = None
+            self._save_active()
+            return True
+        if name not in self.skills:
+            return False
+        self._active_skill_name = name
+        self._save_active()
+        return True
+
+    def get_active(self) -> "Skill | None":
+        if self._active_skill_name and self._active_skill_name in self.skills:
+            return self.skills[self._active_skill_name]
+        return None
+
+    def get_active_name(self) -> str | None:
+        return self._active_skill_name
 
     def _load(self):
         import uuid, json

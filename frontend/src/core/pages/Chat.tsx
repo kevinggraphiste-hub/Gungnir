@@ -8,7 +8,7 @@ import {
   Search, Sparkles, MessageSquare, Star,
   Code, FileText, Globe, BarChart3, Radio,
   ChevronLeft, ChevronRight, Pencil, Check, X, Key,
-  Paperclip, Image as ImageIcon
+  Paperclip, Image as ImageIcon, Copy
 } from 'lucide-react'
 import VoiceModal from '../components/VoiceModal'
 import ApiKeysModal from '../components/ApiKeysModal'
@@ -24,6 +24,133 @@ function AgentAvatar({ size = 32 }: { size?: number }) {
 
 function AgentIcon({ size = 16 }: { size?: number }) {
   return <img src="/logo.png" alt="Agent" width={size} height={size} className="object-contain" />
+}
+
+// Bouton de copie réutilisable (message entier ou bloc de code)
+function CopyButton({ text, label, compact = false }: { text: string; label?: string; compact?: boolean }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard API indisponible — ignorer silencieusement
+    }
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      className={`flex items-center gap-1 rounded-md transition-all ${compact ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-1 text-xs'}`}
+      style={{
+        background: copied ? 'color-mix(in srgb, var(--accent-success) 15%, transparent)' : 'var(--bg-secondary)',
+        color: copied ? 'var(--accent-success)' : 'var(--text-muted)',
+        border: `1px solid ${copied ? 'color-mix(in srgb, var(--accent-success) 30%, transparent)' : 'var(--border)'}`,
+      }}
+      title={copied ? 'Copié !' : 'Copier'}
+    >
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      {label && <span>{copied ? 'Copié' : label}</span>}
+    </button>
+  )
+}
+
+// Barre d'actions sous chaque message (copie, etc.) — toujours visible, style Claude
+function MessageActions({ content, align = 'start' }: { content: string; align?: 'start' | 'end' }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {}
+  }
+  return (
+    <div className={`flex items-center gap-1.5 mt-2 ${align === 'end' ? 'self-end' : 'self-start'}`}>
+      <button
+        onClick={handleCopy}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all hover:scale-105 shadow-sm"
+        style={{
+          background: copied
+            ? 'color-mix(in srgb, var(--accent-success) 20%, transparent)'
+            : 'color-mix(in srgb, var(--scarlet) 12%, var(--bg-secondary))',
+          color: copied ? 'var(--accent-success)' : 'var(--accent-primary-light, #ff6b6b)',
+          border: `1px solid ${copied ? 'color-mix(in srgb, var(--accent-success) 50%, transparent)' : 'color-mix(in srgb, var(--scarlet) 40%, transparent)'}`,
+        }}
+        title="Copier le message"
+      >
+        {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+        <span>{copied ? 'Copié !' : 'Copier'}</span>
+      </button>
+    </div>
+  )
+}
+
+// Bloc de code avec entête (langage + copie) et zone monospace scrollable
+function CodeBlock({ code, language }: { code: string; language?: string }) {
+  return (
+    <div className="my-2 rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border)', background: '#0b0b0d' }}>
+      <div className="flex items-center justify-between px-3 py-1.5 text-[10px] uppercase tracking-widest"
+        style={{ background: 'color-mix(in srgb, var(--scarlet) 8%, #151518)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
+        <span className="font-semibold" style={{ color: 'var(--accent-primary-light, var(--accent-primary))' }}>
+          {language || 'code'}
+        </span>
+        <CopyButton text={code} label="Copier" compact />
+      </div>
+      <pre className="p-3 text-xs overflow-x-auto leading-relaxed" style={{ color: '#e6e6e6', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}>
+        <code>{code}</code>
+      </pre>
+    </div>
+  )
+}
+
+// Rendu d'un message : parse les fences ```lang ... ``` et alterne texte brut / CodeBlock
+function MessageContent({ content }: { content: string }) {
+  const parts: Array<{ type: 'text' | 'code'; content: string; language?: string }> = []
+  const regex = /```(\w+)?\n?([\s\S]*?)```/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'text', content: content.slice(lastIndex, match.index) })
+    }
+    parts.push({ type: 'code', content: match[2].replace(/\n$/, ''), language: match[1] })
+    lastIndex = regex.lastIndex
+  }
+  if (lastIndex < content.length) {
+    parts.push({ type: 'text', content: content.slice(lastIndex) })
+  }
+  if (parts.length === 0) {
+    parts.push({ type: 'text', content })
+  }
+
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.type === 'code') {
+          return <CodeBlock key={i} code={part.content} language={part.language} />
+        }
+        // Rendu du texte avec `inline code` détecté
+        const inlineSegments = part.content.split(/(`[^`\n]+`)/g)
+        return (
+          <span key={i} className="whitespace-pre-wrap">
+            {inlineSegments.map((seg, j) => {
+              if (seg.startsWith('`') && seg.endsWith('`') && seg.length > 2) {
+                return (
+                  <code key={j} className="px-1 py-0.5 rounded text-[0.85em] font-mono"
+                    style={{ background: 'color-mix(in srgb, var(--scarlet) 12%, transparent)', color: 'var(--accent-primary-light, var(--accent-primary))', border: '1px solid color-mix(in srgb, var(--scarlet) 15%, transparent)' }}>
+                    {seg.slice(1, -1)}
+                  </code>
+                )
+              }
+              return <span key={j}>{seg}</span>
+            })}
+          </span>
+        )
+      })}
+    </>
+  )
 }
 
 export default function Chat() {
@@ -642,7 +769,7 @@ export default function Chat() {
                   </div>
                 )}
 
-                <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+                <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
                   style={msg.role === 'assistant' ? {
                     background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 4%, transparent), color-mix(in srgb, var(--ember) 2%, transparent))',
                     border: '1px solid color-mix(in srgb, var(--scarlet) 10%, transparent)', color: 'var(--text-primary)',
@@ -656,8 +783,11 @@ export default function Chat() {
                       ))}
                     </div>
                   )}
-                  {msg.content.replace(/\n\[Image jointe\]/g, '')}
+                  <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
                 </div>
+
+                {/* Barre d'actions sous le message (copie, etc.) */}
+                <MessageActions content={msg.content.replace(/\n\[Image jointe\]/g, '')} align={msg.role === 'user' ? 'end' : 'start'} />
               </div>
             </div>
           ))}

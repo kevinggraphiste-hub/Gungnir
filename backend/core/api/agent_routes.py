@@ -141,6 +141,42 @@ async def reorder_skills(data: dict):
     return {"success": True}
 
 
+@router.get("/skills/active")
+async def get_active_skill():
+    """Retourne le skill actuellement actif (injecté dans le system prompt du chat)."""
+    from backend.core.agents.skills import skill_library
+    active = skill_library.get_active()
+    return {
+        "active": skill_library.get_active_name(),
+        "skill": (
+            {
+                "name": active.name,
+                "description": active.description,
+                "category": active.category,
+            }
+            if active else None
+        ),
+    }
+
+
+@router.post("/skills/active/{skill_name}")
+async def set_active_skill(skill_name: str):
+    """Active un skill. Son prompt sera injecté dans le system prompt à chaque message."""
+    from backend.core.agents.skills import skill_library
+    ok = skill_library.set_active(skill_name)
+    if not ok:
+        return {"success": False, "error": "Skill introuvable"}
+    return {"success": True, "active": skill_library.get_active_name()}
+
+
+@router.delete("/skills/active")
+async def clear_active_skill():
+    """Désactive le skill actif."""
+    from backend.core.agents.skills import skill_library
+    skill_library.set_active(None)
+    return {"success": True, "active": None}
+
+
 @router.put("/skills/favorite/{skill_name}")
 async def toggle_skill_favorite(skill_name: str):
     """Toggle favorite status of a skill."""
@@ -266,6 +302,7 @@ async def invoke_sub_agent(agent_name: str, data: dict):
     import json as _json, uuid as _uuid
     from backend.core.agents.skills import subagent_library
     from backend.core.agents.wolf_tools import WOLF_EXECUTORS, _get_tools_for_agent
+    from backend.core.agents.inter_agent_log import ConversationRecorder
 
     agent = subagent_library.get_agent(agent_name)
     if not agent:
@@ -319,6 +356,10 @@ Tu as un acces COMPLET a Internet. Ne dis JAMAIS que tu n'as pas acces au web. A
 
     total_input = 0
     total_output = 0
+
+    _recorder = ConversationRecorder(callee=agent_name, task=task, provider=provider_name, model=model)
+    _recorder.__enter__()
+    _recorder.record_messages(messages)
 
     try:
         MAX_ROUNDS = 8
@@ -394,37 +435,57 @@ Tu as un acces COMPLET a Internet. Ne dis JAMAIS que tu n'as pas acces au web. A
 
                 tool_events.append({"tool": tool_name, "args": args, "result": tool_result})
                 all_results.append({"tool": tool_name, "args": args, "result": tool_result, "call_id": call_id})
+                _recorder.record_tool_event(tool_name, args, tool_result)
 
             # Inject results
             if _is_text_parsed or not _native_mode:
-                messages.append(ChatMessage(role="assistant", content=response.content or "Execution des outils..."))
+                _ma = ChatMessage(role="assistant", content=response.content or "Execution des outils...")
+                messages.append(_ma)
                 parts = []
                 for r in all_results:
                     parts.append(f"**{r['tool']}** -> {_json.dumps(r['result'], ensure_ascii=False)[:6000]}")
-                messages.append(ChatMessage(role="user", content="Resultats :\n\n" + "\n\n".join(parts) + "\n\nReponds avec ces donnees."))
+                _mu = ChatMessage(role="user", content="Resultats :\n\n" + "\n\n".join(parts) + "\n\nReponds avec ces donnees.")
+                messages.append(_mu)
+                _recorder.record_messages([_ma, _mu])
             else:
-                messages.append(ChatMessage(role="assistant", content=response.content or "", tool_calls=response.tool_calls))
+                _ma = ChatMessage(role="assistant", content=response.content or "", tool_calls=response.tool_calls)
+                messages.append(_ma)
+                _recorder.record_messages([_ma])
                 for r in all_results:
-                    messages.append(ChatMessage(role="tool", content=_json.dumps(r["result"], ensure_ascii=False)[:3000], tool_call_id=r["call_id"]))
+                    _mt = ChatMessage(role="tool", content=_json.dumps(r["result"], ensure_ascii=False)[:3000], tool_call_id=r["call_id"])
+                    messages.append(_mt)
+                    _recorder.record_messages([_mt])
+            _recorder.flush()
 
         if response and response.tool_calls:
             response = await provider.chat(messages, model)
             total_input += response.tokens_input
             total_output += response.tokens_output
 
+        final_text = response.content if response else ""
+        _recorder.record_message("assistant", final_text)
+        _recorder.set_result(final_text, total_input, total_output)
+
         return {
             "agent": agent_name,
             "role": agent.role,
             "model": model,
             "provider": provider_name,
-            "result": response.content if response else "",
+            "result": final_text,
             "tokens_input": total_input,
             "tokens_output": total_output,
             "tool_events": tool_events if tool_events else None,
+            "conversation_id": _recorder.conv.id,
         }
     except Exception as e:
         import logging; logging.getLogger("gungnir").error(f"Sub-agent chat error: {e}", exc_info=True)
-        return {"error": "Erreur interne lors de la communication avec le sous-agent"}
+        _recorder.conv.error = str(e)
+        return {"error": "Erreur interne lors de la communication avec le sous-agent", "conversation_id": _recorder.conv.id}
+    finally:
+        try:
+            _recorder.__exit__(None, None, None)
+        except Exception:
+            pass
 
 
 @router.delete("/sub-agents/{agent_name}")
@@ -432,6 +493,38 @@ async def delete_sub_agent(agent_name: str):
     from backend.core.agents.skills import subagent_library
     subagent_library.remove_agent(agent_name)
     return {"success": True}
+
+
+# ── Inter-agent conversation history ──────────────────────────────────────
+# Gives the user visibility into what happens between agents: every time a
+# sub-agent is invoked (from the main agent or from another sub-agent) the
+# full message history + tool events are persisted and exposed here.
+
+@router.get("/inter-agent/conversations")
+async def list_inter_agent_conversations(limit: int = 100, parent_id: str | None = None):
+    from backend.core.agents.inter_agent_log import list_conversations
+    return {"conversations": list_conversations(limit=limit, parent_id=parent_id)}
+
+
+@router.get("/inter-agent/conversations/{conv_id}")
+async def get_inter_agent_conversation(conv_id: str, tree: bool = False):
+    from backend.core.agents.inter_agent_log import get_conversation, get_conversation_tree
+    data = get_conversation_tree(conv_id) if tree else get_conversation(conv_id)
+    if not data:
+        return {"error": "Conversation introuvable"}
+    return data
+
+
+@router.delete("/inter-agent/conversations/{conv_id}")
+async def delete_inter_agent_conversation(conv_id: str):
+    from backend.core.agents.inter_agent_log import delete_conversation
+    return {"success": delete_conversation(conv_id)}
+
+
+@router.delete("/inter-agent/conversations")
+async def clear_inter_agent_conversations():
+    from backend.core.agents.inter_agent_log import clear_all_conversations
+    return {"success": True, "deleted": clear_all_conversations()}
 
 
 @router.get("/security/scan")

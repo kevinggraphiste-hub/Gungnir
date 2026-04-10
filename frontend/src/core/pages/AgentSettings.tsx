@@ -3,7 +3,7 @@ import {
   Shield, Plus, Trash2, Check, X, AlertTriangle, Star,
   Bot, Sparkles, Lock, Unlock, Settings as SettingsIcon,
   Code, Users, Cpu, Save, Search, FileText, GripVertical,
-  ChevronDown, ChevronUp, Tag, Upload
+  ChevronDown, ChevronUp, Tag, Upload, MessageSquare, RefreshCw
 } from 'lucide-react'
 import { useStore } from '../stores/appStore'
 import { api } from '../services/api'
@@ -12,6 +12,7 @@ export default function AgentSettings() {
   const { config, selectedProvider, setSelectedProvider, selectedModel, setSelectedModel, agentName } = useStore()
   const [activeTab, setActiveTab] = useState('mode')
   const [skills, setSkills] = useState<any[]>([])
+  const [activeSkillName, setActiveSkillName] = useState<string | null>(null)
   const [subAgents, setSubAgents] = useState<any[]>([])
   const [personalities, setPersonalities] = useState<any[]>([])
   const [securityScan, setSecurityScan] = useState<any>(null)
@@ -50,6 +51,45 @@ export default function AgentSettings() {
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null)
   const [dragContext, setDragContext] = useState<'personality' | 'skill' | null>(null)
+
+  // Inter-agent conversations
+  const [interAgentConvs, setInterAgentConvs] = useState<any[]>([])
+  const [selectedConv, setSelectedConv] = useState<any>(null)
+  const [interAgentLoading, setInterAgentLoading] = useState(false)
+
+  const loadInterAgent = async () => {
+    setInterAgentLoading(true)
+    try {
+      const res = await fetch('/api/inter-agent/conversations?limit=200')
+      const data = await res.json()
+      setInterAgentConvs(data.conversations || [])
+    } finally {
+      setInterAgentLoading(false)
+    }
+  }
+
+  const loadConvDetail = async (id: string) => {
+    const res = await fetch(`/api/inter-agent/conversations/${id}?tree=true`)
+    const data = await res.json()
+    if (!data.error) setSelectedConv(data)
+  }
+
+  const deleteConv = async (id: string) => {
+    await fetch(`/api/inter-agent/conversations/${id}`, { method: 'DELETE' })
+    if (selectedConv?.id === id) setSelectedConv(null)
+    loadInterAgent()
+  }
+
+  const clearAllConvs = async () => {
+    if (!confirm('Supprimer tout l\'historique inter-agents ?')) return
+    await fetch('/api/inter-agent/conversations', { method: 'DELETE' })
+    setSelectedConv(null)
+    loadInterAgent()
+  }
+
+  useEffect(() => {
+    if (activeTab === 'inter-agent') loadInterAgent()
+  }, [activeTab])
 
   // Soul editor
   const [soulContent, setSoulContent] = useState('')
@@ -144,12 +184,13 @@ export default function AgentSettings() {
 
   const loadData = async () => {
     try {
-      const [modeRes, skillsRes, agentsRes, persRes, secRes] = await Promise.all([
+      const [modeRes, skillsRes, agentsRes, persRes, secRes, activeSkillRes] = await Promise.all([
         fetch('/api/agent/mode').then(r => r.json()),
         fetch('/api/skills').then(r => r.json()),
         fetch('/api/sub-agents').then(r => r.json()),
         fetch('/api/personality').then(r => r.json()),
         fetch('/api/security/scan').then(r => r.json()),
+        fetch('/api/skills/active').then(r => r.json()).catch(() => ({ active: null })),
       ])
       setCurrentMode(modeRes.mode)
       setSkills(skillsRes)
@@ -157,8 +198,23 @@ export default function AgentSettings() {
       setPersonalities(persRes)
       setSecurityScan(secRes)
       setPendingRequests(modeRes.pending_requests || [])
+      setActiveSkillName(activeSkillRes?.active || null)
     } catch (err) {
       console.error('Load error:', err)
+    }
+  }
+
+  const toggleActiveSkill = async (skillName: string) => {
+    try {
+      if (activeSkillName === skillName) {
+        await api.clearActiveSkill()
+        setActiveSkillName(null)
+      } else {
+        const res = await api.setActiveSkill(skillName)
+        if (res?.success) setActiveSkillName(res.active || skillName)
+      }
+    } catch (err) {
+      console.error('Toggle active skill failed:', err)
     }
   }
 
@@ -367,6 +423,7 @@ export default function AgentSettings() {
     { id: 'skills', label: 'Skills', icon: Sparkles },
     { id: 'subagents', label: 'Sub-agents', icon: Users },
     { id: 'personality', label: 'Personnalité', icon: Bot },
+    { id: 'inter-agent', label: 'Conversations inter-agents', icon: MessageSquare },
     { id: 'security', label: 'Sécurité', icon: Shield },
   ]
 
@@ -854,10 +911,15 @@ export default function AgentSettings() {
                     }}
                     className="rounded-xl border overflow-hidden transition-all"
                     style={{
-                      borderColor: dragContext === 'skill' && dragOverIdx === idx && draggedIdx !== idx ? 'var(--accent-primary)' : 'var(--border)',
-                      background: 'var(--bg-primary)',
+                      borderColor: activeSkillName === skill.name ? 'var(--accent-primary)'
+                        : dragContext === 'skill' && dragOverIdx === idx && draggedIdx !== idx ? 'var(--accent-primary)'
+                        : 'var(--border)',
+                      background: activeSkillName === skill.name
+                        ? 'color-mix(in srgb, var(--accent-primary) 6%, var(--bg-primary))'
+                        : 'var(--bg-primary)',
                       ...(dragContext === 'skill' && dragOverIdx === idx && draggedIdx !== idx ? { boxShadow: '0 0 0 1px var(--accent-primary)' } : {}),
                       ...(dragContext === 'skill' && draggedIdx === idx ? { opacity: 0.5 } : {}),
+                      ...(activeSkillName === skill.name ? { boxShadow: '0 0 0 1px var(--accent-primary)' } : {}),
                     }}
                   >
                     <div className="flex items-center gap-3 p-4">
@@ -886,6 +948,12 @@ export default function AgentSettings() {
                           )}
                           {skill.annotations?.readOnly && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: 'var(--accent-success)', background: 'color-mix(in srgb, var(--accent-success) 12%, transparent)' }}>lecture seule</span>
+                          )}
+                          {activeSkillName === skill.name && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded font-bold flex items-center gap-1"
+                              style={{ color: '#fff', background: 'var(--accent-primary)' }}>
+                              <Check className="w-3 h-3" /> Actif
+                            </span>
                           )}
                         </div>
                         <p className="text-xs mt-1 ml-6" style={{ color: 'var(--text-muted)' }}>{skill.description}</p>
@@ -917,6 +985,17 @@ export default function AgentSettings() {
                         )}
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => toggleActiveSkill(skill.name)}
+                          className="px-2.5 py-1 rounded-lg text-xs font-medium border transition-all"
+                          style={activeSkillName === skill.name
+                            ? { background: 'var(--accent-primary)', color: '#fff', borderColor: 'var(--accent-primary)' }
+                            : { background: 'var(--bg-secondary)', color: 'var(--text-secondary)', borderColor: 'var(--border)' }
+                          }
+                          title={activeSkillName === skill.name ? 'Désactiver ce skill' : 'Utiliser ce skill dans le chat'}
+                        >
+                          {activeSkillName === skill.name ? 'Désactiver' : 'Utiliser'}
+                        </button>
                         <button
                           onClick={() => {
                             if (isEditing) { setEditingSkill(null) }
@@ -1656,6 +1735,167 @@ export default function AgentSettings() {
               <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-primary)' }} />
               <div className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                 <strong style={{ color: 'var(--text-secondary)' }}>Dans le chat</strong>, utilise <code className="bg-[var(--bg-secondary)] px-1 rounded" style={{ color: 'var(--accent-primary)' }}>/perso [nom]</code> pour changer de personnalité instantanément (ex: <code className="bg-[var(--bg-secondary)] px-1 rounded" style={{ color: 'var(--accent-primary)' }}>/perso friendly</code>), ou décris naturellement le comportement souhaité.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'inter-agent' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Conversations inter-agents</h2>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  Historique des échanges entre l'agent principal et ses sous-agents, et entre sous-agents.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={loadInterAgent}
+                  className="px-3 py-2 rounded-lg border flex items-center gap-2 text-sm"
+                  style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                  title="Rafraîchir"
+                >
+                  <RefreshCw className={`w-4 h-4 ${interAgentLoading ? 'animate-spin' : ''}`} />
+                  Rafraîchir
+                </button>
+                <button
+                  onClick={clearAllConvs}
+                  className="px-3 py-2 rounded-lg border flex items-center gap-2 text-sm"
+                  style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)', color: 'var(--accent-danger)' }}
+                  title="Tout supprimer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Tout supprimer
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* List */}
+              <div className="lg:col-span-1 space-y-2 max-h-[70vh] overflow-y-auto pr-2">
+                {interAgentConvs.length === 0 && (
+                  <div className="text-sm p-4 rounded-lg border" style={{ color: 'var(--text-muted)', borderColor: 'var(--border)', background: 'var(--bg-primary)' }}>
+                    Aucune conversation enregistrée. Lance une tâche qui délègue à un sous-agent pour voir apparaître l'historique ici.
+                  </div>
+                )}
+                {interAgentConvs.map((c: any) => (
+                  <div
+                    key={c.id}
+                    onClick={() => loadConvDetail(c.id)}
+                    className="p-3 rounded-lg border cursor-pointer transition-colors"
+                    style={{
+                      background: selectedConv?.id === c.id ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
+                      borderColor: selectedConv?.id === c.id ? 'var(--accent-primary)' : 'var(--border)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-xs font-mono truncate" style={{ color: 'var(--text-muted)' }}>
+                        {c.caller} → <span style={{ color: 'var(--accent-primary)' }}>{c.callee}</span>
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteConv(c.id) }}
+                        className="p-1 rounded hover:bg-red-500/10"
+                        title="Supprimer"
+                      >
+                        <Trash2 className="w-3 h-3" style={{ color: 'var(--accent-danger)' }} />
+                      </button>
+                    </div>
+                    <div className="text-sm line-clamp-2" style={{ color: 'var(--text-primary)' }}>{c.task}</div>
+                    <div className="flex items-center gap-2 mt-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {c.model && <span className="px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-secondary)' }}>{c.model}</span>}
+                      {c.depth > 0 && <span>profondeur {c.depth}</span>}
+                      {c.has_error && <span style={{ color: 'var(--accent-danger)' }}>erreur</span>}
+                      <span className="ml-auto">{c.started_at?.slice(0, 19).replace('T', ' ')}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Detail */}
+              <div className="lg:col-span-2 rounded-lg border p-4 max-h-[70vh] overflow-y-auto" style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
+                {!selectedConv && (
+                  <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                    Sélectionne une conversation pour voir les messages échangés.
+                  </div>
+                )}
+                {selectedConv && (
+                  <div className="space-y-4">
+                    <div>
+                      <div className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{selectedConv.id}</div>
+                      <div className="font-bold" style={{ color: 'var(--text-primary)' }}>
+                        {selectedConv.caller} → {selectedConv.callee}
+                      </div>
+                      <div className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{selectedConv.task}</div>
+                      <div className="flex gap-3 mt-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        <span>{selectedConv.provider}/{selectedConv.model}</span>
+                        <span>in: {selectedConv.tokens_input} / out: {selectedConv.tokens_output}</span>
+                      </div>
+                      {selectedConv.error && (
+                        <div className="mt-2 p-2 rounded text-xs" style={{ background: 'color-mix(in srgb, var(--accent-danger) 10%, transparent)', color: 'var(--accent-danger)' }}>
+                          {selectedConv.error}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Messages</div>
+                      {(selectedConv.messages || []).map((m: any, i: number) => (
+                        <div key={i} className="p-2 rounded text-sm" style={{
+                          background: m.role === 'system' ? 'color-mix(in srgb, var(--accent-tertiary) 8%, transparent)'
+                                    : m.role === 'user' ? 'color-mix(in srgb, var(--accent-primary) 8%, transparent)'
+                                    : m.role === 'assistant' ? 'var(--bg-secondary)'
+                                    : 'color-mix(in srgb, var(--accent-success) 8%, transparent)'
+                        }}>
+                          <div className="text-[10px] uppercase font-bold mb-1" style={{ color: 'var(--text-muted)' }}>{m.role}{m.tool_call_id ? ` · ${m.tool_call_id}` : ''}</div>
+                          <div className="whitespace-pre-wrap break-words" style={{ color: 'var(--text-primary)' }}>{m.content}</div>
+                          {m.tool_calls && (
+                            <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                              {m.tool_calls.length} tool_call(s)
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {selectedConv.tool_events?.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Tool events ({selectedConv.tool_events.length})</div>
+                        {selectedConv.tool_events.map((t: any, i: number) => (
+                          <div key={i} className="p-2 rounded text-xs border" style={{ borderColor: 'var(--border)', background: 'var(--bg-secondary)' }}>
+                            <div className="font-mono font-bold" style={{ color: 'var(--accent-primary)' }}>{t.tool}</div>
+                            <details>
+                              <summary className="cursor-pointer" style={{ color: 'var(--text-muted)' }}>args / result</summary>
+                              <pre className="mt-1 overflow-x-auto" style={{ color: 'var(--text-secondary)' }}>{JSON.stringify(t.args, null, 2)}</pre>
+                              <pre className="overflow-x-auto" style={{ color: 'var(--text-secondary)' }}>{JSON.stringify(t.result, null, 2).slice(0, 3000)}</pre>
+                            </details>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {selectedConv.children?.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                          Sous-conversations ({selectedConv.children.length})
+                        </div>
+                        {selectedConv.children.map((child: any) => child && (
+                          <div
+                            key={child.id}
+                            onClick={() => loadConvDetail(child.id)}
+                            className="p-2 rounded border cursor-pointer text-sm"
+                            style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}
+                          >
+                            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                              {child.caller} → <span style={{ color: 'var(--accent-primary)' }}>{child.callee}</span>
+                            </div>
+                            <div className="line-clamp-1" style={{ color: 'var(--text-primary)' }}>{child.task}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
