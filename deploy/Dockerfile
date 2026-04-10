@@ -44,7 +44,10 @@ COPY deploy/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Chromium for Playwright (browser automation)
-RUN python -m playwright install chromium
+# Set PLAYWRIGHT_BROWSERS_PATH so all users can access it
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+RUN python -m playwright install chromium \
+    && chmod -R 755 /opt/pw-browsers
 
 # Copy backend
 COPY backend/ ./backend/
