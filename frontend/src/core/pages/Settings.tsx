@@ -73,6 +73,15 @@ const DEFAULT_HB_CONFIG = {
   offset_seconds: 0,
   max_concurrent_tasks: 5,
   on_startup: true,
+  // Mode Jour/Nuit
+  day_night_enabled: false,
+  day_start_hour: 7,
+  night_start_hour: 22,
+  night_config: {
+    check_interval_seconds: 300,
+    ws_ping_interval_seconds: 60,
+    max_concurrent_tasks: 2,
+  },
 }
 
 export default function Settings() {
@@ -88,6 +97,11 @@ export default function Settings() {
   const [hbConfig, setHbConfig] = useState<any>(DEFAULT_HB_CONFIG)
   const [hbStatus, setHbStatus] = useState<any>({ running: false, tasks: [] })
   const [hbLoading, setHbLoading] = useState(false)
+  const [hbDirty, setHbDirty] = useState(false)
+  const [hbSaving, setHbSaving] = useState(false)
+  const [hbSaveMsg, setHbSaveMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+  const [hbNightActive, setHbNightActive] = useState(false)
+  const [hbEditMode, setHbEditMode] = useState<'day' | 'night'>('day')
 
   // Voice providers
   const [voiceConfigs, setVoiceConfigs] = useState<Record<string, any>>({})
@@ -217,10 +231,22 @@ export default function Settings() {
       if (res.ok) {
         const data = await res.json()
         setHbStatus(data)
-        if (data.config) setHbConfig(data.config)
+        if (data.config) {
+          // Merge avec les défauts pour garantir la présence de night_config etc.
+          setHbConfig({ ...DEFAULT_HB_CONFIG, ...data.config, night_config: { ...DEFAULT_HB_CONFIG.night_config, ...(data.config.night_config || {}) } })
+          setHbDirty(false)
+        }
       } else {
         console.warn('Heartbeat fetch status:', res.status)
       }
+      // Charge aussi l'état effectif (jour/nuit actuel)
+      try {
+        const eff = await fetch('/api/heartbeat/effective')
+        if (eff.ok) {
+          const d = await eff.json()
+          setHbNightActive(!!d.night_active)
+        }
+      } catch {}
     } catch (err) {
       console.warn('Heartbeat fetch error:', err)
     }
@@ -466,14 +492,43 @@ export default function Settings() {
     if (activeTab === 'doctor') runDoctor()
   }, [activeTab])
 
-  const updateHbConfig = async (key: string, val: any) => {
-    setHbConfig((prev: any) => ({ ...prev, [key]: val }))
+  // Met à jour le draft local (top-level ou nested night_config.X)
+  const updateHbConfig = (key: string, val: any) => {
+    setHbDirty(true)
+    setHbSaveMsg(null)
+    if (key.startsWith('night.')) {
+      const subKey = key.slice(6)
+      setHbConfig((prev: any) => ({
+        ...prev,
+        night_config: { ...(prev.night_config || {}), [subKey]: val },
+      }))
+    } else {
+      setHbConfig((prev: any) => ({ ...prev, [key]: val }))
+    }
+  }
+
+  // Sauvegarde complète du draft vers le backend
+  const saveHbConfig = async () => {
+    setHbSaving(true)
+    setHbSaveMsg(null)
     try {
-      await fetch('/api/heartbeat/config', {
+      const res = await fetch('/api/heartbeat/config', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [key]: val }),
+        body: JSON.stringify(hbConfig),
       })
-    } catch (err) { console.warn('HB config update error:', err) }
+      if (res.ok) {
+        const data = await res.json()
+        setHbDirty(false)
+        setHbNightActive(!!data.night_active)
+        setHbSaveMsg({ type: 'ok', text: 'Configuration sauvegardée' })
+        setTimeout(() => setHbSaveMsg(null), 2500)
+      } else {
+        setHbSaveMsg({ type: 'err', text: `Erreur ${res.status}` })
+      }
+    } catch (err: any) {
+      setHbSaveMsg({ type: 'err', text: err?.message || 'Erreur réseau' })
+    }
+    setHbSaving(false)
   }
 
   const hbAction = async (action: string) => {
@@ -1395,52 +1450,138 @@ export default function Settings() {
                 </div>
               </div>
 
-              {/* Config fields — intervals with unit selector */}
-              {[
-                { key: 'check_interval_seconds', label: 'Intervalle de vérification des tâches', desc: 'Fréquence à laquelle le heartbeat vérifie les tâches planifiées.', min: 5, max: 86400 },
-                { key: 'ws_ping_interval_seconds', label: 'Intervalle ping WebSocket', desc: 'Fréquence des pings keepalive sur les connexions vocales.', min: 5, max: 7200 },
-                { key: 'offset_seconds', label: 'Décalage initial', desc: 'Délai avant le premier cycle après démarrage.', min: 0, max: 86400 },
-              ].map(f => {
-                const totalSeconds = hbConfig[f.key] ?? f.min
-                const bestUnit = totalSeconds >= 3600 && totalSeconds % 3600 === 0 ? 'h' : totalSeconds >= 60 && totalSeconds % 60 === 0 ? 'm' : 's'
-                const displayValue = bestUnit === 'h' ? totalSeconds / 3600 : bestUnit === 'm' ? totalSeconds / 60 : totalSeconds
-                return (
-                  <div key={f.key}>
-                    <label className="text-[var(--text-secondary)] text-sm mb-2 block">{f.label}</label>
-                    <div className="flex gap-2">
-                      <input type="number" min={bestUnit === 'h' ? Math.ceil(f.min / 3600) : bestUnit === 'm' ? Math.ceil(f.min / 60) : f.min}
-                        value={displayValue}
-                        onChange={e => {
-                          const v = Number(e.target.value)
-                          const unit = (document.getElementById(`unit-${f.key}`) as HTMLSelectElement)?.value || 's'
-                          const seconds = unit === 'h' ? v * 3600 : unit === 'm' ? v * 60 : v
-                          if (seconds >= f.min) updateHbConfig(f.key, seconds)
-                        }}
-                        className="flex-1 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2.5 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
-                      <select id={`unit-${f.key}`} defaultValue={bestUnit}
-                        onChange={e => {
-                          const unit = e.target.value
-                          const currentInput = document.querySelector(`#unit-${f.key}`)?.parentElement?.querySelector('input') as HTMLInputElement
-                          const v = Number(currentInput?.value || displayValue)
-                          const seconds = unit === 'h' ? v * 3600 : unit === 'm' ? v * 60 : v
-                          if (seconds >= f.min) updateHbConfig(f.key, seconds)
-                        }}
-                        className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-3 py-2.5 text-sm focus:outline-none cursor-pointer" style={{ color: 'var(--text-primary)' }}>
-                        <option value="s">secondes</option>
-                        <option value="m">minutes</option>
-                        <option value="h">heures</option>
-                      </select>
+              {/* Mode Jour/Nuit — toggle + plages horaires */}
+              <div className="p-4 rounded-lg border" style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Mode Jour / Nuit</span>
+                      {hbConfig.day_night_enabled && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide"
+                          style={{
+                            background: hbNightActive ? 'color-mix(in srgb, #6366f1 20%, transparent)' : 'color-mix(in srgb, #f59e0b 20%, transparent)',
+                            color: hbNightActive ? '#a5b4fc' : '#fbbf24',
+                            border: `1px solid ${hbNightActive ? 'color-mix(in srgb, #6366f1 40%, transparent)' : 'color-mix(in srgb, #f59e0b 40%, transparent)'}`,
+                          }}>
+                          {hbNightActive ? '🌙 Nuit active' : '☀️ Jour actif'}
+                        </span>
+                      )}
                     </div>
-                    <p className="text-[var(--text-muted)] text-xs mt-1">{f.desc}</p>
+                    <p className="text-[var(--text-muted)] text-xs mt-1">Paramètres distincts pour la journée et la nuit (réduit la charge la nuit).</p>
                   </div>
-                )
-              })}
+                  <input type="checkbox" checked={hbConfig.day_night_enabled ?? false}
+                    onChange={e => updateHbConfig('day_night_enabled', e.target.checked)}
+                    className="w-4 h-4 rounded bg-[var(--bg-primary)] border-[var(--border)] accent-red-600" />
+                </div>
+
+                {hbConfig.day_night_enabled && (
+                  <>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="text-[var(--text-secondary)] text-xs mb-1 block">Début du jour</label>
+                        <div className="flex items-center gap-2">
+                          <input type="number" min={0} max={23} value={hbConfig.day_start_hour ?? 7}
+                            onChange={e => updateHbConfig('day_start_hour', Math.max(0, Math.min(23, Number(e.target.value))))}
+                            className="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-3 py-2 focus:outline-none text-sm" style={{ color: 'var(--text-primary)' }} />
+                          <span className="text-[var(--text-muted)] text-xs">h</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[var(--text-secondary)] text-xs mb-1 block">Début de la nuit</label>
+                        <div className="flex items-center gap-2">
+                          <input type="number" min={0} max={23} value={hbConfig.night_start_hour ?? 22}
+                            onChange={e => updateHbConfig('night_start_hour', Math.max(0, Math.min(23, Number(e.target.value))))}
+                            className="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-3 py-2 focus:outline-none text-sm" style={{ color: 'var(--text-primary)' }} />
+                          <span className="text-[var(--text-muted)] text-xs">h</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Switch entre édition jour et nuit */}
+                    <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+                      <button onClick={() => setHbEditMode('day')}
+                        className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all"
+                        style={{
+                          background: hbEditMode === 'day' ? 'color-mix(in srgb, #f59e0b 25%, transparent)' : 'transparent',
+                          color: hbEditMode === 'day' ? '#fbbf24' : 'var(--text-muted)',
+                        }}>
+                        ☀️ Édition Jour
+                      </button>
+                      <button onClick={() => setHbEditMode('night')}
+                        className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all"
+                        style={{
+                          background: hbEditMode === 'night' ? 'color-mix(in srgb, #6366f1 25%, transparent)' : 'transparent',
+                          color: hbEditMode === 'night' ? '#a5b4fc' : 'var(--text-muted)',
+                        }}>
+                        🌙 Édition Nuit
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Config fields — intervals with unit selector */}
+              {(() => {
+                const isNightEdit = hbConfig.day_night_enabled && hbEditMode === 'night'
+                const nightCfg = hbConfig.night_config || {}
+                const fields = [
+                  { key: 'check_interval_seconds', label: 'Intervalle de vérification des tâches', desc: 'Fréquence à laquelle le heartbeat vérifie les tâches planifiées.', min: 5, max: 86400 },
+                  { key: 'ws_ping_interval_seconds', label: 'Intervalle ping WebSocket', desc: 'Fréquence des pings keepalive sur les connexions vocales.', min: 5, max: 7200 },
+                  { key: 'offset_seconds', label: 'Décalage initial', desc: 'Délai avant le premier cycle après démarrage.', min: 0, max: 86400, dayOnly: true },
+                ]
+                return fields.map(f => {
+                  if (isNightEdit && f.dayOnly) return null
+                  const source = isNightEdit ? nightCfg : hbConfig
+                  const totalSeconds = source[f.key] ?? f.min
+                  const bestUnit = totalSeconds >= 3600 && totalSeconds % 3600 === 0 ? 'h' : totalSeconds >= 60 && totalSeconds % 60 === 0 ? 'm' : 's'
+                  const displayValue = bestUnit === 'h' ? totalSeconds / 3600 : bestUnit === 'm' ? totalSeconds / 60 : totalSeconds
+                  const writeKey = isNightEdit ? `night.${f.key}` : f.key
+                  return (
+                    <div key={`${isNightEdit ? 'n' : 'd'}-${f.key}`}>
+                      <label className="text-[var(--text-secondary)] text-sm mb-2 block">{f.label}</label>
+                      <div className="flex gap-2">
+                        <input type="number" min={bestUnit === 'h' ? Math.ceil(f.min / 3600) : bestUnit === 'm' ? Math.ceil(f.min / 60) : f.min}
+                          value={displayValue}
+                          onChange={e => {
+                            const v = Number(e.target.value)
+                            const unit = (document.getElementById(`unit-${writeKey}`) as HTMLSelectElement)?.value || 's'
+                            const seconds = unit === 'h' ? v * 3600 : unit === 'm' ? v * 60 : v
+                            if (seconds >= f.min) updateHbConfig(writeKey, seconds)
+                          }}
+                          className="flex-1 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2.5 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
+                        <select id={`unit-${writeKey}`} value={bestUnit}
+                          onChange={e => {
+                            const unit = e.target.value
+                            const currentInput = document.querySelector(`#unit-${writeKey}`)?.parentElement?.querySelector('input') as HTMLInputElement
+                            const v = Number(currentInput?.value || displayValue)
+                            const seconds = unit === 'h' ? v * 3600 : unit === 'm' ? v * 60 : v
+                            if (seconds >= f.min) updateHbConfig(writeKey, seconds)
+                          }}
+                          className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-3 py-2.5 text-sm focus:outline-none cursor-pointer" style={{ color: 'var(--text-primary)' }}>
+                          <option value="s">secondes</option>
+                          <option value="m">minutes</option>
+                          <option value="h">heures</option>
+                        </select>
+                      </div>
+                      <p className="text-[var(--text-muted)] text-xs mt-1">{f.desc}</p>
+                    </div>
+                  )
+                })
+              })()}
+
               {/* Max concurrent tasks — no unit needed */}
               <div>
                 <label className="text-[var(--text-secondary)] text-sm mb-2 block">Tâches concurrentes max</label>
-                <input type="number" min={1} max={20} value={hbConfig.max_concurrent_tasks ?? 5}
-                  onChange={e => updateHbConfig('max_concurrent_tasks', Number(e.target.value))}
-                  className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2.5 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
+                {(() => {
+                  const isNightEdit = hbConfig.day_night_enabled && hbEditMode === 'night'
+                  const val = isNightEdit ? (hbConfig.night_config?.max_concurrent_tasks ?? 2) : (hbConfig.max_concurrent_tasks ?? 5)
+                  const writeKey = isNightEdit ? 'night.max_concurrent_tasks' : 'max_concurrent_tasks'
+                  return (
+                    <input type="number" min={1} max={20} value={val}
+                      onChange={e => updateHbConfig(writeKey, Number(e.target.value))}
+                      className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2.5 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
+                  )
+                })()}
                 <p className="text-[var(--text-muted)] text-xs mt-1">Nombre max de tâches planifiées en parallèle.</p>
               </div>
 
@@ -1452,6 +1593,31 @@ export default function Settings() {
                 <input type="checkbox" checked={hbConfig.on_startup ?? true}
                   onChange={e => updateHbConfig('on_startup', e.target.checked)}
                   className="w-4 h-4 rounded bg-[var(--bg-primary)] border-[var(--border)] accent-red-600" />
+              </div>
+
+              {/* Bouton Sauvegarder + message */}
+              <div className="flex items-center gap-3 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                <button onClick={saveHbConfig} disabled={!hbDirty || hbSaving}
+                  className="px-4 py-2 text-sm font-medium rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    background: hbDirty ? 'color-mix(in srgb, var(--scarlet) 20%, transparent)' : 'var(--bg-secondary)',
+                    color: hbDirty ? 'var(--accent-primary-light, #ff6b6b)' : 'var(--text-muted)',
+                    border: `1px solid ${hbDirty ? 'color-mix(in srgb, var(--scarlet) 40%, transparent)' : 'var(--border)'}`,
+                  }}>
+                  {hbSaving ? 'Sauvegarde...' : hbDirty ? 'Sauvegarder' : 'Sauvegardé'}
+                </button>
+                {hbDirty && !hbSaving && (
+                  <button onClick={loadHeartbeat}
+                    className="px-3 py-2 text-xs rounded-lg"
+                    style={{ color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)' }}>
+                    Annuler
+                  </button>
+                )}
+                {hbSaveMsg && (
+                  <span className="text-xs" style={{ color: hbSaveMsg.type === 'ok' ? 'var(--accent-success)' : 'var(--accent-primary)' }}>
+                    {hbSaveMsg.text}
+                  </span>
+                )}
               </div>
 
               {hbStatus?.tasks?.length > 0 && (

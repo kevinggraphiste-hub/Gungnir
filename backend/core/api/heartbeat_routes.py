@@ -29,7 +29,43 @@ DEFAULT_CONFIG = {
     "max_concurrent_tasks": 5,
     "on_startup": False,
     "started_at": None,
+    # Mode Jour/Nuit — quand activé, applique night_config entre night_start_hour et day_start_hour
+    "day_night_enabled": False,
+    "day_start_hour": 7,      # 07:00 → début du mode jour
+    "night_start_hour": 22,   # 22:00 → début du mode nuit
+    "night_config": {
+        "check_interval_seconds": 300,
+        "ws_ping_interval_seconds": 60,
+        "max_concurrent_tasks": 2,
+    },
 }
+
+
+def _is_night_time(cfg: dict) -> bool:
+    """Détermine si on est actuellement en période de nuit selon la config."""
+    if not cfg.get("day_night_enabled"):
+        return False
+    from datetime import datetime
+    hour = datetime.now().hour
+    day_start = int(cfg.get("day_start_hour", 7))
+    night_start = int(cfg.get("night_start_hour", 22))
+    # Nuit traverse minuit si night_start > day_start (cas normal)
+    if night_start > day_start:
+        return hour >= night_start or hour < day_start
+    # Inverse (rare) — nuit entre day_start et night_start
+    return day_start <= hour < night_start
+
+
+def _effective_config(cfg: dict) -> dict:
+    """Retourne la config effective en appliquant les overrides nuit si actifs."""
+    if not _is_night_time(cfg):
+        return cfg
+    night = cfg.get("night_config") or {}
+    merged = {**cfg}
+    for k, v in night.items():
+        if v is not None:
+            merged[k] = v
+    return merged
 
 
 def _load() -> dict:
@@ -64,7 +100,9 @@ async def _heartbeat_loop():
                 await asyncio.sleep(5)
                 continue
 
-            interval = cfg.get("check_interval_seconds", 30)
+            # Applique les overrides jour/nuit si activés
+            eff = _effective_config(cfg)
+            interval = eff.get("check_interval_seconds", 30)
 
             # Trigger consciousness background think if available
             try:
@@ -128,18 +166,36 @@ async def get_heartbeat():
 
 @router.put("/heartbeat/config")
 async def update_heartbeat_config(request: Request):
-    """Met à jour la configuration du heartbeat."""
+    """Met à jour la configuration du heartbeat.
+
+    Accepte aussi la clé `night_config` (objet) pour les overrides nuit.
+    """
     request_data = await request.json()
     data = _load()
     cfg = data.get("config", {})
 
     for key, val in request_data.items():
-        if key in DEFAULT_CONFIG:
+        if key == "night_config" and isinstance(val, dict):
+            current_night = cfg.get("night_config") or {}
+            # Fusion partielle : on garde les clés non fournies
+            cfg["night_config"] = {**current_night, **val}
+        elif key in DEFAULT_CONFIG:
             cfg[key] = val
 
     data["config"] = cfg
     _save(data)
-    return {"ok": True, "config": cfg}
+    return {"ok": True, "config": cfg, "night_active": _is_night_time(cfg)}
+
+
+@router.get("/heartbeat/effective")
+async def get_effective_config():
+    """Retourne la config effective (avec overrides jour/nuit appliqués)."""
+    data = _load()
+    cfg = data.get("config", {})
+    return {
+        "effective": _effective_config(cfg),
+        "night_active": _is_night_time(cfg),
+    }
 
 
 @router.post("/heartbeat/start")
