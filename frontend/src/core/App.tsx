@@ -159,22 +159,15 @@ export default function App() {
 
   useEffect(() => {
     const checkAuth = async () => {
-      try {
-        // Check if auth is even required (try accessing a protected endpoint)
-        const result = await api.checkAuth()
-        if (result.ok) {
-          setAuthState('logged_in')
-        } else {
-          setAuthState('needs_login')
-        }
-      } catch (err: any) {
-        // 401 = auth is active but no valid token
-        if (err?.message?.includes('401') || err?.message?.includes('Token')) {
-          setAuthState('needs_login')
-        } else {
-          // Backend not ready or no auth configured — allow access
-          setAuthState('no_auth')
-        }
+      // checkAuth ne throw plus : il renvoie un objet explicite.
+      const result = await api.checkAuth()
+      if (result.ok) {
+        setAuthState('logged_in')
+      } else if (result.reason === 'needs_login') {
+        setAuthState('needs_login')
+      } else {
+        // backend_error / network_error — backend pas prêt, on laisse passer
+        setAuthState('no_auth')
       }
     }
     checkAuth()

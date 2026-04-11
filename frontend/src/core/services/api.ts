@@ -442,8 +442,23 @@ export const api = {
   },
 
   checkAuth: async () => {
-    const response = await apiFetch(`${API_BASE}/users/me`)
-    return handleResponse(response)
+    // Renvoie un objet explicite plutôt que de throw, pour que App.tsx puisse
+    // distinguer 'pas loggué' (needs_login) de 'backend ko' (no_auth) sans
+    // dépendre du contenu du message d'erreur.
+    try {
+      const response = await apiFetch(`${API_BASE}/users/me`)
+      if (response.status === 401) {
+        return { ok: false, reason: 'needs_login' as const }
+      }
+      if (!response.ok) {
+        return { ok: false, reason: 'backend_error' as const }
+      }
+      const data = await response.json().catch(() => null)
+      if (data && data.ok) return { ok: true, user: data.user }
+      return { ok: false, reason: 'needs_login' as const }
+    } catch {
+      return { ok: false, reason: 'network_error' as const }
+    }
   },
 
   // ── Voice ─────────────────────────────────────────────────────────
