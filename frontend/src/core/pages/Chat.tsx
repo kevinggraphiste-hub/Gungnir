@@ -664,35 +664,41 @@ export default function Chat() {
                     <MessageSquare className="w-3 h-3" /> Toutes
                     <span className="ml-auto text-[9px]">{conversations.length}</span>
                   </button>
-                  <button onClick={() => setFolderFilter(null)}
-                    onDragOver={(e) => { if (draggedConvoRef.current !== null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dropTargetFolder !== 'none') setDropTargetFolder('none') } }}
-                    onDragLeave={() => setDropTargetFolder(undefined)}
-                    onDrop={(e) => { e.preventDefault(); const id = draggedConvoRef.current; if (id !== null) handleDropOnFolder(id, null); draggedConvoRef.current = null; setDropTargetFolder(undefined); setDraggedConvoId(null) }}
-                    className="w-full flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors"
+                  <div
+                    onDragEnter={(e) => { e.preventDefault() }}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dropTargetFolder !== 'none') setDropTargetFolder('none') }}
+                    onDragLeave={(e) => { if (e.currentTarget === e.target) setDropTargetFolder(undefined) }}
+                    onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const id = draggedConvoRef.current ?? (Number(e.dataTransfer.getData('text/plain')) || null); if (id !== null) handleDropOnFolder(id, null); draggedConvoRef.current = null; setDropTargetFolder(undefined); setDraggedConvoId(null) }}
+                    onClick={() => setFolderFilter(null)}
+                    role="button"
+                    className="w-full flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors cursor-pointer"
                     style={{
                       background: dropTargetFolder === 'none' ? 'color-mix(in srgb, var(--accent-primary) 20%, transparent)' : folderFilter === null ? 'var(--bg-elevated)' : undefined,
                       border: dropTargetFolder === 'none' ? '1px dashed var(--accent-primary)' : '1px solid transparent',
                       color: folderFilter === null ? 'var(--text-primary)' : 'var(--text-muted)'
                     }}>
-                    <FolderMinus className="w-3 h-3" /> Sans dossier
-                  </button>
+                    <FolderMinus className="w-3 h-3 pointer-events-none" /> <span className="pointer-events-none">Sans dossier</span>
+                  </div>
                   {folders.map(f => {
                     const isDropTarget = dropTargetFolder === f.id
                     return (
                       <div key={f.id} className="group/folder flex items-center">
-                        <button onClick={() => setFolderFilter(f.id)}
-                          onDragOver={(e) => { if (draggedConvoRef.current !== null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dropTargetFolder !== f.id) setDropTargetFolder(f.id) } }}
-                          onDragLeave={() => setDropTargetFolder(undefined)}
-                          onDrop={(e) => { e.preventDefault(); const id = draggedConvoRef.current; if (id !== null) handleDropOnFolder(id, f.id); draggedConvoRef.current = null; setDropTargetFolder(undefined); setDraggedConvoId(null) }}
-                          className="flex-1 flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors min-w-0"
+                        <div
+                          onDragEnter={(e) => { e.preventDefault() }}
+                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dropTargetFolder !== f.id) setDropTargetFolder(f.id) }}
+                          onDragLeave={(e) => { if (e.currentTarget === e.target) setDropTargetFolder(undefined) }}
+                          onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const id = draggedConvoRef.current ?? (Number(e.dataTransfer.getData('text/plain')) || null); if (id !== null) handleDropOnFolder(id, f.id); draggedConvoRef.current = null; setDropTargetFolder(undefined); setDraggedConvoId(null) }}
+                          onClick={() => setFolderFilter(f.id)}
+                          role="button"
+                          className="flex-1 flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors min-w-0 cursor-pointer"
                           style={{
                             background: isDropTarget ? 'color-mix(in srgb, var(--accent-primary) 20%, transparent)' : folderFilter === f.id ? 'var(--bg-elevated)' : undefined,
                             border: isDropTarget ? '1px dashed var(--accent-primary)' : '1px solid transparent',
                             color: folderFilter === f.id ? 'var(--text-primary)' : 'var(--text-muted)'
                           }}>
-                          <Folder className="w-3 h-3 flex-shrink-0" style={{ color: f.color || 'var(--accent-primary)' }} />
-                          <span className="truncate">{f.name}</span>
-                        </button>
+                          <Folder className="w-3 h-3 flex-shrink-0 pointer-events-none" style={{ color: f.color || 'var(--accent-primary)' }} />
+                          <span className="truncate pointer-events-none">{f.name}</span>
+                        </div>
                         <button onClick={(e) => { e.stopPropagation(); handleDeleteFolder(f.id) }}
                           className="opacity-0 group-hover/folder:opacity-100 px-1 transition-opacity" title="Supprimer"
                           style={{ color: 'var(--text-muted)' }}>

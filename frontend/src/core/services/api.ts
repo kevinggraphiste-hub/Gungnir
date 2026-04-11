@@ -37,7 +37,7 @@ export function clearAuthToken() {
   localStorage.removeItem(TOKEN_KEY)
 }
 
-const apiFetch = (url: string, init?: RequestInit) => {
+export const apiFetch = (url: string, init?: RequestInit) => {
   const token = getAuthToken()
   const headers: Record<string, string> = {
     ...(init?.headers as Record<string, string> || {}),

@@ -10,7 +10,7 @@ import { Loader2 } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import { PluginErrorBoundary } from './components/ErrorBoundary'
 import { useStore } from './stores/appStore'
-import { api, clearAuthToken } from './services/api'
+import { api, apiFetch, clearAuthToken } from './services/api'
 import { usePluginStore } from './stores/pluginStore'
 import { useGlobalKeyboard } from './hooks/useKeyboard'
 import { getPluginComponent } from './services/pluginLoader'
@@ -89,7 +89,10 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
     const init = async () => {
       try {
         // Load core config + sync language
-        const configRes = await fetch('/api/config')
+        // ⚠️ apiFetch (pas fetch brut) : quand l'auth est active, sans le
+        // Bearer token /api/config renvoie 401 et toute la config (providers,
+        // personnalités, etc.) apparaît vide dans l'UI.
+        const configRes = await apiFetch('/api/config')
         if (configRes.ok) {
           const data = await configRes.json()
           setConfig(data)
