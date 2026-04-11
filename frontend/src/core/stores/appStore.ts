@@ -5,6 +5,7 @@
  * Plugin-specific state lives in pluginStore or within each plugin.
  */
 import { create } from 'zustand'
+import { apiFetch } from '../services/api'
 
 interface Message {
   id: number
@@ -97,7 +98,7 @@ export const useStore = create<AppState>((set) => ({
     const token = localStorage.getItem('gungnir_auth_token')
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (token) headers['Authorization'] = `Bearer ${token}`
-    fetch('/api/config/user/app', {
+    apiFetch('/api/config/user/app', {
       method: 'POST',
       headers,
       body: JSON.stringify({ active_provider: provider }),
@@ -111,7 +112,7 @@ export const useStore = create<AppState>((set) => ({
     const token = localStorage.getItem('gungnir_auth_token')
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (token) headers['Authorization'] = `Bearer ${token}`
-    fetch('/api/config/user/app', {
+    apiFetch('/api/config/user/app', {
       method: 'POST',
       headers,
       body: JSON.stringify({ active_model: model }),

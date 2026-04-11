@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../i18n'
 import { useStore } from '../stores/appStore'
-import { api } from '../services/api'
+import { api, apiFetch } from '../services/api'
 import {
   Send, Plus, User, Mic, MicOff, ChevronDown, Bot,
   Search, Sparkles, MessageSquare, Star,
@@ -411,7 +411,7 @@ export default function Chat() {
     const enabledNames = Object.entries(config.providers).filter(([, p]) => (p as any).enabled).map(([name]) => name)
     Promise.all(
       enabledNames.map(async (name) => {
-        try { const res = await fetch(`/api/models/${name}`); const data = await res.json(); return { name, models: (data.models || []) as string[] } }
+        try { const res = await apiFetch(`/api/models/${name}`); const data = await res.json(); return { name, models: (data.models || []) as string[] } }
         catch { return { name, models: [] } }
       })
     ).then(results => {

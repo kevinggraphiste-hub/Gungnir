@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useStore } from '../stores/appStore'
-import { api } from '../services/api'
+import { api, apiFetch } from '../services/api'
 import {
   Settings as SettingsIcon, Globe, Palette, Key, Mic, RefreshCw,
   HeartPulse, HardDrive, Download, Upload, Trash2, CheckCircle, AlertCircle, Type, User,
@@ -227,7 +227,7 @@ export default function Settings() {
   const loadHeartbeat = async () => {
     setHbLoading(true)
     try {
-      const res = await fetch('/api/heartbeat')
+      const res = await apiFetch('/api/heartbeat')
       if (res.ok) {
         const data = await res.json()
         setHbStatus(data)
@@ -241,7 +241,7 @@ export default function Settings() {
       }
       // Charge aussi l'état effectif (jour/nuit actuel)
       try {
-        const eff = await fetch('/api/heartbeat/effective')
+        const eff = await apiFetch('/api/heartbeat/effective')
         if (eff.ok) {
           const d = await eff.json()
           setHbNightActive(!!d.night_active)
@@ -263,7 +263,7 @@ export default function Settings() {
 
   const loadCustomProviders = async () => {
     try {
-      const resp = await fetch('/api/plugins/voice/custom-providers')
+      const resp = await apiFetch('/api/plugins/voice/custom-providers')
       if (resp.ok) {
         const data = await resp.json()
         setCustomProviders(data.providers || [])
@@ -313,7 +313,7 @@ export default function Settings() {
     }
     setCustomSaving(true)
     try {
-      const resp = await fetch('/api/plugins/voice/custom-providers', {
+      const resp = await apiFetch('/api/plugins/voice/custom-providers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editingCustom),
@@ -333,7 +333,7 @@ export default function Settings() {
   const handleDeleteCustomProvider = async (id: string) => {
     if (!confirm(`Supprimer le provider "${id}" ?`)) return
     try {
-      await fetch(`/api/plugins/voice/custom-providers/${id}`, { method: 'DELETE' })
+      await apiFetch(`/api/plugins/voice/custom-providers/${id}`, { method: 'DELETE' })
       await loadCustomProviders()
       await loadVoiceConfigs()
     } catch {}
@@ -341,7 +341,7 @@ export default function Settings() {
 
   const loadVoiceConfigs = async () => {
     try {
-      const resp = await fetch('/api/plugins/voice/providers')
+      const resp = await apiFetch('/api/plugins/voice/providers')
       if (resp.ok) {
         const data = await resp.json()
         const configs: Record<string, any> = {}
@@ -382,7 +382,7 @@ export default function Settings() {
   const handleTestVoice = async (providerId: string) => {
     setVoiceTesting(providerId)
     try {
-      const resp = await fetch('/api/plugins/voice/provider/test', {
+      const resp = await apiFetch('/api/plugins/voice/provider/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: providerId }),
@@ -454,7 +454,7 @@ export default function Settings() {
     setDoctorLoading(true)
     setDoctorResult(null)
     try {
-      const res = await fetch('/api/doctor')
+      const res = await apiFetch('/api/doctor')
       const data = await res.json()
       setDoctorResult(data)
     } catch (err: any) {
@@ -512,7 +512,7 @@ export default function Settings() {
     setHbSaving(true)
     setHbSaveMsg(null)
     try {
-      const res = await fetch('/api/heartbeat/config', {
+      const res = await apiFetch('/api/heartbeat/config', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(hbConfig),
       })
@@ -533,7 +533,7 @@ export default function Settings() {
 
   const hbAction = async (action: string) => {
     try {
-      await fetch(`/api/heartbeat/${action}`, { method: 'POST' })
+      await apiFetch(`/api/heartbeat/${action}`, { method: 'POST' })
       setTimeout(loadHeartbeat, 500)
     } catch (err) { console.warn('HB action error:', err) }
   }
@@ -541,11 +541,11 @@ export default function Settings() {
   // -- Backup ------------------------------------------------------------------
   const loadBackup = async () => {
     try {
-      const res = await fetch('/api/backup/config')
+      const res = await apiFetch('/api/backup/config')
       if (res.ok) { const data = await res.json(); setBackupConfig(data) }
     } catch {}
     try {
-      const res = await fetch('/api/backup/history')
+      const res = await apiFetch('/api/backup/history')
       if (res.ok) { const data = await res.json(); setBackupHistory(data.backups || []) }
     } catch {}
   }
@@ -553,7 +553,7 @@ export default function Settings() {
   const saveBackupConfig = async (newCfg: any) => {
     setBackupConfig(newCfg)
     try {
-      await fetch('/api/backup/config', {
+      await apiFetch('/api/backup/config', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newCfg),
       })
@@ -563,7 +563,7 @@ export default function Settings() {
   const triggerBackup = async () => {
     setBackupLoading(true); setBackupMsg(null)
     try {
-      const res = await fetch('/api/backup/now', { method: 'POST' })
+      const res = await apiFetch('/api/backup/now', { method: 'POST' })
       const data = await res.json()
       if (data.ok) { setBackupMsg({ type: 'ok', text: `Backup réussi : ${data.filename || 'OK'}` }); await loadBackup() }
       else setBackupMsg({ type: 'err', text: data.error || 'Erreur backup' })
@@ -575,7 +575,7 @@ export default function Settings() {
     if (!confirm(`Restaurer le backup "${filename}" ? Les données actuelles seront écrasées.`)) return
     setBackupLoading(true); setBackupMsg(null)
     try {
-      const res = await fetch('/api/backup/restore', {
+      const res = await apiFetch('/api/backup/restore', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename }),
       })
@@ -589,7 +589,7 @@ export default function Settings() {
   const deleteBackup = async (filename: string) => {
     if (!confirm(`Supprimer le backup "${filename}" ?`)) return
     try {
-      await fetch(`/api/backup/${encodeURIComponent(filename)}`, { method: 'DELETE' })
+      await apiFetch(`/api/backup/${encodeURIComponent(filename)}`, { method: 'DELETE' })
       await loadBackup()
     } catch {}
   }

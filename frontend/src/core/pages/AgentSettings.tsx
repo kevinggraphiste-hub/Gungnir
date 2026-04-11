@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronUp, Tag, Upload, MessageSquare, RefreshCw
 } from 'lucide-react'
 import { useStore } from '../stores/appStore'
-import { api } from '../services/api'
+import { api, apiFetch } from '../services/api'
 
 export default function AgentSettings() {
   const { config, selectedProvider, setSelectedProvider, selectedModel, setSelectedModel, agentName } = useStore()
@@ -60,7 +60,7 @@ export default function AgentSettings() {
   const loadInterAgent = async () => {
     setInterAgentLoading(true)
     try {
-      const res = await fetch('/api/inter-agent/conversations?limit=200')
+      const res = await apiFetch('/api/inter-agent/conversations?limit=200')
       const data = await res.json()
       setInterAgentConvs(data.conversations || [])
     } finally {
@@ -69,20 +69,20 @@ export default function AgentSettings() {
   }
 
   const loadConvDetail = async (id: string) => {
-    const res = await fetch(`/api/inter-agent/conversations/${id}?tree=true`)
+    const res = await apiFetch(`/api/inter-agent/conversations/${id}?tree=true`)
     const data = await res.json()
     if (!data.error) setSelectedConv(data)
   }
 
   const deleteConv = async (id: string) => {
-    await fetch(`/api/inter-agent/conversations/${id}`, { method: 'DELETE' })
+    await apiFetch(`/api/inter-agent/conversations/${id}`, { method: 'DELETE' })
     if (selectedConv?.id === id) setSelectedConv(null)
     loadInterAgent()
   }
 
   const clearAllConvs = async () => {
     if (!confirm('Supprimer tout l\'historique inter-agents ?')) return
-    await fetch('/api/inter-agent/conversations', { method: 'DELETE' })
+    await apiFetch('/api/inter-agent/conversations', { method: 'DELETE' })
     setSelectedConv(null)
     loadInterAgent()
   }
@@ -134,7 +134,7 @@ export default function AgentSettings() {
     Promise.all(
       enabledNames.map(async (name) => {
         try {
-          const res = await fetch(`/api/models/${name}`)
+          const res = await apiFetch(`/api/models/${name}`)
           const data = await res.json()
           return { name, models: (data.models || []) as string[] }
         } catch {
@@ -185,12 +185,12 @@ export default function AgentSettings() {
   const loadData = async () => {
     try {
       const [modeRes, skillsRes, agentsRes, persRes, secRes, activeSkillRes] = await Promise.all([
-        fetch('/api/agent/mode').then(r => r.json()),
-        fetch('/api/skills').then(r => r.json()),
-        fetch('/api/sub-agents').then(r => r.json()),
-        fetch('/api/personality').then(r => r.json()),
-        fetch('/api/security/scan').then(r => r.json()),
-        fetch('/api/skills/active').then(r => r.json()).catch(() => ({ active: null })),
+        apiFetch('/api/agent/mode').then(r => r.json()),
+        apiFetch('/api/skills').then(r => r.json()),
+        apiFetch('/api/sub-agents').then(r => r.json()),
+        apiFetch('/api/personality').then(r => r.json()),
+        apiFetch('/api/security/scan').then(r => r.json()),
+        apiFetch('/api/skills/active').then(r => r.json()).catch(() => ({ active: null })),
       ])
       setCurrentMode(modeRes.mode)
       setSkills(skillsRes)
@@ -256,12 +256,12 @@ export default function AgentSettings() {
       const text = await file.text()
       const data = JSON.parse(text)
       setImportStatus({ type: 'skill', success: false, message: 'Analyse de sécurité en cours...' })
-      const scanRes = await fetch('/api/security/scan/skill', {
+      const scanRes = await apiFetch('/api/security/scan/skill', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: data.prompt || '', code: data.code || '' }),
       }).then(r => r.json())
       if ((scanRes.score ?? 100) >= SECURITY_THRESHOLD) {
-        await fetch('/api/skills/import', {
+        await apiFetch('/api/skills/import', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data),
         })
@@ -284,12 +284,12 @@ export default function AgentSettings() {
       const text = await file.text()
       const data = JSON.parse(text)
       setImportStatus({ type: 'agent', success: false, message: 'Analyse de sécurité en cours...' })
-      const scanRes = await fetch('/api/security/scan/skill', {
+      const scanRes = await apiFetch('/api/security/scan/skill', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: data.system_prompt || '', code: data.code || '' }),
       }).then(r => r.json())
       if ((scanRes.score ?? 100) >= SECURITY_THRESHOLD) {
-        await fetch('/api/sub-agents/import', {
+        await apiFetch('/api/sub-agents/import', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data),
         })
@@ -305,17 +305,17 @@ export default function AgentSettings() {
   }
 
   const setMode = async (mode: string) => {
-    await fetch(`/api/agent/mode/${mode}`, { method: 'POST' })
+    await apiFetch(`/api/agent/mode/${mode}`, { method: 'POST' })
     setCurrentMode(mode)
   }
 
   const approveRequest = async (id: string) => {
-    await fetch(`/api/agent/permission/${id}/approve`, { method: 'POST' })
+    await apiFetch(`/api/agent/permission/${id}/approve`, { method: 'POST' })
     loadData()
   }
 
   const denyRequest = async (id: string) => {
-    await fetch(`/api/agent/permission/${id}/deny`, { method: 'POST', body: JSON.stringify({ reason: 'denied' }) })
+    await apiFetch(`/api/agent/permission/${id}/deny`, { method: 'POST', body: JSON.stringify({ reason: 'denied' }) })
     loadData()
   }
 
@@ -326,7 +326,7 @@ export default function AgentSettings() {
       tags: newSkill.tags ? newSkill.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
       examples: newSkill.examples.filter(e => e.prompt.trim()),
     }
-    const res = await fetch('/api/skills', {
+    const res = await apiFetch('/api/skills', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -348,7 +348,7 @@ export default function AgentSettings() {
 
   const deleteSkill = async (name: string) => {
     if (!confirm(`Supprimer ${name}?`)) return
-    await fetch(`/api/skills/${name}`, { method: 'DELETE' })
+    await apiFetch(`/api/skills/${name}`, { method: 'DELETE' })
     loadData()
   }
 
@@ -357,7 +357,7 @@ export default function AgentSettings() {
       ...editSkillForm,
       tags: editSkillForm.tags ? editSkillForm.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
     }
-    await fetch(`/api/skills/${name}`, {
+    await apiFetch(`/api/skills/${name}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -372,7 +372,7 @@ export default function AgentSettings() {
       ...newAgent,
       tags: newAgent.tags ? newAgent.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
     }
-    const res = await fetch('/api/sub-agents', {
+    const res = await apiFetch('/api/sub-agents', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -387,7 +387,7 @@ export default function AgentSettings() {
 
   const deleteSubAgent = async (name: string) => {
     if (!confirm(`Supprimer ${name}?`)) return
-    await fetch(`/api/sub-agents/${name}`, { method: 'DELETE' })
+    await apiFetch(`/api/sub-agents/${name}`, { method: 'DELETE' })
     loadData()
   }
 
@@ -403,7 +403,7 @@ export default function AgentSettings() {
   }
 
   const saveSubAgent = async (name: string) => {
-    await fetch(`/api/sub-agents/${name}`, {
+    await apiFetch(`/api/sub-agents/${name}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(editAgentForm),
@@ -1928,7 +1928,7 @@ export default function AgentSettings() {
                   onClick={async () => {
                     const code = (document.getElementById('codeToScan') as HTMLTextAreaElement)?.value
                     setCodeScanResult(null)
-                    const res = await fetch('/api/security/scan/code', {
+                    const res = await apiFetch('/api/security/scan/code', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ code }),
@@ -1984,7 +1984,7 @@ export default function AgentSettings() {
                   onClick={async () => {
                     const prompt = (document.getElementById('skillToScan') as HTMLTextAreaElement)?.value
                     setSkillScanResult(null)
-                    const res = await fetch('/api/security/scan/skill', {
+                    const res = await apiFetch('/api/security/scan/skill', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ prompt }),

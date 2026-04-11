@@ -5,6 +5,7 @@
  * Populated from the backend /api/plugins/status endpoint at startup.
  */
 import { create } from 'zustand'
+import { apiFetch } from '../services/api'
 
 export interface PluginManifest {
   name: string
@@ -44,7 +45,7 @@ export const usePluginStore = create<PluginState>((set, get) => ({
 
   loadPlugins: async () => {
     try {
-      const res = await fetch('/api/plugins/status')
+      const res = await apiFetch('/api/plugins/status')
       if (res.ok) {
         const data = await res.json()
         set({ plugins: data.plugins || [], pluginsLoaded: true })
