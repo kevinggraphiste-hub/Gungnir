@@ -30,7 +30,8 @@ export default function Login({ onLogin }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!username.trim() || !password) return
+    if (!username.trim()) return
+    if (mode === 'setup' && !password) return // en setup, mot de passe obligatoire
 
     setLoading(true)
     setError('')
@@ -43,7 +44,19 @@ export default function Login({ onLogin }: Props) {
           password,
         })
       }
-      const result = await api.loginUser({ username: username.trim(), password })
+      // Premier essai : avec le mot de passe saisi
+      let result: any
+      try {
+        result = await api.loginUser({ username: username.trim(), password })
+      } catch (err: any) {
+        // Si le backend dit que le compte n'utilise pas de mot de passe, on retry sans
+        const msg = String(err?.message || err?.error || '')
+        if (msg.toLowerCase().includes("pas de mot de passe") && password) {
+          result = await api.loginUser({ username: username.trim(), password: '' })
+        } else {
+          throw err
+        }
+      }
       if (result.ok && result.user) {
         localStorage.setItem('gungnir_current_user', JSON.stringify(result.user))
         onLogin(result.user)
@@ -116,9 +129,9 @@ export default function Login({ onLogin }: Props) {
 
           <button
             type="submit"
-            disabled={loading || !username.trim() || !password}
+            disabled={loading || !username.trim() || (mode === 'setup' && !password)}
             className="w-full py-2.5 rounded-lg text-sm font-medium text-white flex items-center justify-center gap-2 transition-opacity"
-            style={{ background: 'var(--accent-primary)', opacity: loading || !username.trim() || !password ? 0.5 : 1 }}
+            style={{ background: 'var(--accent-primary)', opacity: loading || !username.trim() || (mode === 'setup' && !password) ? 0.5 : 1 }}
           >
             {loading ? (
               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
