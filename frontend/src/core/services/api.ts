@@ -48,6 +48,50 @@ export const apiFetch = (url: string, init?: RequestInit) => {
   return fetch(url, { ...init, headers, cache: 'no-store' as RequestCache })
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Global fetch patch — inject Bearer token for /api/* URLs
+// ─────────────────────────────────────────────────────────────────────
+// Les plugins (analytics, browser, code, consciousness, scheduler, voice,
+// webhooks…) utilisent fetch() brut. Quand l'auth est active, toutes leurs
+// routes renvoient 401 sans le header Authorization.
+// On patch window.fetch une seule fois pour injecter le token automatiquement
+// sur toute URL qui cible /api/ (y compris URLs absolues vers le même host),
+// sauf si un Authorization est déjà présent.
+if (typeof window !== 'undefined' && !(window as any).__gungnir_fetch_patched) {
+  const originalFetch = window.fetch.bind(window)
+  ;(window as any).__gungnir_fetch_patched = true
+  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    try {
+      // Récupère l'URL en string, quel que soit le type d'input
+      let urlStr: string
+      if (typeof input === 'string') urlStr = input
+      else if (input instanceof URL) urlStr = input.href
+      else if (input instanceof Request) urlStr = input.url
+      else urlStr = String(input)
+
+      // Détermine si c'est une URL /api/ (relative ou absolue même origin)
+      let isApi = false
+      if (urlStr.startsWith('/api/')) isApi = true
+      else if (urlStr.startsWith(window.location.origin + '/api/')) isApi = true
+
+      if (isApi) {
+        const token = getAuthToken()
+        if (token) {
+          // Ne pas écraser un Authorization déjà fourni
+          const existingHeaders = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined))
+          if (!existingHeaders.has('Authorization')) {
+            existingHeaders.set('Authorization', `Bearer ${token}`)
+            return originalFetch(input, { ...init, headers: existingHeaders })
+          }
+        }
+      }
+    } catch {
+      // En cas de souci, on retombe sur le fetch normal sans bloquer
+    }
+    return originalFetch(input, init)
+  }) as typeof window.fetch
+}
+
 const handleResponse = async (response: Response) => {
   const contentType = response.headers.get('content-type') || ''
   if (!contentType.includes('application/json')) {
@@ -584,11 +628,10 @@ export const api = {
 
   // ── Search (plugin, but core uses it for presearch) ───────────────
   searchStream: (query: string, proSearch: boolean = false, maxResults: number = 15) => {
-    return fetch(`${API_BASE}/search/stream`, {
+    return apiFetch(`${API_BASE}/search/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, pro_search: proSearch, max_results: maxResults }),
-      cache: 'no-store' as RequestCache,
     })
   },
 
