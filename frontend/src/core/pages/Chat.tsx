@@ -586,7 +586,11 @@ export default function Chat() {
           if (sw.model) setSelectedModel(sw.model)
         }
       }
-      if (messages.length === 0) generateTitleForConversation(convoId!, userMessage)
+      // Générer le titre après le 2e message user (pas le 1er — trop tôt pour identifier le sujet)
+      const userMsgCount = messages.filter(m => m.role === 'user').length + 1 // +1 pour celui qu'on vient d'envoyer
+      if (userMsgCount === 2 && !hasGeneratedTitle.has(convoId!)) {
+        generateTitleForConversation(convoId!, userMessage)
+      }
     } catch (err) { console.error('Chat error:', err) }
     setLoading(false)
   }

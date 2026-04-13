@@ -345,29 +345,47 @@ async def generate_conversation_title(convo_id: int, session: AsyncSession = Dep
     if not all_msgs:
         return {"error": "Conversation vide"}
 
-    # Sélection intelligente : 3 premiers + derniers messages (jusqu'à 20 au total)
+    # Sélection intelligente : on priorise les DERNIERS messages (sujet actuel)
+    # et un petit extrait du début pour le contexte d'origine
     total = len(all_msgs)
-    if total <= 20:
+    if total <= 6:
         sampled = all_msgs
     else:
-        # 3 premiers pour le contexte d'ouverture + 17 derniers pour le sujet courant
-        sampled = list(all_msgs[:3]) + list(all_msgs[-17:])
+        # 2 premiers (contexte d'origine) + les N derniers (sujet dominant)
+        tail_count = min(total - 2, 18)
+        sampled = list(all_msgs[:2]) + list(all_msgs[-tail_count:])
 
-    # Construire un résumé compact — tronquer les messages longs
+    # Construire un résumé compact — on donne plus de budget aux messages récents
     msg_preview = ""
-    budget_chars = 8000  # budget total pour le contexte envoyé au LLM
-    for m in sampled:
-        role = "User" if m.role == "user" else "Assistant"
-        # Chaque message limité à ~800 chars
-        content = (m.content or "")[:800]
-        line = f"{role}: {content}\n"
-        if len(msg_preview) + len(line) > budget_chars:
-            break
-        msg_preview += line
+    budget_chars = 6000
+    # D'abord les messages récents (les derniers) en priorité
+    recent_msgs = sampled[2:] if total > 6 else sampled
+    opening_msgs = sampled[:2] if total > 6 else []
 
-    # Marqueur si on a sauté des messages au milieu
-    if total > 20:
-        msg_preview = f"[Conversation de {total} messages — extrait : 3 premiers + derniers]\n\n" + msg_preview
+    recent_preview = ""
+    for m in recent_msgs:
+        role = "User" if m.role == "user" else "Assistant"
+        content = (m.content or "")[:600]
+        line = f"{role}: {content}\n"
+        if len(recent_preview) + len(line) > budget_chars - 1000:
+            break
+        recent_preview += line
+
+    opening_preview = ""
+    for m in opening_msgs:
+        role = "User" if m.role == "user" else "Assistant"
+        content = (m.content or "")[:300]
+        opening_preview += f"{role}: {content}\n"
+
+    if total > 6:
+        msg_preview = (
+            f"[Conversation de {total} messages]\n\n"
+            f"--- Début de conversation ---\n{opening_preview}\n"
+            f"--- Messages récents (sujet principal) ---\n{recent_preview}"
+        )
+    else:
+        msg_preview = recent_preview
+
     msgs = sampled  # pour compatibilité avec le fallback en bas
 
     # Utiliser le LLM configuré pour générer le titre
@@ -416,13 +434,20 @@ async def generate_conversation_title(convo_id: int, session: AsyncSession = Dep
         title_response = await provider.chat(
             [
                 ChatMessage(role="system", content=(
-                    "Tu es un générateur de titres expert. À partir du contenu d'une conversation, "
-                    "génère UN SEUL titre court (max 50 caractères) qui reflète PRÉCISÉMENT le sujet "
-                    "principal de la discussion — pas juste le premier message, mais ce que la conversation "
-                    "traite vraiment dans l'ensemble. Si le sujet a évolué, priorise le sujet actuel. "
-                    "Réponds UNIQUEMENT avec le titre, sans guillemets, sans explication, sans ponctuation finale."
+                    "Tu génères des titres de conversation. Règles STRICTES :\n"
+                    "1. Identifie LE SUJET DOMINANT — celui qui occupe le plus de messages, PAS le premier message\n"
+                    "2. IGNORE les messages de salutation/bonjour/merci\n"
+                    "3. Si la conversation a dérivé vers un nouveau sujet, titre sur le sujet le PLUS RÉCENT\n"
+                    "4. Max 50 caractères, en français\n"
+                    "5. Réponds UNIQUEMENT avec le titre, rien d'autre\n"
+                    "6. Pas de guillemets, pas de point final, pas d'explication\n\n"
+                    "Exemples de BONS titres : 'Drag & drop dossiers sidebar', 'Fix auth 401 au login', "
+                    "'Config providers OpenRouter'"
                 )),
-                ChatMessage(role="user", content=f"Voici le contenu de la conversation :\n\n{msg_preview}"),
+                ChatMessage(role="user", content=(
+                    "Voici la conversation. Les MESSAGES RÉCENTS reflètent le vrai sujet. "
+                    "Génère le titre :\n\n" + msg_preview
+                )),
             ],
             title_model,
         )
