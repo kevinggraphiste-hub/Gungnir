@@ -195,7 +195,6 @@ export default function Chat() {
 
   // Skills
   const [allSkills, setAllSkills] = useState<any[]>([])
-  const [showSkillMenu, setShowSkillMenu] = useState(false)
   const [activeSkill, setActiveSkill] = useState<string | null>(null)
   const [favoriteSkills, setFavoriteSkills] = useState<any[]>([])
 
@@ -833,69 +832,9 @@ export default function Chat() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Skills dropdown */}
-            <div className="relative">
-              <button onClick={() => { setShowSkillMenu(!showSkillMenu); setShowPersonaMenu(false) }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
-                style={{
-                  background: activeSkill ? 'color-mix(in srgb, var(--accent-tertiary) 12%, transparent)' : 'var(--bg-secondary)',
-                  border: `1px solid ${activeSkill ? 'color-mix(in srgb, var(--accent-tertiary) 30%, transparent)' : 'var(--border)'}`,
-                  color: activeSkill ? 'var(--accent-tertiary)' : 'var(--text-secondary)',
-                }}>
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>{activeSkill ? activeSkill.replace(/_/g, ' ') : 'Skills'}</span>
-                <ChevronDown className={`w-3 h-3 transition-transform ${showSkillMenu ? 'rotate-180' : ''}`} />
-              </button>
-              {showSkillMenu && (
-                <div className="absolute top-full right-0 mt-1 w-60 rounded-xl shadow-2xl z-50 p-1.5 max-h-80 overflow-y-auto" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
-                  <div className="text-[9px] font-bold uppercase tracking-widest px-2 py-1 mb-1" style={{ color: 'var(--text-muted)' }}>Skills <span style={{ opacity: 0.5 }}>(glisser pour réordonner)</span></div>
-                  {/* Désactiver le skill actif */}
-                  {activeSkill && (
-                    <button
-                      onClick={async () => {
-                        await api.clearActiveSkill(); setActiveSkill(null); setShowSkillMenu(false)
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-2 mb-1"
-                      style={{ background: 'color-mix(in srgb, var(--accent-danger) 8%, transparent)', color: 'var(--accent-danger)' }}>
-                      <X className="w-3 h-3" /> Désactiver le skill
-                    </button>
-                  )}
-                  {allSkills.map((s: any, idx: number) => (
-                    <div key={s.name}
-                      draggable
-                      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)) }}
-                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
-                      onDrop={async (e) => {
-                        e.preventDefault()
-                        const fromIdx = Number(e.dataTransfer.getData('text/plain'))
-                        if (isNaN(fromIdx) || fromIdx === idx) return
-                        const reordered = [...allSkills]
-                        const [moved] = reordered.splice(fromIdx, 1)
-                        reordered.splice(idx, 0, moved)
-                        setAllSkills(reordered)
-                        setFavoriteSkills(reordered.filter((sk: any) => sk.is_favorite))
-                        await api.reorderSkills(reordered.map((sk: any) => sk.name))
-                      }}
-                      onClick={async () => {
-                        await api.setActiveSkill(s.name); setActiveSkill(s.name); setShowSkillMenu(false)
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-2 cursor-grab active:cursor-grabbing"
-                      style={s.name === activeSkill
-                        ? { background: 'color-mix(in srgb, var(--accent-tertiary) 12%, transparent)', color: 'var(--accent-tertiary)' }
-                        : { color: 'var(--text-secondary)' }}>
-                      <GripVertical className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
-                      {s.icon ? <span className="text-sm leading-none">{s.icon}</span> : <Code className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--accent-primary)' }} />}
-                      <span className="truncate">{s.name.replace(/_/g, ' ')}</span>
-                      {s.is_favorite && <Star className="w-2.5 h-2.5 ml-auto flex-shrink-0" style={{ color: 'var(--accent-warning)', fill: 'var(--accent-warning)' }} />}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
             {/* Personality dropdown */}
             <div className="relative">
-              <button onClick={() => { setShowPersonaMenu(!showPersonaMenu); setShowSkillMenu(false) }}
+              <button onClick={() => setShowPersonaMenu(!showPersonaMenu)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
                 style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                 <Bot className="w-3.5 h-3.5" /><span className="capitalize">{activePersonality}</span>
@@ -1213,27 +1152,60 @@ export default function Chat() {
               <Send className="w-4 h-4" />
             </button>
           </div>
-          {/* Favorite skills bar */}
-          {favoriteSkills.length > 0 && (
-            <div className="flex items-center gap-2 max-w-4xl mx-auto mt-2 overflow-x-auto">
-              <Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--accent-tertiary)' }} />
-              {favoriteSkills.map((skill: any) => (
-                <button
-                  key={skill.name}
-                  onClick={() => {
-                    setInput(prev => prev ? prev : `/skill ${skill.name} `)
-                    inputRef.current?.focus()
-                  }}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] whitespace-nowrap transition-all hover:scale-105"
-                  style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent)', color: 'var(--text-secondary)' }}
-                  title={skill.description}
-                >
-                  {skill.icon ? <span className="text-sm leading-none">{skill.icon}</span> : <Code className="w-3 h-3" style={{ color: 'var(--accent-primary)' }} />}
-                  {skill.name.replace(/_/g, ' ')}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Skills bar — favorites first, or first 6 if no favorites */}
+          {allSkills.length > 0 && (() => {
+            const displaySkills = favoriteSkills.length > 0 ? favoriteSkills : allSkills.slice(0, 6)
+            return (
+              <div className="flex items-center gap-2 max-w-4xl mx-auto mt-2 overflow-x-auto">
+                <Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--accent-tertiary)' }} />
+                {displaySkills.map((skill: any, idx: number) => {
+                  const isActive = skill.name === activeSkill
+                  return (
+                    <button
+                      key={skill.name}
+                      draggable
+                      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)) }}
+                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+                      onDrop={async (e) => {
+                        e.preventDefault()
+                        const fromIdx = Number(e.dataTransfer.getData('text/plain'))
+                        if (isNaN(fromIdx) || fromIdx === idx) return
+                        const reordered = [...allSkills]
+                        // Find real indices in allSkills
+                        const fromSkill = displaySkills[fromIdx]
+                        const toSkill = displaySkills[idx]
+                        const realFrom = reordered.findIndex(s => s.name === fromSkill?.name)
+                        const realTo = reordered.findIndex(s => s.name === toSkill?.name)
+                        if (realFrom < 0 || realTo < 0 || realFrom === realTo) return
+                        const [moved] = reordered.splice(realFrom, 1)
+                        reordered.splice(realTo, 0, moved)
+                        setAllSkills(reordered)
+                        setFavoriteSkills(reordered.filter((sk: any) => sk.is_favorite))
+                        await api.reorderSkills(reordered.map((sk: any) => sk.name))
+                      }}
+                      onClick={async () => {
+                        if (isActive) {
+                          await api.clearActiveSkill(); setActiveSkill(null)
+                        } else {
+                          await api.setActiveSkill(skill.name); setActiveSkill(skill.name)
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] whitespace-nowrap transition-all hover:scale-105 cursor-grab active:cursor-grabbing"
+                      style={{
+                        background: isActive ? 'color-mix(in srgb, var(--accent-tertiary) 18%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 10%, transparent)',
+                        border: `1px solid ${isActive ? 'color-mix(in srgb, var(--accent-tertiary) 40%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 20%, transparent)'}`,
+                        color: isActive ? 'var(--accent-tertiary)' : 'var(--text-secondary)',
+                      }}
+                      title={skill.description}
+                    >
+                      {skill.icon ? <span className="text-sm leading-none">{skill.icon}</span> : <Code className="w-3 h-3" style={{ color: isActive ? 'var(--accent-tertiary)' : 'var(--accent-primary)' }} />}
+                      {skill.name.replace(/_/g, ' ')}
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          })()}
         </div>
       </div>
 
