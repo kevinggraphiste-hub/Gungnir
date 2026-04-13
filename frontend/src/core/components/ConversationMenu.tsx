@@ -59,24 +59,30 @@ export default function ConversationMenu({
     setIsOpen(false)
   }
 
+  const [error, setError] = useState<string | null>(null)
+
   const handleSummarize = async () => {
     setLoading('summarize')
+    setError(null)
     try {
       const result = await api.summarizeConversation(conversationId, provider, model)
-      if (result.summary) onNewChatWithSummary(result.summary)
-    } catch (err) { console.error('Summarize error:', err) }
+      if (result.error) { setError(result.error); setLoading(null); return }
+      if (result.summary) { onNewChatWithSummary(result.summary); setIsOpen(false) }
+      else { setError('Résumé vide — réessayez') }
+    } catch (err) { setError('Erreur réseau — vérifiez votre connexion') }
     setLoading(null)
-    setIsOpen(false)
   }
 
   const handleGenerateTitle = async () => {
     setLoading('title')
+    setError(null)
     try {
       const result = await api.generateTitle(conversationId, provider, model)
-      if (result.title) onTitleUpdated(conversationId, result.title)
-    } catch (err) { console.error('Generate title error:', err) }
+      if (result.error) { setError(result.error); setLoading(null); return }
+      if (result.title) { onTitleUpdated(conversationId, result.title); setIsOpen(false) }
+      else { setError('Titre vide — réessayez') }
+    } catch (err) { setError('Erreur réseau — vérifiez votre connexion') }
     setLoading(null)
-    setIsOpen(false)
   }
 
   return (
@@ -125,6 +131,12 @@ export default function ConversationMenu({
               {loading === 'title' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pencil className="w-3.5 h-3.5" />}
               Renommer par IA
             </button>
+
+            {error && (
+              <div className="px-3 py-2 text-[11px] leading-tight" style={{ color: '#f87171', background: 'rgba(220,38,38,0.08)' }}>
+                ⚠ {error}
+              </div>
+            )}
 
             <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
             <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Dossier</div>

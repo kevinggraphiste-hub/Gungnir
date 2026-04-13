@@ -219,8 +219,8 @@ async def token_auth_middleware(request, call_next):
     for prefix in PUBLIC_PREFIXES:
         if path.startswith(prefix):
             return await call_next(request)
-    # Allow creating first user (POST /api/users) and serving SPA
-    if path == "/api/users" and request.method == "POST":
+    # Allow creating/listing users (POST & GET /api/users) and serving SPA
+    if path == "/api/users" and request.method in ("POST", "GET"):
         return await call_next(request)
     if not path.startswith("/api/"):
         return await call_next(request)

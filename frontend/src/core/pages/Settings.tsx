@@ -1672,7 +1672,7 @@ export default function Settings() {
               <div>
                 <label className="text-[var(--text-secondary)] text-sm mb-2 block">Service de backup</label>
                 <select value={backupConfig?.provider || 'local'}
-                  onChange={e => saveBackupConfig({ ...backupConfig, provider: e.target.value })}
+                  onChange={e => saveBackupConfig({ ...(backupConfig || {}), provider: e.target.value })}
                   className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-3 focus:outline-none" style={{ color: 'var(--text-primary)' }}>
                   <option value="local">Local (fichiers zip dans data/backups/)</option>
                   <option value="supabase">Supabase Storage</option>
@@ -1686,15 +1686,15 @@ export default function Settings() {
                   <h4 className="font-medium" style={{ color: 'var(--text-primary)' }}>Configuration Supabase</h4>
                   <input type="text" placeholder="Project URL (https://xxx.supabase.co)"
                     value={backupConfig?.supabase_url || ''}
-                    onChange={e => saveBackupConfig({ ...backupConfig, supabase_url: e.target.value })}
+                    onChange={e => saveBackupConfig({ ...(backupConfig || {}), supabase_url: e.target.value })}
                     className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                   <input type="password" placeholder="Service Role Key"
                     value={backupConfig?.supabase_key || ''}
-                    onChange={e => saveBackupConfig({ ...backupConfig, supabase_key: e.target.value })}
+                    onChange={e => saveBackupConfig({ ...(backupConfig || {}), supabase_key: e.target.value })}
                     className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                   <input type="text" placeholder="Bucket name (défaut: gungnir-backups)"
                     value={backupConfig?.supabase_bucket || ''}
-                    onChange={e => saveBackupConfig({ ...backupConfig, supabase_bucket: e.target.value })}
+                    onChange={e => saveBackupConfig({ ...(backupConfig || {}), supabase_bucket: e.target.value })}
                     className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                 </div>
               )}
@@ -1705,15 +1705,15 @@ export default function Settings() {
                   <h4 className="font-medium" style={{ color: 'var(--text-primary)' }}>Configuration GitHub</h4>
                   <input type="password" placeholder="Personal Access Token (repo scope)"
                     value={backupConfig?.github_token || ''}
-                    onChange={e => saveBackupConfig({ ...backupConfig, github_token: e.target.value })}
+                    onChange={e => saveBackupConfig({ ...(backupConfig || {}), github_token: e.target.value })}
                     className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                   <input type="text" placeholder="Repository (user/repo)"
                     value={backupConfig?.github_repo || ''}
-                    onChange={e => saveBackupConfig({ ...backupConfig, github_repo: e.target.value })}
+                    onChange={e => saveBackupConfig({ ...(backupConfig || {}), github_repo: e.target.value })}
                     className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                   <input type="text" placeholder="Branche (défaut: main)"
                     value={backupConfig?.github_branch || ''}
-                    onChange={e => saveBackupConfig({ ...backupConfig, github_branch: e.target.value })}
+                    onChange={e => saveBackupConfig({ ...(backupConfig || {}), github_branch: e.target.value })}
                     className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                 </div>
               )}
@@ -1725,7 +1725,7 @@ export default function Settings() {
                   <p className="text-[var(--text-muted)] text-xs">Crée un backup chaque jour à minuit.</p>
                 </div>
                 <input type="checkbox" checked={backupConfig?.auto_daily || false}
-                  onChange={e => saveBackupConfig({ ...backupConfig, auto_daily: e.target.checked })}
+                  onChange={e => saveBackupConfig({ ...(backupConfig || {}), auto_daily: e.target.checked })}
                   className="w-4 h-4 rounded bg-[var(--bg-primary)] border-[var(--border)] accent-red-600" />
               </div>
 
@@ -1733,7 +1733,7 @@ export default function Settings() {
               <div>
                 <label className="text-[var(--text-secondary)] text-sm mb-2 block">Nombre max de backups conservés</label>
                 <input type="number" min={1} max={100} value={backupConfig?.max_backups || 10}
-                  onChange={e => saveBackupConfig({ ...backupConfig, max_backups: Number(e.target.value) })}
+                  onChange={e => saveBackupConfig({ ...(backupConfig || {}), max_backups: Number(e.target.value) })}
                   className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2.5 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
               </div>
 
