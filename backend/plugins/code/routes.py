@@ -16,12 +16,24 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from contextvars import ContextVar
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger("gungnir.plugins.code")
-router = APIRouter()
+
+# ── Per-user workspace isolation ────────────────────────────────────────────
+# Each user gets their own workspace under data/workspace/{user_id}/
+# The context var is set by the dependency injected into the router.
+_current_user_id: ContextVar[int] = ContextVar("_current_user_id", default=0)
+
+def _inject_user_id(request: Request):
+    """Extract user_id from auth middleware and store in context var."""
+    uid = getattr(request.state, "user_id", None) or 0
+    _current_user_id.set(uid)
+
+router = APIRouter(dependencies=[Depends(_inject_user_id)])
 
 # ── Workspace ────────────────────────────────────────────────────────────────
 
@@ -68,8 +80,13 @@ def _save_config(cfg: dict):
 
 
 def _workspace() -> Path:
-    cfg = _load_config()
-    ws = Path(cfg.get("workspace", str(DEFAULT_WORKSPACE)))
+    uid = _current_user_id.get(0)
+    if uid and uid > 0:
+        # Per-user isolated workspace
+        ws = DEFAULT_WORKSPACE / str(uid)
+    else:
+        # Fallback: shared workspace (open mode / admin)
+        ws = DEFAULT_WORKSPACE
     ws.mkdir(parents=True, exist_ok=True)
     return ws
 
@@ -399,12 +416,18 @@ async def run_file(req: RunRequest):
 
     start = datetime.now()
     try:
+        # Sanitized env for code execution
+        _safe_env = {k: v for k, v in os.environ.items()
+                     if not any(s in k.upper() for s in ("KEY", "SECRET", "TOKEN", "PASSWORD", "DATABASE_URL"))}
+        _safe_env["PYTHONUNBUFFERED"] = "1"
+        _safe_env["HOME"] = str(_workspace())
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(_workspace()),
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env=_safe_env,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         elapsed = (datetime.now() - start).total_seconds()
@@ -448,17 +471,25 @@ async def run_terminal(req: TerminalRequest):
 
     import re as _re
     cmd_lower = req.command.lower().strip()
-    # Block destructive system-level commands
+    # Block destructive and escape patterns
     destructive_patterns = [
         r"rm\s+(-[a-z]*\s+)*(/|~|\$home)", r"del\s+/[sfq]",
         r"format\s+[a-z]:", r"mkfs", r"dd\s+if=",
         r"find\s+/\s+.*-delete", r"shred\s+", r"wipefs",
         r"remove-item\s+.*-recurse.*-force.*/",
         r"net\s+user\s+.*\s+/add", r"reg\s+(add|delete)",
+        # Block access outside workspace
+        r"cat\s+/app/data/config", r"cat\s+/etc/",
+        r"curl\s+", r"wget\s+", r"nc\s+", r"ncat\s+",
+        r"python[23]?\s+-c\s+", r"perl\s+-e\s+", r"ruby\s+-e\s+",
+        r"base64\s+.*\|", r"eval\s+", r"exec\s+",
+        r"docker\s+", r"kubectl\s+", r"systemctl\s+",
+        r"/app/data/config", r"/app/data/gungnir\.db",
+        r"\.\./\.\./",  # directory traversal
     ]
     for pat in destructive_patterns:
         if _re.search(pat, cmd_lower):
-            raise HTTPException(403, "Commande bloquée: pattern destructif détecté")
+            raise HTTPException(403, "Commande bloquée: pattern non autorisé")
 
     timeout = min(max(req.timeout, 1), 120)
     start = datetime.now()
@@ -473,12 +504,18 @@ async def run_terminal(req: TerminalRequest):
         shell_args = ["-c", req.command]
 
     try:
+        # Sanitized env: strip sensitive vars (API keys, secrets, DB URLs)
+        _safe_env = {k: v for k, v in os.environ.items()
+                     if not any(s in k.upper() for s in ("KEY", "SECRET", "TOKEN", "PASSWORD", "DATABASE_URL"))}
+        _safe_env["PYTHONUNBUFFERED"] = "1"
+        _safe_env["HOME"] = str(_workspace())
+
         proc = await asyncio.create_subprocess_exec(
             shell_bin, *shell_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(_workspace()),
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env=_safe_env,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         elapsed = (datetime.now() - start).total_seconds()
