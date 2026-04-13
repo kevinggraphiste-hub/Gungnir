@@ -1161,23 +1161,25 @@ export default function Chat() {
                 {displaySkills.map((skill: any, idx: number) => {
                   const isActive = skill.name === activeSkill
                   return (
-                    <button
+                    <div
                       key={skill.name}
                       draggable
                       onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)) }}
+                      onDragEnter={(e) => e.preventDefault()}
                       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
                       onDrop={async (e) => {
                         e.preventDefault()
                         const fromIdx = Number(e.dataTransfer.getData('text/plain'))
                         if (isNaN(fromIdx) || fromIdx === idx) return
                         const reordered = [...allSkills]
-                        // Find real indices in allSkills
                         const fromSkill = displaySkills[fromIdx]
                         const toSkill = displaySkills[idx]
                         const realFrom = reordered.findIndex(s => s.name === fromSkill?.name)
-                        const realTo = reordered.findIndex(s => s.name === toSkill?.name)
+                        let realTo = reordered.findIndex(s => s.name === toSkill?.name)
                         if (realFrom < 0 || realTo < 0 || realFrom === realTo) return
                         const [moved] = reordered.splice(realFrom, 1)
+                        // After splice, indices shift if dragging forward
+                        if (realFrom < realTo) realTo--
                         reordered.splice(realTo, 0, moved)
                         setAllSkills(reordered)
                         setFavoriteSkills(reordered.filter((sk: any) => sk.is_favorite))
@@ -1190,7 +1192,8 @@ export default function Chat() {
                           await api.setActiveSkill(skill.name); setActiveSkill(skill.name)
                         }
                       }}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] whitespace-nowrap transition-all hover:scale-105 cursor-grab active:cursor-grabbing"
+                      role="button"
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] whitespace-nowrap transition-all hover:scale-105 cursor-grab active:cursor-grabbing select-none"
                       style={{
                         background: isActive ? 'color-mix(in srgb, var(--accent-tertiary) 18%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 10%, transparent)',
                         border: `1px solid ${isActive ? 'color-mix(in srgb, var(--accent-tertiary) 40%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 20%, transparent)'}`,
@@ -1200,7 +1203,7 @@ export default function Chat() {
                     >
                       {skill.icon ? <span className="text-sm leading-none">{skill.icon}</span> : <Code className="w-3 h-3" style={{ color: isActive ? 'var(--accent-tertiary)' : 'var(--accent-primary)' }} />}
                       {skill.name.replace(/_/g, ' ')}
-                    </button>
+                    </div>
                   )
                 })}
               </div>
