@@ -307,13 +307,60 @@ export default function AgentSettings() {
 
   const SECURITY_THRESHOLD = 85
 
+  // Parse a .md skill file into a JSON-compatible object
+  const parseSkillMarkdown = (text: string): Record<string, any> => {
+    const data: Record<string, any> = {}
+    // Extract name from # Skill : <name>
+    const nameMatch = text.match(/^#\s*(?:Skill|skill)\s*[:\-–]\s*(.+)/m)
+    if (nameMatch) data.name = nameMatch[1].trim()
+    // Extract bold fields: **Key :** Value
+    const fieldMap: Record<string, string> = { 'catégorie': 'category', 'categorie': 'category', 'category': 'category', 'description': 'description', 'auteur': 'author', 'author': 'author', 'version': 'version', 'tags': 'tags' }
+    for (const [frKey, jsonKey] of Object.entries(fieldMap)) {
+      const re = new RegExp(`\\*\\*${frKey}\\s*[:：]\\s*\\*\\*\\s*(.+)`, 'im')
+      const match = text.match(re)
+      if (match) data[jsonKey] = jsonKey === 'tags' ? match[1].split(',').map((t: string) => t.trim()) : match[1].trim()
+    }
+    // Extract prompt from ## Prompt section
+    const promptMatch = text.match(/##\s*Prompt\s*\n+([\s\S]*?)(?=\n##\s|\n---|\s*$)/i)
+    if (promptMatch) data.prompt = promptMatch[1].trim()
+    // If no structured sections found, use the whole text as prompt
+    if (!data.prompt && !data.name) {
+      data.prompt = text.trim()
+      data.name = 'imported_skill'
+    }
+    return data
+  }
+
+  // Parse a .md agent file into a JSON-compatible object
+  const parseAgentMarkdown = (text: string): Record<string, any> => {
+    const data: Record<string, any> = {}
+    const nameMatch = text.match(/^#\s*(?:Agent|Sub-?agent|Sous-?agent)\s*[:\-–]\s*(.+)/m)
+    if (nameMatch) data.name = nameMatch[1].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+    const fieldMap: Record<string, string> = { 'description': 'description', 'modèle': 'model', 'model': 'model', 'provider': 'provider', 'fournisseur': 'provider', 'température': 'temperature', 'temperature': 'temperature' }
+    for (const [frKey, jsonKey] of Object.entries(fieldMap)) {
+      const re = new RegExp(`\\*\\*${frKey}\\s*[:：]\\s*\\*\\*\\s*(.+)`, 'im')
+      const match = text.match(re)
+      if (match) {
+        const val = match[1].trim()
+        data[jsonKey] = jsonKey === 'temperature' ? parseFloat(val) : val
+      }
+    }
+    const promptMatch = text.match(/##\s*(?:System\s*Prompt|Prompt|Instructions?)\s*\n+([\s\S]*?)(?=\n##\s|\n---|\s*$)/i)
+    if (promptMatch) data.system_prompt = promptMatch[1].trim()
+    if (!data.system_prompt && !data.name) {
+      data.system_prompt = text.trim()
+      data.name = 'imported_agent'
+    }
+    return data
+  }
+
   const handleImportSkill = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
     try {
       const text = await file.text()
-      const data = JSON.parse(text)
+      const data = file.name.endsWith('.md') ? parseSkillMarkdown(text) : JSON.parse(text)
       setImportStatus({ type: 'skill', success: false, message: 'Analyse de sécurité en cours...' })
       const scanRes = await apiFetch('/api/security/scan/skill', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -341,7 +388,7 @@ export default function AgentSettings() {
     e.target.value = ''
     try {
       const text = await file.text()
-      const data = JSON.parse(text)
+      const data = file.name.endsWith('.md') ? parseAgentMarkdown(text) : JSON.parse(text)
       setImportStatus({ type: 'agent', success: false, message: 'Analyse de sécurité en cours...' })
       const scanRes = await apiFetch('/api/security/scan/skill', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -755,9 +802,9 @@ export default function AgentSettings() {
                 <button onClick={() => skillFileRef.current?.click()}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:opacity-80"
                   style={{ borderColor: 'var(--accent-primary)', color: 'var(--accent-primary)' }}>
-                  <Upload className="w-3.5 h-3.5" /> Importer JSON
+                  <Upload className="w-3.5 h-3.5" /> Importer
                 </button>
-                <input ref={skillFileRef} type="file" accept=".json" className="hidden" onChange={handleImportSkill} />
+                <input ref={skillFileRef} type="file" accept=".json,.md" className="hidden" onChange={handleImportSkill} />
               </div>
               {importStatus?.type === 'skill' && (
                 <div className="mb-4 p-3 rounded-lg border text-sm" style={{
@@ -1174,9 +1221,9 @@ export default function AgentSettings() {
                 <button onClick={() => agentFileRef.current?.click()}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:opacity-80"
                   style={{ borderColor: 'var(--accent-primary)', color: 'var(--accent-primary)' }}>
-                  <Upload className="w-3.5 h-3.5" /> Importer JSON
+                  <Upload className="w-3.5 h-3.5" /> Importer
                 </button>
-                <input ref={agentFileRef} type="file" accept=".json" className="hidden" onChange={handleImportAgent} />
+                <input ref={agentFileRef} type="file" accept=".json,.md" className="hidden" onChange={handleImportAgent} />
               </div>
               {importStatus?.type === 'agent' && (
                 <div className="p-3 rounded-lg border text-sm" style={{
