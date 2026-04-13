@@ -219,7 +219,13 @@ export default function Settings() {
 
   const handleLanguageChange = async (lang: string) => {
     i18n.changeLanguage(lang)
-    await api.saveAppConfig({ language: lang })
+    localStorage.setItem('gungnir_language', lang)
+    // Save per-user (same endpoint as provider/model)
+    await apiFetch('/api/config/user/app', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: lang }),
+    })
     const newConfig = await api.getConfig(); setConfig(newConfig)
   }
 

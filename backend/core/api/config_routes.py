@@ -12,11 +12,18 @@ router = APIRouter()
 
 
 @router.get("/config")
-async def get_config():
+async def get_config(request: Request, session: AsyncSession = Depends(get_session)):
     settings = Settings.load()
+    # Per-user language override
+    language = settings.app.language
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        user_settings = await get_user_settings(user_id, session)
+        if user_settings.language:
+            language = user_settings.language
     return {
         "is_configured": settings.is_configured,
-        "language": settings.app.language,
+        "language": language,
         "theme": settings.app.theme,
         "providers": {
             name: {
@@ -465,6 +472,8 @@ async def save_user_app_settings(request: Request, session: AsyncSession = Depen
         user_settings.active_provider = body["active_provider"]
     if "active_model" in body:
         user_settings.active_model = body["active_model"]
+    if "language" in body:
+        user_settings.language = body["language"]
     await session.commit()
     return {"status": "saved"}
 

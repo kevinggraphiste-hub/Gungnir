@@ -96,8 +96,8 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
         if (configRes.ok) {
           const data = await configRes.json()
           setConfig(data)
-          // Sync i18n language with backend config
-          const savedLang = data?.app?.language
+          // Sync i18n language with per-user config (fallback to localStorage)
+          const savedLang = data?.language || localStorage.getItem('gungnir_language')
           if (savedLang) {
             const { default: i18n } = await import('../i18n')
             if (i18n.language !== savedLang) {

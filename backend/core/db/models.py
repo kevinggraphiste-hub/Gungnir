@@ -131,9 +131,10 @@ class UserSettings(Base):
     provider_keys = Column(JSON, default=dict)
     # JSON blob: {"qdrant": {"api_key": "enc:...", "base_url": "..."}, ...}
     service_keys = Column(JSON, default=dict)
-    # User preferences (active provider/model)
+    # User preferences (active provider/model/language)
     active_provider = Column(String(100), default="openrouter")
     active_model = Column(String(255), default="")
+    language = Column(String(10), default="fr")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="settings")
@@ -261,6 +262,7 @@ async def init_db(engine):
         ("ALTER TABLE conversations ADD COLUMN user_id INTEGER REFERENCES users(id)", "user_id -> conversations"),
         ("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE", "is_admin -> users"),
         ("ALTER TABLE conversations ADD COLUMN folder_id INTEGER REFERENCES conversation_folders(id)", "folder_id -> conversations"),
+        ("ALTER TABLE user_settings ADD COLUMN language VARCHAR(10) DEFAULT 'fr'", "language -> user_settings"),
     ]
     for sql, label in migrations:
         try:
