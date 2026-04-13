@@ -406,11 +406,11 @@ export default function Chat() {
     const initialMap: Record<string, string[]> = {}
     Object.entries(config.providers).forEach(([name, p]) => {
       const prov = p as any
-      if (prov.enabled && prov.models?.length > 0) initialMap[name] = prov.models
+      if ((prov.enabled || prov.has_api_key) && prov.models?.length > 0) initialMap[name] = prov.models
     })
     if (Object.keys(initialMap).length > 0) setProviderModelsMap(initialMap)
 
-    const enabledNames = Object.entries(config.providers).filter(([, p]) => (p as any).enabled).map(([name]) => name)
+    const enabledNames = Object.entries(config.providers).filter(([, p]) => (p as any).enabled || (p as any).has_api_key).map(([name]) => name)
     Promise.all(
       enabledNames.map(async (name) => {
         try { const res = await apiFetch(`/api/models/${name}`); const data = await res.json(); return { name, models: (data.models || []) as string[] } }

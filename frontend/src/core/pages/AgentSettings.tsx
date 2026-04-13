@@ -176,17 +176,18 @@ export default function AgentSettings() {
   useEffect(() => {
     if (!config?.providers) return
 
-    // Init immédiate depuis config.json (liste curatée)
+    // Init immédiate depuis config (liste curatée) — includes user-merged providers
     const initialMap: Record<string, string[]> = {}
     Object.entries(config.providers).forEach(([name, p]) => {
       const prov = p as any
-      if (prov.enabled && prov.models?.length > 0) initialMap[name] = prov.models
+      // Provider is usable if enabled OR has an API key (user or global)
+      if ((prov.enabled || prov.has_api_key) && prov.models?.length > 0) initialMap[name] = prov.models
     })
     if (Object.keys(initialMap).length > 0) setProviderModelsMap(initialMap)
 
-    // Enrichissement via l'API
+    // Enrichissement via l'API — fetch for all providers with a key
     const enabledNames = Object.entries(config.providers)
-      .filter(([, p]) => (p as any).enabled)
+      .filter(([, p]) => (p as any).enabled || (p as any).has_api_key)
       .map(([name]) => name)
 
     Promise.all(

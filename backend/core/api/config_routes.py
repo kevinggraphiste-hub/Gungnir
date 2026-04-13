@@ -102,17 +102,31 @@ async def configure_app(app_config: dict, request: Request, session: AsyncSessio
 
 
 @router.get("/models/{provider_name}")
-async def list_models(provider_name: str):
+async def list_models(provider_name: str, request: Request, session: AsyncSession = Depends(get_session)):
     settings = Settings.load()
     provider_config = settings.providers.get(provider_name)
     if not provider_config:
         return {"models": []}
     # Toujours retourner les modèles statiques comme fallback
     static_models = provider_config.models or []
-    if not provider_config.enabled or not provider_config.api_key:
+
+    # Resolve API key: per-user first, then global
+    api_key = None
+    base_url = provider_config.base_url
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        user_settings = await get_user_settings(user_id, session)
+        user_prov = get_user_provider_key(user_settings, provider_name)
+        if user_prov and user_prov.get("api_key"):
+            api_key = user_prov["api_key"]
+            base_url = user_prov.get("base_url") or base_url
+    if not api_key:
+        api_key = provider_config.api_key
+
+    if not api_key:
         return {"models": static_models}
     try:
-        provider = get_provider(provider_name, provider_config.api_key, provider_config.base_url)
+        provider = get_provider(provider_name, api_key, base_url)
         live_models = await provider.list_models()
         if live_models:
             # Merge: modèles live + statiques manquants
