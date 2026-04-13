@@ -8,6 +8,64 @@ import {
 import { useStore } from '../stores/appStore'
 import { api, apiFetch } from '../services/api'
 
+// ── Emoji picker inline pour les skills ──────────────────────────────────────
+const SKILL_EMOJIS = [
+  '🔍', '📝', '🚀', '💡', '🎯', '⚡', '🛡️', '🔧', '📊', '🌐',
+  '🤖', '💬', '📁', '🎨', '🧪', '📦', '🔗', '🧠', '📋', '✨',
+  '🔥', '💾', '🗂️', '📌', '🏷️', '⚙️', '🎲', '📡', '🧩', '🔑',
+]
+
+function SkillIconPicker({ icon, onChange }: { icon: string; onChange: (emoji: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div className="relative flex-shrink-0" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:bg-[var(--bg-elevated)]"
+        title="Choisir une icône"
+        style={{ fontSize: icon ? 16 : 14 }}
+      >
+        {icon || <Code className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />}
+      </button>
+      {open && (
+        <div className="absolute z-50 top-8 left-0 p-2 rounded-lg shadow-lg grid grid-cols-6 gap-1"
+          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', minWidth: 180 }}>
+          {icon && (
+            <button
+              onClick={() => { onChange(''); setOpen(false) }}
+              className="w-7 h-7 flex items-center justify-center rounded text-xs transition-colors hover:bg-[var(--bg-secondary)]"
+              title="Retirer l'icône"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+          {SKILL_EMOJIS.map(e => (
+            <button
+              key={e}
+              onClick={() => { onChange(e); setOpen(false) }}
+              className="w-7 h-7 flex items-center justify-center rounded text-base transition-colors hover:bg-[var(--bg-secondary)] hover:scale-125"
+            >
+              {e}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function AgentSettings() {
   const { config, selectedProvider, setSelectedProvider, selectedModel, setSelectedModel, agentName } = useStore()
   const [activeTab, setActiveTab] = useState('mode')
@@ -940,7 +998,16 @@ export default function AgentSettings() {
                       </button>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <Code className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                          <SkillIconPicker
+                            icon={skill.icon || ''}
+                            onChange={async (emoji: string) => {
+                              setSkills(prev => prev.map((s: any) => s.name === skill.name ? { ...s, icon: emoji } : s))
+                              await apiFetch(`/api/skills/${encodeURIComponent(skill.name)}/icon`, {
+                                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ icon: emoji }),
+                              })
+                            }}
+                          />
                           <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{skill.name}</span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] capitalize" style={{ color: 'var(--text-muted)' }}>{skill.category}</span>
                           {skill.version && (

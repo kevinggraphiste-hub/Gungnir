@@ -1140,7 +1140,7 @@ export default function Chat() {
                   style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent)', color: 'var(--text-secondary)' }}
                   title={skill.description}
                 >
-                  <Code className="w-3 h-3" style={{ color: 'var(--accent-primary)' }} />
+                  {skill.icon ? <span className="text-sm leading-none">{skill.icon}</span> : <Code className="w-3 h-3" style={{ color: 'var(--accent-primary)' }} />}
                   {skill.name.replace(/_/g, ' ')}
                 </button>
               ))}

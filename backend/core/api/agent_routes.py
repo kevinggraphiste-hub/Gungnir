@@ -189,10 +189,22 @@ async def toggle_skill_favorite(skill_name: str):
     return {"success": True, "is_favorite": skill.is_favorite}
 
 
+@router.put("/skills/{skill_name}/icon")
+async def update_skill_icon(skill_name: str, data: dict):
+    """Update the icon (emoji) of a skill."""
+    from backend.core.agents.skills import skill_library
+    skill = skill_library.get_skill(skill_name)
+    if not skill:
+        return {"success": False, "error": "Skill not found"}
+    skill.icon = data.get("icon", "")
+    skill_library._save()
+    return {"success": True, "icon": skill.icon}
+
+
 @router.put("/skills/{skill_name}")
 async def update_skill(skill_name: str, data: dict):
     from backend.core.agents.creators import skill_creator
-    return await skill_creator.update_skill(
+    result = await skill_creator.update_skill(
         skill_name,
         description=data.get("description"),
         prompt=data.get("prompt"),
@@ -204,6 +216,14 @@ async def update_skill(skill_name: str, data: dict):
         output_format=data.get("output_format"),
         annotations=data.get("annotations"),
     )
+    # Update icon if provided
+    if "icon" in data:
+        from backend.core.agents.skills import skill_library
+        skill = skill_library.get_skill(skill_name)
+        if skill:
+            skill.icon = data["icon"]
+            skill_library._save()
+    return result
 
 
 @router.delete("/skills/{skill_name}")

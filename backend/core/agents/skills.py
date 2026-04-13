@@ -23,6 +23,7 @@ class Skill(BaseModel):
     annotations: dict = {}             # {"readOnly": bool, "destructive": bool, "idempotent": bool}
     compatibility: list[str] = ["gungnir"]  # plateformes compatibles
     is_favorite: bool = False
+    icon: str = ""                     # emoji personnalisé (ex: 🔍, 📝, 🚀)
 
 
 class Personality(BaseModel):
@@ -481,6 +482,7 @@ Tu réponds de manière structurée avec tableaux, listes et étapes claires. Tu
                     s.setdefault("annotations", {})
                     s.setdefault("compatibility", ["gungnir"])
                     s.setdefault("is_favorite", False)
+                    s.setdefault("icon", "")
                     if isinstance(s.get("created_at"), str):
                         try:
                             s["created_at"] = datetime.fromisoformat(s["created_at"])
