@@ -468,7 +468,7 @@ export default function Chat() {
 
   const handleNewChat = async () => {
     try {
-      const payload = { title: 'Nouveau chat', provider: selectedProvider, model: selectedModel || 'minimax/minimax-m2.7', user_id: currentUser?.id }
+      const payload = { title: 'Nouveau chat', provider: selectedProvider, model: selectedModel || 'mistralai/mistral-large', user_id: currentUser?.id }
       const newConvo = await api.createConversation(payload)
       // Si un dossier précis est filtré, la nouvelle conversation y atterrit automatiquement
       const targetFolder = typeof folderFilter === 'number' ? folderFilter : null
@@ -490,7 +490,7 @@ export default function Chat() {
 
   const handleNewChatWithSummary = async (summary: string) => {
     try {
-      const payload = { title: 'Suite de conversation', provider: selectedProvider, model: selectedModel || 'minimax/minimax-m2.7', user_id: currentUser?.id }
+      const payload = { title: 'Suite de conversation', provider: selectedProvider, model: selectedModel || 'mistralai/mistral-large', user_id: currentUser?.id }
       const newConvo = await api.createConversation(payload)
       const targetFolder = typeof folderFilter === 'number' ? folderFilter : null
       if (targetFolder !== null && newConvo.id) {
@@ -517,7 +517,7 @@ export default function Chat() {
     let convoId: number | null = currentConversation
     if (!convoId) {
       try {
-        const payload = { title: 'Nouveau chat', provider: selectedProvider, model: selectedModel || 'minimax/minimax-m2.7', user_id: currentUser?.id }
+        const payload = { title: 'Nouveau chat', provider: selectedProvider, model: selectedModel || 'mistralai/mistral-large', user_id: currentUser?.id }
         const newConvo = await api.createConversation(payload)
         const targetFolder = typeof folderFilter === 'number' ? folderFilter : null
         if (targetFolder !== null && newConvo.id) {

@@ -260,6 +260,16 @@ class Settings(BaseSettings):
                     for ekey, evalue in mcp.get("env", {}).items():
                         if isinstance(evalue, str) and evalue.startswith("enc:"):
                             mcp["env"][ekey] = decrypt_value(evalue)
+            # Merge missing providers/services from defaults so new ones appear automatically
+            defaults = cls()
+            if "providers" in data:
+                for pname, pconf in defaults.providers.items():
+                    if pname not in data["providers"]:
+                        data["providers"][pname] = pconf.model_dump()
+            if "services" in data:
+                for sname, sconf in defaults.services.items():
+                    if sname not in data["services"]:
+                        data["services"][sname] = sconf.model_dump()
             return cls(**data)
         return cls()
 

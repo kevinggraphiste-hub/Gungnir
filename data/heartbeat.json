@@ -7,7 +7,14 @@
     "offset_seconds": 0,
     "max_concurrent_tasks": 5,
     "on_startup": true,
-    "started_at": "2026-04-02T21:12:27.742608"
+    "started_at": "2026-04-02T21:12:27.742608",
+    "day_night_enabled": false,
+    "day_start_hour": 7,
+    "night_start_hour": 22,
+    "night_config": {
+      "check_interval_seconds": 300,
+      "max_concurrent_tasks": 2
+    }
   },
   "tasks": []
 }
