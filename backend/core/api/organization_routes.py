@@ -146,8 +146,7 @@ async def move_conversation_to_folder(convo_id: int, request: Request, data: dic
     if not conv:
         return JSONResponse({"error": "conversation not found"}, status_code=404)
     if uid is not None and conv.user_id is not None and conv.user_id != uid:
-        # Admin check : on laisse passer si pas d'owner (legacy convos)
-        pass
+        return JSONResponse({"error": "Acces non autorise"}, status_code=403)
 
     folder_id = data.get("folder_id")
     if folder_id is not None:

@@ -13,6 +13,9 @@ from backend.core.db.engine import get_session
 from backend.core.providers import get_provider, ChatMessage
 from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS, WOLF_EXECUTORS, READ_ONLY_TOOLS, set_conversation_context
 from backend.core.agents.mcp_client import mcp_manager
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
 
@@ -632,6 +635,7 @@ Commence par te presenter et demander le nom.
 
 
 @router.post("/conversations/{convo_id}/chat")
+@limiter.limit("20/minute")
 async def chat(
     convo_id: int,
     request: Request,

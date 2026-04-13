@@ -8,7 +8,15 @@ import secrets
 from backend.core.db.models import User
 from backend.core.db.engine import get_session
 
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+limiter = Limiter(key_func=get_remote_address)
+
 router = APIRouter()
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _hash_password(password: str) -> str:
@@ -22,8 +30,8 @@ def _verify_password(password: str, hashed: str) -> bool:
         _, salt, expected = hashed.split(":", 2)
         dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 200_000)
         return secrets.compare_digest(dk.hex(), expected)
-    # Fallback: old SHA256 hashes for migration
-    return hashlib.sha256(password.encode()).hexdigest() == hashed
+    # Fallback: old SHA256 hashes for migration (constant-time compare)
+    return secrets.compare_digest(hashlib.sha256(password.encode()).hexdigest(), hashed)
 
 
 @router.get("/users")
@@ -89,6 +97,13 @@ async def create_user(request: Request, session: AsyncSession = Depends(get_sess
 @router.put("/users/{user_id}")
 async def update_user(user_id: int, request: Request, session: AsyncSession = Depends(get_session)):
     """Met à jour un utilisateur."""
+    # Only allow if request user == target user OR request user is admin
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None and uid != user_id:
+        from backend.core.api.auth_helpers import require_admin
+        if not await require_admin(request, session):
+            return JSONResponse({"error": "Admin requis"}, status_code=403)
+
     user = await session.get(User, user_id)
     if not user:
         return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
@@ -108,8 +123,14 @@ async def update_user(user_id: int, request: Request, session: AsyncSession = De
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: int, session: AsyncSession = Depends(get_session)):
-    """Supprime un utilisateur."""
+async def delete_user(user_id: int, request: Request, session: AsyncSession = Depends(get_session)):
+    """Supprime un utilisateur. Admin only."""
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        from backend.core.api.auth_helpers import require_admin
+        if not await require_admin(request, session):
+            return JSONResponse({"error": "Admin requis"}, status_code=403)
+
     user = await session.get(User, user_id)
     if not user:
         return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
@@ -125,7 +146,8 @@ async def get_current_user(request: Request, session: AsyncSession = Depends(get
     if not auth_header.startswith("Bearer "):
         return JSONResponse({"error": "Non authentifié"}, status_code=401)
     token = auth_header[7:]
-    result = await session.execute(select(User).where(User.api_token == token, User.is_active == True))
+    token_hash = _hash_token(token)
+    result = await session.execute(select(User).where(User.api_token == token_hash, User.is_active == True))
     user = result.scalars().first()
     if not user:
         return JSONResponse({"error": "Token invalide"}, status_code=401)
@@ -142,6 +164,7 @@ async def get_current_user(request: Request, session: AsyncSession = Depends(get
 
 
 @router.post("/users/login")
+@limiter.limit("10/minute")
 async def login_user(request: Request, session: AsyncSession = Depends(get_session)):
     """Vérifie les identifiants d'un utilisateur."""
     body = await request.json()
@@ -152,24 +175,26 @@ async def login_user(request: Request, session: AsyncSession = Depends(get_sessi
     user = result.scalars().first()
 
     if not user:
-        return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
+        return JSONResponse({"error": "Identifiants invalides"}, status_code=401)
 
     if user.password_hash:
         if not _verify_password(password, user.password_hash):
-            return JSONResponse({"error": "Mot de passe incorrect"}, status_code=401)
+            return JSONResponse({"error": "Identifiants invalides"}, status_code=401)
     else:
         # Compte sans mot de passe : accepter seulement si aucun password fourni
         if password:
             return JSONResponse({"error": "Ce compte n'utilise pas de mot de passe"}, status_code=400)
+        # Passwordless login is allowed — this is the simple mode for small installs.
+        # Users are encouraged to set a password in Settings for better security.
 
-    # Générer un token d'API unique pour cette session
-    if not user.api_token:
-        user.api_token = secrets.token_hex(32)
-        await session.commit()
+    # Toujours générer un nouveau token (rotation — invalide les anciennes sessions)
+    raw_token = secrets.token_hex(32)
+    user.api_token = _hash_token(raw_token)
+    await session.commit()
 
     return {
         "ok": True,
-        "token": user.api_token,
+        "token": raw_token,
         "user": {
             "id": user.id,
             "username": user.username,

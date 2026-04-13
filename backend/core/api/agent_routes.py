@@ -439,13 +439,21 @@ async def delete_sub_agent(request: Request, agent_name: str, session: AsyncSess
 # full message history + tool events are persisted and exposed here.
 
 @router.get("/inter-agent/conversations")
-async def list_inter_agent_conversations(limit: int = 100, parent_id: str | None = None):
+async def list_inter_agent_conversations(request: Request, limit: int = 100, parent_id: str | None = None):
+    # Admin only for now — inter-agent logs may contain data from any user
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None and uid != 1:  # user_id 1 = admin (setup in init_db)
+        return {"conversations": []}
     from backend.core.agents.inter_agent_log import list_conversations
     return {"conversations": list_conversations(limit=limit, parent_id=parent_id)}
 
 
 @router.get("/inter-agent/conversations/{conv_id}")
-async def get_inter_agent_conversation(conv_id: str, tree: bool = False):
+async def get_inter_agent_conversation(request: Request, conv_id: str, tree: bool = False):
+    # Admin only for now — inter-agent logs may contain data from any user
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None and uid != 1:
+        return {"error": "Acces reserve a l'administrateur"}
     from backend.core.agents.inter_agent_log import get_conversation, get_conversation_tree
     data = get_conversation_tree(conv_id) if tree else get_conversation(conv_id)
     if not data:
@@ -454,13 +462,21 @@ async def get_inter_agent_conversation(conv_id: str, tree: bool = False):
 
 
 @router.delete("/inter-agent/conversations/{conv_id}")
-async def delete_inter_agent_conversation(conv_id: str):
+async def delete_inter_agent_conversation(request: Request, conv_id: str):
+    # Admin only for now — inter-agent logs may contain data from any user
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None and uid != 1:
+        return {"success": False, "error": "Acces reserve a l'administrateur"}
     from backend.core.agents.inter_agent_log import delete_conversation
     return {"success": delete_conversation(conv_id)}
 
 
 @router.delete("/inter-agent/conversations")
-async def clear_inter_agent_conversations():
+async def clear_inter_agent_conversations(request: Request):
+    # Admin only for now — inter-agent logs may contain data from any user
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None and uid != 1:
+        return {"success": False, "error": "Acces reserve a l'administrateur"}
     from backend.core.agents.inter_agent_log import clear_all_conversations
     return {"success": True, "deleted": clear_all_conversations()}
 

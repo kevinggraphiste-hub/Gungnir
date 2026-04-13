@@ -1503,6 +1503,8 @@ async def _web_search(query: str, num_results: int = 10) -> dict:
 async def _browser_goto(page_id: str, url: str) -> dict:
     if not _validate_browser_url(url):
         return {"ok": False, "error": "URL scheme not allowed (only http/https)"}
+    if _is_private_url(url):
+        return {"ok": False, "error": "URL interne bloquee (securite SSRF)"}
     from backend.core.agents.tools.browser import browser_tool
     result = await browser_tool.goto(page_id, url)
     if result.get("success"):
@@ -1568,6 +1570,9 @@ async def _browser_fill_form(page_id: str, fields: dict, submit_selector: str = 
 
 
 async def _browser_download(page_id: str, url: str, filename: str = None) -> dict:
+    _validate_browser_url(url)
+    if _is_private_url(url):
+        return {"ok": False, "error": "URL interne bloquee (securite SSRF)"}
     from backend.core.agents.tools.browser import browser_tool
     result = await browser_tool.download_file(page_id, url, filename=filename)
     if result.get("success"):

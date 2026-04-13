@@ -5,6 +5,7 @@ Core app with dynamic plugin loading.
 """
 import sys
 import asyncio
+import hashlib
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -186,6 +187,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Rate limiting ────────────────────────────────────────────────────────────
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 @app.middleware("http")
 async def security_headers(request, call_next):
@@ -223,8 +233,8 @@ async def token_auth_middleware(request, call_next):
     for prefix in PUBLIC_PREFIXES:
         if path.startswith(prefix):
             return await call_next(request)
-    # Allow creating/listing users (POST & GET /api/users) and serving SPA
-    if path == "/api/users" and request.method in ("POST", "GET"):
+    # Allow creating users (POST /api/users) without auth for initial setup
+    if path == "/api/users" and request.method == "POST":
         return await call_next(request)
     if not path.startswith("/api/"):
         return await call_next(request)
@@ -248,8 +258,9 @@ async def token_auth_middleware(request, call_next):
             if not auth_header.startswith("Bearer "):
                 return JSONResponse({"error": "Token requis (Authorization: Bearer <token>)"}, status_code=401)
             token = auth_header[7:]
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
             result = await session.execute(
-                select(User).where(User.api_token == token, User.is_active == True)
+                select(User).where(User.api_token == token_hash, User.is_active == True)
             )
             user = result.scalar()
             if not user:
@@ -259,9 +270,8 @@ async def token_auth_middleware(request, call_next):
             request.state.username = user.username
             return await call_next(request)
     except Exception as e:
-        # If DB not ready or column missing — allow request (graceful degradation)
-        logger.warning(f"Auth middleware error (allowing request): {e}")
-        return await call_next(request)
+        logger.warning(f"Auth middleware error (denying request): {e}")
+        return JSONResponse({"error": "Service d'authentification indisponible"}, status_code=503)
 
 # ── Core API routes ──────────────────────────────────────────────────────────
 from backend.core.api.router import core_router

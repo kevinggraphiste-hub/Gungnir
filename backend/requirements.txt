@@ -26,7 +26,11 @@ duckduckgo-search>=7.0.0
 trafilatura>=2.0.0
 beautifulsoup4>=4.12.0
 
+# ─── Crypto ────────────────────────────────────
+cryptography>=43.0.0
+
 # ─── Utilities ──────────────────────────────────
 python-dotenv>=1.0.0
 python-multipart>=0.0.12
 starlette>=0.41.0
+slowapi>=0.1.9

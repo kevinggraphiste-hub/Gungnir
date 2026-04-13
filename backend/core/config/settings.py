@@ -28,36 +28,48 @@ def _derive_key() -> bytes:
     if secret:
         identity = secret.encode()
     else:
+        import logging
+        logging.getLogger("gungnir").warning(
+            "GUNGNIR_SECRET_KEY not set — using fallback key derived from hostname. "
+            "Set this env var in production for proper encryption!"
+        )
         identity = f"{platform.node()}:{BASE_DIR}".encode()
     return hashlib.pbkdf2_hmac("sha256", identity, _ENCRYPTION_SALT, 100_000)
 
-def encrypt_value(plaintext: str) -> str:
-    """Encrypt a string value. Returns 'enc:base64data'."""
-    if not plaintext or plaintext.startswith("enc:"):
-        return plaintext
-    key = _derive_key()
-    # XOR-based stream cipher with key stretching
-    data = plaintext.encode("utf-8")
-    encrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
-    return "enc:" + base64.b64encode(encrypted).decode()
+from cryptography.fernet import Fernet, InvalidToken
 
-def decrypt_value(encrypted: str) -> str:
-    """Decrypt a value. If not encrypted (no 'enc:' prefix), return as-is.
-    If decryption fails (wrong machine key), strip the encrypted value and return empty."""
-    if not encrypted or not encrypted.startswith("enc:"):
-        return encrypted or ""
-    try:
-        key = _derive_key()
-        data = base64.b64decode(encrypted[4:])
-        decrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
-        return decrypted.decode("utf-8")
-    except (UnicodeDecodeError, Exception):
-        # Wrong machine key — encrypted on a different host
-        import logging
-        logging.getLogger("gungnir").warning(
-            "Failed to decrypt value (different machine key?) — clearing encrypted value"
-        )
-        return ""
+def _get_fernet() -> Fernet:
+    key = _derive_key()
+    # Fernet needs a 32-byte url-safe base64 key
+    fernet_key = base64.urlsafe_b64encode(hashlib.sha256(key).digest())
+    return Fernet(fernet_key)
+
+def encrypt_value(value: str) -> str:
+    """Encrypt a string value using Fernet (AES-128-CBC + HMAC)."""
+    if not value or value.startswith("FERNET:"):
+        return value
+    token = _get_fernet().encrypt(value.encode())
+    return "FERNET:" + token.decode()
+
+def decrypt_value(value: str) -> str:
+    """Decrypt a Fernet-encrypted value. Handles legacy XOR values too."""
+    if not value:
+        return value
+    if value.startswith("FERNET:"):
+        try:
+            return _get_fernet().decrypt(value[7:].encode()).decode()
+        except (InvalidToken, Exception):
+            return ""
+    if value.startswith("enc:"):
+        # Legacy XOR — decrypt then re-encrypt on next save
+        try:
+            key = _derive_key()
+            data = base64.b64decode(value[4:])
+            decrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+            return decrypted.decode("utf-8")
+        except Exception:
+            return ""
+    return value
 
 
 class ProviderConfig(BaseModel):
@@ -224,18 +236,23 @@ class Settings(BaseSettings):
                     sconf[field] = sconf[field].strip()
         # Encrypt API keys before writing to disk
         for pname, pconf in data.get("providers", {}).items():
-            if pconf.get("api_key") and not pconf["api_key"].startswith("enc:"):
+            if pconf.get("api_key") and not pconf["api_key"].startswith(("FERNET:", "enc:")):
                 pconf["api_key"] = encrypt_value(pconf["api_key"])
         # Encrypt service tokens/keys
         for sname, sconf in data.get("services", {}).items():
             for field in ("api_key", "token"):
-                if sconf.get(field) and not sconf[field].startswith("enc:"):
+                if sconf.get(field) and not sconf[field].startswith(("FERNET:", "enc:")):
                     sconf[field] = encrypt_value(sconf[field])
+        # Encrypt voice API keys
+        if "voice" in data:
+            for vname, vconf in data["voice"].items():
+                if isinstance(vconf, dict) and vconf.get("api_key") and not vconf["api_key"].startswith(("FERNET:", "enc:")):
+                    vconf["api_key"] = encrypt_value(vconf["api_key"])
         # Encrypt MCP env secrets
         for mcp in data.get("mcp_servers", []):
             for ekey, evalue in mcp.get("env", {}).items():
                 if ("key" in ekey.lower() or "token" in ekey.lower() or "secret" in ekey.lower()):
-                    if evalue and not evalue.startswith("enc:"):
+                    if evalue and not evalue.startswith(("FERNET:", "enc:")):
                         mcp["env"][ekey] = encrypt_value(evalue)
         self._config_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
@@ -246,19 +263,23 @@ class Settings(BaseSettings):
             data = json.loads(config_path.read_text())
             # Decrypt API keys transparently on load + strip whitespace
             for pname, pconf in data.get("providers", {}).items():
-                if isinstance(pconf, dict) and (pconf.get("api_key") or "").startswith("enc:"):
+                if isinstance(pconf, dict) and (pconf.get("api_key") or "").startswith(("FERNET:", "enc:")):
                     pconf["api_key"] = decrypt_value(pconf["api_key"])
                 if isinstance(pconf, dict) and pconf.get("api_key"):
                     pconf["api_key"] = pconf["api_key"].strip()
             for sname, sconf in data.get("services", {}).items():
                 if isinstance(sconf, dict):
                     for field in ("api_key", "token"):
-                        if (sconf.get(field) or "").startswith("enc:"):
+                        if (sconf.get(field) or "").startswith(("FERNET:", "enc:")):
                             sconf[field] = decrypt_value(sconf[field])
+            # Decrypt voice API keys
+            for vname, vconf in data.get("voice", {}).items():
+                if isinstance(vconf, dict) and (vconf.get("api_key") or "").startswith(("FERNET:", "enc:")):
+                    vconf["api_key"] = decrypt_value(vconf["api_key"])
             for mcp in data.get("mcp_servers", []):
                 if isinstance(mcp, dict):
                     for ekey, evalue in mcp.get("env", {}).items():
-                        if isinstance(evalue, str) and evalue.startswith("enc:"):
+                        if isinstance(evalue, str) and evalue.startswith(("FERNET:", "enc:")):
                             mcp["env"][ekey] = decrypt_value(evalue)
             # Merge missing providers/services from defaults so new ones appear automatically
             defaults = cls()

@@ -12,10 +12,38 @@ Capacités :
 """
 import aiohttp
 import asyncio
+import ipaddress
 import re
+import socket
 from typing import Optional
 from urllib.parse import urljoin, urlparse, quote_plus
 from html.parser import HTMLParser
+
+
+def _is_private_url(url: str) -> bool:
+    """Check if a URL resolves to a private/internal IP address."""
+    try:
+        hostname = urlparse(url).hostname
+        if not hostname:
+            return True
+        # Block obvious internal hostnames
+        if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+            return True
+        if hostname.startswith("169.254.") or hostname.startswith("10.") or hostname.startswith("192.168."):
+            return True
+        if hostname.startswith("172."):
+            parts = hostname.split(".")
+            if len(parts) >= 2 and 16 <= int(parts[1]) <= 31:
+                return True
+        # DNS resolution check
+        try:
+            ip = socket.gethostbyname(hostname)
+            addr = ipaddress.ip_address(ip)
+            return addr.is_private or addr.is_loopback or addr.is_link_local
+        except (socket.gaierror, ValueError):
+            return False
+    except Exception:
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -193,6 +221,9 @@ async def web_fetch(url: str, extract: str = "text", timeout: int = 15) -> dict:
     """
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
+
+    if _is_private_url(url):
+        return {"ok": False, "error": "URL interne bloquee (securite SSRF)"}
 
     try:
         connector = aiohttp.TCPConnector(ssl=False)  # Ignorer erreurs SSL comme Playwright

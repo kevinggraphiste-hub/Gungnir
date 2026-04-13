@@ -10,6 +10,8 @@ L'agent accède à tout via le système MCP tools existant.
 Plugin indépendant — lit la config core, pas d'import cross-plugin.
 """
 import asyncio
+import hashlib as _hashlib
+import hmac as _hmac
 import json
 import logging
 import uuid
@@ -615,6 +617,15 @@ async def receive_webhook(webhook_id: str, request: Request):
     if not wh.get("enabled", True):
         return JSONResponse({"error": "Webhook désactivé"}, status_code=403)
 
+    # Verify HMAC signature if webhook has a secret
+    webhook_secret = wh.get("secret", "")
+    if webhook_secret:
+        sig_header = request.headers.get("X-Webhook-Signature", "")
+        body_bytes = await request.body()
+        expected_sig = _hmac.new(webhook_secret.encode(), body_bytes, _hashlib.sha256).hexdigest()
+        if not _hmac.compare_digest(sig_header, expected_sig):
+            return JSONResponse({"error": "Signature invalide"}, status_code=401)
+
     # Parse body
     try:
         body = await request.json()
@@ -660,6 +671,10 @@ async def trigger_outgoing_webhook(webhook_id: str, request: Request):
         payload = await request.json()
     except Exception:
         payload = {}
+
+    url = wh["url"]
+    if url and not url.startswith("https://"):
+        logging.getLogger("gungnir").warning(f"Outgoing webhook uses insecure HTTP: {url}")
 
     headers = {**(wh.get("headers", {})), "Content-Type": "application/json"}
     if wh.get("secret"):

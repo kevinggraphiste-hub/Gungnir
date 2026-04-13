@@ -77,7 +77,13 @@ def _enforce_max_backups(max_backups: int):
 
 @router.get("/backup/config")
 async def get_backup_config():
-    return _load_config()
+    config = _load_config()
+    # Mask secrets in response
+    safe_config = dict(config)
+    for secret_key in ("github_token", "supabase_key"):
+        if safe_config.get(secret_key):
+            safe_config[secret_key] = "***" + safe_config[secret_key][-4:] if len(safe_config[secret_key]) > 4 else "***"
+    return safe_config
 
 
 @router.put("/backup/config")

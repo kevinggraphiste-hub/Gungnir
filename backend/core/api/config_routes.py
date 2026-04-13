@@ -50,7 +50,12 @@ async def get_config():
 
 
 @router.post("/config/providers/{provider_name}")
-async def configure_provider(provider_name: str, config: ProviderConfig):
+async def configure_provider(provider_name: str, config: ProviderConfig, request: Request, session: AsyncSession = Depends(get_session)):
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        from backend.core.api.auth_helpers import require_admin
+        if not await require_admin(request, session):
+            return JSONResponse({"error": "Admin requis"}, status_code=403)
     # Strip whitespace from API key (common copy-paste issue)
     if config.api_key:
         config.api_key = config.api_key.strip()
@@ -82,7 +87,12 @@ async def configure_voice(voice_name: str, config: VoiceConfig):
 
 
 @router.post("/config/app")
-async def configure_app(app_config: dict):
+async def configure_app(app_config: dict, request: Request, session: AsyncSession = Depends(get_session)):
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        from backend.core.api.auth_helpers import require_admin
+        if not await require_admin(request, session):
+            return JSONResponse({"error": "Admin requis"}, status_code=403)
     settings = Settings.load()
     for key, value in app_config.items():
         if hasattr(settings.app, key):
@@ -118,8 +128,13 @@ async def list_models(provider_name: str):
 
 
 @router.delete("/config/providers/{provider_name}")
-async def delete_provider(provider_name: str):
+async def delete_provider(provider_name: str, request: Request, session: AsyncSession = Depends(get_session)):
     """Supprime un provider de la configuration."""
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        from backend.core.api.auth_helpers import require_admin
+        if not await require_admin(request, session):
+            return JSONResponse({"error": "Admin requis"}, status_code=403)
     settings = Settings.load()
     if provider_name in settings.providers:
         del settings.providers[provider_name]

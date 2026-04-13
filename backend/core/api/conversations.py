@@ -125,6 +125,11 @@ async def update_conversation(convo_id: int, request: Request, data: dict, sessi
 
 @router.get("/conversations/{convo_id}/messages")
 async def get_messages(convo_id: int, request: Request, session: AsyncSession = Depends(get_session)):
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        conv = await session.get(Conversation, convo_id)
+        if conv and conv.user_id is not None and conv.user_id != uid:
+            return JSONResponse({"error": "Acces non autorise"}, status_code=403)
     result = await session.execute(
         select(Message).where(Message.conversation_id == convo_id).order_by(Message.created_at)
     )
@@ -142,11 +147,16 @@ async def get_messages(convo_id: int, request: Request, session: AsyncSession = 
 
 
 @router.get("/conversations/{convo_id}/export/{fmt}")
-async def export_conversation(convo_id: int, fmt: str, session: AsyncSession = Depends(get_session)):
+async def export_conversation(convo_id: int, fmt: str, request: Request, session: AsyncSession = Depends(get_session)):
     """
     Exporte une conversation dans le format demandé.
     Formats supportés : json, txt, md, html
     """
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        conv_check = await session.get(Conversation, convo_id)
+        if conv_check and conv_check.user_id is not None and conv_check.user_id != uid:
+            return JSONResponse({"error": "Acces non autorise"}, status_code=403)
     # Récupérer la conversation + messages
     conv = await session.get(Conversation, convo_id)
     if not conv:
@@ -334,6 +344,11 @@ async def generate_conversation_title(convo_id: int, request: Request, session: 
     Génère un titre court (max 6 mots) basé sur le sujet dominant.
     Le front envoie le provider/model actif pour garantir que ça marche.
     """
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        conv_check = await session.get(Conversation, convo_id)
+        if conv_check and conv_check.user_id is not None and conv_check.user_id != uid:
+            return JSONResponse({"error": "Acces non autorise"}, status_code=403)
     import logging as _logging
     _log = _logging.getLogger("gungnir.title")
 
@@ -502,7 +517,7 @@ async def generate_conversation_title(convo_id: int, request: Request, session: 
 
 
 @router.post("/conversations/{convo_id}/auto-title")
-async def auto_title_if_needed(convo_id: int, session: AsyncSession = Depends(get_session)):
+async def auto_title_if_needed(convo_id: int, request: Request, session: AsyncSession = Depends(get_session)):
     """
     Déclenche la régénération auto du titre si et seulement si :
     - le titre actuel est le titre par défaut (ou l'ancien titre basé sur le premier message)
@@ -512,6 +527,12 @@ async def auto_title_if_needed(convo_id: int, session: AsyncSession = Depends(ge
     Utilisé par le frontend après quelques échanges pour rafraîchir un titre
     qui serait devenu obsolète par rapport au sujet actuel.
     """
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        conv_check = await session.get(Conversation, convo_id)
+        if conv_check and conv_check.user_id is not None and conv_check.user_id != uid:
+            return JSONResponse({"error": "Acces non autorise"}, status_code=403)
+
     conv = await session.get(Conversation, convo_id)
     if not conv:
         return {"ok": False, "reason": "not_found"}
@@ -534,12 +555,17 @@ async def auto_title_if_needed(convo_id: int, session: AsyncSession = Depends(ge
         return {"ok": False, "reason": "too_few_messages", "count": len(msgs)}
 
     # Délègue à la logique existante
-    return await generate_conversation_title(convo_id, session)
+    return await generate_conversation_title(convo_id, request, session)
 
 
 @router.post("/conversations/{convo_id}/summarize")
 async def summarize_conversation(convo_id: int, request: Request, session: AsyncSession = Depends(get_session)):
     """Résume une conversation via le LLM. Retourne un résumé structuré."""
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        conv_check = await session.get(Conversation, convo_id)
+        if conv_check and conv_check.user_id is not None and conv_check.user_id != uid:
+            return JSONResponse({"error": "Acces non autorise"}, status_code=403)
     body = await request.json()
     provider_name = body.get("provider", "openrouter")
     model_name = body.get("model")
@@ -611,10 +637,17 @@ async def summarize_conversation(convo_id: int, request: Request, session: Async
 
 
 @router.delete("/conversations")
-async def delete_all_conversations(session: AsyncSession = Depends(get_session)):
-    """Supprime TOUTES les conversations (reset complet)."""
+async def delete_all_conversations(request: Request, session: AsyncSession = Depends(get_session)):
+    """Supprime les conversations de l'utilisateur courant (ou toutes en mode open)."""
     from sqlalchemy import delete as sql_delete
-    await session.execute(sql_delete(Message))
-    await session.execute(sql_delete(Conversation))
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        # Delete only messages belonging to user's conversations
+        user_convo_ids = select(Conversation.id).where(Conversation.user_id == uid)
+        await session.execute(sql_delete(Message).where(Message.conversation_id.in_(user_convo_ids)))
+        await session.execute(sql_delete(Conversation).where(Conversation.user_id == uid))
+    else:
+        await session.execute(sql_delete(Message))
+        await session.execute(sql_delete(Conversation))
     await session.commit()
     return {"success": True, "message": "Toutes les conversations supprimées"}

@@ -492,6 +492,22 @@ async def openai_realtime_relay(websocket: WebSocket):
     PCM16 24kHz bidirectionnel. VAD automatique côté OpenAI."""
     await websocket.accept()
 
+    # ── Auth: validate token from query params ──
+    token = websocket.query_params.get("token", "")
+    if token:
+        import hashlib
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        from backend.core.db.engine import get_session
+        from backend.core.db.models import User
+        from sqlalchemy import select
+        async for session in get_session():
+            result = await session.execute(
+                select(User).where(User.api_token == token_hash, User.is_active == True)
+            )
+            if not result.scalar():
+                await websocket.close(code=4001, reason="Token invalide")
+                return
+
     api_key = _get_voice_config("openai").get("api_key") or _get_llm_key("openai")
     if not api_key:
         await websocket.send_json({"type": "error", "error": "Clé API OpenAI non configurée"})
@@ -576,6 +592,22 @@ async def google_realtime_relay(websocket: WebSocket):
     """Relay WebSocket pour Google Gemini Multimodal Live API.
     PCM16 16kHz in → 24kHz out. VAD automatique."""
     await websocket.accept()
+
+    # ── Auth: validate token from query params ──
+    token = websocket.query_params.get("token", "")
+    if token:
+        import hashlib
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        from backend.core.db.engine import get_session
+        from backend.core.db.models import User
+        from sqlalchemy import select
+        async for session in get_session():
+            result = await session.execute(
+                select(User).where(User.api_token == token_hash, User.is_active == True)
+            )
+            if not result.scalar():
+                await websocket.close(code=4001, reason="Token invalide")
+                return
 
     api_key = _get_voice_config("google").get("api_key") or _get_llm_key("google")
     if not api_key:
@@ -746,6 +778,22 @@ async def grok_realtime_relay(websocket: WebSocket):
     """Relay WebSocket pour xAI Grok Realtime API.
     Protocole OpenAI-compatible. PCM16 24kHz."""
     await websocket.accept()
+
+    # ── Auth: validate token from query params ──
+    token = websocket.query_params.get("token", "")
+    if token:
+        import hashlib
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        from backend.core.db.engine import get_session
+        from backend.core.db.models import User
+        from sqlalchemy import select
+        async for session in get_session():
+            result = await session.execute(
+                select(User).where(User.api_token == token_hash, User.is_active == True)
+            )
+            if not result.scalar():
+                await websocket.close(code=4001, reason="Token invalide")
+                return
 
     api_key = _get_llm_key("xai")
     if not api_key:
@@ -928,6 +976,22 @@ async def custom_realtime_relay(websocket: WebSocket, provider_id: str):
     """Generic WebSocket relay for any custom voice provider.
     Uses the provider's config to build WS URL, auth, audio message format."""
     await websocket.accept()
+
+    # ── Auth: validate token from query params ──
+    token = websocket.query_params.get("token", "")
+    if token:
+        import hashlib
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        from backend.core.db.engine import get_session
+        from backend.core.db.models import User
+        from sqlalchemy import select
+        async for session in get_session():
+            result = await session.execute(
+                select(User).where(User.api_token == token_hash, User.is_active == True)
+            )
+            if not result.scalar():
+                await websocket.close(code=4001, reason="Token invalide")
+                return
 
     # Load provider config
     providers = _load_custom_providers()

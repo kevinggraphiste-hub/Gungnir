@@ -34,3 +34,4 @@ python-multipart>=0.0.18
 
 # PDF export
 reportlab>=4.2.0
+slowapi>=0.1.9

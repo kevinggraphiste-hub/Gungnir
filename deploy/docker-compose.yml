@@ -19,6 +19,7 @@ services:
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
+      - GUNGNIR_SECRET_KEY=${GUNGNIR_SECRET_KEY}
     volumes:
       # Persistent data (DB, config, backups, workspace)
       - gungnir-data:/app/data

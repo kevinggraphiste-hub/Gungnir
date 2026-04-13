@@ -96,3 +96,14 @@ async def enforce_conversation_owner(convo_id: int, request: Request, session: A
         return convo
 
     return None  # Unauthorized
+
+
+async def require_admin(request: Request, session: AsyncSession) -> bool:
+    """Check if the current user is admin. Returns True or raises 403."""
+    uid = getattr(request.state, "user_id", None)
+    if uid is None:
+        return True  # Open mode, no auth active
+    user = await session.get(User, uid)
+    if not user or not user.is_admin:
+        return False
+    return True
