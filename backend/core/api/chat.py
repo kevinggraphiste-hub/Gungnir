@@ -727,9 +727,11 @@ async def chat(
 
     # Detection commande de changement de personnalite
     from backend.core.agents.skills import personality_manager as pm
+    from backend.core.agents import user_data as _ud
+    _current_uid = getattr(request.state, "user_id", None) or 0
     personality_cmd = pm.detect_personality_command(message)
     if personality_cmd:
-        pm.set_active(personality_cmd)
+        await _ud.set_active_personality(session, _current_uid, personality_cmd)
         print(f"[Wolf] Personality switched to '{personality_cmd}' via chat command")
 
     # Construction du system prompt : Soul (identite) + Personnalite (mode) + Outils
@@ -776,21 +778,20 @@ async def chat(
         _total_msgs = await session.execute(select(Message).limit(1))
         if not _total_msgs.scalars().first():
             _is_first_conversation = True
-    active_personality = pm.get_active()
+    active_personality = await _ud.get_active_personality(session, _current_uid)
     personality_block = ""
-    if active_personality and active_personality.system_prompt:
-        personality_block = f"\n\n## Mode de personnalite actif : {active_personality.name}\n{active_personality.system_prompt}"
-        print(f"[Wolf] Personality overlay applied: '{active_personality.name}' ({len(active_personality.system_prompt)} chars)")
+    if active_personality and active_personality.get("system_prompt"):
+        personality_block = f"\n\n## Mode de personnalite actif : {active_personality['name']}\n{active_personality['system_prompt']}"
+        print(f"[Wolf] Personality overlay applied: '{active_personality['name']}' ({len(active_personality['system_prompt'])} chars)")
     else:
-        print(f"[Wolf] No personality overlay (active: '{active_personality.name if active_personality else 'none'}')")
+        print(f"[Wolf] No personality overlay (active: '{active_personality.get('name') if active_personality else 'none'}')")
 
     # Active skill overlay (user-selected from Agent Settings)
-    from backend.core.agents.skills import skill_library as _sl
-    active_skill = _sl.get_active()
+    active_skill = await _ud.get_active_skill(session, _current_uid)
     skill_block = ""
-    if active_skill and active_skill.prompt:
-        skill_block = f"\n\n## Skill actif : {active_skill.name}\n{active_skill.prompt}"
-        print(f"[Wolf] Skill overlay applied: '{active_skill.name}' ({len(active_skill.prompt)} chars)")
+    if active_skill and active_skill.get("prompt"):
+        skill_block = f"\n\n## Skill actif : {active_skill['name']}\n{active_skill['prompt']}"
+        print(f"[Wolf] Skill overlay applied: '{active_skill['name']}' ({len(active_skill['prompt'])} chars)")
 
     # Construire la liste des modeles disponibles pour guider Wolf
     _available_models_lines = []

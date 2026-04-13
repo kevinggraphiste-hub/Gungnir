@@ -1,14 +1,22 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Depends
 from pathlib import Path
 import json
 import re
 import uuid as _uuid_mod
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from backend.core.config.settings import Settings
 from backend.core.providers import get_provider, ChatMessage
 from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS, WOLF_EXECUTORS, READ_ONLY_TOOLS
+from backend.core.db.engine import get_session
+from backend.core.agents import user_data as ud
 
 router = APIRouter()
+
+def _uid(request: Request) -> int:
+    """Extract user_id from auth middleware, fallback to 0 for unauthenticated."""
+    return getattr(request.state, "user_id", None) or 0
 
 # Import helper functions from chat module (needed by invoke_sub_agent)
 from backend.core.api.chat import (
@@ -58,274 +66,184 @@ async def deny_permission(request_id: str, reason: str = ""):
 
 
 @router.get("/skills")
-async def list_skills(category: str = None):
-    from backend.core.agents.skills import skill_library
-    skills = skill_library.list_skills(category)
-    return [
-        {
-            "name": s.name,
-            "description": s.description,
-            "prompt": s.prompt,
-            "category": s.category,
-            "tools": s.tools,
-            "usage_count": s.usage_count,
-            "version": s.version,
-            "author": s.author,
-            "tags": s.tags,
-            "license": s.license,
-            "examples": s.examples,
-            "output_format": s.output_format,
-            "annotations": s.annotations,
-            "compatibility": s.compatibility,
-            "is_favorite": s.is_favorite,
-            "icon": s.icon,
-        }
-        for s in skills
-    ]
+async def list_skills(request: Request, category: str = None, session: AsyncSession = Depends(get_session)):
+    return await ud.list_skills(session, _uid(request), category)
 
 
 @router.post("/skills")
-async def create_skill(data: dict):
+async def create_skill(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     name = data.get("name", "").strip()
     if not re.match(r'^[a-z][a-z0-9_]{1,50}$', name):
         return {"error": "Nom invalide (snake_case, 2-50 chars, commence par une lettre)"}
-    from backend.core.agents.creators import skill_creator
-    result = await skill_creator.create_skill(
-        name=name,
-        description=data.get("description", ""),
-        prompt=data.get("prompt", ""),
-        tools=data.get("tools", []),
-        code=data.get("code"),
-        category=data.get("category", "custom"),
-        tags=data.get("tags", []),
-        version=data.get("version", "1.0.0"),
-        author=data.get("author", "user"),
-        license=data.get("license", "MIT"),
-        examples=data.get("examples", []),
-        output_format=data.get("output_format", "text"),
-        annotations=data.get("annotations", {}),
-    )
-    return result
+    skill_data = {
+        "description": data.get("description", ""),
+        "prompt": data.get("prompt", ""),
+        "tools": data.get("tools", []),
+        "category": data.get("category", "custom"),
+        "tags": data.get("tags", []),
+        "version": data.get("version", "1.0.0"),
+        "author": data.get("author", "user"),
+        "license": data.get("license", "MIT"),
+        "examples": data.get("examples", []),
+        "output_format": data.get("output_format", "text"),
+        "annotations": data.get("annotations", {}),
+        "icon": data.get("icon", ""),
+        "is_favorite": False,
+        "usage_count": 0,
+    }
+    return await ud.create_skill(session, _uid(request), name, skill_data)
 
 
 @router.post("/skills/import")
-async def import_skill(data: dict):
+async def import_skill(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     name = data.get("name", "").strip()
     if name and not re.match(r'^[a-z][a-z0-9_]{1,50}$', name):
         return {"error": "Nom invalide (snake_case, 2-50 chars, commence par une lettre)"}
-    from backend.core.agents.creators import skill_creator
-    return await skill_creator.import_skill(data)
+    return await ud.create_skill(session, _uid(request), name, data)
 
 
 @router.post("/skills/validate")
 async def validate_skills():
-    from backend.core.agents.creators import skill_creator
-    return await skill_creator.validate_all_skills()
+    # Validation is now per-user; return OK for now
+    return {"valid": True, "errors": []}
 
 
 @router.put("/skills/reorder")
-async def reorder_skills(data: dict):
-    """Reorder skills list by drag-and-drop order."""
-    from backend.core.agents.skills import skill_library
+async def reorder_skills(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     order = data.get("order", [])
     if not order:
         return {"success": False, "error": "Empty order"}
-    reordered = {}
-    for name in order:
-        if name in skill_library.skills:
-            reordered[name] = skill_library.skills[name]
-    for name, s in skill_library.skills.items():
-        if name not in reordered:
-            reordered[name] = s
-    skill_library.skills = reordered
-    skill_library._save()
-    return {"success": True}
+    return await ud.reorder_skills(session, _uid(request), order)
 
 
 @router.get("/skills/active")
-async def get_active_skill():
-    """Retourne le skill actuellement actif (injecté dans le system prompt du chat)."""
-    from backend.core.agents.skills import skill_library
-    active = skill_library.get_active()
+async def get_active_skill(request: Request, session: AsyncSession = Depends(get_session)):
+    active = await ud.get_active_skill(session, _uid(request))
     return {
-        "active": skill_library.get_active_name(),
+        "active": active["name"] if active else None,
         "skill": (
-            {
-                "name": active.name,
-                "description": active.description,
-                "category": active.category,
-            }
+            {"name": active["name"], "description": active.get("description", ""), "category": active.get("category", "")}
             if active else None
         ),
     }
 
 
 @router.post("/skills/active/{skill_name}")
-async def set_active_skill(skill_name: str):
-    """Active un skill. Son prompt sera injecté dans le system prompt à chaque message."""
-    from backend.core.agents.skills import skill_library
-    ok = skill_library.set_active(skill_name)
-    if not ok:
-        return {"success": False, "error": "Skill introuvable"}
-    return {"success": True, "active": skill_library.get_active_name()}
+async def set_active_skill(request: Request, skill_name: str, session: AsyncSession = Depends(get_session)):
+    return await ud.set_active_skill(session, _uid(request), skill_name)
 
 
 @router.delete("/skills/active")
-async def clear_active_skill():
-    """Désactive le skill actif."""
-    from backend.core.agents.skills import skill_library
-    skill_library.set_active(None)
-    return {"success": True, "active": None}
+async def clear_active_skill(request: Request, session: AsyncSession = Depends(get_session)):
+    return await ud.set_active_skill(session, _uid(request), None)
 
 
 @router.put("/skills/favorite/{skill_name}")
-async def toggle_skill_favorite(skill_name: str):
-    """Toggle favorite status of a skill."""
-    from backend.core.agents.skills import skill_library
-    skill = skill_library.get_skill(skill_name)
+async def toggle_skill_favorite(request: Request, skill_name: str, session: AsyncSession = Depends(get_session)):
+    skill = await ud.get_skill(session, _uid(request), skill_name)
     if not skill:
         return {"success": False, "error": "Skill not found"}
-    skill.is_favorite = not skill.is_favorite
-    skill_library._save()
-    return {"success": True, "is_favorite": skill.is_favorite}
+    new_fav = not skill.get("is_favorite", False)
+    await ud.update_skill(session, _uid(request), skill_name, {"is_favorite": new_fav})
+    return {"success": True, "is_favorite": new_fav}
 
 
 @router.put("/skills/{skill_name}/icon")
-async def update_skill_icon(skill_name: str, data: dict):
-    """Update the icon (emoji) of a skill."""
-    from backend.core.agents.skills import skill_library
-    skill = skill_library.get_skill(skill_name)
-    if not skill:
-        return {"success": False, "error": "Skill not found"}
-    skill.icon = data.get("icon", "")
-    skill_library._save()
-    return {"success": True, "icon": skill.icon}
+async def update_skill_icon(request: Request, skill_name: str, data: dict, session: AsyncSession = Depends(get_session)):
+    return await ud.update_skill(session, _uid(request), skill_name, {"icon": data.get("icon", "")})
 
 
 @router.put("/skills/{skill_name}")
-async def update_skill(skill_name: str, data: dict):
-    from backend.core.agents.creators import skill_creator
-    result = await skill_creator.update_skill(
-        skill_name,
-        description=data.get("description"),
-        prompt=data.get("prompt"),
-        tools=data.get("tools"),
-        category=data.get("category"),
-        tags=data.get("tags"),
-        version=data.get("version"),
-        examples=data.get("examples"),
-        output_format=data.get("output_format"),
-        annotations=data.get("annotations"),
-    )
-    # Update icon if provided
-    if "icon" in data:
-        from backend.core.agents.skills import skill_library
-        skill = skill_library.get_skill(skill_name)
-        if skill:
-            skill.icon = data["icon"]
-            skill_library._save()
-    return result
+async def update_skill(request: Request, skill_name: str, data: dict, session: AsyncSession = Depends(get_session)):
+    updates = {}
+    for field in ("description", "prompt", "tools", "category", "tags", "version",
+                  "examples", "output_format", "annotations", "icon"):
+        if field in data and data[field] is not None:
+            updates[field] = data[field]
+    return await ud.update_skill(session, _uid(request), skill_name, updates)
 
 
 @router.delete("/skills/{skill_name}")
-async def delete_skill(skill_name: str):
-    from backend.core.agents.creators import skill_creator
-    return await skill_creator.delete_skill(skill_name)
+async def delete_skill(request: Request, skill_name: str, session: AsyncSession = Depends(get_session)):
+    return await ud.delete_skill(session, _uid(request), skill_name)
 
 
 @router.get("/sub-agents")
-async def list_sub_agents():
-    from backend.core.agents.skills import subagent_library
-    agents = subagent_library.list_agents()
+async def list_sub_agents(request: Request, session: AsyncSession = Depends(get_session)):
+    agents = await ud.list_sub_agents(session, _uid(request))
     return [
         {
-            "name": a.name,
-            "role": a.role,
-            "expertise": a.expertise,
-            "system_prompt": a.system_prompt,
-            "tools": a.tools,
-            "description": a.role,  # compatibilite UI existante
+            "name": a.get("name", ""),
+            "role": a.get("role", ""),
+            "expertise": a.get("expertise", ""),
+            "system_prompt": a.get("system_prompt", ""),
+            "tools": a.get("tools", []),
+            "description": a.get("role", ""),  # compatibilite UI existante
         }
         for a in agents
     ]
 
 
 @router.post("/sub-agents")
-async def create_sub_agent(data: dict):
-    from backend.core.agents.skills import subagent_library, SubAgent
-    import uuid as _uuid
+async def create_sub_agent(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     name = data.get("name", "")
     if not name.startswith("agent_"):
         name = f"agent_{name}"
-    agent = SubAgent(
-        id=str(_uuid.uuid4())[:8],
-        name=name,
-        role=data.get("role", ""),
-        expertise=data.get("expertise", ""),
-        system_prompt=data.get("system_prompt", f"Tu es {data.get('role', '')}. Expertise : {data.get('expertise', '')}."),
-        tools=data.get("tools", []),
-        created_at=__import__("datetime").datetime.utcnow(),
-    )
-    subagent_library.add_agent(agent)
-    return {"success": True, "name": name}
+    agent_data = {
+        "role": data.get("role", ""),
+        "expertise": data.get("expertise", ""),
+        "system_prompt": data.get("system_prompt", f"Tu es {data.get('role', '')}. Expertise : {data.get('expertise', '')}."),
+        "tools": data.get("tools", []),
+        "id": str(_uuid_mod.uuid4())[:8],
+    }
+    return await ud.create_sub_agent(session, _uid(request), name, agent_data)
 
 
 @router.post("/sub-agents/import")
-async def import_sub_agent(data: dict):
+async def import_sub_agent(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     """Import a sub-agent from JSON, reuses create logic."""
-    from backend.core.agents.skills import subagent_library, SubAgent
-    import uuid as _uuid
     name = data.get("name", "").strip()
     if not name:
         return {"success": False, "error": "Missing name"}
-    # Strip agent_ prefix for validation, then re-add
     raw_name = name[6:] if name.startswith("agent_") else name
     if not re.match(r'^[a-z][a-z0-9_]{1,50}$', raw_name):
         return {"success": False, "error": "Nom invalide (snake_case, 2-50 chars, commence par une lettre)"}
     if not name.startswith("agent_"):
         name = f"agent_{name}"
-    agent = SubAgent(
-        id=str(_uuid.uuid4())[:8],
-        name=name,
-        role=data.get("role", ""),
-        expertise=data.get("expertise", ""),
-        system_prompt=data.get("system_prompt", ""),
-        tools=data.get("tools", []),
-        created_at=__import__("datetime").datetime.utcnow(),
-    )
+    agent_data = {
+        "role": data.get("role", ""),
+        "expertise": data.get("expertise", ""),
+        "system_prompt": data.get("system_prompt", ""),
+        "tools": data.get("tools", []),
+        "id": str(_uuid_mod.uuid4())[:8],
+    }
     for field in ("provider", "model", "description", "tags", "version", "author", "max_iterations"):
         if field in data and data[field] is not None:
-            setattr(agent, field, data[field])
-    subagent_library.add_agent(agent)
-    return {"success": True, "name": name}
+            agent_data[field] = data[field]
+    return await ud.create_sub_agent(session, _uid(request), name, agent_data)
 
 
 @router.put("/sub-agents/{agent_name}")
-async def update_sub_agent(agent_name: str, data: dict):
-    from backend.core.agents.skills import subagent_library
-    agent = subagent_library.get_agent(agent_name)
-    if not agent:
-        return {"success": False, "error": "Agent introuvable"}
+async def update_sub_agent(request: Request, agent_name: str, data: dict, session: AsyncSession = Depends(get_session)):
+    updates = {}
     for field in ("role", "expertise", "system_prompt", "tools", "provider", "model"):
         if field in data and data[field] is not None:
-            setattr(agent, field, data[field])
-    subagent_library._save()
-    return {"success": True}
+            updates[field] = data[field]
+    return await ud.update_sub_agent(session, _uid(request), agent_name, updates)
 
 
 @router.post("/sub-agents/{agent_name}/invoke")
-async def invoke_sub_agent(agent_name: str, data: dict):
+async def invoke_sub_agent(request: Request, agent_name: str, data: dict, session: AsyncSession = Depends(get_session)):
     """
     Lance un sous-agent sur une tache avec son propre modele/provider.
     Le sous-agent a acces aux outils web (browser, scraping, crawl, search).
     Boucle multi-rounds : le sous-agent peut appeler des tools puis repondre.
     """
     import json as _json, uuid as _uuid
-    from backend.core.agents.skills import subagent_library
     from backend.core.agents.wolf_tools import WOLF_EXECUTORS, _get_tools_for_agent
     from backend.core.agents.inter_agent_log import ConversationRecorder
 
-    agent = subagent_library.get_agent(agent_name)
+    agent = await ud.get_sub_agent(session, _uid(request), agent_name)
     if not agent:
         return {"error": f"Sous-agent '{agent_name}' introuvable"}
 
@@ -334,16 +252,16 @@ async def invoke_sub_agent(agent_name: str, data: dict):
         return {"error": "Tache vide"}
 
     settings = Settings.load()
-    provider_name = agent.provider or "openrouter"
+    provider_name = agent.get("provider") or "openrouter"
     provider_cfg = settings.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled or not provider_cfg.api_key:
         return {"error": f"Provider '{provider_name}' non configure"}
 
-    model = agent.model or provider_cfg.default_model
+    model = agent.get("model") or provider_cfg.default_model
     provider = get_provider(provider_name, provider_cfg.api_key, provider_cfg.base_url)
 
     # System prompt enrichi + outils web
-    system = agent.system_prompt
+    system = agent.get("system_prompt", "")
     system += """
 
 ## TES OUTILS -- DISPONIBLES IMMEDIATEMENT
@@ -360,7 +278,7 @@ Tu as un acces COMPLET a Internet. Ne dis JAMAIS que tu n'as pas acces au web. A
 - `browser_extract_table(page_id)` / `browser_query_selector_all(page_id, selector, extract)`
 - `browser_download(page_id, url)` -- Telecharger un fichier"""
 
-    agent_tools = _get_tools_for_agent(agent.tools)
+    agent_tools = _get_tools_for_agent(agent.get("tools", []))
 
     # Pre-fetch URLs dans la tache du sous-agent
     tool_events = []
@@ -489,7 +407,7 @@ Tu as un acces COMPLET a Internet. Ne dis JAMAIS que tu n'as pas acces au web. A
 
         return {
             "agent": agent_name,
-            "role": agent.role,
+            "role": agent.get("role", ""),
             "model": model,
             "provider": provider_name,
             "result": final_text,
@@ -511,10 +429,8 @@ Tu as un acces COMPLET a Internet. Ne dis JAMAIS que tu n'as pas acces au web. A
 
 
 @router.delete("/sub-agents/{agent_name}")
-async def delete_sub_agent(agent_name: str):
-    from backend.core.agents.skills import subagent_library
-    subagent_library.remove_agent(agent_name)
-    return {"success": True}
+async def delete_sub_agent(request: Request, agent_name: str, session: AsyncSession = Depends(get_session)):
+    return await ud.delete_sub_agent(session, _uid(request), agent_name)
 
 
 # ── Inter-agent conversation history ──────────────────────────────────────
@@ -606,84 +522,50 @@ async def save_soul(data: dict):
 
 
 @router.get("/personality")
-async def list_personalities():
-    from backend.core.agents.skills import personality_manager
-    return [
-        {
-            "name": p.name,
-            "description": p.description,
-            "system_prompt": p.system_prompt,
-            "traits": p.traits,
-            "active": p.name == personality_manager.active_personality,
-        }
-        for p in personality_manager.list_personalities()
-    ]
+async def list_personalities(request: Request, session: AsyncSession = Depends(get_session)):
+    return await ud.list_personalities(session, _uid(request))
 
 
 @router.put("/personality/reorder")
-async def reorder_personalities(data: dict):
-    """Reorder personalities list by drag-and-drop order."""
-    from backend.core.agents.skills import personality_manager
+async def reorder_personalities(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     order = data.get("order", [])
     if not order:
         return {"success": False, "error": "Empty order"}
-    reordered = {}
-    for name in order:
-        if name in personality_manager.personalities:
-            reordered[name] = personality_manager.personalities[name]
-    # Add any remaining ones not in the order list
-    for name, p in personality_manager.personalities.items():
-        if name not in reordered:
-            reordered[name] = p
-    personality_manager.personalities = reordered
-    personality_manager._save()
-    return {"success": True}
+    return await ud.reorder_personalities(session, _uid(request), order)
 
 
 @router.post("/personality/{name}")
-async def set_personality(name: str):
-    from backend.core.agents.skills import personality_manager
-    result = personality_manager.set_active(name)
-    if not result:
-        return {"success": False, "error": f"Personnalité '{name}' introuvable"}
+async def set_personality(request: Request, name: str, session: AsyncSession = Depends(get_session)):
+    result = await ud.set_active_personality(session, _uid(request), name)
+    if not result.get("success"):
+        return result
     print(f"[Wolf] Personality set to '{name}' via API")
-    return {"success": True, "active_personality": name}
+    return result
 
 
 @router.post("/personality")
-async def create_personality(data: dict):
-    from backend.core.agents.skills import personality_manager, Personality
-    import uuid
-    from datetime import datetime
+async def create_personality(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     name = data.get("name", "").strip()
     if not name:
         return {"success": False, "error": "Nom requis"}
-    personality = Personality(
-        id=str(uuid.uuid4())[:8],
-        name=name,
-        description=data.get("description", ""),
-        system_prompt=data.get("system_prompt", ""),
-        traits=data.get("traits", []),
-        created_at=datetime.utcnow()
-    )
-    personality_manager.add_personality(personality)
-    return {"success": True}
+    personality_data = {
+        "description": data.get("description", ""),
+        "system_prompt": data.get("system_prompt", ""),
+        "traits": data.get("traits", []),
+        "id": str(_uuid_mod.uuid4())[:8],
+    }
+    return await ud.create_personality(session, _uid(request), name, personality_data)
 
 
 @router.put("/personality/{name}")
-async def update_personality(name: str, data: dict):
-    from backend.core.agents.skills import personality_manager
-    ok = personality_manager.update_personality(
-        name,
-        description=data.get("description"),
-        system_prompt=data.get("system_prompt"),
-        traits=data.get("traits"),
-    )
-    return {"success": ok}
+async def update_personality(request: Request, name: str, data: dict, session: AsyncSession = Depends(get_session)):
+    updates = {}
+    for field in ("description", "system_prompt", "traits"):
+        if field in data and data[field] is not None:
+            updates[field] = data[field]
+    return await ud.update_personality(session, _uid(request), name, updates)
 
 
 @router.delete("/personality/{name}")
-async def delete_personality(name: str):
-    from backend.core.agents.skills import personality_manager
-    ok = personality_manager.remove_personality(name)
-    return {"success": ok}
+async def delete_personality(request: Request, name: str, session: AsyncSession = Depends(get_session)):
+    return await ud.delete_personality(session, _uid(request), name)

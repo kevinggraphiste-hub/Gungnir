@@ -203,6 +203,49 @@ class PluginRegistry(Base):
     installed_at = Column(DateTime, server_default=func.now())
 
 
+# ── Per-user data (skills, personalities, sub-agents) ───────────────────────
+
+class UserSkill(Base):
+    """Per-user skills — each user has their own skill library."""
+    __tablename__ = "user_skills"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    data_json = Column(JSON, default=dict)  # Full skill data: description, prompt, category, tools, icon, is_favorite, etc.
+    is_active = Column(Boolean, default=False)
+    position = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class UserPersonality(Base):
+    """Per-user personalities — each user customizes their own set."""
+    __tablename__ = "user_personalities"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    data_json = Column(JSON, default=dict)  # Full personality data: description, system_prompt, traits
+    is_active = Column(Boolean, default=False)
+    position = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class UserSubAgent(Base):
+    """Per-user sub-agents."""
+    __tablename__ = "user_sub_agents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    data_json = Column(JSON, default=dict)  # Full agent data: role, expertise, system_prompt, tools, provider, model
+    position = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 # ── DB init ──────────────────────────────────────────────────────────────────
 
 async def init_db(engine):
@@ -215,9 +258,9 @@ async def init_db(engine):
     # les migrations suivantes sont silencieusement ignorées.
     _text = __import__("sqlalchemy").text
     migrations = [
-        ("ALTER TABLE conversations ADD COLUMN user_id INTEGER REFERENCES users(id)", "user_id → conversations"),
-        ("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE", "is_admin → users"),
-        ("ALTER TABLE conversations ADD COLUMN folder_id INTEGER REFERENCES conversation_folders(id)", "folder_id → conversations"),
+        ("ALTER TABLE conversations ADD COLUMN user_id INTEGER REFERENCES users(id)", "user_id -> conversations"),
+        ("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE", "is_admin -> users"),
+        ("ALTER TABLE conversations ADD COLUMN folder_id INTEGER REFERENCES conversation_folders(id)", "folder_id -> conversations"),
     ]
     for sql, label in migrations:
         try:
@@ -225,7 +268,7 @@ async def init_db(engine):
                 await conn.execute(_text(sql))
             print(f"[DB] Migration: {label}")
         except Exception as e:
-            # Colonne déjà existante → skip. Autre erreur → log pour debug.
+            # Column already exists -> skip. Other error -> log for debug.
             msg = str(e).lower()
             if "already exists" not in msg and "duplicate column" not in msg:
                 print(f"[DB] Migration skipped ({label}): {e}")
