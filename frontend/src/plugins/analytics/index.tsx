@@ -240,14 +240,34 @@ export default function AnalyticsPlugin() {
     return daily.map(e => ({ label: fmtDate(e.date || ''), ...e }))
   }, [trendPeriod, daily, weekly, monthly])
 
-  const handleExport = async () => {
-    const res = await fetch(`${API}${withUser('/export')}`)
+  const [exportOpen, setExportOpen] = useState(false)
+
+  const handleExport = async (format: 'csv' | 'json' | 'md' | 'html' | 'pdf' = 'csv') => {
+    setExportOpen(false)
+    // PDF: fetch the styled HTML, create a blob URL and open for browser Print → Save as PDF
+    if (format === 'pdf') {
+      const res = await fetch(`${API}${withUser('/export/html')}`)
+      const htmlContent = await res.text()
+      const blob = new Blob([htmlContent], { type: 'text/html' })
+      const blobUrl = URL.createObjectURL(blob)
+      const printWin = window.open(blobUrl, '_blank')
+      if (printWin) {
+        printWin.onload = () => {
+          setTimeout(() => printWin.print(), 400)
+        }
+      }
+      return
+    }
+    const endpoint = format === 'csv' ? '/export' : `/export/${format}`
+    const res = await fetch(`${API}${withUser(endpoint)}`)
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'gungnir_analytics.csv'
+    a.download = `gungnir_analytics.${format}`
+    document.body.appendChild(a)
     a.click()
+    document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }
 
@@ -328,7 +348,40 @@ export default function AnalyticsPlugin() {
               <path d="M21 12a9 9 0 11-6.219-8.56" /><polyline points="21 3 21 9 15 9" />
             </svg>
           </button>
-          <button onClick={handleExport} style={btnOutline}>Exporter CSV</button>
+          <div style={{ position: 'relative' }}>
+            <button onClick={() => setExportOpen(!exportOpen)} style={btnOutline}>
+              Exporter ▾
+            </button>
+            {exportOpen && (
+              <>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setExportOpen(false)} />
+                <div style={{
+                  position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 50,
+                  background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                  borderRadius: 10, padding: 4, minWidth: 160, boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                }}>
+                  {([
+                    { fmt: 'pdf' as const, label: '📄 PDF', desc: 'Rapport ScarletWolf' },
+                    { fmt: 'html' as const, label: '🌐 HTML', desc: 'Rapport stylisé' },
+                    { fmt: 'json' as const, label: '📦 JSON', desc: 'Données structurées' },
+                    { fmt: 'md' as const, label: '📝 Markdown', desc: 'Documentation' },
+                    { fmt: 'csv' as const, label: '📊 CSV', desc: 'Tableur' },
+                  ]).map(({ fmt, label, desc }) => (
+                    <button key={fmt} onClick={() => handleExport(fmt)} style={{
+                      display: 'flex', flexDirection: 'column', width: '100%',
+                      padding: '8px 12px', background: 'transparent', border: 'none',
+                      borderRadius: 6, cursor: 'pointer', textAlign: 'left',
+                    }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(220,38,38,0.08)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{label}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
