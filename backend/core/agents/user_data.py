@@ -12,34 +12,60 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.db.models import UserSkill, UserPersonality, UserSubAgent
 
 DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
+# Bundled defaults shipped with the code (not overridden by Docker volume)
+BUNDLED_DEFAULTS_DIR = Path(__file__).parent.parent.parent / "data"
 
 
 # ── Seed defaults ────────────────────────────────────────────────────────────
 
-def _load_defaults(filename: str, key: str | None = None) -> list[dict]:
-    """Load default entries from a JSON file in data/.
+def _parse_json_list(raw, key: str | None = None) -> list[dict]:
+    """Extract a list from raw JSON (list or dict with known key)."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict):
+        if key and key in raw:
+            return raw[key]
+        for v in raw.values():
+            if isinstance(v, list):
+                return v
+    return []
 
-    Files may be a plain list or a dict with a known key containing the list.
-    Pass `key` to extract from a dict wrapper (e.g. "skills", "personalities", "agents").
+
+def _load_defaults(filename: str, key: str | None = None) -> list[dict]:
+    """Load default entries from JSON files.
+
+    Checks both the persistent data/ dir (Docker volume) and the bundled
+    backend/data/ dir (shipped with code). Merges entries by name so that
+    new defaults added to the codebase always appear, even if the volume
+    has an older version of the file.
     """
-    path = DATA_DIR / filename
-    if path.exists():
+    results_by_name: dict[str, dict] = {}
+
+    # 1. Load from bundled defaults (always up-to-date with code)
+    bundled_path = BUNDLED_DEFAULTS_DIR / filename
+    if bundled_path.exists():
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(raw, list):
-                return raw
-            if isinstance(raw, dict):
-                # Try explicit key first, then common patterns
-                if key and key in raw:
-                    return raw[key]
-                # Auto-detect: find the first list value
-                for v in raw.values():
-                    if isinstance(v, list):
-                        return v
-            return []
+            raw = json.loads(bundled_path.read_text(encoding="utf-8"))
+            for item in _parse_json_list(raw, key):
+                name = item.get("name", "")
+                if name:
+                    results_by_name[name] = item
         except Exception:
             pass
-    return []
+
+    # 2. Load from persistent data/ (user may have customized)
+    data_path = DATA_DIR / filename
+    if data_path.exists() and data_path != bundled_path:
+        try:
+            raw = json.loads(data_path.read_text(encoding="utf-8"))
+            for item in _parse_json_list(raw, key):
+                name = item.get("name", "")
+                if name:
+                    results_by_name[name] = item  # Persistent overrides bundled
+        except Exception:
+            pass
+
+    return list(results_by_name.values())
 
 
 async def _seed_skills(session: AsyncSession, user_id: int):
