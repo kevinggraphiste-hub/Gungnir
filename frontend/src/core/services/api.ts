@@ -161,8 +161,12 @@ export const api = {
     return response.blob()
   },
 
-  generateTitle: async (id: number) => {
-    const response = await apiFetch(`${API_BASE}/conversations/${id}/generate-title`, { method: 'POST' })
+  generateTitle: async (id: number, provider?: string, model?: string) => {
+    const response = await apiFetch(`${API_BASE}/conversations/${id}/generate-title`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, model }),
+    })
     return handleResponse(response)
   },
 

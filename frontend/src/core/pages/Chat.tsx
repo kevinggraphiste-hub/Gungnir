@@ -391,7 +391,7 @@ export default function Chat() {
   const generateTitleForConversation = useCallback(async (conversationId: number, userMessage: string) => {
     if (hasGeneratedTitle.has(conversationId)) return
     try {
-      const result = await api.generateTitle(conversationId)
+      const result = await api.generateTitle(conversationId, selectedProvider, selectedModel)
       const newTitle = result.title || userMessage.substring(0, 50).trim()
       setConversations(useStore.getState().conversations.map(c => c.id === conversationId ? { ...c, title: newTitle } : c))
       const updatedSet = new Set(hasGeneratedTitle); updatedSet.add(conversationId)

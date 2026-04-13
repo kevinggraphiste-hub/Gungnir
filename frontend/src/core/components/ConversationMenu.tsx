@@ -72,7 +72,7 @@ export default function ConversationMenu({
   const handleGenerateTitle = async () => {
     setLoading('title')
     try {
-      const result = await api.generateTitle(conversationId)
+      const result = await api.generateTitle(conversationId, provider, model)
       if (result.title) onTitleUpdated(conversationId, result.title)
     } catch (err) { console.error('Generate title error:', err) }
     setLoading(null)
