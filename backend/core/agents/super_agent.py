@@ -9,7 +9,7 @@ from backend.core.providers import get_provider
 from backend.core.agents.tools import FileTool, BashTool, GitTool
 from backend.core.agents.skills import skill_library, personality_manager, Skill, Personality
 from backend.core.agents.memory import AgentMemory, Memory, KnowledgeEntry
-from backend.core.agents.mode_manager import mode_manager, AgentMode, PermissionRequest
+from backend.core.agents.mode_manager import mode_pool, mode_manager, AgentMode, PermissionRequest
 from backend.core.agents.security import security_scanner
 from backend.core.agents.creators import skill_creator, sub_agent_creator
 from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS, WOLF_EXECUTORS, READ_ONLY_TOOLS

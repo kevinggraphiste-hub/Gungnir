@@ -33,9 +33,13 @@ class AgentModeConfig(BaseModel):
 
 
 class ModeManager:
-    _MODE_FILE = Path(__file__).parent.parent.parent.parent / "data" / "agent_mode.json"
-
-    def __init__(self):
+    def __init__(self, user_id: int = 0):
+        self.user_id = user_id
+        self._mode_file = (
+            Path(__file__).parent.parent.parent.parent
+            / "data" / "agent_modes" / str(user_id) / "mode.json"
+        )
+        self._mode_file.parent.mkdir(parents=True, exist_ok=True)
         self.config = AgentModeConfig()
         self.pending_requests: dict[str, PermissionRequest] = {}
         # Charger le mode persisté ou utiliser le défaut
@@ -55,8 +59,8 @@ class ModeManager:
 
     def _load_mode(self) -> AgentMode:
         try:
-            if self._MODE_FILE.exists():
-                data = json.loads(self._MODE_FILE.read_text())
+            if self._mode_file.exists():
+                data = json.loads(self._mode_file.read_text())
                 return AgentMode(data.get("mode", "ask_permission"))
         except Exception:
             pass
@@ -64,7 +68,8 @@ class ModeManager:
 
     def _save_mode(self):
         try:
-            self._MODE_FILE.write_text(json.dumps({"mode": self.current_mode.value}, indent=2))
+            self._mode_file.parent.mkdir(parents=True, exist_ok=True)
+            self._mode_file.write_text(json.dumps({"mode": self.current_mode.value}, indent=2))
         except Exception:
             pass
 
@@ -148,4 +153,18 @@ class ModeManager:
         return True, "allowed"
 
 
-mode_manager = ModeManager()
+class ModeManagerPool:
+    """Cache of per-user ModeManager instances."""
+
+    def __init__(self):
+        self._instances: dict[int, ModeManager] = {}
+
+    def get(self, user_id: int) -> ModeManager:
+        if user_id not in self._instances:
+            self._instances[user_id] = ModeManager(user_id)
+        return self._instances[user_id]
+
+
+mode_pool = ModeManagerPool()
+# Backward compat — default instance for user_id=0
+mode_manager = mode_pool.get(0)

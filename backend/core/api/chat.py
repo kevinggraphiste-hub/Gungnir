@@ -11,7 +11,7 @@ from backend.core.config.settings import Settings, ProviderConfig
 from backend.core.db.models import Conversation, Message
 from backend.core.db.engine import get_session
 from backend.core.providers import get_provider, ChatMessage
-from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS, WOLF_EXECUTORS, READ_ONLY_TOOLS, set_conversation_context
+from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS, WOLF_EXECUTORS, READ_ONLY_TOOLS, set_conversation_context, set_user_context, _soul_path
 from backend.core.agents.mcp_client import mcp_manager
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -590,8 +590,13 @@ def _extract_urls_from_conversation(messages: list) -> list[str]:
     return urls
 
 
-# Chemin du fichier soul
+# Chemin du fichier soul (global fallback — per-user paths use _soul_path(uid))
 SOUL_FILE = Path(__file__).parent.parent.parent.parent / "data" / "soul.md"
+
+
+def _get_soul_file(user_id: int = 0) -> Path:
+    """Retourne le chemin soul per-user, ou global fallback."""
+    return _soul_path(user_id)
 
 def _get_default_soul(agent_name: str = None) -> str:
     """Generate default soul using the configured agent name."""
@@ -733,6 +738,7 @@ async def chat(
     from backend.core.agents.skills import personality_manager as pm
     from backend.core.agents import user_data as _ud
     _current_uid = getattr(request.state, "user_id", None) or 0
+    set_user_context(_current_uid)
     personality_cmd = pm.detect_personality_command(message)
     if personality_cmd:
         await _ud.set_active_personality(session, _current_uid, personality_cmd)
@@ -766,7 +772,17 @@ async def chat(
     _lang_code = settings.app.language or "fr"
     _lang_label = _lang_names.get(_lang_code, _lang_code)
     _agent_name = settings.app.agent_name or "Gungnir"
-    soul_content = SOUL_FILE.read_text(encoding="utf-8") if SOUL_FILE.exists() else _get_default_soul(_agent_name)
+    _user_soul_file = _get_soul_file(_current_uid)
+    # Per-user soul: read user's own soul.md, fallback to global, then default
+    if _user_soul_file.exists():
+        soul_content = _user_soul_file.read_text(encoding="utf-8")
+    elif SOUL_FILE.exists():
+        # First time for this user: copy global soul to per-user
+        soul_content = SOUL_FILE.read_text(encoding="utf-8")
+        _user_soul_file.parent.mkdir(parents=True, exist_ok=True)
+        _user_soul_file.write_text(soul_content, encoding="utf-8")
+    else:
+        soul_content = _get_default_soul(_agent_name)
     chosen_model = model or provider_config.default_model
     soul_content = soul_content + (
         f"\n\n**Ton nom :** Tu t'appelles **{_agent_name}**. Utilise CE nom quand tu te presentes, jamais 'Wolf' ou un autre nom generique."
@@ -777,7 +793,7 @@ async def chat(
 
     # Detect first-ever conversation — trigger onboarding
     _is_first_conversation = False
-    if not SOUL_FILE.exists() and len(messages) == 0:
+    if not _user_soul_file.exists() and len(messages) == 0:
         # Check if there are ANY messages in the DB (not just this conversation)
         _total_msgs = await session.execute(select(Message).limit(1))
         if not _total_msgs.scalars().first():
@@ -821,9 +837,10 @@ async def chat(
     try:
         import json as _json
         import uuid as _uuid
-        from backend.core.agents.mode_manager import mode_manager
+        from backend.core.agents.mode_manager import mode_pool
         from backend.core.gateway import WebGateway, detect_web_refusal, extract_original_query, extract_urls_from_messages
 
+        mode_manager = mode_pool.get(user_id or 0)
         MAX_TOOL_ROUNDS = 12
         tool_events: list[dict] = []
 
@@ -1162,13 +1179,15 @@ Tu operes en mode **demande**. Comportement :
                     executor = WOLF_EXECUTORS.get(tool_name) or mcp_manager.get_all_executors().get(tool_name)
                     if executor:
                         try:
-                            # Injecte la conversation courante pour les outils liés (conversation_tasks_*)
+                            # Injecte le contexte user + conversation pour les outils
                             set_conversation_context(convo_id)
+                            set_user_context(_current_uid)
                             tool_result = await executor(**args)
                         except Exception as ex:
                             tool_result = {"ok": False, "error": str(ex)}
                         finally:
                             set_conversation_context(None)
+                            set_user_context(0)
                     else:
                         tool_result = {"ok": False, "error": f"Outil '{tool_name}' inconnu."}
 

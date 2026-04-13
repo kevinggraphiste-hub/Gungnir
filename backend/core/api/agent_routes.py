@@ -26,42 +26,44 @@ from backend.core.api.chat import (
     _prefetch_urls_in_message,
     SOUL_FILE,
     _get_default_soul,
+    _get_soul_file,
 )
 
 
 @router.get("/agent/mode")
-async def get_agent_mode():
-    from backend.core.agents.mode_manager import mode_manager
+async def get_agent_mode(request: Request):
+    from backend.core.agents.mode_manager import mode_pool
+    mm = mode_pool.get(_uid(request))
     return {
-        "mode": mode_manager.current_mode.value,
+        "mode": mm.current_mode.value,
         "pending_requests": [
             {"id": r.id, "action": r.action, "details": r.details, "status": r.status}
-            for r in mode_manager.get_pending_requests()
+            for r in mm.get_pending_requests()
         ]
     }
 
 
 @router.post("/agent/mode/{mode}")
-async def set_agent_mode(mode: str):
-    from backend.core.agents.mode_manager import mode_manager, AgentMode
+async def set_agent_mode(request: Request, mode: str):
+    from backend.core.agents.mode_manager import mode_pool, AgentMode
     try:
-        mode_manager.set_mode(AgentMode(mode))
+        mode_pool.get(_uid(request)).set_mode(AgentMode(mode))
         return {"success": True, "mode": mode}
     except ValueError:
         return {"success": False, "error": "Invalid mode"}
 
 
 @router.post("/agent/permission/{request_id}/approve")
-async def approve_permission(request_id: str):
-    from backend.core.agents.mode_manager import mode_manager
-    success = await mode_manager.approve_request(request_id)
+async def approve_permission(request: Request, request_id: str):
+    from backend.core.agents.mode_manager import mode_pool
+    success = await mode_pool.get(_uid(request)).approve_request(request_id)
     return {"success": success}
 
 
 @router.post("/agent/permission/{request_id}/deny")
-async def deny_permission(request_id: str, reason: str = ""):
-    from backend.core.agents.mode_manager import mode_manager
-    success = await mode_manager.deny_request(request_id, reason)
+async def deny_permission(request: Request, request_id: str, reason: str = ""):
+    from backend.core.agents.mode_manager import mode_pool
+    success = await mode_pool.get(_uid(request)).deny_request(request_id, reason)
     return {"success": success}
 
 
@@ -240,8 +242,11 @@ async def invoke_sub_agent(request: Request, agent_name: str, data: dict, sessio
     Boucle multi-rounds : le sous-agent peut appeler des tools puis repondre.
     """
     import json as _json, uuid as _uuid
-    from backend.core.agents.wolf_tools import WOLF_EXECUTORS, _get_tools_for_agent
+    from backend.core.agents.wolf_tools import WOLF_EXECUTORS, _get_tools_for_agent, set_user_context
     from backend.core.agents.inter_agent_log import ConversationRecorder
+
+    # Set user context so sub-agent tools resolve per-user soul/kb paths
+    set_user_context(_uid(request))
 
     agent = await ud.get_sub_agent(session, _uid(request), agent_name)
     if not agent:
@@ -422,6 +427,7 @@ Tu as un acces COMPLET a Internet. Ne dis JAMAIS que tu n'as pas acces au web. A
         from backend.core.api.chat import _classify_llm_error
         return {"error": _classify_llm_error(e), "conversation_id": _recorder.conv.id}
     finally:
+        set_user_context(0)
         try:
             _recorder.__exit__(None, None, None)
         except Exception:
@@ -505,18 +511,30 @@ async def scan_skill(data: dict):
 
 
 @router.get("/soul")
-async def get_soul():
-    content = SOUL_FILE.read_text(encoding="utf-8") if SOUL_FILE.exists() else _get_default_soul()
+async def get_soul(request: Request):
+    uid = _uid(request)
+    soul_file = _get_soul_file(uid)
+    if soul_file.exists():
+        content = soul_file.read_text(encoding="utf-8")
+    elif SOUL_FILE.exists():
+        # First time for this user: copy global soul
+        content = SOUL_FILE.read_text(encoding="utf-8")
+        soul_file.parent.mkdir(parents=True, exist_ok=True)
+        soul_file.write_text(content, encoding="utf-8")
+    else:
+        content = _get_default_soul()
     return {"content": content}
 
 
 @router.post("/soul")
-async def save_soul(data: dict):
+async def save_soul(request: Request, data: dict):
     content = data.get("content", "").strip()
     if not content:
         return {"success": False, "error": "Contenu vide"}
-    SOUL_FILE.parent.mkdir(exist_ok=True)
-    SOUL_FILE.write_text(content, encoding="utf-8")
+    uid = _uid(request)
+    soul_file = _get_soul_file(uid)
+    soul_file.parent.mkdir(parents=True, exist_ok=True)
+    soul_file.write_text(content, encoding="utf-8")
 
     # Try to extract and update agent name from soul content
     import re

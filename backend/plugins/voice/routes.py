@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 logger = logging.getLogger("gungnir.voice")
@@ -27,22 +27,43 @@ router = APIRouter()
 # ── Data persistence ────────────────────────────────────────────────────────
 
 DATA_DIR = Path("data")
-SESSIONS_FILE = DATA_DIR / "voice_sessions.json"
-CUSTOM_PROVIDERS_FILE = DATA_DIR / "voice_custom_providers.json"
 
 
-def _load_sessions() -> list[dict]:
-    if SESSIONS_FILE.exists():
+# ── Per-user data isolation ─────────────────────────────────────────────────
+
+def _get_user_id(request_or_ws) -> int:
+    """Extract user_id from Request or WebSocket state."""
+    return getattr(getattr(request_or_ws, "state", None), "user_id", None) or 0
+
+
+def _user_sessions_file(request: Request) -> Path:
+    """Return per-user voice sessions file path."""
+    uid = _get_user_id(request)
+    p = DATA_DIR / "voice_sessions" / str(uid) / "sessions.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _user_custom_providers_file(request_or_ws) -> Path:
+    """Return per-user custom voice providers file path."""
+    uid = _get_user_id(request_or_ws)
+    p = DATA_DIR / "voice_sessions" / str(uid) / "custom_providers.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _load_sessions(sessions_file: Path) -> list[dict]:
+    if sessions_file.exists():
         try:
-            return json.loads(SESSIONS_FILE.read_text(encoding="utf-8"))
+            return json.loads(sessions_file.read_text(encoding="utf-8"))
         except Exception:
             pass
     return []
 
 
-def _save_sessions(sessions: list[dict]):
-    SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SESSIONS_FILE.write_text(json.dumps(sessions, indent=2, ensure_ascii=False), encoding="utf-8")
+def _save_sessions(sessions: list[dict], sessions_file: Path):
+    sessions_file.parent.mkdir(parents=True, exist_ok=True)
+    sessions_file.write_text(json.dumps(sessions, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 # ── Custom voice providers persistence ─────────────────────────────────────
@@ -86,18 +107,18 @@ class CustomVoiceProviderConfig(BaseModel):
     doc_url: str = ""
 
 
-def _load_custom_providers() -> list[dict]:
-    if CUSTOM_PROVIDERS_FILE.exists():
+def _load_custom_providers(providers_file: Path) -> list[dict]:
+    if providers_file.exists():
         try:
-            return json.loads(CUSTOM_PROVIDERS_FILE.read_text(encoding="utf-8"))
+            return json.loads(providers_file.read_text(encoding="utf-8"))
         except Exception:
             pass
     return []
 
 
-def _save_custom_providers(providers: list[dict]):
-    CUSTOM_PROVIDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CUSTOM_PROVIDERS_FILE.write_text(json.dumps(providers, indent=2, ensure_ascii=False), encoding="utf-8")
+def _save_custom_providers(providers: list[dict], providers_file: Path):
+    providers_file.parent.mkdir(parents=True, exist_ok=True)
+    providers_file.write_text(json.dumps(providers, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _get_nested(data: dict, path: str):
@@ -213,7 +234,7 @@ PROVIDER_INFO = {
 
 
 @router.get("/providers")
-async def list_voice_providers():
+async def list_voice_providers(request: Request):
     """List all voice providers with their configuration status."""
     try:
         from backend.core.config.settings import Settings
@@ -243,7 +264,7 @@ async def list_voice_providers():
         })
 
     # Add custom providers
-    for cp in _load_custom_providers():
+    for cp in _load_custom_providers(_user_custom_providers_file(request)):
         providers.append({
             "name": cp["id"],
             "display_name": cp.get("display_name", cp["id"]),
@@ -904,9 +925,9 @@ PROTOCOL_PRESETS = {
 
 
 @router.get("/custom-providers")
-async def list_custom_providers():
+async def list_custom_providers(request: Request):
     """List all custom voice providers."""
-    providers = _load_custom_providers()
+    providers = _load_custom_providers(_user_custom_providers_file(request))
     # Mask API keys
     safe = []
     for p in providers:
@@ -918,8 +939,8 @@ async def list_custom_providers():
 
 
 @router.get("/custom-providers/{provider_id}")
-async def get_custom_provider(provider_id: str):
-    for p in _load_custom_providers():
+async def get_custom_provider(provider_id: str, request: Request):
+    for p in _load_custom_providers(_user_custom_providers_file(request)):
         if p["id"] == provider_id:
             safe = {**p}
             if safe.get("api_key"):
@@ -929,9 +950,10 @@ async def get_custom_provider(provider_id: str):
 
 
 @router.post("/custom-providers")
-async def create_custom_provider(config: CustomVoiceProviderConfig):
+async def create_custom_provider(config: CustomVoiceProviderConfig, request: Request):
     """Create or update a custom voice provider."""
-    providers = _load_custom_providers()
+    providers_file = _user_custom_providers_file(request)
+    providers = _load_custom_providers(providers_file)
 
     # Validate unique ID doesn't clash with built-in
     if config.id in PROVIDER_INFO:
@@ -949,19 +971,20 @@ async def create_custom_provider(config: CustomVoiceProviderConfig):
     else:
         providers.append(new_data)
 
-    _save_custom_providers(providers)
+    _save_custom_providers(providers, providers_file)
     logger.info(f"Custom voice provider saved: {config.id}")
     return {"ok": True, "provider": config.id}
 
 
 @router.delete("/custom-providers/{provider_id}")
-async def delete_custom_provider(provider_id: str):
-    providers = _load_custom_providers()
+async def delete_custom_provider(provider_id: str, request: Request):
+    providers_file = _user_custom_providers_file(request)
+    providers = _load_custom_providers(providers_file)
     before = len(providers)
     providers = [p for p in providers if p["id"] != provider_id]
     if len(providers) == before:
         raise HTTPException(404, f"Provider custom '{provider_id}' non trouvé")
-    _save_custom_providers(providers)
+    _save_custom_providers(providers, providers_file)
     return {"ok": True, "deleted": provider_id}
 
 
@@ -994,7 +1017,7 @@ async def custom_realtime_relay(websocket: WebSocket, provider_id: str):
                 return
 
     # Load provider config
-    providers = _load_custom_providers()
+    providers = _load_custom_providers(_user_custom_providers_file(websocket))
     cp = next((p for p in providers if p["id"] == provider_id), None)
     if not cp:
         await websocket.send_json({"type": "error", "error": f"Provider custom '{provider_id}' non trouvé"})
@@ -1148,9 +1171,10 @@ async def custom_realtime_relay(websocket: WebSocket, provider_id: str):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.post("/sessions")
-async def save_session(data: dict):
+async def save_session(data: dict, request: Request):
     """Save a voice session transcript."""
-    sessions = _load_sessions()
+    sessions_file = _user_sessions_file(request)
+    sessions = _load_sessions(sessions_file)
     session = {
         "id": str(uuid.uuid4())[:8],
         "provider": data.get("provider", "elevenlabs"),
@@ -1162,31 +1186,32 @@ async def save_session(data: dict):
     sessions.insert(0, session)
     if len(sessions) > 50:
         sessions = sessions[:50]
-    _save_sessions(sessions)
+    _save_sessions(sessions, sessions_file)
     return {"ok": True, "session": session}
 
 
 @router.get("/sessions")
-async def list_sessions():
-    return {"sessions": _load_sessions()}
+async def list_sessions(request: Request):
+    return {"sessions": _load_sessions(_user_sessions_file(request))}
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
-    for s in _load_sessions():
+async def get_session(session_id: str, request: Request):
+    for s in _load_sessions(_user_sessions_file(request)):
         if s.get("id") == session_id:
             return s
     raise HTTPException(404, "Session introuvable")
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
-    sessions = [s for s in _load_sessions() if s.get("id") != session_id]
-    _save_sessions(sessions)
+async def delete_session(session_id: str, request: Request):
+    sessions_file = _user_sessions_file(request)
+    sessions = [s for s in _load_sessions(sessions_file) if s.get("id") != session_id]
+    _save_sessions(sessions, sessions_file)
     return {"ok": True}
 
 
 @router.delete("/sessions")
-async def clear_sessions():
-    _save_sessions([])
+async def clear_sessions(request: Request):
+    _save_sessions([], _user_sessions_file(request))
     return {"ok": True}

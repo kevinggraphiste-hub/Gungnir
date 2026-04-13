@@ -13,30 +13,40 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
 logger = logging.getLogger("gungnir.plugins.automata")
 router = APIRouter()
 
-DATA_FILE = Path("data/automata.json")
+DATA_DIR = Path("data")
+
+
+# ── Per-user data isolation ─────────────────────────────────────────────────
+
+def _user_automata_file(request: Request) -> Path:
+    """Return per-user automata file path."""
+    uid = getattr(request.state, "user_id", None) or 0
+    p = DATA_DIR / "automata" / str(uid) / "tasks.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 # ── Persistence (shared format with wolf_tools) ─────────────────────────────
 
-def _load_data() -> dict:
-    if DATA_FILE.exists():
+def _load_data(data_file: Path) -> dict:
+    if data_file.exists():
         try:
-            return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+            return json.loads(data_file.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {"tasks": [], "history": []}
 
 
-def _save_data(data: dict):
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DATA_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+def _save_data(data: dict, data_file: Path):
+    data_file.parent.mkdir(parents=True, exist_ok=True)
+    data_file.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
 
 # ── Update model ─────────────────────────────────────────────────────────────
@@ -60,9 +70,10 @@ async def automata_health():
 
 
 @router.get("/tasks")
-async def list_tasks():
+async def list_tasks(request: Request):
     """List all scheduled tasks with stats."""
-    data = _load_data()
+    data_file = _user_automata_file(request)
+    data = _load_data(data_file)
     tasks = data.get("tasks", [])
     active = sum(1 for t in tasks if t.get("enabled"))
     return {
@@ -77,56 +88,60 @@ async def list_tasks():
 
 
 @router.put("/tasks/{task_id}")
-async def update_task(task_id: str, update: TaskUpdate):
+async def update_task(task_id: str, update: TaskUpdate, request: Request):
     """Update a task (name, prompt, schedule, enabled state)."""
-    data = _load_data()
+    data_file = _user_automata_file(request)
+    data = _load_data(data_file)
     for i, t in enumerate(data["tasks"]):
         if t["id"] == task_id:
             updates = update.model_dump(exclude_none=True)
             data["tasks"][i] = {**t, **updates, "updated_at": datetime.now().isoformat()}
-            _save_data(data)
+            _save_data(data, data_file)
             logger.info(f"Task updated: {task_id}")
             return data["tasks"][i]
     raise HTTPException(404, "Task not found")
 
 
 @router.delete("/tasks/{task_id}")
-async def delete_task(task_id: str):
+async def delete_task(task_id: str, request: Request):
     """Delete a scheduled task."""
-    data = _load_data()
+    data_file = _user_automata_file(request)
+    data = _load_data(data_file)
     before = len(data["tasks"])
     data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id]
     if len(data["tasks"]) == before:
         raise HTTPException(404, "Task not found")
-    _save_data(data)
+    _save_data(data, data_file)
     logger.info(f"Task deleted: {task_id}")
     return {"deleted": task_id}
 
 
 @router.post("/tasks/{task_id}/toggle")
-async def toggle_task(task_id: str):
+async def toggle_task(task_id: str, request: Request):
     """Toggle task enabled/disabled."""
-    data = _load_data()
+    data_file = _user_automata_file(request)
+    data = _load_data(data_file)
     for i, t in enumerate(data["tasks"]):
         if t["id"] == task_id:
             data["tasks"][i]["enabled"] = not t.get("enabled", True)
             data["tasks"][i]["updated_at"] = datetime.now().isoformat()
-            _save_data(data)
+            _save_data(data, data_file)
             return {"id": task_id, "enabled": data["tasks"][i]["enabled"]}
     raise HTTPException(404, "Task not found")
 
 
 @router.post("/tasks/{task_id}/run")
-async def run_task_now(task_id: str):
+async def run_task_now(task_id: str, request: Request):
     """Trigger immediate execution of a task (sends prompt to active LLM)."""
-    data = _load_data()
+    data_file = _user_automata_file(request)
+    data = _load_data(data_file)
     for i, t in enumerate(data["tasks"]):
         if t["id"] == task_id:
             # Mark as manually triggered
             data["tasks"][i]["last_run"] = datetime.now().isoformat()
             data["tasks"][i]["run_count"] = t.get("run_count", 0) + 1
             data["tasks"][i]["last_status"] = "manual"
-            _save_data(data)
+            _save_data(data, data_file)
 
             # Add to history
             data.setdefault("history", []).append({
@@ -136,7 +151,7 @@ async def run_task_now(task_id: str):
                 "trigger": "manual",
                 "status": "triggered",
             })
-            _save_data(data)
+            _save_data(data, data_file)
 
             logger.info(f"Manual run: {t['name']} ({task_id})")
             return {
@@ -149,9 +164,10 @@ async def run_task_now(task_id: str):
 
 
 @router.get("/history")
-async def get_history():
+async def get_history(request: Request):
     """Get execution history (last 50 entries)."""
-    data = _load_data()
+    data_file = _user_automata_file(request)
+    data = _load_data(data_file)
     history = data.get("history", [])
     return {"entries": history[-50:], "total": len(history)}
 
@@ -165,8 +181,8 @@ class N8nConfig(BaseModel):
     api_key: str = ""      # n8n API key
 
 
-def _get_n8n_config() -> dict:
-    data = _load_data()
+def _get_n8n_config(data_file: Path) -> dict:
+    data = _load_data(data_file)
     return data.get("n8n", {"url": "", "api_key": ""})
 
 
@@ -174,9 +190,9 @@ def _n8n_headers(config: dict) -> dict:
     return {"X-N8N-API-KEY": config["api_key"], "Content-Type": "application/json"}
 
 
-async def _n8n_request(method: str, path: str, json_body: dict = None) -> dict:
+async def _n8n_request(method: str, path: str, data_file: Path, json_body: dict = None) -> dict:
     """Proxy request to n8n API."""
-    config = _get_n8n_config()
+    config = _get_n8n_config(data_file)
     if not config.get("url") or not config.get("api_key"):
         raise HTTPException(400, "n8n non configure. Ajoutez l'URL et la cle API.")
 
@@ -197,9 +213,10 @@ async def _n8n_request(method: str, path: str, json_body: dict = None) -> dict:
 # ── n8n config ────────────────────────────────────────────────────────────────
 
 @router.get("/n8n/config")
-async def get_n8n_config():
+async def get_n8n_config(request: Request):
     """Get n8n connection config (url only, key masked)."""
-    config = _get_n8n_config()
+    data_file = _user_automata_file(request)
+    config = _get_n8n_config(data_file)
     return {
         "url": config.get("url", ""),
         "has_key": bool(config.get("api_key")),
@@ -208,19 +225,21 @@ async def get_n8n_config():
 
 
 @router.put("/n8n/config")
-async def update_n8n_config(cfg: N8nConfig):
+async def update_n8n_config(cfg: N8nConfig, request: Request):
     """Save n8n connection config."""
-    data = _load_data()
+    data_file = _user_automata_file(request)
+    data = _load_data(data_file)
     data["n8n"] = {"url": cfg.url.rstrip("/"), "api_key": cfg.api_key}
-    _save_data(data)
+    _save_data(data, data_file)
     logger.info(f"n8n config updated: {cfg.url}")
     return {"ok": True, "url": cfg.url}
 
 
 @router.get("/n8n/test")
-async def test_n8n_connection():
+async def test_n8n_connection(request: Request):
     """Test n8n connectivity."""
-    config = _get_n8n_config()
+    data_file = _user_automata_file(request)
+    config = _get_n8n_config(data_file)
     if not config.get("url") or not config.get("api_key"):
         return {"ok": False, "error": "Non configure"}
     try:
@@ -242,9 +261,10 @@ async def test_n8n_connection():
 # ── n8n workflows ─────────────────────────────────────────────────────────────
 
 @router.get("/n8n/workflows")
-async def list_n8n_workflows():
+async def list_n8n_workflows(request: Request):
     """List all n8n workflows."""
-    data = await _n8n_request("GET", "/workflows")
+    data_file = _user_automata_file(request)
+    data = await _n8n_request("GET", "/workflows", data_file)
     workflows = data.get("data", [])
     return {
         "workflows": [
@@ -264,38 +284,42 @@ async def list_n8n_workflows():
 
 
 @router.post("/n8n/workflows/{workflow_id}/activate")
-async def activate_n8n_workflow(workflow_id: str):
+async def activate_n8n_workflow(workflow_id: str, request: Request):
     """Activate a n8n workflow."""
-    result = await _n8n_request("PATCH", f"/workflows/{workflow_id}", {"active": True})
+    data_file = _user_automata_file(request)
+    result = await _n8n_request("PATCH", f"/workflows/{workflow_id}", data_file, {"active": True})
     return {"ok": True, "id": workflow_id, "active": True}
 
 
 @router.post("/n8n/workflows/{workflow_id}/deactivate")
-async def deactivate_n8n_workflow(workflow_id: str):
+async def deactivate_n8n_workflow(workflow_id: str, request: Request):
     """Deactivate a n8n workflow."""
-    result = await _n8n_request("PATCH", f"/workflows/{workflow_id}", {"active": False})
+    data_file = _user_automata_file(request)
+    result = await _n8n_request("PATCH", f"/workflows/{workflow_id}", data_file, {"active": False})
     return {"ok": True, "id": workflow_id, "active": False}
 
 
 @router.post("/n8n/workflows/{workflow_id}/execute")
-async def execute_n8n_workflow(workflow_id: str):
+async def execute_n8n_workflow(workflow_id: str, request: Request):
     """Trigger immediate execution of a n8n workflow."""
+    data_file = _user_automata_file(request)
     try:
-        result = await _n8n_request("POST", f"/workflows/{workflow_id}/run")
+        result = await _n8n_request("POST", f"/workflows/{workflow_id}/run", data_file)
         return {"ok": True, "id": workflow_id, "execution": result}
     except HTTPException:
         # Some n8n versions use different endpoint
         try:
-            result = await _n8n_request("POST", f"/executions", {"workflowId": workflow_id})
+            result = await _n8n_request("POST", f"/executions", data_file, {"workflowId": workflow_id})
             return {"ok": True, "id": workflow_id, "execution": result}
         except Exception:
             raise
 
 
 @router.get("/n8n/executions")
-async def list_n8n_executions():
+async def list_n8n_executions(request: Request):
     """Get recent n8n executions."""
-    data = await _n8n_request("GET", "/executions?limit=20")
+    data_file = _user_automata_file(request)
+    data = await _n8n_request("GET", "/executions?limit=20", data_file)
     executions = data.get("data", [])
     return {
         "executions": [
@@ -321,14 +345,15 @@ class ModifyRequest(BaseModel):
 
 
 @router.post("/n8n/workflows/{workflow_id}/modify")
-async def modify_n8n_workflow(workflow_id: str, req: ModifyRequest):
+async def modify_n8n_workflow(workflow_id: str, req: ModifyRequest, request: Request):
     """
     Inline modification: sends user prompt + workflow context to the LLM
     with MCP tools available, so it can modify the n8n workflow directly.
     """
+    data_file = _user_automata_file(request)
     # 1. Fetch full workflow details from n8n for context
     try:
-        workflow_data = await _n8n_request("GET", f"/workflows/{workflow_id}")
+        workflow_data = await _n8n_request("GET", f"/workflows/{workflow_id}", data_file)
     except HTTPException as e:
         return {"ok": False, "error": f"Impossible de recuperer le workflow: {e.detail}"}
 

@@ -6,7 +6,7 @@ from datetime import datetime
 
 from backend.core.agents.skills import Skill, skill_library
 from backend.core.agents.security import security_scanner, SecurityError
-from backend.core.agents.mode_manager import mode_manager, AgentMode
+from backend.core.agents.mode_manager import mode_pool, mode_manager, AgentMode
 
 
 class SkillCreator:

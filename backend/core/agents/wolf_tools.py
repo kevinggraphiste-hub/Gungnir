@@ -12,6 +12,7 @@ DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 # ── Contexte d'exécution (défini par chat.py avant dispatch) ──────────────────
 # Permet aux outils de connaître la conversation courante sans la passer en arg.
 _current_conv_id: int | None = None
+_current_user_id: int = 0
 
 def set_conversation_context(conv_id: int | None) -> None:
     """Appelé par chat.py juste avant d'exécuter un outil, pour que les outils
@@ -21,6 +22,36 @@ def set_conversation_context(conv_id: int | None) -> None:
 
 def get_conversation_context() -> int | None:
     return _current_conv_id
+
+def set_user_context(user_id: int) -> None:
+    """Appelé par chat.py pour que les outils soul/kb résolvent les chemins par user."""
+    global _current_user_id
+    _current_user_id = user_id
+
+def get_user_context() -> int:
+    return _current_user_id
+
+
+def _soul_path(user_id: int = None) -> Path:
+    """Chemin du soul.md per-user. Fallback global si user_id == 0."""
+    uid = user_id or _current_user_id
+    if uid and uid > 0:
+        p = DATA_DIR / "soul" / str(uid) / "soul.md"
+    else:
+        p = DATA_DIR / "soul.md"  # fallback global
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _kb_dir(user_id: int = None) -> Path:
+    """Répertoire KB per-user. Fallback global si user_id == 0."""
+    uid = user_id or _current_user_id
+    if uid and uid > 0:
+        d = DATA_DIR / "kb" / str(uid)
+    else:
+        d = DATA_DIR / "kb"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 # ── Schémas envoyés au LLM ─────────────────────────────────────────────────────
 
@@ -1275,12 +1306,13 @@ async def _subagent_list() -> dict:
 
 
 def _safe_path(subdir: str, filename: str) -> Path:
-    """Retourne un chemin sécurisé dans data/ (pas de traversal)."""
+    """Retourne un chemin sécurisé dans le répertoire KB per-user (pas de traversal)."""
     subdir_clean = Path(subdir).name  # empêche ../../../etc
     filename_clean = Path(filename).name
-    path = DATA_DIR / subdir_clean / filename_clean
-    # S'assurer que le chemin résolu reste dans DATA_DIR
-    if not str(path.resolve()).startswith(str(DATA_DIR.resolve())):
+    base = _kb_dir()
+    path = base / subdir_clean / filename_clean
+    # S'assurer que le chemin résolu reste dans le répertoire KB de l'user
+    if not str(path.resolve()).startswith(str(base.resolve())):
         raise ValueError("Chemin non autorisé.")
     return path
 
@@ -1291,7 +1323,7 @@ async def _kb_write(filename: str, content: str, subdir: str = "knowledge") -> d
     path = _safe_path(subdir, filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-    return {"ok": True, "path": str(path.relative_to(DATA_DIR)), "message": f"Fichier '{filename}' sauvegardé dans data/{subdir}/"}
+    return {"ok": True, "path": str(path), "message": f"Fichier '{filename}' sauvegardé dans la KB."}
 
 
 async def _kb_read(filename: str, subdir: str = "knowledge") -> dict:
@@ -1299,17 +1331,18 @@ async def _kb_read(filename: str, subdir: str = "knowledge") -> dict:
         filename = filename + ".md"
     path = _safe_path(subdir, filename)
     if not path.exists():
-        return {"ok": False, "error": f"Fichier '{filename}' introuvable dans data/{subdir}/"}
+        return {"ok": False, "error": f"Fichier '{filename}' introuvable dans la KB."}
     return {"ok": True, "content": path.read_text(encoding="utf-8")}
 
 
 async def _kb_list(subdir: str = "knowledge") -> dict:
     subdir_clean = Path(subdir).name
-    directory = DATA_DIR / subdir_clean
+    base = _kb_dir()
+    directory = base / subdir_clean
     if not directory.exists():
         return {"files": []}
     files = [f.name for f in directory.iterdir() if f.is_file()]
-    return {"files": files, "directory": f"data/{subdir_clean}/"}
+    return {"files": files, "directory": str(directory)}
 
 
 def _validate_browser_url(url: str) -> bool:
@@ -1587,15 +1620,22 @@ async def _browser_list_pages() -> dict:
 
 
 async def _soul_read() -> dict:
-    soul = DATA_DIR / "soul.md"
+    soul = _soul_path()
     if soul.exists():
         return {"ok": True, "content": soul.read_text(encoding="utf-8")}
+    # Fallback: copy from global soul.md if it exists (first-time per-user)
+    global_soul = DATA_DIR / "soul.md"
+    if global_soul.exists():
+        content = global_soul.read_text(encoding="utf-8")
+        soul.parent.mkdir(parents=True, exist_ok=True)
+        soul.write_text(content, encoding="utf-8")
+        return {"ok": True, "content": content}
     return {"ok": False, "error": "soul.md introuvable."}
 
 
 async def _soul_write(content: str, agent_name: str = None) -> dict:
-    soul = DATA_DIR / "soul.md"
-    soul.parent.mkdir(exist_ok=True)
+    soul = _soul_path()
+    soul.parent.mkdir(parents=True, exist_ok=True)
     soul.write_text(content, encoding="utf-8")
 
     # If agent_name is provided (or extractable), update the app settings

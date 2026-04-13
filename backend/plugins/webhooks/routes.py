@@ -27,9 +27,34 @@ logger = logging.getLogger("gungnir.webhooks")
 router = APIRouter()
 
 DATA_DIR = Path("data")
-INTEGRATIONS_FILE = DATA_DIR / "integrations.json"
-WEBHOOKS_FILE = DATA_DIR / "webhooks.json"
-WEBHOOK_LOGS_FILE = DATA_DIR / "webhook_logs.json"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Per-user data isolation
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _user_integrations_file(request: Request) -> Path:
+    """Return per-user integrations file path."""
+    uid = getattr(request.state, "user_id", None) or 0
+    p = DATA_DIR / "integrations" / str(uid) / "integrations.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _user_webhooks_file(request: Request) -> Path:
+    """Return per-user webhooks file path."""
+    uid = getattr(request.state, "user_id", None) or 0
+    p = DATA_DIR / "webhooks" / str(uid) / "webhooks.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _user_webhook_logs_file(request: Request) -> Path:
+    """Return per-user webhook logs file path."""
+    uid = getattr(request.state, "user_id", None) or 0
+    p = DATA_DIR / "webhooks" / str(uid) / "webhook_logs.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -303,9 +328,9 @@ class WebhookConfig(BaseModel):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/health")
-async def webhooks_health():
-    integrations = _load_json(INTEGRATIONS_FILE, [])
-    webhooks = _load_json(WEBHOOKS_FILE, [])
+async def webhooks_health(request: Request):
+    integrations = _load_json(_user_integrations_file(request), [])
+    webhooks = _load_json(_user_webhooks_file(request), [])
     active_integrations = sum(1 for i in integrations if i.get("enabled"))
 
     # MCP status
@@ -342,9 +367,9 @@ async def get_catalog():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/integrations")
-async def list_integrations():
+async def list_integrations(request: Request):
     """List all user-configured integrations with their status."""
-    integrations = _load_json(INTEGRATIONS_FILE, [])
+    integrations = _load_json(_user_integrations_file(request), [])
 
     # Get MCP status for running info
     try:
@@ -380,9 +405,10 @@ async def list_integrations():
 
 
 @router.post("/integrations")
-async def add_integration(config: IntegrationConfig):
+async def add_integration(config: IntegrationConfig, request: Request):
     """Add or update an integration configuration."""
-    integrations = _load_json(INTEGRATIONS_FILE, [])
+    integrations_file = _user_integrations_file(request)
+    integrations = _load_json(integrations_file, [])
 
     # Check if exists — update
     existing_idx = next((i for i, x in enumerate(integrations) if x["id"] == config.id), None)
@@ -398,15 +424,16 @@ async def add_integration(config: IntegrationConfig):
     else:
         integrations.append(new_data)
 
-    _save_json(INTEGRATIONS_FILE, integrations)
+    _save_json(integrations_file, integrations)
     logger.info(f"Integration saved: {config.id}")
     return {"ok": True, "integration": config.id}
 
 
 @router.delete("/integrations/{integration_id}")
-async def remove_integration(integration_id: str):
+async def remove_integration(integration_id: str, request: Request):
     """Remove an integration and stop its MCP server if running."""
-    integrations = _load_json(INTEGRATIONS_FILE, [])
+    integrations_file = _user_integrations_file(request)
+    integrations = _load_json(integrations_file, [])
     before = len(integrations)
     removed = next((i for i in integrations if i["id"] == integration_id), None)
     integrations = [i for i in integrations if i["id"] != integration_id]
@@ -414,7 +441,7 @@ async def remove_integration(integration_id: str):
     if len(integrations) == before:
         raise HTTPException(404, f"Intégration '{integration_id}' non trouvée")
 
-    _save_json(INTEGRATIONS_FILE, integrations)
+    _save_json(integrations_file, integrations)
 
     # Stop MCP server if running
     if removed:
@@ -436,9 +463,9 @@ async def remove_integration(integration_id: str):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.post("/integrations/{integration_id}/start")
-async def start_integration_mcp(integration_id: str):
+async def start_integration_mcp(integration_id: str, request: Request):
     """Start the MCP server for an integration."""
-    integrations = _load_json(INTEGRATIONS_FILE, [])
+    integrations = _load_json(_user_integrations_file(request), [])
     integ = next((i for i in integrations if i["id"] == integration_id), None)
     if not integ:
         raise HTTPException(404, f"Intégration '{integration_id}' non trouvée")
@@ -488,11 +515,11 @@ async def start_integration_mcp(integration_id: str):
 
 
 @router.post("/integrations/{integration_id}/stop")
-async def stop_integration_mcp(integration_id: str):
+async def stop_integration_mcp(integration_id: str, request: Request):
     """Stop the MCP server for an integration."""
     try:
         from backend.core.agents.mcp_client import mcp_manager
-        integrations = _load_json(INTEGRATIONS_FILE, [])
+        integrations = _load_json(_user_integrations_file(request), [])
         integ = next((i for i in integrations if i["id"] == integration_id), None)
         server_name = (integ.get("mcp_server_name") if integ else None) or integration_id
 
@@ -506,11 +533,11 @@ async def stop_integration_mcp(integration_id: str):
 
 
 @router.get("/integrations/{integration_id}/tools")
-async def get_integration_tools(integration_id: str):
+async def get_integration_tools(integration_id: str, request: Request):
     """List tools provided by an integration's MCP server."""
     try:
         from backend.core.agents.mcp_client import mcp_manager
-        integrations = _load_json(INTEGRATIONS_FILE, [])
+        integrations = _load_json(_user_integrations_file(request), [])
         integ = next((i for i in integrations if i["id"] == integration_id), None)
         server_name = (integ.get("mcp_server_name") if integ else None) or integration_id
 
@@ -556,9 +583,9 @@ async def mcp_global_status():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/webhooks")
-async def list_webhooks():
+async def list_webhooks(request: Request):
     """List all configured webhooks."""
-    webhooks = _load_json(WEBHOOKS_FILE, [])
+    webhooks = _load_json(_user_webhooks_file(request), [])
     # Mask secrets
     for wh in webhooks:
         if wh.get("secret"):
@@ -567,9 +594,10 @@ async def list_webhooks():
 
 
 @router.post("/webhooks")
-async def create_webhook(config: WebhookConfig):
+async def create_webhook(config: WebhookConfig, request: Request):
     """Create a new webhook."""
-    webhooks = _load_json(WEBHOOKS_FILE, [])
+    webhooks_file = _user_webhooks_file(request)
+    webhooks = _load_json(webhooks_file, [])
 
     webhook = config.model_dump()
     webhook["id"] = str(uuid.uuid4())[:8]
@@ -579,28 +607,30 @@ async def create_webhook(config: WebhookConfig):
         webhook["endpoint"] = f"/api/plugins/webhooks/incoming/{webhook['id']}"
 
     webhooks.append(webhook)
-    _save_json(WEBHOOKS_FILE, webhooks)
+    _save_json(webhooks_file, webhooks)
     return {"ok": True, "webhook": webhook}
 
 
 @router.delete("/webhooks/{webhook_id}")
-async def delete_webhook(webhook_id: str):
-    webhooks = _load_json(WEBHOOKS_FILE, [])
+async def delete_webhook(webhook_id: str, request: Request):
+    webhooks_file = _user_webhooks_file(request)
+    webhooks = _load_json(webhooks_file, [])
     before = len(webhooks)
     webhooks = [w for w in webhooks if w.get("id") != webhook_id]
     if len(webhooks) == before:
         raise HTTPException(404, "Webhook non trouvé")
-    _save_json(WEBHOOKS_FILE, webhooks)
+    _save_json(webhooks_file, webhooks)
     return {"ok": True, "deleted": webhook_id}
 
 
 @router.put("/webhooks/{webhook_id}/toggle")
-async def toggle_webhook(webhook_id: str):
-    webhooks = _load_json(WEBHOOKS_FILE, [])
+async def toggle_webhook(webhook_id: str, request: Request):
+    webhooks_file = _user_webhooks_file(request)
+    webhooks = _load_json(webhooks_file, [])
     for wh in webhooks:
         if wh.get("id") == webhook_id:
             wh["enabled"] = not wh.get("enabled", True)
-            _save_json(WEBHOOKS_FILE, webhooks)
+            _save_json(webhooks_file, webhooks)
             return {"ok": True, "enabled": wh["enabled"]}
     raise HTTPException(404, "Webhook non trouvé")
 
@@ -610,7 +640,8 @@ async def toggle_webhook(webhook_id: str):
 @router.post("/incoming/{webhook_id}")
 async def receive_webhook(webhook_id: str, request: Request):
     """Receive an incoming webhook call."""
-    webhooks = _load_json(WEBHOOKS_FILE, [])
+    webhooks_file = _user_webhooks_file(request)
+    webhooks = _load_json(webhooks_file, [])
     wh = next((w for w in webhooks if w.get("id") == webhook_id), None)
     if not wh:
         return JSONResponse({"error": "Webhook non trouvé"}, status_code=404)
@@ -633,7 +664,8 @@ async def receive_webhook(webhook_id: str, request: Request):
         body = {"raw": (await request.body()).decode()[:5000]}
 
     # Log the event
-    logs = _load_json(WEBHOOK_LOGS_FILE, [])
+    logs_file = _user_webhook_logs_file(request)
+    logs = _load_json(logs_file, [])
     log_entry = {
         "id": str(uuid.uuid4())[:8],
         "webhook_id": webhook_id,
@@ -647,7 +679,7 @@ async def receive_webhook(webhook_id: str, request: Request):
     logs.insert(0, log_entry)
     if len(logs) > 200:
         logs = logs[:200]
-    _save_json(WEBHOOK_LOGS_FILE, logs)
+    _save_json(logs_file, logs)
 
     logger.info(f"Webhook received: {wh.get('name', webhook_id)}")
     return {"ok": True, "event_id": log_entry["id"]}
@@ -660,7 +692,8 @@ async def trigger_outgoing_webhook(webhook_id: str, request: Request):
     """Trigger an outgoing webhook."""
     import httpx
 
-    webhooks = _load_json(WEBHOOKS_FILE, [])
+    webhooks_file = _user_webhooks_file(request)
+    webhooks = _load_json(webhooks_file, [])
     wh = next((w for w in webhooks if w.get("id") == webhook_id), None)
     if not wh or wh.get("direction") != "outgoing":
         raise HTTPException(404, "Webhook sortant non trouvé")
@@ -680,7 +713,8 @@ async def trigger_outgoing_webhook(webhook_id: str, request: Request):
     if wh.get("secret"):
         headers["X-Webhook-Secret"] = wh["secret"]
 
-    logs = _load_json(WEBHOOK_LOGS_FILE, [])
+    logs_file = _user_webhook_logs_file(request)
+    logs = _load_json(logs_file, [])
     log_entry = {
         "id": str(uuid.uuid4())[:8],
         "webhook_id": webhook_id,
@@ -704,7 +738,7 @@ async def trigger_outgoing_webhook(webhook_id: str, request: Request):
     logs.insert(0, log_entry)
     if len(logs) > 200:
         logs = logs[:200]
-    _save_json(WEBHOOK_LOGS_FILE, logs)
+    _save_json(logs_file, logs)
 
     return {"ok": log_entry["status"] == "sent", "log": log_entry}
 
@@ -712,13 +746,13 @@ async def trigger_outgoing_webhook(webhook_id: str, request: Request):
 # ── Webhook Logs ────────────────────────────────────────────────────────────
 
 @router.get("/logs")
-async def get_webhook_logs(limit: int = 50):
+async def get_webhook_logs(request: Request, limit: int = 50):
     """Get recent webhook event logs."""
-    logs = _load_json(WEBHOOK_LOGS_FILE, [])
+    logs = _load_json(_user_webhook_logs_file(request), [])
     return {"logs": logs[:limit]}
 
 
 @router.delete("/logs")
-async def clear_webhook_logs():
-    _save_json(WEBHOOK_LOGS_FILE, [])
+async def clear_webhook_logs(request: Request):
+    _save_json(_user_webhook_logs_file(request), [])
     return {"ok": True}
