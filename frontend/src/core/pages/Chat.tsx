@@ -8,7 +8,7 @@ import {
   Search, Sparkles, MessageSquare, Star,
   Code, FileText, Globe, BarChart3, Radio,
   ChevronLeft, ChevronRight, Pencil, Check, X, Key,
-  Paperclip, Image as ImageIcon, Copy, ListTodo, Folder, FolderMinus
+  Paperclip, Image as ImageIcon, Copy, ListTodo, Folder, FolderMinus, GripVertical
 } from 'lucide-react'
 import VoiceModal from '../components/VoiceModal'
 import ApiKeysModal from '../components/ApiKeysModal'
@@ -833,20 +833,35 @@ export default function Chat() {
                 <ChevronDown className={`w-3 h-3 transition-transform ${showPersonaMenu ? 'rotate-180' : ''}`} />
               </button>
               {showPersonaMenu && (
-                <div className="absolute top-full right-0 mt-1 w-52 rounded-xl shadow-2xl z-50 p-1.5" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
-                  <div className="text-[9px] font-bold uppercase tracking-widest px-2 py-1 mb-1" style={{ color: 'var(--text-muted)' }}>Personnalité</div>
-                  {personalities.map((p: any) => (
-                    <button key={p.name} onClick={async () => {
-                      await api.setPersonality(p.name); setActivePersonality(p.name)
-                      setPersonalities(prev => prev.map(pp => ({ ...pp, active: pp.name === p.name }))); setShowPersonaMenu(false)
-                    }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-2"
+                <div className="absolute top-full right-0 mt-1 w-56 rounded-xl shadow-2xl z-50 p-1.5" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+                  <div className="text-[9px] font-bold uppercase tracking-widest px-2 py-1 mb-1" style={{ color: 'var(--text-muted)' }}>Personnalité <span style={{ opacity: 0.5 }}>(glisser pour réordonner)</span></div>
+                  {personalities.map((p: any, idx: number) => (
+                    <div key={p.name}
+                      draggable
+                      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)) }}
+                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+                      onDrop={async (e) => {
+                        e.preventDefault()
+                        const fromIdx = Number(e.dataTransfer.getData('text/plain'))
+                        if (isNaN(fromIdx) || fromIdx === idx) return
+                        const reordered = [...personalities]
+                        const [moved] = reordered.splice(fromIdx, 1)
+                        reordered.splice(idx, 0, moved)
+                        setPersonalities(reordered)
+                        await api.reorderPersonalities(reordered.map((pp: any) => pp.name))
+                      }}
+                      onClick={async () => {
+                        await api.setPersonality(p.name); setActivePersonality(p.name)
+                        setPersonalities(prev => prev.map(pp => ({ ...pp, active: pp.name === p.name }))); setShowPersonaMenu(false)
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-2 cursor-grab active:cursor-grabbing"
                       style={p.active || p.name === activePersonality
                         ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' }
                         : { color: 'var(--text-secondary)' }}>
+                      <GripVertical className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
                       <Bot className="w-3 h-3 flex-shrink-0" /><span className="capitalize">{p.name}</span>
                       <span className="ml-auto text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{p.description}</span>
-                    </button>
+                    </div>
                   ))}
                 </div>
               )}
