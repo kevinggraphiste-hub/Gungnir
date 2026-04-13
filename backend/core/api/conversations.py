@@ -393,19 +393,32 @@ async def generate_conversation_title(convo_id: int, session: AsyncSession = Dep
     # Chercher un provider configuré (préférer un modèle rapide/cheap)
     provider_name = None
     provider_config = None
-    for pname in ["openrouter"]:
-        pcfg = settings.providers.get(pname)
+    import re as _re
+
+    def _clean_user_text(text: str) -> str:
+        """Nettoie un message user pour le fallback titre : retire /skill, /command, etc."""
+        text = _re.sub(r'^/\w+\s+', '', text).strip()             # retire /skill xxx, /search, etc.
+        text = _re.sub(r'^(salut|bonjour|hello|hey|coucou|yo)\b[,!\s]*', '', text, flags=_re.IGNORECASE).strip()
+        return text or "Conversation"
+
+    def _fallback_title(messages_list) -> str:
+        """Génère un titre basique à partir des messages user (nettoyés)."""
+        for m in messages_list:
+            if m.role == "user":
+                clean = _clean_user_text(m.content or "")
+                if len(clean) > 3:
+                    return clean[:45].strip() + ("..." if len(clean) > 45 else "")
+        return "Nouvelle conversation"
+
+    # Trouver un provider configuré — essayer tous les providers, pas seulement openrouter
+    for pname, pcfg in settings.providers.items():
         if pcfg and pcfg.enabled and pcfg.api_key:
             provider_name = pname
             provider_config = pcfg
             break
 
     if not provider_config:
-        # Fallback: extraire un titre basique du premier message user
-        first_user = next((m.content for m in msgs if m.role == "user"), "Nouvelle conversation")
-        title = first_user[:60].strip()
-        if len(first_user) > 60:
-            title += "..."
+        title = _fallback_title(msgs)
         conv = await session.get(Conversation, convo_id)
         if conv:
             conv.title = title
@@ -415,46 +428,56 @@ async def generate_conversation_title(convo_id: int, session: AsyncSession = Dep
     provider = get_provider(provider_name, provider_config.api_key, provider_config.base_url)
 
     # Choisir un modèle cheap pour la génération de titre
-    _cheap_models = [
-        "google/gemini-2.0-flash-exp:free",
-        "google/gemini-2.5-flash-preview",
-        "meta-llama/llama-3.1-8b-instruct:free",
-        "mistralai/mistral-small",
-    ]
+    _cheap_keywords = ["flash", "mini", "small", "8b", "haiku", "instant", "free"]
     title_model = None
     if provider_config.models:
-        for cm in _cheap_models:
-            if cm in provider_config.models:
-                title_model = cm
+        for m in provider_config.models:
+            ml = m.lower()
+            if any(kw in ml for kw in _cheap_keywords):
+                title_model = m
                 break
     if not title_model:
-        title_model = provider_config.default_model
+        title_model = provider_config.default_model or (provider_config.models[0] if provider_config.models else None)
+
+    if not title_model:
+        title = _fallback_title(msgs)
+        conv = await session.get(Conversation, convo_id)
+        if conv:
+            conv.title = title
+            await session.commit()
+        return {"title": title, "method": "fallback"}
 
     try:
         title_response = await provider.chat(
             [
                 ChatMessage(role="system", content=(
-                    "Tu génères des titres de conversation. Règles STRICTES :\n"
-                    "1. Identifie LE SUJET DOMINANT — celui qui occupe le plus de messages, PAS le premier message\n"
-                    "2. IGNORE les messages de salutation/bonjour/merci\n"
-                    "3. Si la conversation a dérivé vers un nouveau sujet, titre sur le sujet le PLUS RÉCENT\n"
-                    "4. Max 50 caractères, en français\n"
-                    "5. Réponds UNIQUEMENT avec le titre, rien d'autre\n"
-                    "6. Pas de guillemets, pas de point final, pas d'explication\n\n"
-                    "Exemples de BONS titres : 'Drag & drop dossiers sidebar', 'Fix auth 401 au login', "
-                    "'Config providers OpenRouter'"
+                    "Génère un titre COURT pour cette conversation (max 6 mots, max 45 caractères).\n"
+                    "Le titre doit capturer l'ESSENCE du sujet, comme un titre d'article.\n\n"
+                    "RÈGLES :\n"
+                    "- Lis TOUS les messages, identifie DE QUOI ON PARLE au global\n"
+                    "- IGNORE : salutations, remerciements, commandes /skill, bavardages\n"
+                    "- Si plusieurs sujets : prends le sujet PRINCIPAL (le plus discuté)\n"
+                    "- Style télégraphique : pas de verbe conjugué, pas d'article inutile\n"
+                    "- Réponds UNIQUEMENT le titre, RIEN d'autre\n\n"
+                    "EXEMPLES :\n"
+                    "Conversation sur un bug d'auth → Auth 401 login\n"
+                    "Discussion sur le déploiement VPS → Déploiement Docker VPS\n"
+                    "Demande de recherche sur l'IA → Recherche tendances IA\n"
+                    "Debug drag and drop sidebar → Fix drag & drop sidebar"
                 )),
                 ChatMessage(role="user", content=(
-                    "Voici la conversation. Les MESSAGES RÉCENTS reflètent le vrai sujet. "
-                    "Génère le titre :\n\n" + msg_preview
+                    "Génère le titre de cette conversation :\n\n" + msg_preview
                 )),
             ],
             title_model,
         )
-        title = (title_response.content or "").strip().strip('"').strip("'").strip()[:60]
+        title = (title_response.content or "").strip().strip('"\'«»').strip()
+        # Nettoyer : retirer "Titre : " ou "Title: " si le LLM préfixe
+        title = _re.sub(r'^(titre\s*[:—–-]\s*)', '', title, flags=_re.IGNORECASE).strip()
+        title = title[:50]
+
         if not title or len(title) < 3:
-            first_user = next((m.content for m in msgs if m.role == "user"), "Conversation")
-            title = first_user[:50].strip() + ("..." if len(first_user) > 50 else "")
+            title = _fallback_title(msgs)
 
         conv = await session.get(Conversation, convo_id)
         if conv:
@@ -463,14 +486,13 @@ async def generate_conversation_title(convo_id: int, session: AsyncSession = Dep
         return {"title": title, "method": "ai"}
 
     except Exception as e:
-        first_user = next((m.content for m in msgs if m.role == "user"), "Conversation")
-        title = first_user[:50].strip() + ("..." if len(first_user) > 50 else "")
+        title = _fallback_title(msgs)
         conv = await session.get(Conversation, convo_id)
         if conv:
             conv.title = title
             await session.commit()
         import logging; logging.getLogger("gungnir").error(f"Title gen error: {e}")
-        return {"title": title, "method": "fallback", "error": "Erreur lors de la génération du titre"}
+        return {"title": title, "method": "fallback", "error": str(e)}
 
 
 @router.post("/conversations/{convo_id}/auto-title")
