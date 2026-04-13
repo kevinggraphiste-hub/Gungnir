@@ -39,3 +39,4 @@ deploy/certbot/
 data/config.json
 data/gungnir.db-journal
 data/backups/*.zip
+data/heartbeat.json
