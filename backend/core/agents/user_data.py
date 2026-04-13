@@ -43,62 +43,77 @@ def _load_defaults(filename: str, key: str | None = None) -> list[dict]:
 
 
 async def _seed_skills(session: AsyncSession, user_id: int):
-    """Seed default skills for a new user."""
+    """Seed default skills for a new user, and backfill any new defaults."""
     existing = await session.execute(
-        select(UserSkill).where(UserSkill.user_id == user_id).limit(1)
+        select(UserSkill).where(UserSkill.user_id == user_id)
     )
-    if existing.scalars().first():
-        return  # Already seeded
+    existing_names = {s.name for s in existing.scalars().all()}
 
     defaults = _load_defaults("skills.json", "skills")
+    max_pos = len(existing_names)
+    added = 0
     for i, s in enumerate(defaults):
-        session.add(UserSkill(
-            user_id=user_id,
-            name=s.get("name", f"skill_{i}"),
-            data_json=s,
-            is_active=False,
-            position=i,
-        ))
-    await session.flush()
+        name = s.get("name", f"skill_{i}")
+        if name not in existing_names:
+            session.add(UserSkill(
+                user_id=user_id,
+                name=name,
+                data_json=s,
+                is_active=False,
+                position=max_pos + added,
+            ))
+            added += 1
+    if added:
+        await session.flush()
 
 
 async def _seed_personalities(session: AsyncSession, user_id: int):
-    """Seed default personalities for a new user."""
+    """Seed default personalities for a new user, and backfill any new defaults."""
     existing = await session.execute(
-        select(UserPersonality).where(UserPersonality.user_id == user_id).limit(1)
+        select(UserPersonality).where(UserPersonality.user_id == user_id)
     )
-    if existing.scalars().first():
-        return
+    existing_names = {p.name for p in existing.scalars().all()}
 
     defaults = _load_defaults("personalities.json", "personalities")
+    max_pos = len(existing_names)
+    added = 0
     for i, p in enumerate(defaults):
-        session.add(UserPersonality(
-            user_id=user_id,
-            name=p.get("name", f"personality_{i}"),
-            data_json=p,
-            is_active=(p.get("name") == "default"),
-            position=i,
-        ))
-    await session.flush()
+        name = p.get("name", f"personality_{i}")
+        if name not in existing_names:
+            session.add(UserPersonality(
+                user_id=user_id,
+                name=name,
+                data_json=p,
+                is_active=(not existing_names and p.get("name") == "default"),
+                position=max_pos + added,
+            ))
+            added += 1
+    if added:
+        await session.flush()
 
 
 async def _seed_sub_agents(session: AsyncSession, user_id: int):
-    """Seed default sub-agents for a new user."""
+    """Seed default sub-agents for a new user, and backfill any new defaults."""
     existing = await session.execute(
-        select(UserSubAgent).where(UserSubAgent.user_id == user_id).limit(1)
+        select(UserSubAgent).where(UserSubAgent.user_id == user_id)
     )
-    if existing.scalars().first():
-        return
+    existing_names = {a.name for a in existing.scalars().all()}
 
     defaults = _load_defaults("agents.json", "agents")
+    max_pos = len(existing_names)
+    added = 0
     for i, a in enumerate(defaults):
-        session.add(UserSubAgent(
-            user_id=user_id,
-            name=a.get("name", f"agent_{i}"),
-            data_json=a,
-            position=i,
-        ))
-    await session.flush()
+        name = a.get("name", f"agent_{i}")
+        if name not in existing_names:
+            session.add(UserSubAgent(
+                user_id=user_id,
+                name=name,
+                data_json=a,
+                position=max_pos + added,
+            ))
+            added += 1
+    if added:
+        await session.flush()
 
 
 # ── Skills CRUD ──────────────────────────────────────────────────────────────
