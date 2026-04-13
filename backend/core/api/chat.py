@@ -17,6 +17,31 @@ from backend.core.agents.mcp_client import mcp_manager
 router = APIRouter()
 
 
+def _classify_llm_error(exc: Exception) -> str:
+    """Return a user-friendly error message based on the LLM API exception."""
+    msg = str(exc).lower()
+    # Credit / payment
+    if "402" in msg or "payment required" in msg or "insufficient" in msg or "quota" in msg or "credits" in msg:
+        return "Crédits épuisés — rechargez votre compte sur le site du provider."
+    # Auth
+    if "401" in msg or "unauthorized" in msg or "invalid.*key" in msg or "api key" in msg:
+        return "Clé API invalide ou expirée — vérifiez-la dans les paramètres."
+    # Rate limit
+    if "429" in msg or "rate limit" in msg or "too many" in msg:
+        return "Trop de requêtes — attendez quelques secondes et réessayez."
+    # Model not found
+    if "404" in msg or "model not found" in msg or "not found" in msg:
+        return "Modèle introuvable — vérifiez le nom du modèle sélectionné."
+    # Context too long
+    if "context" in msg and "length" in msg or "token" in msg and ("limit" in msg or "maximum" in msg):
+        return "Conversation trop longue pour ce modèle — essayez de résumer ou changer de modèle."
+    # Server error
+    if "500" in msg or "502" in msg or "503" in msg or "server" in msg:
+        return "Le serveur du provider est temporairement indisponible — réessayez dans un instant."
+    # Fallback
+    return "Erreur interne lors du traitement du message."
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Vision fallback : description d'images pour modèles non-multimodaux
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1234,7 +1259,7 @@ Tu operes en mode **demande**. Comportement :
     except Exception as e:
         import logging
         logging.getLogger("gungnir").error(f"Chat error: {e}", exc_info=True)
-        return {"error": "Erreur interne lors du traitement du message"}
+        return {"error": _classify_llm_error(e)}
 
 
 @router.post("/conversations/{convo_id}/chat/stream")

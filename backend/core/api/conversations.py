@@ -604,7 +604,10 @@ async def summarize_conversation(convo_id: int, request: Request, session: Async
             last_error = e
 
     _log.error(f"Summarize failed on all providers. Last error: {last_error}")
-    return JSONResponse({"error": "Erreur lors de la génération du résumé"}, status_code=500)
+    # Classify the error for the user
+    from backend.core.api.chat import _classify_llm_error
+    user_msg = _classify_llm_error(last_error) if last_error else "Aucun provider disponible."
+    return JSONResponse({"error": user_msg}, status_code=500)
 
 
 @router.delete("/conversations")

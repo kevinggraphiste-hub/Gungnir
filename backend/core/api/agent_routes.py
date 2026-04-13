@@ -501,7 +501,8 @@ Tu as un acces COMPLET a Internet. Ne dis JAMAIS que tu n'as pas acces au web. A
     except Exception as e:
         import logging; logging.getLogger("gungnir").error(f"Sub-agent chat error: {e}", exc_info=True)
         _recorder.conv.error = str(e)
-        return {"error": "Erreur interne lors de la communication avec le sous-agent", "conversation_id": _recorder.conv.id}
+        from backend.core.api.chat import _classify_llm_error
+        return {"error": _classify_llm_error(e), "conversation_id": _recorder.conv.id}
     finally:
         try:
             _recorder.__exit__(None, None, None)
