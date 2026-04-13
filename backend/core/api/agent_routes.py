@@ -78,6 +78,7 @@ async def list_skills(category: str = None):
             "annotations": s.annotations,
             "compatibility": s.compatibility,
             "is_favorite": s.is_favorite,
+            "icon": s.icon,
         }
         for s in skills
     ]
