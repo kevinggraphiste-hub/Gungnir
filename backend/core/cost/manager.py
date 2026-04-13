@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
-from sqlalchemy import select, func, and_, extract
+from sqlalchemy import select, func, and_, extract, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.db.models import CostAnalytics, BudgetSettings, ProviderBudget, Message, Conversation
 from backend.core.cost.calculator import calculate_cost, extract_model_from_response
@@ -111,19 +111,19 @@ class CostManager:
     async def get_daily_costs(self, session: AsyncSession, days: int = 30) -> List[dict]:
         """Get daily costs for the last N days."""
         try:
+            since = datetime.utcnow() - timedelta(days=days)
+            day_col = cast(CostAnalytics.created_at, Date)
             result = await session.execute(
                 select(
-                    func.date(CostAnalytics.created_at).label("date"),
+                    day_col.label("date"),
                     func.sum(CostAnalytics.cost).label("daily_cost"),
                     func.sum(CostAnalytics.tokens_input + CostAnalytics.tokens_output).label("daily_tokens")
                 )
-                .where(
-                    func.date(CostAnalytics.created_at) >= func.date('now', f'-{days} days')
-                )
-                .group_by(func.date(CostAnalytics.created_at))
-                .order_by(func.date(CostAnalytics.created_at))
+                .where(CostAnalytics.created_at >= since)
+                .group_by(day_col)
+                .order_by(day_col)
             )
-            
+
             return [
                 {
                     "date": str(row.date),
@@ -342,19 +342,22 @@ class CostManager:
     async def get_weekly_costs(self, session: AsyncSession, weeks: int = 12) -> List[dict]:
         """Get weekly costs for the last N weeks."""
         try:
+            since = datetime.utcnow() - timedelta(weeks=weeks)
+            yr = extract('year', CostAnalytics.created_at)
+            wk = extract('week', CostAnalytics.created_at)
             result = await session.execute(
                 select(
-                    func.strftime('%Y-W%W', CostAnalytics.created_at).label("week"),
+                    yr.label("yr"), wk.label("wk"),
                     func.sum(CostAnalytics.cost).label("weekly_cost"),
                     func.sum(CostAnalytics.tokens_input + CostAnalytics.tokens_output).label("weekly_tokens"),
                     func.count().label("message_count")
                 )
-                .where(func.date(CostAnalytics.created_at) >= func.date('now', f'-{weeks * 7} days'))
-                .group_by(func.strftime('%Y-W%W', CostAnalytics.created_at))
-                .order_by(func.strftime('%Y-W%W', CostAnalytics.created_at))
+                .where(CostAnalytics.created_at >= since)
+                .group_by(yr, wk)
+                .order_by(yr, wk)
             )
             return [
-                {"week": row.week, "cost": round(float(row.weekly_cost), 4), "tokens": int(row.weekly_tokens or 0), "messages": int(row.message_count or 0)}
+                {"week": f"{int(row.yr)}-W{int(row.wk):02d}", "cost": round(float(row.weekly_cost), 4), "tokens": int(row.weekly_tokens or 0), "messages": int(row.message_count or 0)}
                 for row in result.all()
             ]
         except Exception as e:
@@ -364,19 +367,22 @@ class CostManager:
     async def get_monthly_costs(self, session: AsyncSession, months: int = 12) -> List[dict]:
         """Get monthly costs for the last N months."""
         try:
+            since = datetime.utcnow() - timedelta(days=months * 31)
+            yr = extract('year', CostAnalytics.created_at)
+            mo = extract('month', CostAnalytics.created_at)
             result = await session.execute(
                 select(
-                    func.strftime('%Y-%m', CostAnalytics.created_at).label("month"),
+                    yr.label("yr"), mo.label("mo"),
                     func.sum(CostAnalytics.cost).label("monthly_cost"),
                     func.sum(CostAnalytics.tokens_input + CostAnalytics.tokens_output).label("monthly_tokens"),
                     func.count().label("message_count")
                 )
-                .where(func.date(CostAnalytics.created_at) >= func.date('now', f'-{months * 31} days'))
-                .group_by(func.strftime('%Y-%m', CostAnalytics.created_at))
-                .order_by(func.strftime('%Y-%m', CostAnalytics.created_at))
+                .where(CostAnalytics.created_at >= since)
+                .group_by(yr, mo)
+                .order_by(yr, mo)
             )
             return [
-                {"month": row.month, "cost": round(float(row.monthly_cost), 4), "tokens": int(row.monthly_tokens or 0), "messages": int(row.message_count or 0)}
+                {"month": f"{int(row.yr)}-{int(row.mo):02d}", "cost": round(float(row.monthly_cost), 4), "tokens": int(row.monthly_tokens or 0), "messages": int(row.message_count or 0)}
                 for row in result.all()
             ]
         except Exception as e:
@@ -386,18 +392,19 @@ class CostManager:
     async def get_yearly_costs(self, session: AsyncSession) -> List[dict]:
         """Get yearly cost breakdown."""
         try:
+            yr = extract('year', CostAnalytics.created_at)
             result = await session.execute(
                 select(
-                    func.strftime('%Y', CostAnalytics.created_at).label("year"),
+                    yr.label("yr"),
                     func.sum(CostAnalytics.cost).label("yearly_cost"),
                     func.sum(CostAnalytics.tokens_input + CostAnalytics.tokens_output).label("yearly_tokens"),
                     func.count().label("message_count")
                 )
-                .group_by(func.strftime('%Y', CostAnalytics.created_at))
-                .order_by(func.strftime('%Y', CostAnalytics.created_at))
+                .group_by(yr)
+                .order_by(yr)
             )
             return [
-                {"year": row.year, "cost": round(float(row.yearly_cost), 4), "tokens": int(row.yearly_tokens or 0), "messages": int(row.message_count or 0)}
+                {"year": str(int(row.yr)), "cost": round(float(row.yearly_cost), 4), "tokens": int(row.yearly_tokens or 0), "messages": int(row.message_count or 0)}
                 for row in result.all()
             ]
         except Exception as e:
@@ -407,15 +414,17 @@ class CostManager:
     async def get_heatmap_data(self, session: AsyncSession, days: int = 90) -> List[dict]:
         """Get activity heatmap data (messages per day with hour distribution)."""
         try:
+            since = datetime.utcnow() - timedelta(days=days)
+            day_col = cast(CostAnalytics.created_at, Date)
             result = await session.execute(
                 select(
-                    func.date(CostAnalytics.created_at).label("date"),
+                    day_col.label("date"),
                     func.count().label("count"),
                     func.sum(CostAnalytics.cost).label("cost")
                 )
-                .where(func.date(CostAnalytics.created_at) >= func.date('now', f'-{days} days'))
-                .group_by(func.date(CostAnalytics.created_at))
-                .order_by(func.date(CostAnalytics.created_at))
+                .where(CostAnalytics.created_at >= since)
+                .group_by(day_col)
+                .order_by(day_col)
             )
             return [
                 {"date": str(row.date), "count": int(row.count), "cost": round(float(row.cost), 4)}
@@ -428,9 +437,12 @@ class CostManager:
     async def get_weekly_budget_cost(self, session: AsyncSession) -> float:
         """Get total cost for the current week (Monday to Sunday)."""
         try:
+            now = datetime.utcnow()
+            week_start = now - timedelta(days=now.weekday())
+            week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
             result = await session.execute(
                 select(func.sum(CostAnalytics.cost))
-                .where(func.date(CostAnalytics.created_at) >= func.date('now', 'weekday 0', '-7 days'))
+                .where(CostAnalytics.created_at >= week_start)
             )
             return float(result.scalar() or 0.0)
         except Exception as e:
@@ -490,17 +502,19 @@ class CostManager:
     async def get_provider_cost(self, session: AsyncSession, provider: str, period: str = "month") -> float:
         """Get total cost for a provider in the current week or month."""
         try:
+            now = datetime.utcnow()
             if period == "week":
+                week_start = now - timedelta(days=now.weekday())
+                week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
                 where_clause = and_(
                     CostAnalytics.model.like(f"{provider}/%"),
-                    func.date(CostAnalytics.created_at) >= func.date('now', 'weekday 0', '-7 days')
+                    CostAnalytics.created_at >= week_start,
                 )
             else:
-                now = datetime.utcnow()
                 where_clause = and_(
                     CostAnalytics.model.like(f"{provider}/%"),
                     extract('year', CostAnalytics.created_at) == now.year,
-                    extract('month', CostAnalytics.created_at) == now.month
+                    extract('month', CostAnalytics.created_at) == now.month,
                 )
             result = await session.execute(select(func.sum(CostAnalytics.cost)).where(where_clause))
             return float(result.scalar() or 0.0)
