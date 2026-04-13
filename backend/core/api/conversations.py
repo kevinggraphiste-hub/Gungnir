@@ -562,35 +562,49 @@ async def summarize_conversation(convo_id: int, request: Request, session: Async
         transcript = transcript[:12000] + "\n[... tronqué ...]"
 
     settings = Settings.load()
+
+    # Build ordered list of providers to try: requested first, then all enabled ones
+    providers_to_try: list[tuple[str, str]] = []
     pcfg = settings.providers.get(provider_name)
-    if not pcfg or not pcfg.api_key:
-        return JSONResponse({"error": f"Provider '{provider_name}' non configuré"}, status_code=400)
+    if pcfg and pcfg.enabled and pcfg.api_key:
+        providers_to_try.append((provider_name, model_name or pcfg.default_model or ""))
+    for pname, pconf in settings.providers.items():
+        if pname != provider_name and pconf.enabled and pconf.api_key:
+            providers_to_try.append((pname, pconf.default_model or ""))
 
-    if not model_name:
-        model_name = pcfg.default_model
+    if not providers_to_try:
+        return JSONResponse({"error": "Aucun provider configuré"}, status_code=400)
 
-    provider = get_provider(provider_name, pcfg.api_key, pcfg.base_url)
+    import logging as _logging
+    _log = _logging.getLogger("gungnir.summarize")
 
-    try:
-        resp = await provider.chat(
-            [
-                ChatMessage(role="system", content=(
-                    "Tu es un assistant de résumé. Génère un résumé structuré de cette conversation. "
-                    "Le résumé doit contenir :\n"
-                    "1. **Sujet principal** (1 phrase)\n"
-                    "2. **Points clés** (3-5 bullets)\n"
-                    "3. **Décisions/Actions** (si applicable)\n"
-                    "4. **Contexte utile** pour reprendre la discussion plus tard\n\n"
-                    "Sois concis mais complet. Réponds en français."
-                )),
-                ChatMessage(role="user", content=f"Voici la conversation à résumer :\n\n{transcript}"),
-            ],
-            model_name,
-        )
-        return {"summary": resp.content, "tokens": resp.tokens_input + resp.tokens_output}
-    except Exception as e:
-        import logging; logging.getLogger("gungnir").error(f"Summarize error: {e}")
-        return JSONResponse({"error": "Erreur lors de la génération du résumé"}, status_code=500)
+    summary_messages = [
+        ChatMessage(role="system", content=(
+            "Tu es un assistant de résumé. Génère un résumé structuré de cette conversation. "
+            "Le résumé doit contenir :\n"
+            "1. **Sujet principal** (1 phrase)\n"
+            "2. **Points clés** (3-5 bullets)\n"
+            "3. **Décisions/Actions** (si applicable)\n"
+            "4. **Contexte utile** pour reprendre la discussion plus tard\n\n"
+            "Sois concis mais complet. Réponds en français."
+        )),
+        ChatMessage(role="user", content=f"Voici la conversation à résumer :\n\n{transcript}"),
+    ]
+
+    last_error = None
+    for pname, mname in providers_to_try:
+        try:
+            pconf = settings.providers[pname]
+            provider = get_provider(pname, pconf.api_key, pconf.base_url)
+            resp = await provider.chat(summary_messages, mname)
+            if resp.content and len(resp.content.strip()) > 20:
+                return {"summary": resp.content, "tokens": resp.tokens_input + resp.tokens_output}
+        except Exception as e:
+            _log.warning(f"Summarize failed with {pname}/{mname}: {e}")
+            last_error = e
+
+    _log.error(f"Summarize failed on all providers. Last error: {last_error}")
+    return JSONResponse({"error": "Erreur lors de la génération du résumé"}, status_code=500)
 
 
 @router.delete("/conversations")
