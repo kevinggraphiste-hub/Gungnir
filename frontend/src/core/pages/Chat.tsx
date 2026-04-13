@@ -278,6 +278,8 @@ export default function Chat() {
     // Optimistic update
     const current = useStore.getState().conversations
     setConversations(current.map(c => c.id === convoId ? { ...c, folder_id: folderId } : c))
+    // Basculer automatiquement sur le dossier cible pour voir le résultat
+    setFolderFilter(folderId)
     try {
       await api.moveConversationToFolder(convoId, folderId)
     } catch (err) {
