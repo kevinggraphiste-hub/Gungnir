@@ -11,7 +11,7 @@ export default function Login({ onLogin }: Props) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [mode, setMode] = useState<'login' | 'setup'>('login')
+  const [mode, setMode] = useState<'login' | 'setup' | 'register'>('login')
   const [hasUsers, setHasUsers] = useState(true)
 
   // Check if any users exist — if not, show setup mode
@@ -31,13 +31,13 @@ export default function Login({ onLogin }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!username.trim()) return
-    if (mode === 'setup' && !password) return // en setup, mot de passe obligatoire
+    if ((mode === 'setup' || mode === 'register') && !password) return
 
     setLoading(true)
     setError('')
     try {
-      if (mode === 'setup') {
-        // Create first user then login
+      if (mode === 'setup' || mode === 'register') {
+        // Create user then login
         await api.createUser({
           username: username.trim(),
           display_name: username.trim(),
@@ -62,11 +62,20 @@ export default function Login({ onLogin }: Props) {
         onLogin(result.user)
       }
     } catch (err: any) {
-      setError(err?.message || err?.error || 'Erreur de connexion')
+      const msg = err?.message || err?.error || 'Erreur de connexion'
+      // Friendly message for duplicate username
+      if (msg.includes('existe déjà')) {
+        setError('Ce nom d\'utilisateur est déjà pris. Choisissez-en un autre.')
+      } else {
+        setError(msg)
+      }
     } finally {
       setLoading(false)
     }
   }
+
+  const isRegisterMode = mode === 'setup' || mode === 'register'
+  const canSubmit = username.trim() && (isRegisterMode ? !!password : true) && !loading
 
   return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
@@ -78,7 +87,9 @@ export default function Login({ onLogin }: Props) {
           </div>
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Gungnir</h1>
           <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
-            {mode === 'setup' ? 'Créer votre compte administrateur' : 'Connexion requise'}
+            {mode === 'setup' ? 'Créer votre compte administrateur'
+              : mode === 'register' ? 'Créer votre compte'
+              : 'Connexion requise'}
           </p>
         </div>
 
@@ -104,7 +115,7 @@ export default function Login({ onLogin }: Props) {
                 onChange={e => setUsername(e.target.value)}
                 className="w-full pl-10 pr-3 py-2.5 rounded-lg text-sm outline-none"
                 style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
-                placeholder="admin"
+                placeholder={isRegisterMode ? 'Choisissez un pseudo' : 'Votre pseudo'}
                 autoFocus
               />
             </div>
@@ -112,7 +123,7 @@ export default function Login({ onLogin }: Props) {
 
           <div>
             <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
-              Mot de passe
+              Mot de passe {!isRegisterMode && <span style={{ color: 'var(--text-muted)' }}>(si défini)</span>}
             </label>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--text-muted)' }} />
@@ -129,20 +140,34 @@ export default function Login({ onLogin }: Props) {
 
           <button
             type="submit"
-            disabled={loading || !username.trim() || (mode === 'setup' && !password)}
+            disabled={!canSubmit}
             className="w-full py-2.5 rounded-lg text-sm font-medium text-white flex items-center justify-center gap-2 transition-opacity"
-            style={{ background: 'var(--accent-primary)', opacity: loading || !username.trim() || (mode === 'setup' && !password) ? 0.5 : 1 }}
+            style={{ background: 'var(--accent-primary)', opacity: canSubmit ? 1 : 0.5 }}
           >
             {loading ? (
               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : mode === 'setup' ? (
+            ) : isRegisterMode ? (
               <UserPlus className="w-4 h-4" />
             ) : (
               <LogIn className="w-4 h-4" />
             )}
-            {loading ? 'Connexion...' : mode === 'setup' ? 'Créer et se connecter' : 'Se connecter'}
+            {loading ? 'Connexion...' : isRegisterMode ? 'Créer et se connecter' : 'Se connecter'}
           </button>
         </form>
+
+        {/* Toggle login / register — only when users already exist */}
+        {hasUsers && mode !== 'setup' && (
+          <div className="mt-5 text-center">
+            <button
+              type="button"
+              onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}
+              className="text-xs transition-opacity hover:opacity-80"
+              style={{ color: 'var(--accent-primary)' }}
+            >
+              {mode === 'login' ? 'Pas encore de compte ? Créer un compte' : 'Déjà un compte ? Se connecter'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
