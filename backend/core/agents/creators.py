@@ -11,7 +11,7 @@ from backend.core.agents.mode_manager import mode_manager, AgentMode
 
 class SkillCreator:
     def __init__(self):
-        self.skills_dir = Path(__file__).parent.parent.parent / "data" / "skills"
+        self.skills_dir = Path(__file__).parent.parent.parent.parent / "data" / "skills"
         self.skills_dir.mkdir(exist_ok=True, parents=True)
 
     async def create_skill(
@@ -182,7 +182,7 @@ class SkillCreator:
 
 class SubAgentCreator:
     def __init__(self):
-        self.agents_dir = Path(__file__).parent.parent.parent / "data" / "agents"
+        self.agents_dir = Path(__file__).parent.parent.parent.parent / "data" / "agents"
         self.agents_dir.mkdir(exist_ok=True, parents=True)
 
     async def create_sub_agent(

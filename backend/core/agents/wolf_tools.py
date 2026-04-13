@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 import json, uuid
 
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
+DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 
 # ── Contexte d'exécution (défini par chat.py avant dispatch) ──────────────────
 # Permet aux outils de connaître la conversation courante sans la passer en arg.

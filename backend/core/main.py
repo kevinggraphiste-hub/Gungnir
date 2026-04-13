@@ -86,7 +86,11 @@ async def lifespan(app: FastAPI):
 
     # 3. Call plugin on_startup hooks
     for manifest in _loaded_plugins:
-        call_plugin_lifecycle(manifest, "on_startup", app=app)
+        try:
+            call_plugin_lifecycle(manifest, "on_startup", app=app)
+        except Exception as _plugin_err:
+            import logging
+            logging.getLogger("gungnir").error(f"Plugin {manifest.get('name', '?')} startup failed: {_plugin_err}")
 
     # 4. Start MCP servers
     from backend.core.agents.mcp_client import mcp_manager

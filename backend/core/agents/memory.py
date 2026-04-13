@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-MEMORY_PATH = Path(__file__).parent.parent.parent / "data" / "memory.json"
+MEMORY_PATH = Path(__file__).parent.parent.parent.parent / "data" / "memory.json"
 
 
 class Memory(BaseModel):

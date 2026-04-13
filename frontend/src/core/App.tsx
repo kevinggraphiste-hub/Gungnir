@@ -182,7 +182,13 @@ export default function App() {
 
   const handleLogout = () => {
     clearAuthToken()
-    localStorage.removeItem('gungnir_current_user')
+    // Clean all user-specific data to prevent bleeding between accounts
+    const userKeys = [
+      'gungnir_current_user', 'gungnir_favorite_models', 'gungnir_chat_sidebar',
+      'gungnir_titles_generated', 'gungnir_provider', 'gungnir_model',
+      'gungnir_agent_name', 'gungnir_theme', 'gungnir_fontsize', 'gungnir_custom_theme',
+    ]
+    userKeys.forEach(k => localStorage.removeItem(k))
     setAuthState('needs_login')
   }
 

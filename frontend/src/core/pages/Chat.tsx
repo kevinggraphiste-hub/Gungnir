@@ -246,15 +246,15 @@ export default function Chat() {
   const [editTitleValue, setEditTitleValue] = useState('')
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [hasGeneratedTitle, setHasGeneratedTitle] = useState(() => {
-    const saved = localStorage.getItem('gungnir_titles_generated')
-    return new Set(JSON.parse(saved || '[]'))
+    try { const saved = localStorage.getItem('gungnir_titles_generated'); return new Set(JSON.parse(saved || '[]')) }
+    catch { return new Set() }
   })
 
   const [showApiKeysModal, setShowApiKeysModal] = useState(false)
   const [showUserModal, setShowUserModal] = useState(false)
   const [currentUser, setCurrentUser] = useState<any>(() => {
-    const saved = localStorage.getItem('gungnir_current_user')
-    return saved ? JSON.parse(saved) : null
+    try { const saved = localStorage.getItem('gungnir_current_user'); return saved ? JSON.parse(saved) : null }
+    catch { return null }
   })
 
   // Folders (classification des conversations) — placé après currentUser pour éviter TDZ

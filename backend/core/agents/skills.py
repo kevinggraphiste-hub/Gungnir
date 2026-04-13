@@ -37,8 +37,8 @@ class Personality(BaseModel):
 
 class SkillLibrary:
     from pathlib import Path
-    SKILLS_FILE = Path(__file__).parent.parent.parent / "data" / "skills.json"
-    ACTIVE_SKILL_FILE = Path(__file__).parent.parent.parent / "data" / "active_skill.json"
+    SKILLS_FILE = Path(__file__).parent.parent.parent.parent / "data" / "skills.json"
+    ACTIVE_SKILL_FILE = Path(__file__).parent.parent.parent.parent / "data" / "active_skill.json"
 
     DEFAULT_SKILLS = [
         {
@@ -587,7 +587,7 @@ Utilise cette expertise pour aider l'utilisateur."""
 
 class PersonalityManager:
     from pathlib import Path
-    PERSONALITIES_FILE = Path(__file__).parent.parent.parent / "data" / "personalities.json"
+    PERSONALITIES_FILE = Path(__file__).parent.parent.parent.parent / "data" / "personalities.json"
 
     DEFAULT_PERSONALITIES = [
         {
@@ -842,7 +842,7 @@ class SubAgent(BaseModel):
 
 class SubAgentLibrary:
     from pathlib import Path
-    AGENTS_FILE = Path(__file__).parent.parent.parent / "data" / "agents.json"
+    AGENTS_FILE = Path(__file__).parent.parent.parent.parent / "data" / "agents.json"
 
     def __init__(self):
         self.agents: dict[str, SubAgent] = {}

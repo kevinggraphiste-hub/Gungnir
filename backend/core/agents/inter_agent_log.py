@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-_LOG_DIR = Path(__file__).parent.parent.parent / "data" / "inter_agent_conversations"
+_LOG_DIR = Path(__file__).parent.parent.parent.parent / "data" / "inter_agent_conversations"
 _INDEX_FILE = _LOG_DIR / "index.json"
 _MAX_INDEX_ENTRIES = 500  # keep last N in the index (files on disk are not auto-deleted)
 
