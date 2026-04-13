@@ -4,6 +4,8 @@ from .anthropic_provider import AnthropicProvider
 from .google_provider import GoogleProvider
 from .openai_provider import OpenAIProvider
 from .minimax_provider import MiniMaxProvider
+from .mistral_provider import MistralProvider
+from .xai_provider import XAIProvider
 from .ollama_provider import OllamaProvider
 
 PROVIDERS: dict[str, type[LLMProvider]] = {
@@ -12,6 +14,8 @@ PROVIDERS: dict[str, type[LLMProvider]] = {
     "google": GoogleProvider,
     "openai": OpenAIProvider,
     "minimax": MiniMaxProvider,
+    "mistral": MistralProvider,
+    "xai": XAIProvider,
     "ollama": OllamaProvider,
 }
 

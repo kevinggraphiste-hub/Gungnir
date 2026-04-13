@@ -104,7 +104,7 @@ export const useStore = create<AppState>((set) => ({
       body: JSON.stringify({ active_provider: provider }),
     }).catch(() => {})
   },
-  selectedModel: localStorage.getItem('gungnir_model') || 'minimax/minimax-m2.7',
+  selectedModel: localStorage.getItem('gungnir_model') || 'mistralai/mistral-large',
   setSelectedModel: (model) => {
     localStorage.setItem('gungnir_model', model)
     set({ selectedModel: model })

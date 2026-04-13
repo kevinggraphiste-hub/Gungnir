@@ -108,14 +108,14 @@ class AppSettings(BaseModel):
     auto_update: bool = False
     update_channel: str = "stable"
     active_provider: str = "openrouter"
-    active_model: str = "minimax/minimax-m2.7"
+    active_model: str = "mistralai/mistral-large"
 
 
 class Settings(BaseSettings):
     app: AppSettings = Field(default_factory=AppSettings)
     providers: dict[str, ProviderConfig] = Field(default_factory=lambda: {
         "openrouter": ProviderConfig(
-            default_model="minimax/minimax-m2.7",
+            default_model="mistralai/mistral-large",
             models=[
                 "anthropic/claude-sonnet-4.6",
                 "anthropic/claude-opus-4.6",
@@ -124,13 +124,16 @@ class Settings(BaseSettings):
                 "openai/gpt-4.1",
                 "openai/gpt-4.1-mini",
                 "openai/o4-mini",
-                "minimax/minimax-m2.7",
+                "mistralai/mistral-large",
+                "mistralai/mistral-small",
+                "mistralai/codestral",
+                "x-ai/grok-3-beta",
+                "x-ai/grok-3-mini-beta",
                 "deepseek/deepseek-chat",
                 "deepseek/deepseek-r1",
                 "meta-llama/llama-4-maverick",
                 "qwen/qwen3-235b-a22b",
-                "x-ai/grok-3-beta",
-                "mistralai/mistral-large",
+                "minimax/minimax-m2.7",
             ]
         ),
         "anthropic": ProviderConfig(
@@ -144,6 +147,14 @@ class Settings(BaseSettings):
         "openai": ProviderConfig(
             default_model="gpt-4.1",
             models=["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o4-mini", "gpt-4o"]
+        ),
+        "mistral": ProviderConfig(
+            default_model="mistral-large-latest",
+            models=["mistral-large-latest", "mistral-small-latest", "mistral-medium-latest", "codestral-latest"]
+        ),
+        "xai": ProviderConfig(
+            default_model="grok-3-beta",
+            models=["grok-3-beta", "grok-3-mini-beta"]
         ),
         "minimax": ProviderConfig(
             base_url="https://api.minimax.chat/v1",
