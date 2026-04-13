@@ -989,10 +989,11 @@ Tu operes en mode **demande**. Comportement :
         # ══════════════════════════════════════════════════════════════════
         consciousness_block = ""
         try:
-            from backend.plugins.consciousness.engine import consciousness as _consciousness_engine
-            if _consciousness_engine.enabled:
-                consciousness_block = _consciousness_engine.get_consciousness_prompt_block()
-                _consciousness_engine.record_interaction()
+            from backend.plugins.consciousness.engine import consciousness_manager as _cm
+            _user_consciousness = _cm.get(user_id or 0)
+            if _user_consciousness.enabled:
+                consciousness_block = _user_consciousness.get_consciousness_prompt_block()
+                _user_consciousness.record_interaction()
         except Exception:
             pass  # Plugin non chargé ou erreur — pas bloquant
 

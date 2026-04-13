@@ -605,12 +605,13 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
         except Exception:
             pass
 
-        # Consciousness context (memories)
+        # Consciousness context (memories) — channels use user 0 (system/no-auth context)
         consciousness_block = ""
         try:
-            from backend.plugins.consciousness.engine import consciousness
-            if consciousness.enabled:
-                memories = await consciousness.recall(text, limit=3)
+            from backend.plugins.consciousness.engine import consciousness_manager
+            _ch_consciousness = consciousness_manager.get(0)
+            if _ch_consciousness.enabled:
+                memories = await _ch_consciousness.recall(text, limit=3)
                 if memories:
                     consciousness_block = "\n\n## Souvenirs pertinents\n" + "\n".join(
                         f"- {m.get('content', '')[:200]}" for m in memories
@@ -643,9 +644,10 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
 
         # Store in consciousness
         try:
-            from backend.plugins.consciousness.engine import consciousness
-            if consciousness.enabled:
-                await consciousness.store_interaction(
+            from backend.plugins.consciousness.engine import consciousness_manager
+            _ch_consciousness = consciousness_manager.get(0)
+            if _ch_consciousness.enabled:
+                await _ch_consciousness.store_interaction(
                     f"[{ch.get('type', 'channel')}:{sender_name}] {text}",
                     response_text,
                 )

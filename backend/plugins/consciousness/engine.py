@@ -28,15 +28,27 @@ logger = logging.getLogger("gungnir.consciousness")
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
-CONSCIOUSNESS_DIR = DATA_DIR / "consciousness"
+CONSCIOUSNESS_BASE_DIR = DATA_DIR / "consciousness"
 
-STATE_FILE = CONSCIOUSNESS_DIR / "state.json"
-THOUGHT_BUFFER_FILE = CONSCIOUSNESS_DIR / "thought_buffer.json"
-SIMULATION_FILE = CONSCIOUSNESS_DIR / "simulation_buffer.json"
-SCORE_LOG_FILE = CONSCIOUSNESS_DIR / "score_log.json"
-CHALLENGER_LOG_FILE = CONSCIOUSNESS_DIR / "challenger_log.json"
-WORKING_MEMORY_FILE = CONSCIOUSNESS_DIR / "working_memory.json"
-CONFIG_FILE = CONSCIOUSNESS_DIR / "config.json"
+
+def _user_dir(user_id: int) -> Path:
+    """Per-user consciousness data directory."""
+    return CONSCIOUSNESS_BASE_DIR / "users" / str(user_id)
+
+
+def _user_paths(user_id: int) -> dict[str, Path]:
+    """All file paths for a given user's consciousness."""
+    d = _user_dir(user_id)
+    return {
+        "dir": d,
+        "state": d / "state.json",
+        "thought_buffer": d / "thought_buffer.json",
+        "simulation": d / "simulation_buffer.json",
+        "score_log": d / "score_log.json",
+        "challenger_log": d / "challenger_log.json",
+        "working_memory": d / "working_memory.json",
+        "config": d / "config.json",
+    }
 
 # ── Default Configuration ───────────────────────────────────────────────────
 
@@ -144,8 +156,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _ensure_dir():
-    CONSCIOUSNESS_DIR.mkdir(parents=True, exist_ok=True)
+def _ensure_dir(path: Path = None):
+    d = path or CONSCIOUSNESS_BASE_DIR
+    d.mkdir(parents=True, exist_ok=True)
 
 
 def _load_json(path: Path, default: dict) -> dict:
@@ -165,10 +178,12 @@ def _save_json(path: Path, data: dict):
 # ── Core Engine ─────────────────────────────────────────────────────────────
 
 class ConsciousnessEngine:
-    """Moteur central de la conscience v3."""
+    """Moteur central de la conscience v3 — instancié par utilisateur."""
 
-    def __init__(self):
-        _ensure_dir()
+    def __init__(self, user_id: int = 0):
+        self.user_id = user_id
+        self._paths = _user_paths(user_id)
+        _ensure_dir(self._paths["dir"])
         self._config: dict = {}
         self._state: dict = {}
         self._thought_buffer: dict = {"entries": [], "max_entries": 50, "last_updated": None}
@@ -182,30 +197,32 @@ class ConsciousnessEngine:
     # ── Persistence ─────────────────────────────────────────────────────
 
     def _load_all(self):
-        self._config = _load_json(CONFIG_FILE, DEFAULT_CONFIG)
-        self._state = _load_json(STATE_FILE, DEFAULT_STATE)
+        p = self._paths
+        self._config = _load_json(p["config"], DEFAULT_CONFIG)
+        self._state = _load_json(p["state"], DEFAULT_STATE)
         if not self._state.get("created_at"):
             self._state["created_at"] = _now()
-        self._thought_buffer = _load_json(THOUGHT_BUFFER_FILE, self._thought_buffer)
-        self._simulation_buffer = _load_json(SIMULATION_FILE, self._simulation_buffer)
-        self._score_log = _load_json(SCORE_LOG_FILE, self._score_log)
-        self._challenger_log = _load_json(CHALLENGER_LOG_FILE, self._challenger_log)
-        self._working_memory = _load_json(WORKING_MEMORY_FILE, self._working_memory)
+        self._thought_buffer = _load_json(p["thought_buffer"], self._thought_buffer)
+        self._simulation_buffer = _load_json(p["simulation"], self._simulation_buffer)
+        self._score_log = _load_json(p["score_log"], self._score_log)
+        self._challenger_log = _load_json(p["challenger_log"], self._challenger_log)
+        self._working_memory = _load_json(p["working_memory"], self._working_memory)
 
     def save_all(self):
-        _save_json(CONFIG_FILE, self._config)
-        _save_json(STATE_FILE, self._state)
-        _save_json(THOUGHT_BUFFER_FILE, self._thought_buffer)
-        _save_json(SIMULATION_FILE, self._simulation_buffer)
-        _save_json(SCORE_LOG_FILE, self._score_log)
-        _save_json(CHALLENGER_LOG_FILE, self._challenger_log)
-        _save_json(WORKING_MEMORY_FILE, self._working_memory)
+        p = self._paths
+        _save_json(p["config"], self._config)
+        _save_json(p["state"], self._state)
+        _save_json(p["thought_buffer"], self._thought_buffer)
+        _save_json(p["simulation"], self._simulation_buffer)
+        _save_json(p["score_log"], self._score_log)
+        _save_json(p["challenger_log"], self._challenger_log)
+        _save_json(p["working_memory"], self._working_memory)
 
     def save_config(self):
-        _save_json(CONFIG_FILE, self._config)
+        _save_json(self._paths["config"], self._config)
 
     def save_state(self):
-        _save_json(STATE_FILE, self._state)
+        _save_json(self._paths["state"], self._state)
 
     # ── Config ──────────────────────────────────────────────────────────
 
@@ -233,10 +250,13 @@ class ConsciousnessEngine:
     async def init_vector_memory(self) -> bool:
         """Initialize vector memory from config. Call after startup or config change."""
         from .vector_store import ConsciousnessVectorMemory
-        vm_config = self._config.get("vector_memory", {})
+        vm_config = dict(self._config.get("vector_memory", {}))
         if vm_config.get("vector_provider", "none") == "none":
             self._vector_memory = None
             return False
+        # Per-user vector storage
+        vm_config["chroma_persist_dir"] = str(self._paths["dir"] / "chroma_db")
+        vm_config["_user_id"] = self.user_id
         self._vector_memory = ConsciousnessVectorMemory(vm_config)
         ok = await self._vector_memory.initialize()
         if ok:
@@ -753,6 +773,31 @@ class ConsciousnessEngine:
         self.save_all()
 
 
-# ── Singleton ───────────────────────────────────────────────────────────────
+# ── Per-User Instance Manager ──────────────────────────────────────────────
 
-consciousness = ConsciousnessEngine()
+class ConsciousnessManager:
+    """Manages per-user ConsciousnessEngine instances with in-memory caching."""
+
+    def __init__(self):
+        self._instances: dict[int, ConsciousnessEngine] = {}
+
+    def get(self, user_id: int) -> ConsciousnessEngine:
+        """Get or create a ConsciousnessEngine for the given user."""
+        if user_id not in self._instances:
+            self._instances[user_id] = ConsciousnessEngine(user_id)
+            logger.info(f"Consciousness instance created for user {user_id}")
+        return self._instances[user_id]
+
+    def evict(self, user_id: int):
+        """Remove a user's instance from cache (e.g. after reset)."""
+        if user_id in self._instances:
+            del self._instances[user_id]
+
+    def active_count(self) -> int:
+        return len(self._instances)
+
+
+consciousness_manager = ConsciousnessManager()
+
+# Backward-compatible shortcut for user_id=0 (setup/no-auth mode)
+consciousness = consciousness_manager.get(0)

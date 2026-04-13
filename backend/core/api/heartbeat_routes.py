@@ -104,12 +104,13 @@ async def _heartbeat_loop():
             eff = _effective_config(cfg)
             interval = eff.get("check_interval_seconds", 30)
 
-            # Trigger consciousness background think if available
+            # Trigger consciousness background think for all active user instances
             try:
-                from backend.plugins.consciousness.engine import consciousness
-                if consciousness.enabled:
-                    await consciousness.background_think()
-                    logger.debug("Heartbeat: consciousness tick")
+                from backend.plugins.consciousness.engine import consciousness_manager
+                for uid, instance in list(consciousness_manager._instances.items()):
+                    if instance.enabled and hasattr(instance, 'background_think'):
+                        await instance.background_think()
+                        logger.debug(f"Heartbeat: consciousness tick for user {uid}")
             except Exception:
                 pass  # Consciousness plugin may not be loaded
 
