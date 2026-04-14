@@ -1272,18 +1272,55 @@ export default function Settings() {
               {editingService && (() => {
                 // Show only relevant fields per service
                 const serviceFields: Record<string, string[]> = {
+                  // Base de données
                   supabase: ['base_url', 'api_key', 'project_id'],
                   postgresql: ['base_url', 'database'],
+                  mysql: ['base_url', 'database'],
+                  mongodb: ['base_url', 'database'],
+                  redis: ['base_url'],
+                  sqlite: ['base_url'],
+                  // Stockage
                   s3: ['base_url', 'api_key', 'region', 'bucket'],
-                  github: ['base_url', 'token'],
-                  notion: ['base_url', 'token'],
                   google_drive: ['base_url', 'api_key'],
-                  pinecone: ['base_url', 'api_key', 'namespace'],
+                  dropbox: ['base_url', 'token'],
+                  azure_blob: ['base_url', 'api_key', 'bucket'],
+                  ftp: ['base_url', 'token'],
+                  // RAG / Vectoriel
                   qdrant: ['base_url', 'api_key', 'namespace'],
+                  pinecone: ['base_url', 'api_key', 'namespace'],
+                  weaviate: ['base_url', 'api_key'],
+                  chromadb: ['base_url'],
+                  milvus: ['base_url', 'token'],
+                  elasticsearch: ['base_url', 'api_key'],
+                  // Développement
+                  github: ['base_url', 'token'],
+                  gitlab: ['base_url', 'token'],
+                  notion: ['base_url', 'token'],
+                  jira: ['base_url', 'api_key', 'project_id'],
+                  linear: ['base_url', 'api_key'],
+                  confluence: ['base_url', 'api_key'],
+                  // Communication
                   slack: ['token', 'webhook_url'],
                   discord: ['token', 'webhook_url'],
+                  telegram: ['base_url', 'token'],
+                  email_smtp: ['base_url', 'api_key', 'token'],
+                  teams: ['base_url', 'token'],
+                  whatsapp: ['base_url', 'token'],
+                  // Automatisation
                   n8n: ['base_url', 'api_key'],
-                  redis: ['base_url'],
+                  make: ['base_url', 'api_key'],
+                  zapier: ['base_url', 'api_key'],
+                  activepieces: ['base_url', 'api_key'],
+                  // Monitoring
+                  sentry: ['base_url', 'api_key', 'project_id'],
+                  grafana: ['base_url', 'api_key'],
+                  posthog: ['base_url', 'api_key', 'project_id'],
+                  // IA
+                  huggingface: ['base_url', 'api_key'],
+                  replicate: ['base_url', 'api_key'],
+                  stability: ['base_url', 'api_key'],
+                  serper: ['api_key'],
+                  tavily: ['api_key'],
                 }
                 const fieldDefs: Record<string, { label: string; placeholder: string; type?: string }> = {
                   base_url: { label: 'URL de base', placeholder: 'https://...' },
@@ -1352,6 +1389,8 @@ export default function Settings() {
                   dev: 'Développement',
                   communication: 'Communication',
                   automation: 'Automatisation',
+                  monitoring: 'Monitoring / Analytics',
+                  ai: 'IA / APIs externes',
                 }
                 const catIcons: Record<string, any> = {
                   database: Database,
@@ -1360,6 +1399,8 @@ export default function Settings() {
                   dev: GitBranch,
                   communication: MessageSquare,
                   automation: Zap,
+                  monitoring: Stethoscope,
+                  ai: Zap,
                 }
                 const CatIcon = catIcons[cat] || Server
                 return (

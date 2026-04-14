@@ -185,40 +185,55 @@ class Settings(BaseSettings):
         "grok": VoiceConfig(provider="grok"),
     })
     services: dict[str, ServiceConfig] = Field(default_factory=lambda: {
-        "supabase": ServiceConfig(
-            base_url="https://your-project.supabase.co",
-        ),
-        "postgresql": ServiceConfig(
-            base_url="postgresql://localhost:5432",
-            database="gungnir",
-        ),
-        "s3": ServiceConfig(
-            base_url="https://s3.amazonaws.com",
-            region="eu-west-1",
-        ),
-        "github": ServiceConfig(
-            base_url="https://api.github.com",
-        ),
-        "notion": ServiceConfig(
-            base_url="https://api.notion.com/v1",
-        ),
-        "google_drive": ServiceConfig(
-            base_url="https://www.googleapis.com/drive/v3",
-        ),
-        "pinecone": ServiceConfig(
-            base_url="https://api.pinecone.io",
-        ),
-        "qdrant": ServiceConfig(
-            base_url="http://localhost:6333",
-        ),
+        # Base de données
+        "supabase": ServiceConfig(base_url="https://your-project.supabase.co"),
+        "postgresql": ServiceConfig(base_url="postgresql://localhost:5432", database="gungnir"),
+        "mysql": ServiceConfig(base_url="mysql://localhost:3306"),
+        "mongodb": ServiceConfig(base_url="mongodb://localhost:27017"),
+        "redis": ServiceConfig(base_url="redis://localhost:6379"),
+        "sqlite": ServiceConfig(base_url="sqlite:///data/external.db"),
+        # Stockage
+        "s3": ServiceConfig(base_url="https://s3.amazonaws.com", region="eu-west-1"),
+        "google_drive": ServiceConfig(base_url="https://www.googleapis.com/drive/v3"),
+        "dropbox": ServiceConfig(base_url="https://api.dropboxapi.com/2"),
+        "azure_blob": ServiceConfig(base_url="https://your-account.blob.core.windows.net"),
+        "ftp": ServiceConfig(base_url="sftp://your-server:22"),
+        # RAG / Vectoriel
+        "qdrant": ServiceConfig(base_url="http://localhost:6333"),
+        "pinecone": ServiceConfig(base_url="https://api.pinecone.io"),
+        "weaviate": ServiceConfig(base_url="http://localhost:8080"),
+        "chromadb": ServiceConfig(base_url="http://localhost:8000"),
+        "milvus": ServiceConfig(base_url="http://localhost:19530"),
+        "elasticsearch": ServiceConfig(base_url="http://localhost:9200"),
+        # Développement
+        "github": ServiceConfig(base_url="https://api.github.com"),
+        "gitlab": ServiceConfig(base_url="https://gitlab.com/api/v4"),
+        "notion": ServiceConfig(base_url="https://api.notion.com/v1"),
+        "jira": ServiceConfig(base_url="https://your-domain.atlassian.net"),
+        "linear": ServiceConfig(base_url="https://api.linear.app"),
+        "confluence": ServiceConfig(base_url="https://your-domain.atlassian.net/wiki"),
+        # Communication
         "slack": ServiceConfig(),
         "discord": ServiceConfig(),
-        "n8n": ServiceConfig(
-            base_url="http://localhost:5678",
-        ),
-        "redis": ServiceConfig(
-            base_url="redis://localhost:6379",
-        ),
+        "telegram": ServiceConfig(base_url="https://api.telegram.org"),
+        "email_smtp": ServiceConfig(base_url="smtp://smtp.gmail.com:587"),
+        "teams": ServiceConfig(base_url="https://graph.microsoft.com/v1.0"),
+        "whatsapp": ServiceConfig(base_url="https://graph.facebook.com/v18.0"),
+        # Automatisation
+        "n8n": ServiceConfig(base_url="http://localhost:5678"),
+        "make": ServiceConfig(base_url="https://hook.eu1.make.com"),
+        "zapier": ServiceConfig(base_url="https://hooks.zapier.com"),
+        "activepieces": ServiceConfig(base_url="http://localhost:8080"),
+        # Monitoring
+        "sentry": ServiceConfig(base_url="https://sentry.io/api/0"),
+        "grafana": ServiceConfig(base_url="http://localhost:3000"),
+        "posthog": ServiceConfig(base_url="https://app.posthog.com"),
+        # IA / APIs externes
+        "huggingface": ServiceConfig(base_url="https://api-inference.huggingface.co"),
+        "replicate": ServiceConfig(base_url="https://api.replicate.com/v1"),
+        "stability": ServiceConfig(base_url="https://api.stability.ai/v2beta"),
+        "serper": ServiceConfig(base_url="https://google.serper.dev"),
+        "tavily": ServiceConfig(base_url="https://api.tavily.com"),
     })
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
 

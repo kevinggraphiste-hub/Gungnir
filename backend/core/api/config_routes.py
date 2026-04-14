@@ -167,27 +167,66 @@ async def delete_provider(provider_name: str, request: Request, session: AsyncSe
 # ── Service Providers ─────────────────────────────────────────────────────────
 
 SERVICE_LABELS = {
+    # Base de données
     "supabase": "Supabase",
     "postgresql": "PostgreSQL",
+    "mysql": "MySQL / MariaDB",
+    "mongodb": "MongoDB",
+    "redis": "Redis",
+    "sqlite": "SQLite (externe)",
+    # Stockage
     "s3": "S3 / MinIO",
-    "github": "GitHub",
-    "notion": "Notion",
     "google_drive": "Google Drive",
+    "dropbox": "Dropbox",
+    "azure_blob": "Azure Blob Storage",
+    "ftp": "FTP / SFTP",
+    # RAG / Vectoriel
     "pinecone": "Pinecone",
     "qdrant": "Qdrant",
+    "weaviate": "Weaviate",
+    "chromadb": "ChromaDB",
+    "milvus": "Milvus",
+    "elasticsearch": "Elasticsearch",
+    # Développement
+    "github": "GitHub",
+    "gitlab": "GitLab",
+    "notion": "Notion",
+    "jira": "Jira",
+    "linear": "Linear",
+    "confluence": "Confluence",
+    # Communication
     "slack": "Slack",
     "discord": "Discord",
+    "telegram": "Telegram Bot API",
+    "email_smtp": "Email (SMTP)",
+    "teams": "Microsoft Teams",
+    "whatsapp": "WhatsApp Business",
+    # Automatisation
     "n8n": "n8n",
-    "redis": "Redis",
+    "make": "Make (Integromat)",
+    "zapier": "Zapier",
+    "activepieces": "Activepieces",
+    # Monitoring / Analytics
+    "sentry": "Sentry",
+    "grafana": "Grafana",
+    "posthog": "PostHog",
+    # IA / APIs externes
+    "huggingface": "Hugging Face",
+    "replicate": "Replicate",
+    "stability": "Stability AI",
+    "serper": "Serper (Google Search)",
+    "tavily": "Tavily (Web Search)",
 }
 
 SERVICE_CATEGORIES = {
-    "database": ["supabase", "postgresql", "redis"],
-    "storage": ["s3", "google_drive"],
-    "rag": ["supabase", "pinecone", "qdrant"],
-    "dev": ["github", "notion"],
-    "communication": ["slack", "discord"],
-    "automation": ["n8n"],
+    "database": ["supabase", "postgresql", "mysql", "mongodb", "redis", "sqlite"],
+    "storage": ["s3", "google_drive", "dropbox", "azure_blob", "ftp"],
+    "rag": ["qdrant", "pinecone", "weaviate", "chromadb", "milvus", "elasticsearch"],
+    "dev": ["github", "gitlab", "notion", "jira", "linear", "confluence"],
+    "communication": ["slack", "discord", "telegram", "email_smtp", "teams", "whatsapp"],
+    "automation": ["n8n", "make", "zapier", "activepieces"],
+    "monitoring": ["sentry", "grafana", "posthog"],
+    "ai": ["huggingface", "replicate", "stability", "serper", "tavily"],
 }
 
 
