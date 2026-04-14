@@ -1,0 +1,24 @@
+# Auto-detect text files and normalize to LF on commit
+* text=auto eol=lf
+
+# Force LF for shell scripts (must work in Linux containers)
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Keep Windows line endings for batch files
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files — never touch
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.db binary
+*.sqlite binary

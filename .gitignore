@@ -13,6 +13,13 @@ frontend/dist/
 data/*.db
 data/*.sqlite
 data/workspace/
+data/consciousness/
+data/agents.json
+data/skills.json
+data/voice_sessions.json
+data/agent_mode.json
+data/backup_config.json
+data/channel_logs.json
 
 # Environment
 .env
@@ -41,3 +48,6 @@ data/gungnir.db-journal
 data/backups/*.zip
 data/heartbeat.json
 backups/
+
+# Tester-only docs (not versioned)
+docs/
