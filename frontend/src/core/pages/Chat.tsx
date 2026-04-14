@@ -165,6 +165,7 @@ export default function Chat() {
     config, agentName,
     messages, currentConversation, setCurrentConversation,
     conversations, setConversations, isLoading, setLoading,
+    loadingConvoId, setLoadingConvoId,
     selectedProvider, setSelectedProvider, selectedModel, setSelectedModel,
     setMessages, addMessage,
     activePersonality, setActivePersonality
@@ -585,6 +586,7 @@ export default function Chat() {
     setInput('')
     setAttachedFiles([])
     setLoading(true)
+    setLoadingConvoId(convoId)
     // Afficher le message user avec miniatures des images jointes
     const displayContent = currentImages.length > 0
       ? userMessage + currentImages.map(() => '\n[Image jointe]').join('')
@@ -595,15 +597,24 @@ export default function Chat() {
         message: fullMessage, provider: selectedProvider, model: selectedModel,
         ...(currentImages.length > 0 ? { images: currentImages } : {}),
       })
+      // Read the live current conversation — the user may have switched
+      // chats while we were awaiting. If so, the response is already saved
+      // server-side and we must NOT append it to the local messages array
+      // (which now belongs to a different conversation).
+      const stillOnSameConvo = useStore.getState().currentConversation === convoId
       if (response.error) {
-        addMessage({ id: Date.now() + 1, role: 'assistant', content: `[Erreur: ${response.error}]`, created_at: new Date().toISOString() })
+        if (stillOnSameConvo) {
+          addMessage({ id: Date.now() + 1, role: 'assistant', content: `[Erreur: ${response.error}]`, created_at: new Date().toISOString() })
+        }
       } else {
-        addMessage({
-          id: Date.now() + 1, role: 'assistant', content: response.content,
-          created_at: new Date().toISOString(),
-          model: response.model, provider: response.provider,
-          tokens_input: response.tokens_input, tokens_output: response.tokens_output,
-        })
+        if (stillOnSameConvo) {
+          addMessage({
+            id: Date.now() + 1, role: 'assistant', content: response.content,
+            created_at: new Date().toISOString(),
+            model: response.model, provider: response.provider,
+            tokens_input: response.tokens_input, tokens_output: response.tokens_output,
+          })
+        }
         // If agent switched provider/model, update the frontend selection
         if (response.switch_provider) {
           const sw = response.switch_provider
@@ -612,12 +623,17 @@ export default function Chat() {
         }
       }
       // Générer le titre après le 2e message user (pas le 1er — trop tôt pour identifier le sujet)
-      const userMsgCount = messages.filter(m => m.role === 'user').length + 1 // +1 pour celui qu'on vient d'envoyer
-      if (userMsgCount === 2 && !hasGeneratedTitle.has(convoId!)) {
-        generateTitleForConversation(convoId!, userMessage)
+      // Only if we're still on the convo that just sent — otherwise `messages`
+      // refers to a different conversation and the count is meaningless.
+      if (stillOnSameConvo) {
+        const userMsgCount = messages.filter(m => m.role === 'user').length + 1 // +1 pour celui qu'on vient d'envoyer
+        if (userMsgCount === 2 && !hasGeneratedTitle.has(convoId!)) {
+          generateTitleForConversation(convoId!, userMessage)
+        }
       }
     } catch (err) { console.error('Chat error:', err) }
     setLoading(false)
+    setLoadingConvoId(null)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1009,7 +1025,7 @@ export default function Chat() {
             </div>
           ))}
 
-          {isLoading && (
+          {loadingConvoId === currentConversation && (
             <div className="flex gap-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
                 style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 10%, var(--bg-primary)), color-mix(in srgb, var(--scarlet) 15%, var(--bg-primary)))', border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)' }}>

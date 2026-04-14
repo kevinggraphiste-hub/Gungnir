@@ -65,6 +65,11 @@ interface AppState {
   // Loading
   isLoading: boolean
   setLoading: (loading: boolean) => void
+  // ID of the conversation currently awaiting a response (null if none).
+  // Used so the thinking animation only shows in the chat that actually has
+  // a request in flight, not every chat the user switches to.
+  loadingConvoId: number | null
+  setLoadingConvoId: (id: number | null) => void
 
   // Auth
   onLogout: (() => void) | null
@@ -124,6 +129,8 @@ export const useStore = create<AppState>((set) => ({
 
   isLoading: false,
   setLoading: (loading) => set({ isLoading: loading }),
+  loadingConvoId: null,
+  setLoadingConvoId: (id) => set({ loadingConvoId: id }),
 
   onLogout: null,
   setOnLogout: (fn) => set({ onLogout: fn }),
