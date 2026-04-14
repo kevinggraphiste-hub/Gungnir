@@ -258,17 +258,48 @@ class ConsciousnessEngine:
             try:
                 from backend.core.config.settings import Settings, decrypt_value
                 settings = Settings.load()
-                qdrant_svc = settings.services.get("qdrant")
-                if qdrant_svc and qdrant_svc.base_url:
-                    vm_config["vector_provider"] = "qdrant"
-                    vm_config["qdrant_url"] = qdrant_svc.base_url
-                    vm_config["qdrant_api_key"] = decrypt_value(qdrant_svc.api_key) if qdrant_svc.api_key else ""
-                    # Also grab embedding config from google provider if available
+                qdrant_url = ""
+                qdrant_key = ""
+                embedding_key = ""
+
+                # 1. Try per-user service keys first
+                if self.user_id:
+                    try:
+                        from backend.core.db.engine import engine
+                        from backend.core.api.auth_helpers import get_user_settings, get_user_service_key, get_user_provider_key
+                        from sqlalchemy.ext.asyncio import AsyncSession
+                        async with AsyncSession(engine) as session:
+                            us = await get_user_settings(self.user_id, session)
+                            user_qdrant = get_user_service_key(us, "qdrant")
+                            if user_qdrant and user_qdrant.get("base_url"):
+                                qdrant_url = user_qdrant["base_url"]
+                                qdrant_key = user_qdrant.get("api_key", "")
+                            # Per-user Google key for embeddings
+                            user_google = get_user_provider_key(us, "google")
+                            if user_google and user_google.get("api_key"):
+                                embedding_key = user_google["api_key"]
+                    except Exception:
+                        pass
+
+                # 2. Fallback to global config
+                if not qdrant_url:
+                    qdrant_svc = settings.services.get("qdrant")
+                    if qdrant_svc and qdrant_svc.base_url:
+                        qdrant_url = qdrant_svc.base_url
+                        qdrant_key = decrypt_value(qdrant_svc.api_key) if qdrant_svc.api_key else ""
+                if not embedding_key:
                     google_prov = settings.providers.get("google")
                     if google_prov and google_prov.api_key:
+                        embedding_key = decrypt_value(google_prov.api_key) if google_prov.api_key.startswith("enc:") else google_prov.api_key
+
+                if qdrant_url:
+                    vm_config["vector_provider"] = "qdrant"
+                    vm_config["qdrant_url"] = qdrant_url
+                    vm_config["qdrant_api_key"] = qdrant_key
+                    if embedding_key:
                         vm_config["embedding_provider"] = "google"
-                        vm_config["embedding_api_key"] = decrypt_value(google_prov.api_key) if google_prov.api_key.startswith("enc:") else google_prov.api_key
-                    logger.info(f"Auto-detected Qdrant from services: {qdrant_svc.base_url}")
+                        vm_config["embedding_api_key"] = embedding_key
+                    logger.info(f"Auto-detected Qdrant for user {self.user_id}: {qdrant_url}")
             except Exception as e:
                 logger.debug(f"Auto-detect Qdrant failed: {e}")
 

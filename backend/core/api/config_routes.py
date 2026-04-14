@@ -454,6 +454,17 @@ async def save_user_service(service_name: str, request: Request, session: AsyncS
     user_settings.service_keys = service_keys
     flag_modified(user_settings, "service_keys")
     await session.commit()
+
+    # Auto-init consciousness vector memory when Qdrant is configured
+    if service_name == "qdrant" and existing.get("base_url"):
+        try:
+            from backend.plugins.consciousness.engine import consciousness_manager
+            c = consciousness_manager.get(user_id)
+            if c.enabled and not c.vector_memory:
+                await c.init_vector_memory()
+        except Exception:
+            pass  # Non-blocking
+
     return {"status": "saved", "service": service_name}
 
 
