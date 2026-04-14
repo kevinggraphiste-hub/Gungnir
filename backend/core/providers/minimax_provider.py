@@ -71,4 +71,10 @@ class MiniMaxProvider(LLMProvider):
                         continue
 
     async def list_models(self) -> list[str]:
-        return ["minimax-m2.7", "minimax-m2.5", "minimax-m2.1", "abab6.5s-chat", "abab5.5s-chat"]
+        try:
+            resp = await self.client.get("/models")
+            resp.raise_for_status()
+            data = resp.json()
+            return [m["id"] for m in data.get("data", [])]
+        except Exception:
+            return ["minimax-m2.7", "minimax-m2.5", "minimax-m2.1", "abab6.5s-chat", "abab5.5s-chat"]
