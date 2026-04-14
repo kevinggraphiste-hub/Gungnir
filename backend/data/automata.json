@@ -1,0 +1,20 @@
+{
+  "tasks": [
+    {
+      "name": "Résumé quotidien",
+      "description": "Synthèse de la journée : activité, interactions, tâches en cours",
+      "prompt": "Fais-moi un résumé concis de ma journée : ce que j'ai accompli, les sujets qu'on a abordés, les tâches en suspens et ce que tu me proposes pour demain.",
+      "task_type": "cron",
+      "cron_expression": "0 21 * * *",
+      "enabled": false
+    },
+    {
+      "name": "Check notifications",
+      "description": "Vérification périodique des notifications et alertes importantes",
+      "prompt": "Y a-t-il des notifications, alertes ou événements importants à me signaler depuis le dernier check ? Si rien de notable, réponds simplement 'RAS'.",
+      "task_type": "interval",
+      "interval_seconds": 3600,
+      "enabled": false
+    }
+  ]
+}

@@ -84,6 +84,17 @@ async def create_user(request: Request, session: AsyncSession = Depends(get_sess
     session.add(user)
     await session.commit()
     await session.refresh(user)
+
+    # Seed default skills, personalities, agents, automata, consciousness.
+    # Each user gets their own copy of the basics at signup.
+    try:
+        from backend.core.services.user_bootstrap import seed_user_defaults
+        await seed_user_defaults(session, user.id)
+        await session.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger("gungnir.users").error(f"Bootstrap failed for user {user.id}: {e}")
+
     return {
         "id": user.id,
         "username": user.username,
