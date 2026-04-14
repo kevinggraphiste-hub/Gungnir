@@ -378,7 +378,10 @@ async def save_user_provider(provider_name: str, request: Request, session: Asyn
         existing["base_url"] = body["base_url"]
 
     provider_keys[provider_name] = existing
+    # Force SQLAlchemy to detect JSON change (PostgreSQL needs this)
+    from sqlalchemy.orm.attributes import flag_modified
     user_settings.provider_keys = provider_keys
+    flag_modified(user_settings, "provider_keys")
     await session.commit()
     return {"status": "saved", "provider": provider_name}
 
@@ -447,7 +450,9 @@ async def save_user_service(service_name: str, request: Request, session: AsyncS
         existing["enabled"] = body["enabled"]
 
     service_keys[service_name] = existing
+    from sqlalchemy.orm.attributes import flag_modified
     user_settings.service_keys = service_keys
+    flag_modified(user_settings, "service_keys")
     await session.commit()
     return {"status": "saved", "service": service_name}
 
