@@ -222,7 +222,9 @@ PUBLIC_PATHS = {
     "/api/health", "/api/doctor", "/api/users/login", "/api/users/me", "/api/plugins/status",
 }
 PUBLIC_PREFIXES = (
-    "/api/webhook/",      # Incoming webhooks (Slack, Discord, WhatsApp) have their own auth
+    "/api/webhook/",                        # Incoming webhooks have their own auth
+    "/api/plugins/channels/webhook/",       # Channel webhooks (Telegram, Discord, Slack, WhatsApp)
+    "/api/plugins/channels/incoming/",      # Channel incoming messages (API channels with own auth)
     "/assets/", "/static/", "/favicon",
 )
 
