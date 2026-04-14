@@ -225,6 +225,14 @@ export default function Chat() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // When we create a conversation locally (handleSend / handleNewChat /
+  // handleNewChatWithSummary), we already know its messages state — either
+  // empty or the optimistic user message we just added. Without this ref,
+  // the useEffect on currentConversation would race and wipe that state by
+  // calling loadMessages() before the backend has persisted the user msg.
+  // Carry the expected ID so a no-op setCurrentConversation can't leave a
+  // stale skip flag that would drop a later real navigation.
+  const skipLoadForRef = useRef<number | null>(null)
 
   // Chat sidebar collapse (Ctrl+B via custom event)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
@@ -460,7 +468,14 @@ export default function Chat() {
   }, [])
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
-  useEffect(() => { if (currentConversation) loadMessages() }, [currentConversation])
+  useEffect(() => {
+    if (!currentConversation) return
+    if (skipLoadForRef.current === currentConversation) {
+      skipLoadForRef.current = null
+      return
+    }
+    loadMessages()
+  }, [currentConversation])
   useEffect(() => {
     const totalMsgs = messages.length
     const totalTokens = messages.reduce((acc, m) => acc + (m.content.length / 4), 0)
@@ -490,6 +505,7 @@ export default function Chat() {
         folder_id: targetFolder,
       }
       setConversations([fullConvo, ...conversations])
+      skipLoadForRef.current = fullConvo.id
       setCurrentConversation(fullConvo.id)
       setMessages([])
     } catch (err) { console.error('New chat error:', err) }
@@ -511,6 +527,7 @@ export default function Chat() {
         folder_id: targetFolder,
       }
       setConversations([fullConvo, ...conversations])
+      skipLoadForRef.current = fullConvo.id
       setCurrentConversation(fullConvo.id)
       setMessages([])
       setInput(`Voici le résumé de notre conversation précédente pour contexte :\n\n${summary}\n\nOn peut continuer à partir de là.`)
@@ -538,6 +555,7 @@ export default function Chat() {
           folder_id: targetFolder,
         }
         setConversations([fullConvo, ...conversations])
+        skipLoadForRef.current = fullConvo.id
         setCurrentConversation(fullConvo.id)
         convoId = fullConvo.id
       } catch (err) {
