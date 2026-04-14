@@ -65,8 +65,12 @@ COPY CLAUDE.md ./CLAUDE.md
 RUN mkdir -p data/backups data/workspace data/consciousness \
     && chown -R gungnir:gungnir /app
 
-# Switch to non-root user
-USER gungnir
+# Install gosu for dropping privileges in entrypoint
+RUN apt-get update && apt-get install -y --no-install-recommends gosu && rm -rf /var/lib/apt/lists/*
+
+# Copy entrypoint script
+COPY deploy/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Expose backend port
 EXPOSE 8000
@@ -75,8 +79,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-# Start uvicorn
-CMD ["python", "-m", "uvicorn", "backend.core.main:app", \
-     "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "1", "--loop", "uvloop", \
-     "--limit-concurrency", "50"]
+# Run as root initially — entrypoint fixes permissions then drops to gungnir
+ENTRYPOINT ["/entrypoint.sh"]
