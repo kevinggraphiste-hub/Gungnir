@@ -201,28 +201,40 @@ class GoogleProvider(LLMProvider):
         if USE_NEW_SDK:
             try:
                 models = []
-                async for m in self.client.aio.models.list():
-                    # Include models that support generateContent
-                    methods = getattr(m, 'supported_actions', None) or getattr(m, 'supported_generation_methods', [])
-                    # New SDK: model.name is already clean (e.g. "models/gemini-2.5-flash")
+                # New SDK: list() returns a pager, iterate with async for
+                pager = await self.client.aio.models.list(config={"page_size": 100})
+                for m in pager.models:
                     name = m.name if hasattr(m, 'name') else str(m)
                     name = name.replace("models/", "")
                     models.append(name)
+                # Fetch remaining pages
+                while pager.next_page_token:
+                    pager = await self.client.aio.models.list(
+                        config={"page_size": 100, "page_token": pager.next_page_token}
+                    )
+                    for m in pager.models:
+                        name = m.name if hasattr(m, 'name') else str(m)
+                        name = name.replace("models/", "")
+                        models.append(name)
                 return models
-            except Exception:
-                # Fallback to sync if async listing fails
+            except Exception as e:
+                import logging
+                logging.getLogger("gungnir").warning(f"Google new SDK list_models failed: {e}")
+                # Fallback to sync
                 try:
                     models = []
-                    for m in self.client.models.list():
+                    result = self.client.models.list(config={"page_size": 100})
+                    for m in result.models:
                         name = m.name if hasattr(m, 'name') else str(m)
                         name = name.replace("models/", "")
                         models.append(name)
                     return models
-                except Exception:
-                    pass
+                except Exception as e2:
+                    logging.getLogger("gungnir").warning(f"Google sync list_models failed: {e2}")
         # Legacy SDK fallback
         try:
             import google.generativeai as genai
+            genai.configure(api_key=self.api_key)
             models = []
             for m in genai.list_models():
                 if "generateContent" in m.supported_generation_methods:
