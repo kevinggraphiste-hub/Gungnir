@@ -4,6 +4,7 @@ Gungnir — Plugin Loader
 Auto-discovers plugins from backend/plugins/, reads their manifest.json,
 and mounts their FastAPI routes dynamically.
 """
+import inspect
 import json
 import importlib
 import logging
@@ -87,8 +88,13 @@ def mount_plugin_routes(app: FastAPI, manifest: PluginManifest) -> bool:
         return False
 
 
-def call_plugin_lifecycle(manifest: PluginManifest, hook: str, **kwargs) -> Optional[any]:
-    """Call a lifecycle hook on a plugin if it exists (on_startup, on_shutdown)."""
+async def call_plugin_lifecycle(manifest: PluginManifest, hook: str, **kwargs) -> Optional[any]:
+    """Call a lifecycle hook on a plugin if it exists (on_startup, on_shutdown).
+
+    Supports both sync and async hook functions — coroutines are awaited
+    so that background tasks created inside the hook run under the app's
+    event loop.
+    """
     if not manifest.lifecycle_hooks:
         return None
 
@@ -96,8 +102,12 @@ def call_plugin_lifecycle(manifest: PluginManifest, hook: str, **kwargs) -> Opti
     try:
         module = importlib.import_module(module_name)
         hook_fn = getattr(module, hook, None)
-        if hook_fn:
-            return hook_fn(**kwargs)
+        if hook_fn is None:
+            return None
+        result = hook_fn(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
     except Exception as e:
         logger.error(f"Plugin {manifest.name} lifecycle hook '{hook}' failed: {e}")
     return None
