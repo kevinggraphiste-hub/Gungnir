@@ -91,10 +91,15 @@ async def create_conversation(request: Request, data: dict, session: AsyncSessio
 
 @router.delete("/conversations/{convo_id}")
 async def delete_conversation(convo_id: int, request: Request, session: AsyncSession = Depends(get_session)):
+    from sqlalchemy import delete as sql_delete
     convo = await enforce_conversation_owner(convo_id, request, session)
     if not convo:
         return JSONResponse({"error": "Conversation introuvable ou non autorisé"}, status_code=403)
 
+    # Message FK has no ondelete=CASCADE and async SQLAlchemy won't walk the
+    # delete-orphan relationship cascade without eager-loading messages first.
+    # Clear them manually like delete_all_conversations does.
+    await session.execute(sql_delete(Message).where(Message.conversation_id == convo_id))
     await session.delete(convo)
     await session.commit()
     return {"ok": True}
