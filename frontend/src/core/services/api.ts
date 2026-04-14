@@ -81,7 +81,15 @@ if (typeof window !== 'undefined' && !(window as any).__gungnir_fetch_patched) {
           const existingHeaders = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined))
           if (!existingHeaders.has('Authorization')) {
             existingHeaders.set('Authorization', `Bearer ${token}`)
-            return originalFetch(input, { ...init, headers: existingHeaders })
+            const result = originalFetch(input, { ...init, headers: existingHeaders })
+            // Auto-logout on 401 (expired/invalid token)
+            result.then((resp: Response) => {
+              if (resp.status === 401 && !urlStr.includes('/users/login') && !urlStr.includes('/users/me')) {
+                localStorage.removeItem('gungnir_auth_token')
+                window.location.href = '/'
+              }
+            }).catch(() => {})
+            return result
           }
         }
       }

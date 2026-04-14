@@ -640,7 +640,7 @@ Commence par te presenter et demander le nom.
 
 
 @router.post("/conversations/{convo_id}/chat")
-@limiter.limit("20/minute")
+@limiter.limit("60/minute")
 async def chat(
     convo_id: int,
     request: Request,

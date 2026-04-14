@@ -192,7 +192,16 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
+
+def _rate_limit_key(request):
+    """Use authenticated user_id as rate limit key, fallback to IP."""
+    uid = getattr(getattr(request, "state", None), "user_id", None)
+    if uid:
+        return f"user:{uid}"
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=_rate_limit_key, default_limits=["300/minute"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
