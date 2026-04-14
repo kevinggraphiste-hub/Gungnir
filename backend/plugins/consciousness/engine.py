@@ -509,7 +509,7 @@ class ConsciousnessEngine:
         self._state["stats"]["thoughts_generated"] = self._state["stats"].get("thoughts_generated", 0) + 1
         self._state["last_thought"] = ts
 
-        _save_json(THOUGHT_BUFFER_FILE, self._thought_buffer)
+        _save_json(self._paths["thought_buffer"], self._thought_buffer)
         self.save_state()
 
         # Index in vector memory (async, fire-and-forget)
@@ -529,7 +529,7 @@ class ConsciousnessEngine:
     def clear_thoughts(self):
         self._thought_buffer["entries"] = []
         self._thought_buffer["last_updated"] = _now()
-        _save_json(THOUGHT_BUFFER_FILE, self._thought_buffer)
+        _save_json(self._paths["thought_buffer"], self._thought_buffer)
 
     # ── Working Memory ──────────────────────────────────────────────────
 
@@ -551,7 +551,7 @@ class ConsciousnessEngine:
         if len(self._working_memory["items"]) > max_items:
             self._working_memory["items"] = self._working_memory["items"][-max_items:]
 
-        _save_json(WORKING_MEMORY_FILE, self._working_memory)
+        _save_json(self._paths["working_memory"], self._working_memory)
 
         # Index in vector memory
         vm_config = self._config.get("vector_memory", {})
@@ -581,7 +581,7 @@ class ConsciousnessEngine:
 
     def clear_working_memory(self):
         self._working_memory["items"] = []
-        _save_json(WORKING_MEMORY_FILE, self._working_memory)
+        _save_json(self._paths["working_memory"], self._working_memory)
 
     # ── Reward System ───────────────────────────────────────────────────
 
@@ -605,7 +605,7 @@ class ConsciousnessEngine:
         stats["interactions_scored"] = stats.get("interactions_scored", 0) + 1
         stats["total_reward_score"] = round(stats.get("total_reward_score", 0) + composite, 3)
 
-        _save_json(SCORE_LOG_FILE, self._score_log)
+        _save_json(self._paths["score_log"], self._score_log)
         self.save_state()
 
         # Index interaction in vector memory
@@ -677,7 +677,7 @@ class ConsciousnessEngine:
         self._state["stats"]["challenger_flags"] = self._state["stats"].get("challenger_flags", 0) + 1
         self._state["last_challenger"] = _now()
 
-        _save_json(CHALLENGER_LOG_FILE, self._challenger_log)
+        _save_json(self._paths["challenger_log"], self._challenger_log)
         self.save_state()
 
     def get_recent_findings(self, limit: int = 20) -> list:
@@ -705,7 +705,7 @@ class ConsciousnessEngine:
         self._simulation_buffer["generated_at"] = _now()
         self._state["last_simulation"] = _now()
 
-        _save_json(SIMULATION_FILE, self._simulation_buffer)
+        _save_json(self._paths["simulation"], self._simulation_buffer)
         self.save_state()
 
     def get_active_simulations(self, limit: int = 5) -> list:
@@ -718,7 +718,7 @@ class ConsciousnessEngine:
                 sim["materialized"] = True
                 sim["materialized_at"] = _now()
                 break
-        _save_json(SIMULATION_FILE, self._simulation_buffer)
+        _save_json(self._paths["simulation"], self._simulation_buffer)
 
     # ── System Prompt Injection ─────────────────────────────────────────
 
