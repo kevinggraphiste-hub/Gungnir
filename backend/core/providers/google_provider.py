@@ -1,6 +1,19 @@
+"""
+Gungnir — Google Generative AI Provider
+Uses the new google-genai SDK (recommended by Google, GA since 2025).
+Fallback to legacy google-generativeai if needed.
+"""
 from typing import AsyncGenerator, Optional
-import google.generativeai as genai
 from .base import LLMProvider, ChatMessage, ChatResponse
+
+# Try new SDK first, fallback to legacy
+try:
+    from google import genai as google_genai
+    from google.genai import types
+    USE_NEW_SDK = True
+except ImportError:
+    import google.generativeai as genai_legacy
+    USE_NEW_SDK = False
 
 
 class GoogleProvider(LLMProvider):
@@ -10,7 +23,10 @@ class GoogleProvider(LLMProvider):
 
     def __init__(self, api_key: str, base_url: Optional[str] = None, **kwargs):
         super().__init__(api_key, base_url, **kwargs)
-        genai.configure(api_key=api_key)
+        if USE_NEW_SDK:
+            self.client = google_genai.Client(api_key=api_key)
+        else:
+            genai_legacy.configure(api_key=api_key)
 
     async def chat(
         self,
@@ -18,6 +34,53 @@ class GoogleProvider(LLMProvider):
         model: str,
         **kwargs
     ) -> ChatResponse:
+        if USE_NEW_SDK:
+            return await self._chat_new(messages, model, **kwargs)
+        return await self._chat_legacy(messages, model, **kwargs)
+
+    async def _chat_new(self, messages, model, **kwargs):
+        contents = []
+        system_prompt = None
+
+        for m in messages:
+            if m.role == "system":
+                system_prompt = m.content
+            elif m.role == "user":
+                parts = []
+                if m.content:
+                    parts.append(types.Part.from_text(text=m.content))
+                if m.images:
+                    import base64
+                    for img in m.images:
+                        if img.startswith("data:"):
+                            header, b64_data = img.split(",", 1)
+                            mime = header.split(":")[1].split(";")[0]
+                            parts.append(types.Part.from_bytes(data=base64.b64decode(b64_data), mime_type=mime))
+                contents.append(types.Content(role="user", parts=parts))
+            elif m.role == "assistant":
+                contents.append(types.Content(role="model", parts=[types.Part.from_text(text=m.content)]))
+
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt if system_prompt else None,
+            max_output_tokens=kwargs.get("max_tokens", 8192),
+            temperature=kwargs.get("temperature", 0.7),
+        )
+
+        resp = await self.client.aio.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config,
+        )
+
+        return ChatResponse(
+            content=resp.text or "",
+            model=model,
+            tokens_input=resp.usage_metadata.prompt_token_count if resp.usage_metadata else 0,
+            tokens_output=resp.usage_metadata.candidates_token_count if resp.usage_metadata else 0,
+        )
+
+    async def _chat_legacy(self, messages, model, **kwargs):
+        import google.generativeai as genai
         model_instance = genai.GenerativeModel(model)
         chat_history = []
         system_prompt = None
@@ -58,6 +121,51 @@ class GoogleProvider(LLMProvider):
         model: str,
         **kwargs
     ) -> AsyncGenerator[str, None]:
+        if USE_NEW_SDK:
+            async for chunk in self._stream_new(messages, model, **kwargs):
+                yield chunk
+        else:
+            async for chunk in self._stream_legacy(messages, model, **kwargs):
+                yield chunk
+
+    async def _stream_new(self, messages, model, **kwargs):
+        contents = []
+        system_prompt = None
+
+        for m in messages:
+            if m.role == "system":
+                system_prompt = m.content
+            elif m.role == "user":
+                parts = []
+                if m.content:
+                    parts.append(types.Part.from_text(text=m.content))
+                if m.images:
+                    import base64
+                    for img in m.images:
+                        if img.startswith("data:"):
+                            header, b64_data = img.split(",", 1)
+                            mime = header.split(":")[1].split(";")[0]
+                            parts.append(types.Part.from_bytes(data=base64.b64decode(b64_data), mime_type=mime))
+                contents.append(types.Content(role="user", parts=parts))
+            elif m.role == "assistant":
+                contents.append(types.Content(role="model", parts=[types.Part.from_text(text=m.content)]))
+
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt if system_prompt else None,
+            max_output_tokens=kwargs.get("max_tokens", 8192),
+            temperature=kwargs.get("temperature", 0.7),
+        )
+
+        async for chunk in self.client.aio.models.generate_content_stream(
+            model=model,
+            contents=contents,
+            config=config,
+        ):
+            if chunk.text:
+                yield chunk.text
+
+    async def _stream_legacy(self, messages, model, **kwargs):
+        import google.generativeai as genai
         model_instance = genai.GenerativeModel(model)
         chat_history = []
         system_prompt = None
@@ -90,8 +198,35 @@ class GoogleProvider(LLMProvider):
                 yield chunk.text
 
     async def list_models(self) -> list[str]:
-        models = []
-        for m in genai.list_models():
-            if "generateContent" in m.supported_generation_methods:
-                models.append(m.name.replace("models/", ""))
-        return models
+        if USE_NEW_SDK:
+            try:
+                models = []
+                async for m in self.client.aio.models.list():
+                    # Include models that support generateContent
+                    methods = getattr(m, 'supported_actions', None) or getattr(m, 'supported_generation_methods', [])
+                    # New SDK: model.name is already clean (e.g. "models/gemini-2.5-flash")
+                    name = m.name if hasattr(m, 'name') else str(m)
+                    name = name.replace("models/", "")
+                    models.append(name)
+                return models
+            except Exception:
+                # Fallback to sync if async listing fails
+                try:
+                    models = []
+                    for m in self.client.models.list():
+                        name = m.name if hasattr(m, 'name') else str(m)
+                        name = name.replace("models/", "")
+                        models.append(name)
+                    return models
+                except Exception:
+                    pass
+        # Legacy SDK fallback
+        try:
+            import google.generativeai as genai
+            models = []
+            for m in genai.list_models():
+                if "generateContent" in m.supported_generation_methods:
+                    models.append(m.name.replace("models/", ""))
+            return models
+        except Exception:
+            return []
