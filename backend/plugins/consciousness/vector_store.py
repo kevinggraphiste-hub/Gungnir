@@ -405,10 +405,18 @@ COLLECTION_MEMORIES = "consciousness_memories"
 COLLECTION_INTERACTIONS = "consciousness_interactions"
 
 
+def _user_collection(base: str, user_id: int | None) -> str:
+    """Namespace collection by user_id to isolate per-user data."""
+    if user_id and user_id != 0:
+        return f"{base}_u{user_id}"
+    return base
+
+
 class ConsciousnessVectorMemory:
     """
     High-level vector memory for consciousness.
     Wraps vector store + embedding generator into semantic operations.
+    Each user gets their own Qdrant collections (namespaced by user_id).
     """
 
     def __init__(self, config: dict):
@@ -416,6 +424,7 @@ class ConsciousnessVectorMemory:
         self._store: VectorStoreBase | None = None
         self._embedder: EmbeddingGenerator | None = None
         self._ready = False
+        self._user_id = config.get("_user_id", 0)
 
     @property
     def enabled(self) -> bool:
@@ -442,9 +451,10 @@ class ConsciousnessVectorMemory:
                 logger.warning("Vector store connection failed")
                 return False
 
-            # Create collections
+            # Create per-user collections
             dim = self._embedder.dimension
-            for col in [COLLECTION_THOUGHTS, COLLECTION_MEMORIES, COLLECTION_INTERACTIONS]:
+            for base_col in [COLLECTION_THOUGHTS, COLLECTION_MEMORIES, COLLECTION_INTERACTIONS]:
+                col = _user_collection(base_col, self._user_id)
                 await self._store.ensure_collection(col, dim)
 
             self._ready = True
@@ -465,7 +475,7 @@ class ConsciousnessVectorMemory:
         try:
             embedding = await self._embedder.embed_single(content)
             await self._store.upsert(
-                collection=COLLECTION_THOUGHTS,
+                collection=_user_collection(COLLECTION_THOUGHTS, self._user_id),
                 doc_id=thought_id,
                 embedding=embedding,
                 metadata={
@@ -489,7 +499,7 @@ class ConsciousnessVectorMemory:
         try:
             embedding = await self._embedder.embed_single(content)
             await self._store.upsert(
-                collection=COLLECTION_MEMORIES,
+                collection=_user_collection(COLLECTION_MEMORIES, self._user_id),
                 doc_id=memory_id,
                 embedding=embedding,
                 metadata={
@@ -512,7 +522,7 @@ class ConsciousnessVectorMemory:
         try:
             embedding = await self._embedder.embed_single(content)
             await self._store.upsert(
-                collection=COLLECTION_INTERACTIONS,
+                collection=_user_collection(COLLECTION_INTERACTIONS, self._user_id),
                 doc_id=interaction_id,
                 embedding=embedding,
                 metadata={
@@ -534,9 +544,14 @@ class ConsciousnessVectorMemory:
             return []
         try:
             embedding = await self._embedder.embed_single(query)
-            collections = [collection] if collection else [
-                COLLECTION_THOUGHTS, COLLECTION_MEMORIES, COLLECTION_INTERACTIONS
-            ]
+            if collection:
+                collections = [_user_collection(collection, self._user_id)]
+            else:
+                collections = [
+                    _user_collection(COLLECTION_THOUGHTS, self._user_id),
+                    _user_collection(COLLECTION_MEMORIES, self._user_id),
+                    _user_collection(COLLECTION_INTERACTIONS, self._user_id),
+                ]
             all_results = []
             for col in collections:
                 results = await self._store.search(col, embedding, top_k, filter_meta)
@@ -561,8 +576,9 @@ class ConsciousnessVectorMemory:
         try:
             store_info = await self._store.info()
             counts = {}
-            for col in [COLLECTION_THOUGHTS, COLLECTION_MEMORIES, COLLECTION_INTERACTIONS]:
-                counts[col] = await self._store.count(col)
+            for base_col in [COLLECTION_THOUGHTS, COLLECTION_MEMORIES, COLLECTION_INTERACTIONS]:
+                col = _user_collection(base_col, self._user_id)
+                counts[base_col] = await self._store.count(col)
             return {
                 "enabled": True,
                 "ready": True,
