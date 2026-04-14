@@ -107,6 +107,12 @@ async def toggle_consciousness(req: ToggleRequest, request: Request):
     """Active/désactive la conscience."""
     c = _get_consciousness(request)
     c.set_enabled(req.enabled)
+    # Auto-initialize vector memory when enabling (if Qdrant is configured in services)
+    if req.enabled and not c.vector_memory:
+        try:
+            await c.init_vector_memory()
+        except Exception:
+            pass  # Non-blocking: conscience works without vector memory
     return {"enabled": c.enabled, "message": f"Conscience {'activée' if req.enabled else 'désactivée'}"}
 
 @router.post("/level")

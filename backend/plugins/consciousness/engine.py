@@ -248,9 +248,30 @@ class ConsciousnessEngine:
         return self._vector_memory
 
     async def init_vector_memory(self) -> bool:
-        """Initialize vector memory from config. Call after startup or config change."""
+        """Initialize vector memory from config. Call after startup or config change.
+        Auto-detects Qdrant from global/user service config if not explicitly set."""
         from .vector_store import ConsciousnessVectorMemory
         vm_config = dict(self._config.get("vector_memory", {}))
+
+        # Auto-detect: if vector_provider is "none", try to pull Qdrant from services
+        if vm_config.get("vector_provider", "none") == "none":
+            try:
+                from backend.core.config.settings import Settings, decrypt_value
+                settings = Settings.load()
+                qdrant_svc = settings.services.get("qdrant")
+                if qdrant_svc and qdrant_svc.base_url:
+                    vm_config["vector_provider"] = "qdrant"
+                    vm_config["qdrant_url"] = qdrant_svc.base_url
+                    vm_config["qdrant_api_key"] = decrypt_value(qdrant_svc.api_key) if qdrant_svc.api_key else ""
+                    # Also grab embedding config from google provider if available
+                    google_prov = settings.providers.get("google")
+                    if google_prov and google_prov.api_key:
+                        vm_config["embedding_provider"] = "google"
+                        vm_config["embedding_api_key"] = decrypt_value(google_prov.api_key) if google_prov.api_key.startswith("enc:") else google_prov.api_key
+                    logger.info(f"Auto-detected Qdrant from services: {qdrant_svc.base_url}")
+            except Exception as e:
+                logger.debug(f"Auto-detect Qdrant failed: {e}")
+
         if vm_config.get("vector_provider", "none") == "none":
             self._vector_memory = None
             return False
