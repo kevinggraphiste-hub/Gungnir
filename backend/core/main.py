@@ -387,10 +387,15 @@ async def lifespan(app: FastAPI):
 
 
 async def _auto_backup_loop():
-    """Background loop: runs daily backup at midnight if enabled."""
-    from backend.core.api.backup_routes import _load_config, BACKUPS_DIR, BACKUP_TARGETS, PROJECT_ROOT, _enforce_max_backups
-    import zipfile
+    """Background loop: every midnight, run a per-user auto-backup for every
+    user that has ``auto_daily`` enabled in their own backup config. Each
+    user's zip is stored under ``data/backups/<uid>/``.
+    """
     from datetime import datetime, timedelta
+    from sqlalchemy import select as _sel
+    from backend.core.api.backup_routes import create_user_backup, _load_user_config
+    from backend.core.db.engine import async_session
+    from backend.core.db.models import User
 
     while True:
         try:
@@ -404,22 +409,24 @@ async def _auto_backup_loop():
         await asyncio.sleep(wait_seconds)
 
         try:
-            cfg = _load_config()
-            if not cfg.get("auto_daily"):
-                continue
-
-            BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"gungnir_backup_{timestamp}.zip"
-            zip_path = BACKUPS_DIR / filename
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for target in BACKUP_TARGETS:
-                    if target.exists():
-                        zf.write(target, str(target.relative_to(PROJECT_ROOT)))
-            _enforce_max_backups(cfg.get("max_backups", 10))
-            logger.info(f"Auto-backup created at midnight: {filename}")
+            async with async_session() as backup_session:
+                users_result = await backup_session.execute(_sel(User))
+                users = list(users_result.scalars().all())
+                for u in users:
+                    cfg = _load_user_config(u.id)
+                    if not cfg.get("auto_daily"):
+                        continue
+                    result = await create_user_backup(backup_session, u.id)
+                    if result.get("ok"):
+                        logger.info(
+                            f"Auto-backup created for user {u.id}: {result.get('filename')}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Auto-backup failed for user {u.id}: {result.get('error')}"
+                        )
         except Exception as e:
-            logger.warning(f"Auto-backup error: {e}")
+            logger.warning(f"Auto-backup loop error: {e}")
 
 
 # ── App ──────────────────────────────────────────────────────────────────────
