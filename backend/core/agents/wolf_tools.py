@@ -1126,11 +1126,36 @@ async def _subagent_invoke(name: str, task: str) -> dict:
     if not agent:
         return {"ok": False, "error": f"Sous-agent '{name}' introuvable."}
     settings = Settings.load()
-    provider_cfg = settings.providers.get(agent.provider or "openrouter")
-    if not provider_cfg or not provider_cfg.api_key:
-        return {"ok": False, "error": f"Provider '{agent.provider}' non configuré."}
-    model = agent.model or provider_cfg.default_model
-    llm = get_provider(agent.provider, provider_cfg.api_key, provider_cfg.base_url)
+    provider_name = agent.provider or "openrouter"
+    provider_meta = settings.providers.get(provider_name)
+
+    # STRICT per-user: resolve the caller's own key via the wolf user context.
+    # chat.py sets this before invoking a tool, so the sub-agent runs on the
+    # caller's credits instead of falling back to a global fallback.
+    _uid_sa = get_user_context() or 0
+    _user_api_key = None
+    _user_base_url = None
+    if _uid_sa > 0:
+        try:
+            from backend.core.db.engine import async_session as _sa_sm
+            from backend.core.api.auth_helpers import (
+                get_user_settings as _sa_gus,
+                get_user_provider_key as _sa_gpk,
+            )
+            async with _sa_sm() as _sa_s:
+                _uset = await _sa_gus(_uid_sa, _sa_s)
+                _decoded = _sa_gpk(_uset, provider_name)
+                if _decoded and _decoded.get("api_key"):
+                    _user_api_key = _decoded["api_key"]
+                    _user_base_url = _decoded.get("base_url")
+        except Exception as _e:
+            print(f"[Wolf] Sub-agent key lookup failed for uid={_uid_sa}: {_e}")
+
+    if not _user_api_key:
+        return {"ok": False, "error": f"Provider '{provider_name}' non configuré pour cet utilisateur."}
+
+    model = agent.model or (provider_meta.default_model if provider_meta else None)
+    llm = get_provider(provider_name, _user_api_key, _user_base_url or (provider_meta.base_url if provider_meta else None))
 
     # Start recording this inter-agent conversation (context-aware: parent_id is set
     # automatically if we're inside another sub-agent invocation).
@@ -2456,11 +2481,30 @@ async def _doctor_check(scope: str = "full") -> dict:
             settings = Settings.load()
             add_check("Config chargée", "ok", "config.json trouvé")
 
-            enabled_providers = [n for n, p in settings.providers.items() if p.enabled and p.api_key]
-            if enabled_providers:
-                add_check("Providers LLM", "ok", f"{len(enabled_providers)} actifs: {', '.join(enabled_providers)}")
+            # Per-user: resolve the caller's provider keys from the wolf context,
+            # not the now-empty global config.
+            _uid_doc = get_user_context() or 0
+            _user_providers: list[str] = []
+            if _uid_doc > 0:
+                try:
+                    from backend.core.db.engine import async_session as _doc_sm
+                    from backend.core.api.auth_helpers import (
+                        get_user_settings as _doc_gus,
+                        get_user_provider_key as _doc_gpk,
+                    )
+                    async with _doc_sm() as _doc_s:
+                        _uset_doc = await _doc_gus(_uid_doc, _doc_s)
+                        for pname in (_uset_doc.provider_keys or {}).keys():
+                            decoded = _doc_gpk(_uset_doc, pname)
+                            if decoded and decoded.get("api_key"):
+                                _user_providers.append(pname)
+                except Exception as _de:
+                    print(f"[Wolf] Doctor user provider lookup failed: {_de}")
+
+            if _user_providers:
+                add_check("Providers LLM", "ok", f"{len(_user_providers)} actifs: {', '.join(_user_providers)}")
             else:
-                add_check("Providers LLM", "warning", "Aucun provider LLM activé avec clé API")
+                add_check("Providers LLM", "warning", "Aucun provider LLM configuré pour cet utilisateur")
 
             enabled_services = [n for n, s in settings.services.items() if s.enabled]
             add_check("Services", "ok" if enabled_services else "info", f"{len(enabled_services)} services activés")

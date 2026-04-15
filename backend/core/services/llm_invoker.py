@@ -48,7 +48,8 @@ async def invoke_llm_for_user(
     settings = Settings.load()
     provider_name = provider or settings.app.active_provider or "openrouter"
 
-    # Resolve API key: user override first, then global
+    # Resolve API key: STRICT per-user. A background task must run as a known
+    # user, and that user must have their own key — no global fallback.
     api_key = None
     base_url = None
     try:
@@ -63,9 +64,13 @@ async def invoke_llm_for_user(
 
     provider_config = settings.providers.get(provider_name)
     if not api_key:
-        if not provider_config or not provider_config.api_key:
-            return {"ok": False, "error": f"Aucune clé API pour le provider '{provider_name}'"}
-        api_key = provider_config.api_key
+        return {
+            "ok": False,
+            "error": f"Aucune clé API pour le provider '{provider_name}' (user {user_id})",
+        }
+    # Fall back to the global base_url (metadata only, no secret) if the user
+    # didn't set a custom endpoint.
+    if not base_url and provider_config:
         base_url = provider_config.base_url
 
     chosen_model = model or (provider_config.default_model if provider_config else None)

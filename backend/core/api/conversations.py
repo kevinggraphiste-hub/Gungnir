@@ -7,7 +7,11 @@ from backend.core.config.settings import Settings
 from backend.core.db.models import Conversation, Message, User, ConversationTag, ConversationTagLink, AgentTask, CostAnalytics
 from backend.core.db.engine import get_session
 from backend.core.providers import get_provider, ChatMessage
-from backend.core.api.auth_helpers import enforce_conversation_owner
+from backend.core.api.auth_helpers import (
+    enforce_conversation_owner,
+    get_user_settings,
+    get_user_provider_key,
+)
 
 router = APIRouter()
 
@@ -433,41 +437,58 @@ async def generate_conversation_title(convo_id: int, request: Request, session: 
                     return t[:40].strip() + ("..." if len(t) > 40 else "")
         return "Nouvelle conversation"
 
-    # ── Résolution provider/model ──
-    # Le front envoie le provider + model actifs de l'utilisateur
+    # ── Résolution provider/model — STRICT per-user ──
+    # Le front envoie le provider + model actifs de l'utilisateur. On ne
+    # regarde que ses propres clés, jamais celles d'un autre user.
     settings = Settings.load()
     req_provider = body.get("provider", "openrouter")
     req_model = body.get("model")
 
-    # 1) Utiliser le provider demandé par le front
-    provider_config = settings.providers.get(req_provider)
-    provider_name = req_provider
+    user_api_key = None
+    user_base_url = None
+    chosen_provider_name = req_provider
+    provider_meta = settings.providers.get(req_provider)
 
-    # 2) Si pas configuré, essayer tous les providers
-    if not provider_config or not provider_config.api_key:
-        provider_config = None
-        for pname, pcfg in settings.providers.items():
-            if pcfg and pcfg.enabled and pcfg.api_key:
-                provider_name = pname
-                provider_config = pcfg
-                break
+    user_settings_row = None
+    if uid:
+        try:
+            user_settings_row = await get_user_settings(uid, session)
+        except Exception as e:
+            _log.warning(f"Title gen: user settings lookup failed: {e}")
 
-    if not provider_config or not provider_config.api_key:
-        _log.warning(f"Title gen: no provider found, falling back")
+    if user_settings_row is not None:
+        # 1) Provider demandé par le front
+        user_prov = get_user_provider_key(user_settings_row, req_provider)
+        if user_prov and user_prov.get("api_key"):
+            user_api_key = user_prov["api_key"]
+            user_base_url = user_prov.get("base_url")
+        else:
+            # 2) Premier provider per-user disponible
+            for pname, pconf in (user_settings_row.provider_keys or {}).items():
+                decoded = get_user_provider_key(user_settings_row, pname)
+                if decoded and decoded.get("api_key"):
+                    chosen_provider_name = pname
+                    user_api_key = decoded["api_key"]
+                    user_base_url = decoded.get("base_url")
+                    provider_meta = settings.providers.get(pname)
+                    break
+
+    if not user_api_key:
+        _log.warning(f"Title gen: no user provider key for uid={uid}, falling back")
         title = _clean_fallback(msgs)
         conv = await session.get(Conversation, convo_id)
         if conv:
             conv.title = title
             await session.commit()
-        return {"title": title, "method": "fallback", "reason": "no_provider"}
+        return {"title": title, "method": "fallback", "reason": "no_user_provider"}
 
-    # Modèle : utiliser celui du front, sinon le default du provider
-    title_model = req_model or provider_config.default_model
-    if not title_model and provider_config.models:
-        title_model = provider_config.models[0]
+    # Modèle : celui du front, sinon le default global du provider, sinon le premier de la liste
+    title_model = req_model or (provider_meta.default_model if provider_meta else None)
+    if not title_model and provider_meta and provider_meta.models:
+        title_model = provider_meta.models[0]
 
     if not title_model:
-        _log.warning(f"Title gen: no model for provider {provider_name}")
+        _log.warning(f"Title gen: no model for provider {chosen_provider_name}")
         title = _clean_fallback(msgs)
         conv = await session.get(Conversation, convo_id)
         if conv:
@@ -475,9 +496,11 @@ async def generate_conversation_title(convo_id: int, request: Request, session: 
             await session.commit()
         return {"title": title, "method": "fallback", "reason": "no_model"}
 
-    _log.info(f"Title gen: using {provider_name}/{title_model} for convo {convo_id} ({total} msgs)")
+    _log.info(f"Title gen: using {chosen_provider_name}/{title_model} for convo {convo_id} ({total} msgs)")
 
-    provider = get_provider(provider_name, provider_config.api_key, provider_config.base_url)
+    _base_url = user_base_url or (provider_meta.base_url if provider_meta else None)
+    provider = get_provider(chosen_provider_name, user_api_key, _base_url)
+    provider_name = chosen_provider_name
 
     try:
         title_response = await provider.chat(
@@ -602,17 +625,33 @@ async def summarize_conversation(convo_id: int, request: Request, session: Async
 
     settings = Settings.load()
 
-    # Build ordered list of providers to try: requested first, then all enabled ones
-    providers_to_try: list[tuple[str, str]] = []
-    pcfg = settings.providers.get(provider_name)
-    if pcfg and pcfg.enabled and pcfg.api_key:
-        providers_to_try.append((provider_name, model_name or pcfg.default_model or ""))
-    for pname, pconf in settings.providers.items():
-        if pname != provider_name and pconf.enabled and pconf.api_key:
-            providers_to_try.append((pname, pconf.default_model or ""))
+    # STRICT per-user: resolve candidate providers from the caller's own keys.
+    # Requested provider first, then any other provider the user has a key for.
+    user_settings_row = None
+    if uid:
+        try:
+            user_settings_row = await get_user_settings(uid, session)
+        except Exception:
+            user_settings_row = None
+
+    providers_to_try: list[tuple[str, str, str | None, str | None]] = []
+    if user_settings_row is not None:
+        def _push(pname: str, model_pref: str | None):
+            decoded = get_user_provider_key(user_settings_row, pname)
+            if not decoded or not decoded.get("api_key"):
+                return
+            meta = settings.providers.get(pname)
+            chosen = model_pref or (meta.default_model if meta else None) or ""
+            base_url = decoded.get("base_url") or (meta.base_url if meta else None)
+            providers_to_try.append((pname, chosen, decoded["api_key"], base_url))
+
+        _push(provider_name, model_name)
+        for pname in (user_settings_row.provider_keys or {}).keys():
+            if pname != provider_name:
+                _push(pname, None)
 
     if not providers_to_try:
-        return JSONResponse({"error": "Aucun provider configuré"}, status_code=400)
+        return JSONResponse({"error": "Aucun provider configuré pour cet utilisateur"}, status_code=400)
 
     import logging as _logging
     _log = _logging.getLogger("gungnir.summarize")
@@ -631,10 +670,9 @@ async def summarize_conversation(convo_id: int, request: Request, session: Async
     ]
 
     last_error = None
-    for pname, mname in providers_to_try:
+    for pname, mname, _pkey, _pbu in providers_to_try:
         try:
-            pconf = settings.providers[pname]
-            provider = get_provider(pname, pconf.api_key, pconf.base_url)
+            provider = get_provider(pname, _pkey, _pbu)
             resp = await provider.chat(summary_messages, mname)
             if resp.content and len(resp.content.strip()) > 20:
                 return {"summary": resp.content, "tokens": resp.tokens_input + resp.tokens_output}

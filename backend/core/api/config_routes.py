@@ -6,7 +6,7 @@ from backend.core.config.settings import Settings, ProviderConfig, VoiceConfig, 
 from backend.core.providers import get_provider
 from backend.core.agents.mcp_client import mcp_manager
 from backend.core.db.engine import get_session
-from backend.core.db.models import MCPServerConfig as DBMCPServerConfig
+from backend.core.db.models import MCPServerConfig as DBMCPServerConfig, User
 from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
 from sqlalchemy import select, delete
 
@@ -60,29 +60,32 @@ async def get_config(request: Request, session: AsyncSession = Depends(get_sessi
 
 @router.post("/config/providers/{provider_name}")
 async def configure_provider(provider_name: str, config: ProviderConfig, request: Request, session: AsyncSession = Depends(get_session)):
+    """Admin-only: write non-secret provider metadata (models, base_url,
+    default_model) to the global settings. API keys are STRICTLY per-user and
+    must be set via POST /config/user/providers/{provider_name} — any api_key
+    sent to this endpoint is ignored on purpose to prevent cross-user leaks.
+    """
     uid = getattr(request.state, "user_id", None)
     if uid is not None:
         from backend.core.api.auth_helpers import require_admin
         if not await require_admin(request, session):
             return JSONResponse({"error": "Admin requis"}, status_code=403)
-    # Strip whitespace from API key (common copy-paste issue)
-    if config.api_key:
-        config.api_key = config.api_key.strip()
+
     settings = Settings.load()
-    existing = settings.providers.get(provider_name)
-    if existing:
-        # Préserver les champs sensibles/existants si absents de la requête
-        if not config.api_key:
-            config.api_key = existing.api_key
-        if not config.models:
-            config.models = existing.models
-        if not config.base_url:
-            config.base_url = existing.base_url
-        if config.enabled is False and existing.enabled is True and config.api_key:
-            config.enabled = existing.enabled
-    settings.providers[provider_name] = config
+    existing = settings.providers.get(provider_name) or ProviderConfig()
+
+    # Build a fresh metadata-only ProviderConfig. api_key is intentionally
+    # dropped — the user-scoped endpoint is the only way to set it.
+    merged = ProviderConfig(
+        enabled=existing.enabled,
+        api_key=None,
+        base_url=config.base_url or existing.base_url,
+        default_model=config.default_model or existing.default_model,
+        models=list(config.models) if config.models else list(existing.models or []),
+    )
+    settings.providers[provider_name] = merged
     settings.save()
-    return {"status": "saved"}
+    return {"status": "saved", "note": "api_key is ignored — use /config/user/providers/{provider_name}"}
 
 
 @router.post("/config/voice/{voice_name}")
@@ -119,7 +122,8 @@ async def list_models(provider_name: str, request: Request, session: AsyncSessio
     # Toujours retourner les modèles statiques comme fallback
     static_models = provider_config.models or []
 
-    # Resolve API key: per-user first, then global
+    # STRICT per-user: live model listing uses the caller's own key. If they
+    # have none, we just return the static metadata list.
     api_key = None
     base_url = provider_config.base_url
     user_id = getattr(request.state, "user_id", None)
@@ -129,8 +133,6 @@ async def list_models(provider_name: str, request: Request, session: AsyncSessio
         if user_prov and user_prov.get("api_key"):
             api_key = user_prov["api_key"]
             base_url = user_prov.get("base_url") or base_url
-    if not api_key:
-        api_key = provider_config.api_key
 
     if not api_key:
         return {"models": static_models}
@@ -152,7 +154,12 @@ async def list_models(provider_name: str, request: Request, session: AsyncSessio
 
 @router.delete("/config/providers/{provider_name}")
 async def delete_provider(provider_name: str, request: Request, session: AsyncSession = Depends(get_session)):
-    """Supprime un provider de la configuration."""
+    """Admin-only: remove a provider's global metadata entry.
+
+    This does NOT drop per-user api_keys stored in UserSettings.provider_keys
+    — users keep their own credentials. Use DELETE /config/user/providers/{p}
+    to remove a given user's key.
+    """
     uid = getattr(request.state, "user_id", None)
     if uid is not None:
         from backend.core.api.auth_helpers import require_admin
@@ -382,28 +389,23 @@ async def get_user_providers(request: Request, session: AsyncSession = Depends(g
 
 @router.post("/config/user/providers/{provider_name}")
 async def save_user_provider(provider_name: str, request: Request, session: AsyncSession = Depends(get_session)):
-    """Save a provider API key for the current user. Fallback to global config if no auth."""
+    """Save a provider API key for the current user. In open/setup mode with
+    no auth, the key is saved under user #1 (the admin) rather than in the
+    global settings — the global store no longer holds secrets."""
     user_id = getattr(request.state, "user_id", None)
     body = await request.json()
 
-    # No auth (open mode / setup) → save to global config like before
     if not user_id:
-        config = ProviderConfig(**body) if isinstance(body, dict) else ProviderConfig()
-        if body.get("api_key"):
-            config.api_key = body["api_key"].strip()
-            config.enabled = True
-        settings = Settings.load()
-        existing = settings.providers.get(provider_name)
-        if existing:
-            if not config.api_key:
-                config.api_key = existing.api_key
-            if not config.models:
-                config.models = existing.models
-            if not config.base_url:
-                config.base_url = existing.base_url
-        settings.providers[provider_name] = config
-        settings.save()
-        return {"status": "saved"}
+        # Open / setup mode: write to user #1 if it exists. Never to the global.
+        first_user = await session.execute(select(User).order_by(User.id).limit(1))
+        fallback_user = first_user.scalar()
+        if fallback_user is None:
+            return JSONResponse(
+                {"error": "Créez un utilisateur avant de configurer les clés API (POST /api/users)."},
+                status_code=400,
+            )
+        user_id = fallback_user.id
+
     user_settings = await get_user_settings(user_id, session)
 
     provider_keys = dict(user_settings.provider_keys or {})
@@ -429,20 +431,21 @@ async def save_user_provider(provider_name: str, request: Request, session: Asyn
 
 @router.delete("/config/user/providers/{provider_name}")
 async def delete_user_provider(provider_name: str, request: Request, session: AsyncSession = Depends(get_session)):
-    """Remove a user's provider key."""
+    """Remove a user's provider key. In open mode, targets user #1."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
-        # Fallback: delete from global config
-        settings = Settings.load()
-        if provider_name in settings.providers:
-            del settings.providers[provider_name]
-            settings.save()
-        return {"ok": True}
+        first_user = await session.execute(select(User).order_by(User.id).limit(1))
+        fallback_user = first_user.scalar()
+        if fallback_user is None:
+            return {"ok": True}
+        user_id = fallback_user.id
     user_settings = await get_user_settings(user_id, session)
     provider_keys = dict(user_settings.provider_keys or {})
     if provider_name in provider_keys:
         del provider_keys[provider_name]
         user_settings.provider_keys = provider_keys
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(user_settings, "provider_keys")
         await session.commit()
     return {"ok": True}
 

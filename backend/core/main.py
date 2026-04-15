@@ -93,7 +93,71 @@ async def lifespan(app: FastAPI):
             import logging
             logging.getLogger("gungnir").error(f"Plugin {getattr(manifest, 'name', '?')} startup failed: {_plugin_err}")
 
-    # 4. MCP one-shot migration: move legacy global settings.mcp_servers to
+    # 4a. Provider-keys one-shot migration: move any api_key stored in the
+    # legacy global settings.providers[*] into user #1's UserSettings so the
+    # global JSON never acts as a cross-user fallback again. Idempotent.
+    try:
+        from sqlalchemy import select as _select_keys
+        from backend.core.db.engine import get_session as _get_session_keys
+        from backend.core.db.models import User as _User_keys, UserSettings as _US_keys
+        from backend.core.config.settings import encrypt_value as _enc_keys
+
+        settings_keys = Settings.load()
+        legacy_keys: dict[str, dict] = {}
+        for pname, pconf in (settings_keys.providers or {}).items():
+            if pconf and pconf.api_key:
+                legacy_keys[pname] = {
+                    "api_key": pconf.api_key,
+                    "base_url": pconf.base_url,
+                    "enabled": True,
+                }
+
+        if legacy_keys:
+            async for _ks in _get_session_keys():
+                _target = await _ks.execute(_select_keys(_User_keys).order_by(_User_keys.id).limit(1))
+                _owner_k = _target.scalar()
+                if _owner_k is None:
+                    logger.info("Provider-keys legacy migration skipped: no users yet")
+                    break
+
+                _us_row = await _ks.execute(
+                    _select_keys(_US_keys).where(_US_keys.user_id == _owner_k.id)
+                )
+                _us = _us_row.scalar_one_or_none()
+                if _us is None:
+                    _us = _US_keys(user_id=_owner_k.id, provider_keys={}, service_keys={})
+                    _ks.add(_us)
+                    await _ks.flush()
+
+                existing = dict(_us.provider_keys or {})
+                added = 0
+                for pname, payload in legacy_keys.items():
+                    if pname in existing and existing[pname].get("api_key"):
+                        continue  # User already has their own key for this provider
+                    existing[pname] = {
+                        "api_key": _enc_keys(payload["api_key"]),
+                        "base_url": payload.get("base_url"),
+                        "enabled": True,
+                    }
+                    added += 1
+                _us.provider_keys = existing
+                await _ks.commit()
+
+                if added:
+                    # Clear global api_keys so the cross-user fallback is gone for good
+                    for pname in legacy_keys.keys():
+                        if settings_keys.providers.get(pname):
+                            settings_keys.providers[pname].api_key = None
+                    settings_keys.save()
+                    logger.info(
+                        f"Provider-keys legacy migration: {added} key(s) moved to user #{_owner_k.id} "
+                        f"({', '.join(legacy_keys.keys())})"
+                    )
+                break
+    except Exception as e:
+        logger.warning(f"Provider-keys legacy migration failed: {e}")
+
+    # 4b. MCP one-shot migration: move legacy global settings.mcp_servers to
     # per-user DB rows under user #1, then clear the legacy field. Servers are
     # started lazily on first use (chat/scheduler/webhooks), not at boot.
     from backend.core.agents.mcp_client import mcp_manager  # imported for shutdown hook

@@ -149,15 +149,11 @@ def _get_voice_config(provider: str = "elevenlabs") -> dict:
 
 
 def _get_llm_key(provider: str) -> Optional[str]:
-    """Fallback: get API key from LLM providers config."""
-    try:
-        from backend.core.config.settings import Settings
-        settings = Settings.load()
-        pcfg = settings.providers.get(provider)
-        if pcfg and pcfg.api_key:
-            return pcfg.api_key
-    except Exception:
-        pass
+    """DEPRECATED: always returns None. LLM provider keys are strictly per-user
+    now — voice endpoints that need an LLM key must resolve it from the current
+    user's UserSettings.provider_keys via a proper request/user context. This
+    helper used to fall back to the global settings.providers[*].api_key which
+    leaked one user's key to every other caller."""
     return None
 
 

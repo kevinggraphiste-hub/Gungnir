@@ -564,23 +564,10 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
                 import logging
                 logging.getLogger("gungnir").warning(f"Channel user key lookup failed: {_e}")
 
-        # Fallback to global config
-        if not provider_config:
-            provider_name = settings.app.active_provider or "openrouter"
-            provider_config = settings.providers.get(provider_name)
-            if not provider_config or not provider_config.enabled or not provider_config.api_key:
-                provider_name = None
-                provider_config = None
-                for pname, pcfg in settings.providers.items():
-                    if pcfg.enabled and pcfg.api_key:
-                        provider_name = pname
-                        provider_config = pcfg
-                        break
-            if provider_config:
-                model = settings.app.active_model or provider_config.default_model
-
+        # STRICT per-user: no global fallback. If the channel owner has no key
+        # configured, refuse to answer instead of using someone else's credits.
         if not provider_name or not provider_config:
-            return "Aucun provider LLM configuré. Ajoutez votre clé API dans les paramètres."
+            return "Ce canal n'a pas de clé API configurée pour son propriétaire. Ajoutez une clé dans Paramètres → Providers."
 
         provider = get_provider(provider_name, provider_config.api_key, provider_config.base_url)
         if not model:

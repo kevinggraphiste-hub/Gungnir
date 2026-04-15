@@ -433,27 +433,51 @@ async def modify_n8n_workflow(workflow_id: str, req: ModifyRequest, request: Req
         f"Connexions: {json.dumps(connections, ensure_ascii=False)[:500]}"
     )
 
-    # 2. Load settings and get the active LLM provider
+    # 2. Load settings and get the current user's configured LLM provider
     try:
         from backend.core.config.settings import Settings
         from backend.core.providers import get_provider, ChatMessage
         from backend.core.agents.mcp_client import mcp_manager
+        from backend.core.db.engine import async_session as _n8n_sm
+        from backend.core.api.auth_helpers import (
+            get_user_settings as _n8n_gus,
+            get_user_provider_key as _n8n_gpk,
+        )
     except ImportError as e:
         return {"ok": False, "error": f"Import error: {e}"}
 
     settings = Settings.load()
 
-    # Find first enabled provider with an API key
+    # STRICT per-user: pick the first provider for which THIS user has a key.
+    _req_uid = getattr(request.state, "user_id", None) or 0
     provider = None
     chosen_model = None
-    for pname, pcfg in settings.providers.items():
-        if pcfg.enabled and pcfg.api_key:
-            provider = get_provider(pname, pcfg.api_key, pcfg.base_url)
-            chosen_model = pcfg.default_model
-            break
+    if _req_uid > 0:
+        try:
+            async with _n8n_sm() as _n8n_s:
+                _uset_n8n = await _n8n_gus(_req_uid, _n8n_s)
+                _active = _uset_n8n.active_provider or "openrouter"
+                _order = [_active] + [
+                    p for p in (_uset_n8n.provider_keys or {}).keys() if p != _active
+                ]
+                for pname in _order:
+                    decoded = _n8n_gpk(_uset_n8n, pname)
+                    if not decoded or not decoded.get("api_key"):
+                        continue
+                    meta = settings.providers.get(pname)
+                    _bu = decoded.get("base_url") or (meta.base_url if meta else None)
+                    provider = get_provider(pname, decoded["api_key"], _bu)
+                    chosen_model = (
+                        (_uset_n8n.active_model if pname == _active else None)
+                        or (meta.default_model if meta else None)
+                    )
+                    if provider and chosen_model:
+                        break
+        except Exception as _e:
+            return {"ok": False, "error": f"Erreur de résolution de provider: {_e}"}
 
     if not provider or not chosen_model:
-        return {"ok": False, "error": "Aucun provider LLM configure"}
+        return {"ok": False, "error": "Aucun provider LLM configuré pour cet utilisateur"}
 
     # 3. Build messages with workflow context + MCP tools
     system_prompt = (

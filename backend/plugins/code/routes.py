@@ -844,7 +844,66 @@ _models_cache: dict[str, dict] = {}
 _CACHE_TTL = 300  # 5 minutes
 
 
-async def _fetch_provider_models(pname: str, pcfg) -> list[str]:
+async def _resolve_user_provider(
+    req_provider_name: Optional[str] = None,
+    req_model_name: Optional[str] = None,
+):
+    """Resolve an LLM provider strictly from the current user's keys.
+
+    Returns (provider_instance, chosen_model, error_string). Reads user_id from
+    the _current_user_id ContextVar populated by the router dependency, so
+    callers don't need to pass Request around.
+    """
+    from backend.core.config.settings import Settings
+    from backend.core.providers import get_provider
+    from backend.core.db.engine import async_session
+    from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
+
+    uid = _current_user_id.get() or 0
+    if uid <= 0:
+        return None, None, "Authentification requise pour utiliser les providers LLM"
+
+    settings = Settings.load()
+    async with async_session() as _s:
+        user_settings = await get_user_settings(uid, _s)
+
+        def _build(pname: str, model_hint: Optional[str]):
+            decoded = get_user_provider_key(user_settings, pname)
+            if not decoded or not decoded.get("api_key"):
+                return None, None
+            meta = settings.providers.get(pname)
+            base_url = decoded.get("base_url") or (meta.base_url if meta else None)
+            prov = get_provider(pname, decoded["api_key"], base_url)
+            chosen = (
+                model_hint
+                or (meta.default_model if meta else None)
+                or (user_settings.active_model if pname == user_settings.active_provider else None)
+            )
+            return prov, chosen
+
+        # 1) Explicitly requested provider (if the caller picked one)
+        if req_provider_name:
+            prov, chosen = _build(req_provider_name, req_model_name)
+            if prov and chosen:
+                return prov, chosen, None
+
+        # 2) User's active provider, then any other provider they own a key for
+        order = [user_settings.active_provider] + [
+            p
+            for p in (user_settings.provider_keys or {}).keys()
+            if p != user_settings.active_provider
+        ]
+        for pname in order:
+            if not pname:
+                continue
+            prov, chosen = _build(pname, None)
+            if prov and chosen:
+                return prov, chosen, None
+
+    return None, None, "Aucun provider LLM configuré pour cet utilisateur"
+
+
+async def _fetch_provider_models(pname: str, api_key: str, base_url: Optional[str], static_models: list[str], default_model: Optional[str]) -> list[str]:
     """Fetch models dynamically from provider API, with cache."""
     import time
     cached = _models_cache.get(pname)
@@ -853,7 +912,7 @@ async def _fetch_provider_models(pname: str, pcfg) -> list[str]:
 
     try:
         from backend.core.providers import get_provider
-        provider = get_provider(pname, pcfg.api_key, pcfg.base_url)
+        provider = get_provider(pname, api_key, base_url)
         models = await provider.list_models()
         if models:
             _models_cache[pname] = {"models": models, "ts": time.time()}
@@ -862,24 +921,39 @@ async def _fetch_provider_models(pname: str, pcfg) -> list[str]:
         logger.warning(f"Failed to fetch models for {pname}: {e}")
 
     # Fallback to settings static list or default_model
-    return pcfg.models if pcfg.models else [pcfg.default_model]
+    return static_models if static_models else ([default_model] if default_model else [])
 
 
 @router.get("/providers")
 async def list_providers():
-    """List configured LLM providers with dynamically fetched model lists."""
+    """List the current user's configured LLM providers with live model lists."""
     try:
         from backend.core.config.settings import Settings
+        from backend.core.db.engine import async_session
+        from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
     except ImportError:
         return {"providers": []}
+
+    uid = _current_user_id.get() or 0
+    if uid <= 0:
+        return {"providers": []}
+
     settings = Settings.load()
     result = []
-    for pname, pcfg in settings.providers.items():
-        if pcfg.enabled and pcfg.api_key:
-            models = await _fetch_provider_models(pname, pcfg)
+    async with async_session() as _s:
+        user_settings = await get_user_settings(uid, _s)
+        for pname in (user_settings.provider_keys or {}).keys():
+            decoded = get_user_provider_key(user_settings, pname)
+            if not decoded or not decoded.get("api_key"):
+                continue
+            meta = settings.providers.get(pname)
+            base_url = decoded.get("base_url") or (meta.base_url if meta else None)
+            static_models = list(meta.models) if meta and meta.models else []
+            default_model = meta.default_model if meta else None
+            models = await _fetch_provider_models(pname, decoded["api_key"], base_url, static_models, default_model)
             result.append({
                 "name": pname,
-                "default_model": pcfg.default_model,
+                "default_model": default_model,
                 "enabled": True,
                 "models": models,
             })
@@ -888,34 +962,45 @@ async def list_providers():
 
 @router.get("/providers/{provider_name}/models")
 async def refresh_provider_models(provider_name: str):
-    """Force-refresh model list from a specific provider API."""
+    """Force-refresh the current user's model list for a specific provider."""
     import time
     try:
         from backend.core.config.settings import Settings
+        from backend.core.providers import get_provider
+        from backend.core.db.engine import async_session
+        from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
     except ImportError:
         raise HTTPException(404, "Settings not available")
+
+    uid = _current_user_id.get() or 0
+    if uid <= 0:
+        raise HTTPException(401, "Authentification requise")
+
     settings = Settings.load()
-    pcfg = settings.providers.get(provider_name)
-    if not pcfg or not pcfg.enabled or not pcfg.api_key:
-        raise HTTPException(404, f"Provider '{provider_name}' not configured or disabled")
+    meta = settings.providers.get(provider_name)
+    async with async_session() as _s:
+        user_settings = await get_user_settings(uid, _s)
+        decoded = get_user_provider_key(user_settings, provider_name)
+        if not decoded or not decoded.get("api_key"):
+            raise HTTPException(404, f"Provider '{provider_name}' non configuré pour cet utilisateur")
+        api_key = decoded["api_key"]
+        base_url = decoded.get("base_url") or (meta.base_url if meta else None)
 
     # Clear cache to force refresh
     _models_cache.pop(provider_name, None)
 
     try:
-        from backend.core.providers import get_provider
-        provider = get_provider(provider_name, pcfg.api_key, pcfg.base_url)
+        provider = get_provider(provider_name, api_key, base_url)
         models = await provider.list_models()
         if models:
             _models_cache[provider_name] = {"models": models, "ts": time.time()}
-            pcfg.models = models
-            settings.save()
             return {"provider": provider_name, "models": models, "count": len(models)}
     except Exception as e:
         logger.error(f"Failed to refresh models for {provider_name}: {e}")
         raise HTTPException(502, f"Could not fetch models from {provider_name}: {str(e)}")
 
-    return {"provider": provider_name, "models": [pcfg.default_model], "count": 1}
+    default_m = meta.default_model if meta else None
+    return {"provider": provider_name, "models": [default_m] if default_m else [], "count": 1 if default_m else 0}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1296,34 +1381,13 @@ async def ai_code_chat(req: AIChatRequest):
     """
     # Lazy imports to maintain plugin independence
     try:
-        from backend.core.config.settings import Settings
-        from backend.core.providers import get_provider, ChatMessage
+        from backend.core.providers import ChatMessage
     except ImportError as e:
         return {"ok": False, "error": f"Import error: {e}"}
 
-    settings = Settings.load()
-
-    # ── Provider/model selection (supports on-the-fly switching) ──────────
-    provider = None
-    chosen_model = None
-
-    if req.provider_name and req.model_name:
-        # User explicitly selected a provider+model
-        pcfg = settings.providers.get(req.provider_name)
-        if pcfg and pcfg.enabled and pcfg.api_key:
-            provider = get_provider(req.provider_name, pcfg.api_key, pcfg.base_url)
-            chosen_model = req.model_name
-
-    if not provider:
-        # Fallback to default
-        for pname, pcfg in settings.providers.items():
-            if pcfg.enabled and pcfg.api_key:
-                provider = get_provider(pname, pcfg.api_key, pcfg.base_url)
-                chosen_model = req.model_name or pcfg.default_model
-                break
-
-    if not provider or not chosen_model:
-        return {"ok": False, "error": "Aucun provider LLM configure"}
+    provider, chosen_model, _err = await _resolve_user_provider(req.provider_name, req.model_name)
+    if _err or not provider or not chosen_model:
+        return {"ok": False, "error": _err or "Aucun provider LLM configuré"}
 
     # ── Build system prompt (optimized for token efficiency) ─────────────
     ws = _workspace()
@@ -1439,28 +1503,11 @@ async def ai_code_chat(req: AIChatRequest):
 
 # ── Helper: build provider + messages from request ────────────────────────
 
-def _build_chat_context(req: AIChatRequest):
+async def _build_chat_context(req: AIChatRequest):
     """Shared logic for building provider, model, system prompt, and messages."""
-    from backend.core.config.settings import Settings
-    from backend.core.providers import get_provider, ChatMessage
+    from backend.core.providers import ChatMessage
 
-    settings = Settings.load()
-    provider = None
-    chosen_model = None
-
-    if req.provider_name and req.model_name:
-        pcfg = settings.providers.get(req.provider_name)
-        if pcfg and pcfg.enabled and pcfg.api_key:
-            provider = get_provider(req.provider_name, pcfg.api_key, pcfg.base_url)
-            chosen_model = req.model_name
-
-    if not provider:
-        for pname, pcfg in settings.providers.items():
-            if pcfg.enabled and pcfg.api_key:
-                provider = get_provider(pname, pcfg.api_key, pcfg.base_url)
-                chosen_model = req.model_name or pcfg.default_model
-                break
-
+    provider, chosen_model, _err = await _resolve_user_provider(req.provider_name, req.model_name)
     if not provider or not chosen_model:
         return None, None, None, None
 
@@ -1538,12 +1585,12 @@ async def ai_code_chat_stream(req: AIChatRequest):
     Sends tokens one by one as they arrive from the LLM.
     """
     try:
-        provider, chosen_model, messages, persona = _build_chat_context(req)
+        provider, chosen_model, messages, persona = await _build_chat_context(req)
     except ImportError as e:
         return {"ok": False, "error": f"Import error: {e}"}
 
     if not provider:
-        return {"ok": False, "error": "Aucun provider LLM configure"}
+        return {"ok": False, "error": "Aucun provider LLM configuré pour cet utilisateur"}
 
     async def event_stream():
         try:
@@ -1608,28 +1655,13 @@ async def ai_agent_run(req: AgentRequest):
     autonomously. Streams each step back via SSE.
     """
     try:
-        from backend.core.config.settings import Settings
-        from backend.core.providers import get_provider, ChatMessage
+        from backend.core.providers import ChatMessage
     except ImportError as e:
         return {"ok": False, "error": f"Import error: {e}"}
 
-    settings = Settings.load()
-    provider = None
-    chosen_model = None
-
-    if req.provider_name and req.model_name:
-        pcfg = settings.providers.get(req.provider_name)
-        if pcfg and pcfg.enabled and pcfg.api_key:
-            provider = get_provider(req.provider_name, pcfg.api_key, pcfg.base_url)
-            chosen_model = req.model_name
-    if not provider:
-        for pname, pcfg in settings.providers.items():
-            if pcfg.enabled and pcfg.api_key:
-                provider = get_provider(pname, pcfg.api_key, pcfg.base_url)
-                chosen_model = req.model_name or pcfg.default_model
-                break
-    if not provider or not chosen_model:
-        return {"ok": False, "error": "Aucun provider LLM configure"}
+    provider, chosen_model, _err = await _resolve_user_provider(req.provider_name, req.model_name)
+    if _err or not provider or not chosen_model:
+        return {"ok": False, "error": _err or "Aucun provider LLM configuré"}
 
     ws = _workspace()
 
@@ -1867,28 +1899,13 @@ class AICommitRequest(BaseModel):
 async def generate_commit_message(req: AICommitRequest):
     """Generate a commit message from git diff using AI."""
     try:
-        from backend.core.config.settings import Settings
-        from backend.core.providers import get_provider, ChatMessage
+        from backend.core.providers import ChatMessage
     except ImportError as e:
         return {"ok": False, "error": f"Import error: {e}"}
 
-    settings = Settings.load()
-    provider = None
-    chosen_model = None
-
-    if req.provider_name and req.model_name:
-        pcfg = settings.providers.get(req.provider_name)
-        if pcfg and pcfg.enabled and pcfg.api_key:
-            provider = get_provider(req.provider_name, pcfg.api_key, pcfg.base_url)
-            chosen_model = req.model_name
-    if not provider:
-        for pname, pcfg in settings.providers.items():
-            if pcfg.enabled and pcfg.api_key:
-                provider = get_provider(pname, pcfg.api_key, pcfg.base_url)
-                chosen_model = req.model_name or pcfg.default_model
-                break
-    if not provider or not chosen_model:
-        return {"ok": False, "error": "Aucun provider LLM configure"}
+    provider, chosen_model, _err = await _resolve_user_provider(req.provider_name, req.model_name)
+    if _err or not provider or not chosen_model:
+        return {"ok": False, "error": _err or "Aucun provider LLM configuré"}
 
     messages = [
         ChatMessage(role="system", content=(
@@ -1940,28 +1957,13 @@ CODE_ACTION_PROMPTS = {
 async def ai_code_action(req: CodeActionRequest):
     """Execute a contextual AI action on selected code."""
     try:
-        from backend.core.config.settings import Settings
-        from backend.core.providers import get_provider, ChatMessage
+        from backend.core.providers import ChatMessage
     except ImportError as e:
         return {"ok": False, "error": f"Import error: {e}"}
 
-    settings = Settings.load()
-    provider = None
-    chosen_model = None
-
-    if req.provider_name and req.model_name:
-        pcfg = settings.providers.get(req.provider_name)
-        if pcfg and pcfg.enabled and pcfg.api_key:
-            provider = get_provider(req.provider_name, pcfg.api_key, pcfg.base_url)
-            chosen_model = req.model_name
-    if not provider:
-        for pname, pcfg in settings.providers.items():
-            if pcfg.enabled and pcfg.api_key:
-                provider = get_provider(pname, pcfg.api_key, pcfg.base_url)
-                chosen_model = req.model_name or pcfg.default_model
-                break
-    if not provider or not chosen_model:
-        return {"ok": False, "error": "Aucun provider LLM configure"}
+    provider, chosen_model, _err = await _resolve_user_provider(req.provider_name, req.model_name)
+    if _err or not provider or not chosen_model:
+        return {"ok": False, "error": _err or "Aucun provider LLM configuré"}
 
     action_prompt = CODE_ACTION_PROMPTS.get(req.action, f"Action: {req.action}")
     lang = req.language or "text"
@@ -1997,28 +1999,13 @@ class MultiFileContextRequest(BaseModel):
 async def ai_multi_file_chat(req: MultiFileContextRequest):
     """AI chat with multiple file contexts."""
     try:
-        from backend.core.config.settings import Settings
-        from backend.core.providers import get_provider, ChatMessage
+        from backend.core.providers import ChatMessage
     except ImportError as e:
         return {"ok": False, "error": f"Import error: {e}"}
 
-    settings = Settings.load()
-    provider = None
-    chosen_model = None
-
-    if req.provider_name and req.model_name:
-        pcfg = settings.providers.get(req.provider_name)
-        if pcfg and pcfg.enabled and pcfg.api_key:
-            provider = get_provider(req.provider_name, pcfg.api_key, pcfg.base_url)
-            chosen_model = req.model_name
-    if not provider:
-        for pname, pcfg in settings.providers.items():
-            if pcfg.enabled and pcfg.api_key:
-                provider = get_provider(pname, pcfg.api_key, pcfg.base_url)
-                chosen_model = req.model_name or pcfg.default_model
-                break
-    if not provider or not chosen_model:
-        return {"ok": False, "error": "Aucun provider LLM configure"}
+    provider, chosen_model, _err = await _resolve_user_provider(req.provider_name, req.model_name)
+    if _err or not provider or not chosen_model:
+        return {"ok": False, "error": _err or "Aucun provider LLM configuré"}
 
     system_parts = [
         "Assistant de programmation IDE multi-fichiers. Reponds en francais, concis et technique.",

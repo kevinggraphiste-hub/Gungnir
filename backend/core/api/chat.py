@@ -66,10 +66,17 @@ def _model_supports_vision(model_name: str) -> bool:
 
 
 async def _describe_images_for_blind_model(
-    images: list[str], user_message: str, settings
+    images: list[str],
+    user_message: str,
+    settings,
+    user_settings=None,
 ) -> str:
-    """Utilise un modèle multimodal disponible pour décrire les images en texte."""
-    # Chercher un provider avec un modèle vision disponible
+    """Utilise un modèle multimodal disponible pour décrire les images en texte.
+
+    Resolves API keys strictly from the caller's own UserSettings.provider_keys.
+    If the user has no vision-capable provider configured, returns a textual
+    placeholder instead of falling back to another user's key.
+    """
     vision_providers = [
         ("openrouter", "openai/gpt-4o-mini"),
         ("openai", "gpt-4o-mini"),
@@ -77,24 +84,34 @@ async def _describe_images_for_blind_model(
         ("google", "gemini-2.0-flash"),
     ]
     for prov_name, fallback_model in vision_providers:
-        prov_cfg = settings.providers.get(prov_name)
-        if prov_cfg and prov_cfg.enabled and prov_cfg.api_key:
-            try:
-                provider = get_provider(prov_name, prov_cfg.api_key, prov_cfg.base_url)
-                desc_msg = ChatMessage(
-                    role="user",
-                    content=f"Décris précisément cette/ces image(s) en français. Contexte du message utilisateur : \"{user_message}\". Donne une description détaillée et utile.",
-                    images=images,
-                )
-                resp = await provider.chat(
-                    [desc_msg],
-                    fallback_model,
-                )
-                return resp.content
-            except Exception as e:
-                print(f"[Wolf] Vision fallback with {prov_name} failed: {e}")
-                continue
-    return "[Images jointes — impossible de les décrire, aucun modèle vision disponible]"
+        api_key = None
+        base_url = None
+        if user_settings is not None:
+            user_prov = get_user_provider_key(user_settings, prov_name)
+            if user_prov and user_prov.get("api_key"):
+                api_key = user_prov["api_key"]
+                base_url = user_prov.get("base_url")
+        if not api_key:
+            continue
+        # base_url may still come from the global metadata (non-secret) if the
+        # user didn't override it
+        if not base_url:
+            meta = settings.providers.get(prov_name) if settings else None
+            if meta:
+                base_url = meta.base_url
+        try:
+            provider = get_provider(prov_name, api_key, base_url)
+            desc_msg = ChatMessage(
+                role="user",
+                content=f"Décris précisément cette/ces image(s) en français. Contexte du message utilisateur : \"{user_message}\". Donne une description détaillée et utile.",
+                images=images,
+            )
+            resp = await provider.chat([desc_msg], fallback_model)
+            return resp.content
+        except Exception as e:
+            print(f"[Wolf] Vision fallback with {prov_name} failed: {e}")
+            continue
+    return "[Images jointes — impossible de les décrire, aucun modèle vision disponible pour cet utilisateur]"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -670,8 +687,9 @@ async def chat(
     model = data.get("model")
     message = data.get("message", "")
 
-    # -- Resolve API key: per-user keys first, fallback to global config
-    provider_config = settings.providers.get(provider_name)
+    # -- Resolve API key: STRICT per-user — the global settings hold only
+    # provider metadata (base_url, model lists). Keys live only in the user's
+    # UserSettings.provider_keys so one user's key can never back another user.
     user_id = getattr(request.state, "user_id", None)
     _user_api_key = None
     _user_base_url = None
@@ -685,18 +703,20 @@ async def chat(
         except Exception as e:
             print(f"[Wolf] User key lookup skipped: {e}")
 
-    if _user_api_key:
-        # User has their own key — use it
-        if not provider_config:
-            provider_config = ProviderConfig(enabled=True, api_key=_user_api_key, base_url=_user_base_url)
-        else:
-            provider_config = provider_config.model_copy()
-            provider_config.api_key = _user_api_key
-            provider_config.enabled = True
-            if _user_base_url:
-                provider_config.base_url = _user_base_url
-    elif not provider_config or not provider_config.enabled or not provider_config.api_key:
-        return {"error": "Provider non configuré. Ajoutez votre clé API dans les paramètres."}
+    if not _user_api_key:
+        return {"error": f"Aucune clé API configurée pour le provider '{provider_name}'. Ajoute la tienne dans Paramètres → Providers."}
+
+    # Build a per-request provider_config from global metadata (base_url, models)
+    # and the user's own key. The original global entry is never mutated.
+    _global_meta = settings.providers.get(provider_name)
+    if _global_meta:
+        provider_config = _global_meta.model_copy()
+    else:
+        provider_config = ProviderConfig(enabled=True)
+    provider_config.api_key = _user_api_key
+    provider_config.enabled = True
+    if _user_base_url:
+        provider_config.base_url = _user_base_url
 
     # Validation du modele : verifier qu'il existe chez le provider
     if model:
@@ -727,9 +747,18 @@ async def chat(
     user_images = data.get("images", [])
     actual_model = model or provider_config.default_model or ""
     if user_images and not _model_supports_vision(actual_model):
-        # Le modèle ne supporte pas la vision → décrire les images en texte
+        # Le modèle ne supporte pas la vision → décrire les images en texte.
+        # Only the caller's own vision keys are used — no cross-user fallback.
         print(f"[Wolf] Model '{actual_model}' has no vision — using fallback description")
-        description = await _describe_images_for_blind_model(user_images, message, settings)
+        _caller_user_settings = None
+        if user_id:
+            try:
+                _caller_user_settings = await get_user_settings(user_id, session)
+            except Exception:
+                _caller_user_settings = None
+        description = await _describe_images_for_blind_model(
+            user_images, message, settings, user_settings=_caller_user_settings
+        )
         message = f"{message}\n\n[Description des images jointes par un modèle vision :\n{description}]"
         user_images = []  # Ne pas envoyer les images au modèle non-vision
     chat_messages.append(ChatMessage(role="user", content=message, images=user_images))
@@ -813,12 +842,23 @@ async def chat(
         skill_block = f"\n\n## Skill actif : {active_skill['name']}\n{active_skill['prompt']}"
         print(f"[Wolf] Skill overlay applied: '{active_skill['name']}' ({len(active_skill['prompt'])} chars)")
 
-    # Construire la liste des modeles disponibles pour guider Wolf
+    # Construire la liste des modeles disponibles pour guider Wolf — basée
+    # uniquement sur les providers pour lesquels CE user a une clé configurée.
     _available_models_lines = []
+    _caller_provider_names: set[str] = set()
+    if user_id:
+        try:
+            _us_for_models = await get_user_settings(user_id, session)
+            for _pname_k in (_us_for_models.provider_keys or {}).keys():
+                _decoded_k = get_user_provider_key(_us_for_models, _pname_k)
+                if _decoded_k and _decoded_k.get("api_key"):
+                    _caller_provider_names.add(_pname_k)
+        except Exception:
+            pass
     for _pname, _pcfg in settings.providers.items():
-        if _pcfg.enabled and _pcfg.api_key and _pcfg.models:
+        if _pname in _caller_provider_names and _pcfg.models:
             _available_models_lines.append(f"  - **{_pname}** : {', '.join(_pcfg.models[:12])}")
-    _models_section = "\n".join(_available_models_lines) if _available_models_lines else "  (aucun provider configure)"
+    _models_section = "\n".join(_available_models_lines) if _available_models_lines else "  (aucun provider configure pour cet utilisateur)"
 
     # Le tools_block sera construit APRES le gateway (voir plus bas)
     _models_section_for_prompt = _models_section
@@ -1289,7 +1329,7 @@ Tu operes en mode **demande**. Comportement :
 
 
 @router.post("/conversations/{convo_id}/chat/stream")
-async def chat_stream(convo_id: int, data: dict):
+async def chat_stream(convo_id: int, data: dict, request: Request):
     # -- Budget check
     from backend.core.cost.manager import get_cost_manager
     from backend.core.db.engine import get_session as _get_session
@@ -1305,16 +1345,32 @@ async def chat_stream(convo_id: int, data: dict):
     model = data.get("model")
     message = data.get("message", "")
 
-    provider_config = settings.providers.get(provider_name)
-    if not provider_config or not provider_config.enabled or not provider_config.api_key:
-        yield {"error": "Provider non configure"}
+    # STRICT per-user: resolve the key from the caller's UserSettings only.
+    _uid_stream = getattr(request.state, "user_id", None)
+    _stream_api_key = None
+    _stream_base_url = None
+    if _uid_stream:
+        async for _stream_session in _get_session():
+            try:
+                _us = await get_user_settings(_uid_stream, _stream_session)
+                _up = get_user_provider_key(_us, provider_name)
+                if _up and _up.get("api_key"):
+                    _stream_api_key = _up["api_key"]
+                    _stream_base_url = _up.get("base_url")
+            except Exception:
+                pass
+            break
+    if not _stream_api_key:
+        yield {"error": f"Aucune clé API configurée pour '{provider_name}'. Ajoute la tienne dans Paramètres → Providers."}
         return
 
+    provider_meta = settings.providers.get(provider_name)
     provider = get_provider(
         provider_name,
-        provider_config.api_key,
-        provider_config.base_url,
+        _stream_api_key,
+        _stream_base_url or (provider_meta.base_url if provider_meta else None),
     )
+    provider_config = provider_meta or ProviderConfig()
 
     user_images = data.get("images", [])
     chat_messages = [ChatMessage(role="user", content=message, images=user_images)]

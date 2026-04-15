@@ -10,9 +10,12 @@ import time
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config.settings import Settings
+from backend.core.db.engine import get_session
+from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
 from backend.core.providers import get_provider
 
 logger = logging.getLogger("gungnir.plugins.model_guide")
@@ -239,21 +242,41 @@ async def model_guide_health():
 
 
 @router.get("/catalog")
-async def get_catalog():
+async def get_catalog(request: Request, session: AsyncSession = Depends(get_session)):
     """
-    Returns all available models grouped by provider.
-    OpenRouter models are enriched with live pricing from their API.
-    Other providers use static metadata.
+    Returns all available models grouped by provider for the current user.
+    Provider API keys are resolved strictly from the caller's UserSettings so
+    the "has_api_key" flag and dynamic model listing reflect the caller's own
+    configuration, never another user's.
     """
     settings = Settings.load()
     or_models = await _fetch_openrouter_models()
     catalog = {}
+
+    # Resolve the caller's per-user provider keys
+    uid = getattr(request.state, "user_id", None)
+    user_settings_row = None
+    if uid:
+        try:
+            user_settings_row = await get_user_settings(uid, session)
+        except Exception as e:
+            logger.warning(f"Model catalog: user settings lookup failed: {e}")
+
+    def _user_key_for(pname: str) -> tuple[str | None, str | None]:
+        """Return (api_key, base_url) for the current user, or (None, None)."""
+        if user_settings_row is None:
+            return None, None
+        decoded = get_user_provider_key(user_settings_row, pname)
+        if decoded and decoded.get("api_key"):
+            return decoded["api_key"], decoded.get("base_url")
+        return None, None
 
     for provider_name, provider_config in settings.providers.items():
         if not provider_config.enabled:
             continue
 
         models_list = provider_config.models or []
+        _uapi_key, _ubase_url = _user_key_for(provider_name)
 
         if provider_name == "openrouter":
             # Use live data — filter to only configured + available models
@@ -304,17 +327,18 @@ async def get_catalog():
             catalog[provider_name] = {
                 "provider": provider_name,
                 "enabled": True,
-                "has_api_key": bool(provider_config.api_key),
+                "has_api_key": bool(_uapi_key),
                 "default_model": provider_config.default_model,
                 "model_count": len(enriched),
                 "models": sorted(enriched, key=lambda x: x["name"].lower()),
             }
         else:
-            # Non-OpenRouter: try dynamic listing first, fallback to static config
+            # Non-OpenRouter: try dynamic listing with the user's own key first
             dynamic_models = []
-            if provider_config.api_key:
+            if _uapi_key:
                 try:
-                    provider = get_provider(provider_name, provider_config.api_key, provider_config.base_url)
+                    _bu = _ubase_url or provider_config.base_url
+                    provider = get_provider(provider_name, _uapi_key, _bu)
                     dynamic_models = await provider.list_models()
                 except Exception as e:
                     logger.warning(f"Dynamic model listing failed for {provider_name}: {e}")
@@ -367,7 +391,7 @@ async def get_catalog():
             catalog[provider_name] = {
                 "provider": provider_name,
                 "enabled": True,
-                "has_api_key": bool(provider_config.api_key),
+                "has_api_key": bool(_uapi_key),
                 "default_model": provider_config.default_model,
                 "model_count": len(enriched),
                 "models": sorted(enriched, key=lambda x: x["name"].lower()),
