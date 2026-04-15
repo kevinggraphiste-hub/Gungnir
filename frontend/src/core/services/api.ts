@@ -265,19 +265,31 @@ export const api = {
   getConfig: async () => {
     const response = await apiFetch(`${API_BASE}/config`)
     const config = await handleResponse(response)
-    // Merge per-user provider keys over global config
+    if (!config.providers) config.providers = {}
+    // Merge per-user provider keys over global config.
+    // If the user added a provider that is not in the global defaults
+    // (e.g. groq, together, or any custom one), synthesize an entry so
+    // the frontend (chat dropdown, settings modal, etc.) can see it.
     try {
       const userProvResp = await apiFetch(`${API_BASE}/config/user/providers`)
       if (userProvResp.ok) {
         const userProvData = await userProvResp.json()
         if (userProvData.providers) {
           for (const [name, uprov] of Object.entries(userProvData.providers) as any) {
-            if (config.providers[name]) {
-              // User has a key → show as configured
-              if (uprov.has_api_key) {
-                config.providers[name].has_api_key = true
-                config.providers[name].enabled = uprov.enabled
+            if (!config.providers[name]) {
+              config.providers[name] = {
+                enabled: uprov.enabled ?? true,
+                has_api_key: !!uprov.has_api_key,
+                api_key: '',
+                base_url: uprov.base_url || '',
+                default_model: uprov.default_model || '',
+                models: uprov.models || [],
               }
+            } else if (uprov.has_api_key) {
+              config.providers[name].has_api_key = true
+              config.providers[name].enabled = uprov.enabled
+              if (uprov.base_url) config.providers[name].base_url = uprov.base_url
+              if (uprov.default_model) config.providers[name].default_model = uprov.default_model
             }
           }
         }
