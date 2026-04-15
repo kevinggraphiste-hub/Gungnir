@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { X, Key, Plus, Trash2, Eye, EyeOff, Check, Save } from 'lucide-react'
-import { api } from '../services/api'
+import { X, Key, Plus, Trash2, Eye, EyeOff, Check, Save, RefreshCw } from 'lucide-react'
+import { api, apiFetch } from '../services/api'
 
 interface Provider {
   name: string
@@ -24,6 +24,11 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
   const [newProvider, setNewProvider] = useState({ name: '', api_key: '' })
   const [showAddForm, setShowAddForm] = useState(false)
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+  // Live model lists per provider, fetched from /api/models/{name} when the
+  // modal opens. Falls back to the static p.models list if the live fetch
+  // fails or returns nothing.
+  const [liveModels, setLiveModels] = useState<Record<string, string[]>>({})
+  const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     if (!isOpen || !config?.providers) return
@@ -35,6 +40,36 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
       models: p?.models || [],
     }))
     setProviders(list)
+  }, [isOpen, config])
+
+  // Fetch live model lists every time the modal opens, for every provider
+  // that is enabled or has a key — same flow as Settings → Providers.
+  const loadLive = async (force = false) => {
+    if (!config?.providers) return
+    const targets = Object.entries(config.providers)
+      .filter(([, p]: [string, any]) => p?.enabled || p?.has_api_key)
+      .map(([name]) => name)
+    for (const name of targets) {
+      if (!force && liveModels[name]?.length) continue
+      setLoadingModels(prev => ({ ...prev, [name]: true }))
+      try {
+        const res = await apiFetch(`/api/models/${name}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.models) && data.models.length > 0) {
+            setLiveModels(prev => ({ ...prev, [name]: data.models }))
+          }
+        }
+      } catch (err) {
+        console.warn(`ApiKeysModal: live models fetch failed for ${name}:`, err)
+      }
+      setLoadingModels(prev => ({ ...prev, [name]: false }))
+    }
+  }
+
+  useEffect(() => {
+    if (isOpen) loadLive()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, config])
 
   const handleSave = async (providerName: string) => {
@@ -112,9 +147,15 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Gérer vos providers et clés</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg transition-colors" style={{ color: 'var(--text-muted)' }}>
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button onClick={() => loadLive(true)} title="Rafraîchir les modèles live"
+              className="p-2 rounded-lg transition-colors" style={{ color: 'var(--text-muted)' }}>
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <button onClick={onClose} className="p-2 rounded-lg transition-colors" style={{ color: 'var(--text-muted)' }}>
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Message */}
@@ -168,14 +209,30 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
                 </button>
               </div>
 
-              {prov.models.length > 0 && (
-                <select value={prov.default_model}
-                  onChange={e => updateProvider(prov.name, 'default_model', e.target.value)}
-                  className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
-                  {prov.models.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              )}
+              {(() => {
+                const live = liveModels[prov.name]
+                const allModels = (live && live.length > 0) ? live : prov.models
+                if (allModels.length === 0) return null
+                const sorted = [...allModels].sort()
+                return (
+                  <div>
+                    <div className="flex items-center justify-between text-[10px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                      <span>
+                        {live && live.length > 0
+                          ? `${sorted.length} modèle${sorted.length > 1 ? 's' : ''} live`
+                          : `${sorted.length} modèle${sorted.length > 1 ? 's' : ''} (statique)`}
+                      </span>
+                      {loadingModels[prov.name] && <span>chargement…</span>}
+                    </div>
+                    <select value={prov.default_model}
+                      onChange={e => updateProvider(prov.name, 'default_model', e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                      {sorted.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                )
+              })()}
 
               <button onClick={() => handleSave(prov.name)} disabled={saving === prov.name}
                 className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm disabled:opacity-50 transition-colors"
