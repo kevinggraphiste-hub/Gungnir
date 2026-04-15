@@ -61,6 +61,9 @@ COPY data/ ./data/
 # Copy project-level files
 COPY CLAUDE.md ./CLAUDE.md
 
+# Copy one-shot migration / maintenance scripts (seed_existing_users, etc.)
+COPY scripts/ ./scripts/
+
 # Create data directory structure
 RUN mkdir -p data/backups data/workspace data/consciousness \
     && chown -R gungnir:gungnir /app
