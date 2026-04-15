@@ -1206,7 +1206,10 @@ export default function Chat() {
                     {groupedProviders.map(group => {
                       const isSearching = !!modelSearch.trim()
                       const isExpanded = expandedProviders.has(group.name)
-                      const limit = isSearching ? 50 : (isExpanded ? group.models.length : 20)
+                      // Show ALL models by default. Provider lists like
+                      // OpenRouter (300+) are scrollable inside the dropdown.
+                      // Search still acts as a filter.
+                      const limit = group.models.length
                       const displayModels = group.models.slice(0, limit)
                       const hasMore = group.models.length > limit
                       return (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useStore } from '../stores/appStore'
 import { api, apiFetch } from '../services/api'
@@ -92,6 +92,11 @@ export default function Settings() {
   const [langDropdownOpen, setLangDropdownOpen] = useState(false)
   const langDropdownRef = useRef<HTMLDivElement>(null)
   const [providerConfigs, setProviderConfigs] = useState<Record<string, { api_key?: string; enabled: boolean; default_model?: string }>>({})
+  // Live model lists per provider, fetched from /api/models/{name} when the
+  // providers tab opens. Falls back to the static p.models list if the live
+  // fetch fails or returns nothing.
+  const [livePerProviderModels, setLivePerProviderModels] = useState<Record<string, string[]>>({})
+  const [livePerProviderLoading, setLivePerProviderLoading] = useState<Record<string, boolean>>({})
 
   // Heartbeat
   const [hbConfig, setHbConfig] = useState<any>(DEFAULT_HB_CONFIG)
@@ -208,6 +213,38 @@ export default function Settings() {
       setProviderConfigs(configs)
     }
   }, [config])
+
+  // Fetch live model lists for every provider that is enabled or has a key.
+  // Runs when the user opens the providers tab. Each provider's list comes
+  // from /api/models/{name} which calls the live API and merges with the
+  // static defaults server-side.
+  const loadLiveModels = useCallback(async (force = false) => {
+    if (!config?.providers) return
+    const targets = Object.entries(config.providers)
+      .filter(([, p]: [string, any]) => p?.enabled || p?.has_api_key)
+      .map(([name]) => name)
+    for (const name of targets) {
+      if (!force && livePerProviderModels[name]?.length) continue
+      setLivePerProviderLoading(prev => ({ ...prev, [name]: true }))
+      try {
+        const res = await apiFetch(`/api/models/${name}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.models) && data.models.length > 0) {
+            setLivePerProviderModels(prev => ({ ...prev, [name]: data.models }))
+          }
+        }
+      } catch (err) {
+        console.warn(`Live models fetch failed for ${name}:`, err)
+      }
+      setLivePerProviderLoading(prev => ({ ...prev, [name]: false }))
+    }
+  }, [config, livePerProviderModels])
+
+  useEffect(() => {
+    if (activeTab === 'providers') loadLiveModels()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, config])
 
   const handleSaveProvider = async (provider: string) => {
     const cfg = providerConfigs[provider]; if (!cfg) return
@@ -890,7 +927,21 @@ export default function Settings() {
           {/* -- Providers ------------------------------------------------- */}
           {activeTab === 'providers' && (
             <div className="space-y-6">
-              {config?.providers && Object.entries(config.providers).map(([name, p]: [string, any]) => (
+              <div className="flex items-center justify-between">
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  La liste des modèles est récupérée en direct via l'API de chaque provider.
+                </p>
+                <button onClick={() => loadLiveModels(true)}
+                  className="text-xs px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
+                  style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                  <RefreshCw className="w-3 h-3" /> Rafraîchir tous les modèles
+                </button>
+              </div>
+              {config?.providers && Object.entries(config.providers).map(([name, p]: [string, any]) => {
+                const liveModels = livePerProviderModels[name]
+                const models: string[] = (liveModels && liveModels.length > 0) ? liveModels : (p?.models || [])
+                const isLoadingModels = livePerProviderLoading[name]
+                return (
                 <div key={name} className="border border-[var(--border)] rounded-lg p-4">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-medium capitalize" style={{ color: 'var(--text-primary)' }}>{name}</h3>
@@ -905,12 +956,26 @@ export default function Settings() {
                     <input type="password" placeholder="API Key" value={providerConfigs[name]?.api_key || ''}
                       onChange={e => setProviderConfigs(prev => ({ ...prev, [name]: { ...prev[name], api_key: e.target.value } }))}
                       className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
-                    {p?.models && p.models.length > 0 && (
-                      <select value={providerConfigs[name]?.default_model || p.default_model || ''}
-                        onChange={e => setProviderConfigs(prev => ({ ...prev, [name]: { ...prev[name], default_model: e.target.value } }))}
-                        className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }}>
-                        {p.models.map((m: string) => <option key={m} value={m}>{m}</option>)}
-                      </select>
+                    {models.length > 0 ? (
+                      <div>
+                        <div className="flex items-center justify-between text-[10px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                          <span>
+                            {liveModels && liveModels.length > 0
+                              ? `${models.length} modèle${models.length > 1 ? 's' : ''} live`
+                              : `${models.length} modèle${models.length > 1 ? 's' : ''} (statique)`}
+                          </span>
+                          {isLoadingModels && <span>chargement…</span>}
+                        </div>
+                        <select value={providerConfigs[name]?.default_model || p.default_model || ''}
+                          onChange={e => setProviderConfigs(prev => ({ ...prev, [name]: { ...prev[name], default_model: e.target.value } }))}
+                          className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }}>
+                          {[...models].sort().map((m: string) => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        {isLoadingModels ? 'Chargement des modèles…' : 'Aucun modèle disponible. Active le provider et ajoute une clé API.'}
+                      </div>
                     )}
                     <button onClick={() => handleSaveProvider(name)} disabled={isSaving}
                       className="disabled:opacity-50 px-4 py-2 rounded-lg"
@@ -919,7 +984,7 @@ export default function Settings() {
                     </button>
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           )}
 

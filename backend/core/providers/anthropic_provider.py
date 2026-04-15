@@ -161,8 +161,22 @@ class AnthropicProvider(LLMProvider):
 
     async def list_models(self) -> list[str]:
         try:
-            resp = await self.client.models.list()
-            return [m.id for m in resp.data]
+            # Anthropic SDK paginates models.list() at 20 by default. Walk
+            # all pages so the UI sees every available model, not just the
+            # first page.
+            all_ids: list[str] = []
+            page = await self.client.models.list(limit=1000)
+            while True:
+                for m in page.data:
+                    all_ids.append(m.id)
+                has_more = getattr(page, "has_more", False)
+                if not has_more:
+                    break
+                last_id = page.data[-1].id if page.data else None
+                if not last_id:
+                    break
+                page = await self.client.models.list(limit=1000, after_id=last_id)
+            return all_ids
         except Exception:
             # Fallback to known models if API call fails
             return [
