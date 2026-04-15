@@ -8,7 +8,7 @@ it never respawns.
 import json
 from pathlib import Path
 from datetime import datetime
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -249,9 +249,12 @@ async def get_skill(session: AsyncSession, user_id: int, name: str) -> dict | No
 
 
 async def create_skill(session: AsyncSession, user_id: int, name: str, data: dict) -> dict:
-    # Check duplicate
+    # Duplicate check is case-insensitive so "MySkill" and "myskill" collide
     existing = await session.execute(
-        select(UserSkill).where(UserSkill.user_id == user_id, UserSkill.name == name)
+        select(UserSkill).where(
+            UserSkill.user_id == user_id,
+            func.lower(UserSkill.name) == name.lower(),
+        )
     )
     if existing.scalars().first():
         return {"success": False, "error": f"Skill '{name}' existe déjà"}
@@ -360,7 +363,10 @@ async def list_personalities(session: AsyncSession, user_id: int) -> list[dict]:
 
 async def create_personality(session: AsyncSession, user_id: int, name: str, data: dict) -> dict:
     existing = await session.execute(
-        select(UserPersonality).where(UserPersonality.user_id == user_id, UserPersonality.name == name)
+        select(UserPersonality).where(
+            UserPersonality.user_id == user_id,
+            func.lower(UserPersonality.name) == name.lower(),
+        )
     )
     if existing.scalars().first():
         return {"success": False, "error": f"Personnalité '{name}' existe déjà"}
@@ -463,7 +469,10 @@ async def list_sub_agents(session: AsyncSession, user_id: int) -> list[dict]:
 
 async def create_sub_agent(session: AsyncSession, user_id: int, name: str, data: dict) -> dict:
     existing = await session.execute(
-        select(UserSubAgent).where(UserSubAgent.user_id == user_id, UserSubAgent.name == name)
+        select(UserSubAgent).where(
+            UserSubAgent.user_id == user_id,
+            func.lower(UserSubAgent.name) == name.lower(),
+        )
     )
     if existing.scalars().first():
         return {"success": False, "error": f"Agent '{name}' existe déjà"}

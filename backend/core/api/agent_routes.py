@@ -18,6 +18,31 @@ def _uid(request: Request) -> int:
     """Extract user_id from auth middleware, fallback to 0 for unauthenticated."""
     return getattr(request.state, "user_id", None) or 0
 
+
+# Display-name validation for skills / sub-agents / personalities.
+# Intentionally permissive: users can type natural titles with uppercase,
+# digits, spaces, accents and common punctuation. We only reject characters
+# that would break URL routing, HTML rendering or the shell ever touching
+# the name: /, \, <, >, ", ', `, |, and control chars (\n, \r, \t, \0).
+_NAME_FORBIDDEN_CHARS = set("/\\<>\"'`|\n\r\t\0")
+_NAME_MAX_LEN = 80
+
+
+def _validate_display_name(name: str) -> tuple[bool, str]:
+    """Return (ok, error_message). Call before create/import endpoints."""
+    if not isinstance(name, str):
+        return False, "Nom requis"
+    trimmed = name.strip()
+    if not trimmed:
+        return False, "Nom requis"
+    if len(trimmed) > _NAME_MAX_LEN:
+        return False, f"Nom trop long (max {_NAME_MAX_LEN} caractères)"
+    bad = sorted({c for c in trimmed if c in _NAME_FORBIDDEN_CHARS})
+    if bad:
+        human = ", ".join(repr(c) for c in bad)
+        return False, f"Caractères interdits dans le nom : {human}"
+    return True, ""
+
 # Import helper functions from chat module (needed by invoke_sub_agent)
 from backend.core.api.chat import (
     _parse_text_tool_calls,
@@ -75,8 +100,9 @@ async def list_skills(request: Request, category: str = None, session: AsyncSess
 @router.post("/skills")
 async def create_skill(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     name = data.get("name", "").strip()
-    if not re.match(r'^[a-z][a-z0-9_]{1,50}$', name):
-        return {"error": "Nom invalide (snake_case, 2-50 chars, commence par une lettre)"}
+    ok, err = _validate_display_name(name)
+    if not ok:
+        return {"error": err}
     skill_data = {
         "description": data.get("description", ""),
         "prompt": data.get("prompt", ""),
@@ -99,8 +125,10 @@ async def create_skill(request: Request, data: dict, session: AsyncSession = Dep
 @router.post("/skills/import")
 async def import_skill(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     name = data.get("name", "").strip()
-    if name and not re.match(r'^[a-z][a-z0-9_]{1,50}$', name):
-        return {"error": "Nom invalide (snake_case, 2-50 chars, commence par une lettre)"}
+    if name:
+        ok, err = _validate_display_name(name)
+        if not ok:
+            return {"error": err}
     return await ud.create_skill(session, _uid(request), name, data)
 
 
@@ -188,7 +216,10 @@ async def list_sub_agents(request: Request, session: AsyncSession = Depends(get_
 
 @router.post("/sub-agents")
 async def create_sub_agent(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
-    name = data.get("name", "")
+    name = (data.get("name") or "").strip()
+    ok, err = _validate_display_name(name)
+    if not ok:
+        return {"success": False, "error": err}
     if not name.startswith("agent_"):
         name = f"agent_{name}"
     agent_data = {
@@ -204,12 +235,11 @@ async def create_sub_agent(request: Request, data: dict, session: AsyncSession =
 @router.post("/sub-agents/import")
 async def import_sub_agent(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     """Import a sub-agent from JSON, reuses create logic."""
-    name = data.get("name", "").strip()
-    if not name:
-        return {"success": False, "error": "Missing name"}
+    name = (data.get("name") or "").strip()
     raw_name = name[6:] if name.startswith("agent_") else name
-    if not re.match(r'^[a-z][a-z0-9_]{1,50}$', raw_name):
-        return {"success": False, "error": "Nom invalide (snake_case, 2-50 chars, commence par une lettre)"}
+    ok, err = _validate_display_name(raw_name)
+    if not ok:
+        return {"success": False, "error": err}
     if not name.startswith("agent_"):
         name = f"agent_{name}"
     agent_data = {
@@ -579,9 +609,10 @@ async def set_personality(request: Request, name: str, session: AsyncSession = D
 
 @router.post("/personality")
 async def create_personality(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
-    name = data.get("name", "").strip()
-    if not name:
-        return {"success": False, "error": "Nom requis"}
+    name = (data.get("name") or "").strip()
+    ok, err = _validate_display_name(name)
+    if not ok:
+        return {"success": False, "error": err}
     personality_data = {
         "description": data.get("description", ""),
         "system_prompt": data.get("system_prompt", ""),
