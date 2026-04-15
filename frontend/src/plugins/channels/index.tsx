@@ -4,6 +4,7 @@
  * Indépendant — appels directs vers /api/plugins/channels/*.
  */
 import { useState, useEffect, useCallback } from 'react'
+import InfoButton from '@core/components/InfoButton'
 import {
   Radio, RadioTower, Send, MessageCircle, Hash, Phone, Mail, Globe, Code,
   Plus, Trash2, Power, PowerOff, Settings, Copy, Check, ExternalLink,
@@ -238,6 +239,13 @@ export default function ChannelsPlugin() {
         <div className="flex items-center gap-3">
           <RadioTower className="w-5 h-5" style={{ color: '#dc2626' }} />
           <h1 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Channels</h1>
+          <InfoButton>
+            <strong>Les channels</strong> sont les portes d'entrée par lesquelles ton agent reçoit des messages de l'extérieur : Telegram, Discord, Slack, WhatsApp, email, widget web, API HTTP…
+            <br /><br />
+            Chaque canal a un webhook entrant qu'un service tiers appelle quand un message arrive. Ton agent répond ensuite via le même canal (par exemple : un user t'envoie un message sur Telegram → l'agent lit et répond directement dans le chat Telegram).
+            <br /><br />
+            Les canaux sont <em>per-user</em> : les messages qui arrivent sur ton Telegram déclenchent uniquement <em>ton</em> agent, avec <em>tes</em> clés API et <em>ta</em> config.
+          </InfoButton>
           <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(220,38,38,0.15)', color: '#dc2626' }}>
             {activeCount} actif{activeCount !== 1 ? 's' : ''}
           </span>

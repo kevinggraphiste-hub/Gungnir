@@ -8,6 +8,7 @@
  * Self-contained — no core dependency beyond CSS variables.
  */
 import { useState, useEffect, useCallback } from 'react'
+import InfoButton from '@core/components/InfoButton'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -131,7 +132,16 @@ export default function AutomataPlugin() {
         borderBottom: '1px solid var(--border)', flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Automata</span>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Automata</span>
+            <InfoButton>
+              <strong>Les automatas</strong> sont des tâches que l'agent exécute tout seul à des moments précis — une fois à une date donnée, toutes les N minutes/heures, ou selon une expression cron.
+              <br /><br />
+              À chaque déclenchement, l'agent lit ton prompt et y répond comme si tu venais de l'écrire dans le chat. Il a accès aux mêmes outils que pendant une conversation normale (recherche web, MCP, filesystem, etc.), donc il peut par exemple faire une veille matinale qui pousse un résumé sur Discord, ou un backup quotidien.
+              <br /><br />
+              Le <em>heartbeat</em> est le chef d'orchestre : c'est lui qui scanne tes automatas à intervalle régulier et les déclenche. Si tu arrêtes le heartbeat dans Paramètres, tes automatas ne tournent plus.
+            </InfoButton>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 0 }}>
           <TabBtn active={tab === 'tasks'} onClick={() => setTab('tasks')}>Taches planifiees</TabBtn>
@@ -472,6 +482,13 @@ function N8nTab() {
             <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>
               Serveur MCP n8n
             </div>
+            <InfoButton>
+              <strong>MCP</strong> (Model Context Protocol) est un standard qui permet à un LLM d'appeler des services externes comme s'il s'agissait d'outils natifs. Un serveur MCP expose une liste d'actions (API n8n, API Notion, etc.) que l'agent peut invoquer.
+              <br /><br />
+              Concrètement, une fois le MCP n8n connecté, ton agent peut <em>lire, créer, modifier ou exécuter</em> tes workflows n8n directement depuis une conversation ou un cron.
+              <br /><br />
+              Les serveurs MCP sont isolés <em>per-user</em> : tes clés API passent en variables d'environnement et restent privées.
+            </InfoButton>
             {mcpConnected && (
               <span style={{
                 fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4,

@@ -6,6 +6,7 @@
  * Plugin 100% indépendant.
  */
 import { useState, useEffect, useCallback } from 'react'
+import InfoButton from '@core/components/InfoButton'
 import {
   Plug, Plus, Settings, Trash2, Play, Square, RefreshCw,
   CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronRight,
@@ -234,7 +235,18 @@ export default function WebhooksPlugin() {
             <Plug className="w-5 h-5" style={{ color: 'var(--accent-primary)' }} />
           </div>
           <div>
-            <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Intégrations</h1>
+            <div className="flex items-center gap-1">
+              <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Intégrations</h1>
+              <InfoButton>
+                <strong>Les intégrations</strong> sont des connecteurs vers des services externes (GitHub, n8n, Notion, Linear, Supabase, Sentry…) qui s'exposent à l'agent comme des <em>outils</em> appelables.
+                <br /><br />
+                Chaque intégration tourne comme un serveur MCP (Model Context Protocol) : une fois branchée, l'agent peut lire/écrire sur le service via des tool calls pendant une conversation ou un cron.
+                <br /><br />
+                Les <em>Webhooks</em> (onglet suivant) sont l'inverse : ils permettent à des services externes d'appeler ton agent quand un événement se produit (ex : un nouveau commit sur GitHub → l'agent est notifié et peut réagir).
+                <br /><br />
+                Tout est <em>per-user</em> : tes intégrations et leurs outils sont isolés des autres utilisateurs de l'instance.
+              </InfoButton>
+            </div>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
               {activeIntegrations.length} active{activeIntegrations.length > 1 ? 's' : ''} — {mcpStatus?.total_tools || 0} outils disponibles pour l'agent
             </p>
