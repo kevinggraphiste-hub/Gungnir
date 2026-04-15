@@ -627,33 +627,11 @@ Tu es honnete : tu admets clairement quand tu ne sais pas quelque chose.
 Tu n'es pas Claude, GPT ou un autre assistant generique -- tu es {name}.
 """
 
-# Onboarding prompt — injected on the very first conversation ever
-ONBOARDING_PROMPT = """
-## ONBOARDING — PREMIERE CONVERSATION
-
-C'est la **toute premiere conversation** avec cet utilisateur. Le systeme n'a pas encore ete configure.
-Tu dois te presenter et proposer un setup initial convivial. Voici comment proceder :
-
-1. **Accueille chaleureusement** l'utilisateur avec un message court et amical
-2. **Demande-lui comment il veut t'appeler** — propose le nom actuel ("{agent_name}") ou un autre de son choix
-3. **Demande-lui de definir ta personnalite** — quel role tu dois jouer (assistant general, expert technique, assistant creatif, etc.)
-4. **Demande s'il a des preferences** :
-   - Tutoiement ou vouvoiement ?
-   - Style de reponse : concis ou detaille ?
-   - Domaines d'expertise privilegies ?
-   - Une signature de message ? (ex: un emoji, une phrase de fin)
-5. **Propose de configurer les bases** :
-   - Cles API LLM (si pas encore fait) — tu peux les sauvegarder avec provider_manage
-   - Canaux de communication (Slack, Discord, Telegram) — tu peux les connecter avec channel_manage
-   - Serveurs MCP — tu peux les ajouter avec mcp_manage
-
-Une fois les reponses obtenues, utilise tes outils :
-- `soul_write(content)` pour ecrire ton identite dans le fichier soul.md
-- Si l'utilisateur donne un nom different, inclus-le dans le soul
-
-**Sois naturel, pas robotique.** Ne deballe pas tout d'un coup — pose 2-3 questions, attends la reponse, puis continue.
-Commence par te presenter et demander le nom.
-"""
+# The legacy ONBOARDING_PROMPT was a global detection ("no messages in the
+# whole DB") that broke in multi-user mode. The new onboarding system uses
+# a per-user flag (UserSettings.onboarding_state.step) plus a conversation
+# metadata marker (metadata_json.is_onboarding = true). See
+# backend/core/api/onboarding.py for the full flow.
 
 
 @router.post("/conversations/{convo_id}/chat")
@@ -801,7 +779,15 @@ async def chat(
     }
     _lang_code = settings.app.language or "fr"
     _lang_label = _lang_names.get(_lang_code, _lang_code)
+    # Per-user override on agent name (set at onboarding); fall back to the
+    # global default when the user hasn't finished the welcome chat yet.
     _agent_name = settings.app.agent_name or "Gungnir"
+    try:
+        _user_settings_row = await get_user_settings(_current_uid, session)
+        if _user_settings_row.agent_name:
+            _agent_name = _user_settings_row.agent_name
+    except Exception:
+        pass
     _user_soul_file = _get_soul_file(_current_uid)
     # Per-user soul: read user's own soul.md, fallback to global, then default
     if _user_soul_file.exists():
@@ -821,13 +807,9 @@ async def chat(
         f"\n**Langue de reponse :** Tu reponds TOUJOURS en {_lang_label}, quelle que soit la langue du message recu, sauf instruction explicite contraire."
     )
 
-    # Detect first-ever conversation — trigger onboarding
-    _is_first_conversation = False
-    if not _user_soul_file.exists() and len(messages) == 0:
-        # Check if there are ANY messages in the DB (not just this conversation)
-        _total_msgs = await session.execute(select(Message).limit(1))
-        if not _total_msgs.scalars().first():
-            _is_first_conversation = True
+    # Detect welcome-chat onboarding — per-user flag + conversation marker
+    from backend.core.api.onboarding import is_onboarding_active, ONBOARDING_SYSTEM_PROMPT
+    _is_onboarding_convo = await is_onboarding_active(session, _current_uid, convo_id)
     active_personality = await _ud.get_active_personality(session, _current_uid)
     personality_block = ""
     if active_personality and active_personality.get("system_prompt"):
@@ -1055,11 +1037,11 @@ Tu operes en mode **demande**. Comportement :
         except Exception:
             pass  # Plugin non chargé ou erreur — pas bloquant
 
-        # Onboarding block (first conversation ever)
+        # Welcome-chat onboarding injection (strictly per-user)
         onboarding_block = ""
-        if _is_first_conversation:
-            onboarding_block = ONBOARDING_PROMPT.replace("{agent_name}", _agent_name)
-            print(f"[Wolf] ONBOARDING: first conversation detected, injecting setup prompt")
+        if _is_onboarding_convo:
+            onboarding_block = "\n\n" + ONBOARDING_SYSTEM_PROMPT
+            print(f"[Wolf] ONBOARDING: welcome chat active for user={_current_uid}, convo={convo_id}")
 
         # ══════════════════════════════════════════════════════════════════
         # Todo-list interne de la conversation (injection si présente)

@@ -85,6 +85,23 @@ async def lifespan(app: FastAPI):
                     ))
                 logger.info("Migration: added deleted_defaults column to user_settings")
 
+            # Migration: agent_name + onboarding_state on user_settings
+            if not await _has_col("user_settings", "agent_name"):
+                await conn.execute(text(
+                    "ALTER TABLE user_settings ADD COLUMN agent_name VARCHAR(100) DEFAULT ''"
+                ))
+                logger.info("Migration: added agent_name column to user_settings")
+            if not await _has_col("user_settings", "onboarding_state"):
+                if _is_pg:
+                    await conn.execute(text(
+                        "ALTER TABLE user_settings ADD COLUMN onboarding_state JSONB DEFAULT '{}'::jsonb"
+                    ))
+                else:
+                    await conn.execute(text(
+                        "ALTER TABLE user_settings ADD COLUMN onboarding_state JSON DEFAULT '{}'"
+                    ))
+                logger.info("Migration: added onboarding_state column to user_settings")
+
             # Migration: user_id on cost_analytics / budget_settings / provider_budgets
             if not await _has_col("cost_analytics", "user_id"):
                 await conn.execute(text("ALTER TABLE cost_analytics ADD COLUMN user_id INTEGER"))

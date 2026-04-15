@@ -851,6 +851,28 @@ WOLF_TOOL_SCHEMAS = [
             }
         }
     },
+    # ── Onboarding finalization (welcome chat) ────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "finalize_onboarding",
+            "description": (
+                "À appeler UNIQUEMENT pendant la conversation d'onboarding de bienvenue, quand tu as collecté auprès de l'utilisateur : son nom d'agent préféré, s'il veut être tutoyé ou vouvoyé, une phrase de description (soul), et le mode d'autonomie. "
+                "Ce tool persiste tout en DB (agent_name, soul, mode, formality), écrit la soul dans data/soul/<user>/soul.md, marque l'onboarding comme terminé, et libère la conversation du mode onboarding. "
+                "Après l'appel, souhaite simplement la bienvenue à l'utilisateur en résumant ce qu'il t'a dit."
+            ),
+            "parameters": {
+                "type": "object",
+                "required": ["agent_name", "formality", "soul", "mode"],
+                "properties": {
+                    "agent_name": {"type": "string", "description": "Le nom choisi par l'utilisateur pour l'agent (ex : 'Loki', 'Vega', 'Gungnir')."},
+                    "formality": {"type": "string", "enum": ["tu", "vous"], "description": "'tu' pour tutoiement, 'vous' pour vouvoiement."},
+                    "soul": {"type": "string", "description": "Description courte et fidèle de l'identité/ton de l'agent telle que l'utilisateur l'a exprimée (1-3 phrases)."},
+                    "mode": {"type": "string", "enum": ["autonomous", "ask_permission", "restrained"], "description": "Niveau d'autonomie demandé. 'autonomous' = agit librement, 'ask_permission' = demande avant chaque action, 'restrained' = n'agit que si explicitement demandé."},
+                },
+            }
+        }
+    },
     # ── Channel management (setup wizard) ─────────────────────────────────────
     {
         "type": "function",
@@ -2677,6 +2699,91 @@ async def _doctor_check(scope: str = "full") -> dict:
     return results
 
 
+# ── Onboarding finalization ───────────────────────────────────────────────────
+
+async def _finalize_onboarding(
+    agent_name: str,
+    formality: str,
+    soul: str,
+    mode: str,
+) -> dict:
+    """Persist the welcome-chat answers and mark onboarding as done for the
+    current wolf user. Writes agent_name + formality + onboarding_state on
+    UserSettings, saves the soul to data/soul/<uid>/soul.md, and flips the
+    active ModeManager to the requested mode."""
+    uid = get_user_context() or 0
+    if uid <= 0:
+        return {"ok": False, "error": "Aucun utilisateur authentifié pour finaliser l'onboarding."}
+
+    clean_name = (agent_name or "").strip() or "Gungnir"
+    clean_formality = formality if formality in ("tu", "vous") else "tu"
+    clean_mode = mode if mode in ("autonomous", "ask_permission", "restrained") else "ask_permission"
+    clean_soul = (soul or "").strip()
+
+    # 1. Persist to UserSettings: agent_name + onboarding_state.done
+    try:
+        from backend.core.db.engine import async_session as _oa_sm
+        from backend.core.db.models import UserSettings as _oa_US
+        from sqlalchemy import select as _oa_sel
+        from sqlalchemy.orm.attributes import flag_modified as _oa_fm
+
+        async with _oa_sm() as _s:
+            res = await _s.execute(_oa_sel(_oa_US).where(_oa_US.user_id == uid))
+            us = res.scalar_one_or_none()
+            if us is None:
+                us = _oa_US(user_id=uid, provider_keys={}, service_keys={}, deleted_defaults={})
+                _s.add(us)
+                await _s.flush()
+            us.agent_name = clean_name
+            state = dict(us.onboarding_state or {})
+            state["step"] = "done"
+            state["answers"] = {
+                "agent_name": clean_name,
+                "formality": clean_formality,
+                "mode": clean_mode,
+            }
+            us.onboarding_state = state
+            _oa_fm(us, "onboarding_state")
+            await _s.commit()
+    except Exception as e:
+        return {"ok": False, "error": f"Persistance échouée: {e}"}
+
+    # 2. Write the soul.md file (per-user via _soul_path())
+    if clean_soul:
+        try:
+            soul_file = _soul_path(uid)
+            soul_file.parent.mkdir(parents=True, exist_ok=True)
+            header = f"# Âme de {clean_name}\n\n"
+            formality_line = (
+                "L'utilisateur préfère être tutoyé. Utilise 'tu' dans tes réponses.\n\n"
+                if clean_formality == "tu"
+                else "L'utilisateur préfère être vouvoyé. Utilise 'vous' dans tes réponses.\n\n"
+            )
+            soul_file.write_text(header + formality_line + clean_soul + "\n", encoding="utf-8")
+        except Exception as e:
+            # Non-fatal: the main config is already persisted
+            print(f"[Wolf] onboarding: soul write failed uid={uid}: {e}")
+
+    # 3. Flip the user's ModeManager to the requested mode
+    try:
+        from backend.core.agents.mode_manager import mode_pool, AgentMode
+        mm = mode_pool.get(uid)
+        mm.set_mode(AgentMode(clean_mode))
+    except Exception as e:
+        print(f"[Wolf] onboarding: mode switch failed uid={uid}: {e}")
+
+    return {
+        "ok": True,
+        "message": (
+            f"Onboarding terminé : agent_name='{clean_name}', formality='{clean_formality}', "
+            f"mode='{clean_mode}'. Souhaite maintenant la bienvenue à l'utilisateur en une courte phrase."
+        ),
+        "agent_name": clean_name,
+        "formality": clean_formality,
+        "mode": clean_mode,
+    }
+
+
 # ── Registre final ─────────────────────────────────────────────────────────────
 
 WOLF_EXECUTORS: dict[str, Any] = {
@@ -2740,6 +2847,8 @@ WOLF_EXECUTORS: dict[str, Any] = {
     "bash_exec":                  _bash_exec,
     # Doctor
     "doctor_check":               _doctor_check,
+    # Onboarding (welcome chat)
+    "finalize_onboarding":        _finalize_onboarding,
     # Setup wizard tools
     "channel_manage":             _channel_manage,
     "provider_manage":            _provider_manage,

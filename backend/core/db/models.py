@@ -139,6 +139,14 @@ class UserSettings(Base):
     active_provider = Column(String(100), default="openrouter")
     active_model = Column(String(255), default="")
     language = Column(String(10), default="fr")
+    # Per-user agent name (overrides Settings.app.agent_name when set). Filled
+    # by the welcome onboarding chat at first login.
+    agent_name = Column(String(100), default="")
+    # Onboarding state machine. Shape:
+    # {"step": "name|formality|personality|soul|mode|api_key|done",
+    #  "convo_id": <int|None>,  # the welcome conversation id
+    #  "answers": {"name": "...", "formality": "tu", ...}}
+    onboarding_state = Column(JSON, default=dict)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="settings")

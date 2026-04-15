@@ -14,6 +14,7 @@ from backend.core.api.backup_routes import router as backup_router
 from backend.core.api.heartbeat_routes import router as heartbeat_router
 from backend.core.api.organization_routes import router as organization_router
 from backend.core.api.task_routes import router as task_router
+from backend.core.api.onboarding import router as onboarding_router
 
 core_router = APIRouter()
 
@@ -40,3 +41,4 @@ core_router.include_router(backup_router, tags=["Backup"])
 core_router.include_router(heartbeat_router, tags=["Heartbeat"])
 core_router.include_router(organization_router, tags=["Organization"])
 core_router.include_router(task_router, tags=["Tasks"])
+core_router.include_router(onboarding_router, tags=["Onboarding"])

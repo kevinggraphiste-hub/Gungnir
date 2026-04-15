@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../i18n'
 import { useStore } from '../stores/appStore'
@@ -162,6 +163,7 @@ function MessageContent({ content }: { content: string }) {
 
 export default function Chat() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const {
     config, agentName,
     messages, currentConversation, setCurrentConversation,
@@ -205,6 +207,15 @@ export default function Chat() {
   const [allSkills, setAllSkills] = useState<any[]>([])
   const [activeSkill, setActiveSkill] = useState<string | null>(null)
   const [favoriteSkills, setFavoriteSkills] = useState<any[]>([])
+
+  // Welcome onboarding
+  const [onboardingState, setOnboardingState] = useState<{
+    step: 'pending' | 'in_progress' | 'done'
+    has_api_key: boolean
+    welcome_convo_id: number | null
+    agent_name: string
+  } | null>(null)
+  const onboardingAutoOpenedRef = useRef(false)
 
   // File/image attachments
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; type: string; dataUrl: string; preview?: string }[]>([])
@@ -380,6 +391,102 @@ export default function Chat() {
     }
     loadUserConversations()
   }, [currentUser?.id])
+
+  // ─── Welcome onboarding gate ──────────────────────────────────────
+  // On first mount (or when the user changes), check whether the caller
+  // needs the welcome chat. If they already have an API key and haven't
+  // finished onboarding, create+open the welcome conversation once.
+  useEffect(() => {
+    if (!currentUser?.id) return
+    onboardingAutoOpenedRef.current = false
+    const loadOnboarding = async () => {
+      try {
+        const res = await apiFetch('/api/onboarding/state')
+        if (!res.ok) return
+        const data = await res.json()
+        setOnboardingState(data)
+
+        if (data.step === 'done' || !data.has_api_key) return
+
+        // Needs onboarding + has key: create welcome conv if missing, then open it
+        if (!onboardingAutoOpenedRef.current) {
+          onboardingAutoOpenedRef.current = true
+          let convoId = data.welcome_convo_id
+          if (!convoId) {
+            try {
+              const createRes = await apiFetch('/api/onboarding/welcome', { method: 'POST' })
+              if (createRes.ok) {
+                const created = await createRes.json()
+                convoId = created.welcome_convo_id
+                setOnboardingState((prev) => prev ? { ...prev, welcome_convo_id: convoId, step: 'in_progress' } : prev)
+                // Refresh the conversations list so the sidebar shows "Bienvenue"
+                try {
+                  const convos = await api.getConversations(currentUser?.id)
+                  setConversations(convos)
+                } catch { /* ignore */ }
+              }
+            } catch { /* ignore */ }
+          }
+          if (convoId) setCurrentConversation(convoId)
+        }
+      } catch { /* ignore */ }
+    }
+    loadOnboarding()
+  }, [currentUser?.id])
+
+  const refreshOnboardingState = useCallback(async () => {
+    if (!currentUser?.id) return
+    try {
+      const res = await apiFetch('/api/onboarding/state')
+      if (!res.ok) return
+      const data = await res.json()
+      setOnboardingState(data)
+
+      // If the user just configured their API key elsewhere and came back,
+      // auto-create + open the welcome conversation now.
+      if (data.step !== 'done' && data.has_api_key && !onboardingAutoOpenedRef.current) {
+        onboardingAutoOpenedRef.current = true
+        let convoId = data.welcome_convo_id
+        if (!convoId) {
+          try {
+            const createRes = await apiFetch('/api/onboarding/welcome', { method: 'POST' })
+            if (createRes.ok) {
+              const created = await createRes.json()
+              convoId = created.welcome_convo_id
+              setOnboardingState((prev) => prev ? { ...prev, welcome_convo_id: convoId, step: 'in_progress' } : prev)
+              try {
+                const convos = await api.getConversations(currentUser?.id)
+                setConversations(convos)
+              } catch { /* ignore */ }
+            }
+          } catch { /* ignore */ }
+        }
+        if (convoId) setCurrentConversation(convoId)
+      }
+    } catch { /* ignore */ }
+  }, [currentUser?.id])
+
+  // Re-fetch onboarding state when the tab regains focus or the user comes
+  // back from Settings → Providers — so the welcome card disappears as soon
+  // as the key lands in UserSettings.provider_keys.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshOnboardingState()
+    }
+    window.addEventListener('focus', refreshOnboardingState)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('focus', refreshOnboardingState)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [refreshOnboardingState])
+
+  const skipOnboarding = async () => {
+    try {
+      await apiFetch('/api/onboarding/skip', { method: 'POST' })
+      setOnboardingState((prev) => prev ? { ...prev, step: 'done' } : prev)
+    } catch { /* ignore */ }
+  }
 
   // ─── Conversation operations ───────────────────────────────────────
   const handleDeleteConversation = async (id: number, confirm: boolean) => {
@@ -666,6 +773,17 @@ export default function Chat() {
         if (userMsgCount === 2 && !hasGeneratedTitle.has(convoId!)) {
           generateTitleForConversation(convoId!, userMessage)
         }
+      }
+      // If we were in the welcome chat, re-fetch onboarding state so the UI
+      // reflects the "done" flag as soon as finalize_onboarding has fired.
+      if (onboardingState && onboardingState.step !== 'done' && onboardingState.welcome_convo_id === convoId) {
+        try {
+          const res = await apiFetch('/api/onboarding/state')
+          if (res.ok) {
+            const data = await res.json()
+            setOnboardingState(data)
+          }
+        } catch { /* ignore */ }
       }
     } catch (err) { console.error('Chat error:', err) }
     setLoading(false)
@@ -1057,7 +1175,43 @@ export default function Chat() {
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-5 py-6 space-y-4" style={{ display: activeAutomataTaskId ? 'none' : undefined }}>
-          {messages.length === 0 && (
+          {messages.length === 0 && onboardingState && onboardingState.step !== 'done' && !onboardingState.has_api_key && (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <div className="w-16 h-16 rounded-2xl mb-5 flex items-center justify-center"
+                style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 18%, transparent), color-mix(in srgb, var(--ember) 12%, transparent))' }}>
+                <AgentIcon size={32} />
+              </div>
+              <h3 className="text-xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>Bienvenue sur Gungnir&nbsp;👋</h3>
+              <p className="text-sm max-w-md mb-6" style={{ color: 'var(--text-secondary)' }}>
+                Avant qu'on puisse vraiment discuter, il me faut <strong>une clé API</strong> pour te parler. Ça prend 2 minutes : tu choisis un provider (OpenRouter est le plus simple), tu colles ta clé, tu reviens ici et on fait connaissance.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => navigate('/settings?tab=providers')}
+                  className="px-5 py-2.5 rounded-xl text-sm font-semibold transition-all hover:opacity-90"
+                  style={{
+                    background: 'linear-gradient(135deg, var(--scarlet), var(--ember))',
+                    color: '#fff',
+                    border: '1px solid color-mix(in srgb, var(--scarlet) 40%, transparent)',
+                  }}
+                >
+                  Configurer ma clé API →
+                </button>
+                <button
+                  onClick={skipOnboarding}
+                  className="px-4 py-2 rounded-xl text-xs transition-colors hover:opacity-80"
+                  style={{ color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border)' }}
+                >
+                  Passer l'onboarding
+                </button>
+              </div>
+              <p className="text-[10px] mt-5 max-w-md" style={{ color: 'var(--text-muted)' }}>
+                Une fois la clé configurée, reviens ici : un chat de bienvenue s'ouvrira automatiquement pour que tu puisses me façonner (mon nom, ma personnalité, ta préférence de tutoiement, etc.).
+              </p>
+            </div>
+          )}
+
+          {messages.length === 0 && (!onboardingState || onboardingState.step === 'done' || onboardingState.has_api_key) && (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <div className="w-16 h-16 rounded-2xl mb-5 flex items-center justify-center"
                 style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 12%, transparent), color-mix(in srgb, var(--ember) 8%, transparent))' }}>

@@ -173,7 +173,15 @@ const DEFAULT_HB_CONFIG = {
 export default function Settings() {
   const { t, i18n } = useTranslation()
   const { config, setConfig, agentName, setAgentName } = useStore()
-  const [activeTab, setActiveTab] = useState('general')
+  const [activeTab, setActiveTab] = useState(() => {
+    // Support ?tab=providers deep-linking (used by the onboarding welcome card)
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const t = params.get('tab')
+      if (t) return t
+    } catch { /* ignore */ }
+    return 'general'
+  })
   const [isSaving, setIsSaving] = useState(false)
   const [langDropdownOpen, setLangDropdownOpen] = useState(false)
   const langDropdownRef = useRef<HTMLDivElement>(null)
