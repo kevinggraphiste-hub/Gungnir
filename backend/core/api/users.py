@@ -7,6 +7,7 @@ import secrets
 
 from backend.core.db.models import User
 from backend.core.db.engine import get_session
+from backend.core.api.auth_helpers import require_admin
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -35,10 +36,30 @@ def _verify_password(password: str, hashed: str) -> bool:
 
 
 @router.get("/users")
-async def list_users(session: AsyncSession = Depends(get_session)):
-    """Liste tous les utilisateurs."""
-    result = await session.execute(select(User).order_by(User.created_at))
-    users = result.scalars().all()
+async def list_users(request: Request, session: AsyncSession = Depends(get_session)):
+    """Liste les utilisateurs.
+
+    Admin → voit tout le monde.
+    Non-admin → ne voit que son propre compte (pas de fuite vers les autres).
+    Mode ouvert (pas d'auth) → renvoie tout (legacy, setup-first-user flow).
+    """
+    uid = getattr(request.state, "user_id", None)
+
+    if uid is None:
+        # Open mode — no auth active. Needed for the initial "create first user"
+        # flow before any token exists. Return everything as before.
+        result = await session.execute(select(User).order_by(User.created_at))
+        users = result.scalars().all()
+    else:
+        is_admin = await require_admin(request, session)
+        if is_admin:
+            result = await session.execute(select(User).order_by(User.created_at))
+            users = result.scalars().all()
+        else:
+            # Non-admin: expose only the caller's own account.
+            me = await session.get(User, uid)
+            users = [me] if me else []
+
     return [
         {
             "id": u.id,
