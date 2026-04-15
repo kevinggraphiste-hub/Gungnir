@@ -33,6 +33,9 @@ playwright>=1.49.0
 python-dotenv>=1.0.0
 python-multipart>=0.0.18
 
+# Scheduling (automata cron parser)
+croniter>=2.0.0
+
 # PDF export
 reportlab>=4.2.0
 slowapi>=0.1.9
