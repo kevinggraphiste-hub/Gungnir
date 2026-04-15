@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from backend.core.config.settings import Settings
-from backend.core.db.models import Conversation, Message, User, ConversationTag, ConversationTagLink
+from backend.core.db.models import Conversation, Message, User, ConversationTag, ConversationTagLink, AgentTask, CostAnalytics
 from backend.core.db.engine import get_session
 from backend.core.providers import get_provider, ChatMessage
 from backend.core.api.auth_helpers import enforce_conversation_owner
@@ -91,15 +91,23 @@ async def create_conversation(request: Request, data: dict, session: AsyncSessio
 
 @router.delete("/conversations/{convo_id}")
 async def delete_conversation(convo_id: int, request: Request, session: AsyncSession = Depends(get_session)):
-    from sqlalchemy import delete as sql_delete
+    from sqlalchemy import delete as sql_delete, update as sql_update
     convo = await enforce_conversation_owner(convo_id, request, session)
     if not convo:
         return JSONResponse({"error": "Conversation introuvable ou non autorisé"}, status_code=403)
 
-    # Message FK has no ondelete=CASCADE and async SQLAlchemy won't walk the
-    # delete-orphan relationship cascade without eager-loading messages first.
-    # Clear them manually like delete_all_conversations does.
+    # Several tables reference conversations.id without ondelete=CASCADE:
+    #   • messages, agent_tasks — delete (tied to the conversation)
+    #   • cost_analytics — null-out (historical cost data we want to keep)
+    # Async SQLAlchemy won't walk relationship-based cascade without eager
+    # loading, so we clean them up manually before dropping the parent.
     await session.execute(sql_delete(Message).where(Message.conversation_id == convo_id))
+    await session.execute(sql_delete(AgentTask).where(AgentTask.conversation_id == convo_id))
+    await session.execute(
+        sql_update(CostAnalytics)
+        .where(CostAnalytics.conversation_id == convo_id)
+        .values(conversation_id=None)
+    )
     await session.delete(convo)
     await session.commit()
     return {"ok": True}
@@ -644,15 +652,22 @@ async def summarize_conversation(convo_id: int, request: Request, session: Async
 @router.delete("/conversations")
 async def delete_all_conversations(request: Request, session: AsyncSession = Depends(get_session)):
     """Supprime les conversations de l'utilisateur courant (ou toutes en mode open)."""
-    from sqlalchemy import delete as sql_delete
+    from sqlalchemy import delete as sql_delete, update as sql_update
     uid = getattr(request.state, "user_id", None)
     if uid is not None:
-        # Delete only messages belonging to user's conversations
         user_convo_ids = select(Conversation.id).where(Conversation.user_id == uid)
         await session.execute(sql_delete(Message).where(Message.conversation_id.in_(user_convo_ids)))
+        await session.execute(sql_delete(AgentTask).where(AgentTask.conversation_id.in_(user_convo_ids)))
+        await session.execute(
+            sql_update(CostAnalytics)
+            .where(CostAnalytics.conversation_id.in_(user_convo_ids))
+            .values(conversation_id=None)
+        )
         await session.execute(sql_delete(Conversation).where(Conversation.user_id == uid))
     else:
         await session.execute(sql_delete(Message))
+        await session.execute(sql_delete(AgentTask))
+        await session.execute(sql_update(CostAnalytics).values(conversation_id=None))
         await session.execute(sql_delete(Conversation))
     await session.commit()
     return {"success": True, "message": "Toutes les conversations supprimées"}
