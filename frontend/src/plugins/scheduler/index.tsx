@@ -57,9 +57,16 @@ const API = '/api/plugins/scheduler'
 
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T | null> {
   try {
-    const res = await fetch(`${API}${path}`, {
-      headers: { 'Content-Type': 'application/json' }, ...opts,
-    })
+    // Forward the auth token so the backend resolves the right user.
+    // Without this, /tasks falls back to user_id=0 and no per-user data
+    // (including tasks created by the LLM) shows up in the UI.
+    const token = localStorage.getItem('gungnir_auth_token')
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(opts?.headers as Record<string, string> || {}),
+    }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const res = await fetch(`${API}${path}`, { ...opts, headers })
     if (!res.ok) return null
     return res.json()
   } catch { return null }
@@ -247,9 +254,13 @@ const CORE_API = '/api'
 
 async function coreApiFetch<T>(path: string, opts?: RequestInit): Promise<T | null> {
   try {
-    const res = await fetch(`${CORE_API}${path}`, {
-      headers: { 'Content-Type': 'application/json' }, ...opts,
-    })
+    const token = localStorage.getItem('gungnir_auth_token')
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(opts?.headers as Record<string, string> || {}),
+    }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const res = await fetch(`${CORE_API}${path}`, { ...opts, headers })
     if (!res.ok) return null
     return res.json()
   } catch { return null }

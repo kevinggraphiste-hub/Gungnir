@@ -3,7 +3,7 @@ wolf_tools.py — Outils que Wolf peut appeler lui-même via function calling.
 Chaque outil a un schéma OpenAI-compatible et un exécuteur Python async.
 """
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 import json, uuid
 
@@ -1664,20 +1664,32 @@ async def _soul_write(content: str, agent_name: str = None) -> dict:
 
 
 # ── Automata executors ────────────────────────────────────────────────────────
+#
+# Must stay in sync with backend/plugins/scheduler/routes.py and
+# backend/plugins/scheduler/__init__.py — tasks live per-user at
+# data/automata/{uid}/tasks.json so the UI and the background daemon
+# (which scans that exact path glob) can see what the LLM creates.
 
-AUTOMATA_FILE = DATA_DIR / "automata.json"
+def _user_automata_file() -> Path:
+    """Per-user automata file. Uses the LLM's current user context."""
+    uid = get_user_context() or 0
+    p = DATA_DIR / "automata" / str(uid) / "tasks.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
 
 def _load_automata() -> dict:
-    if AUTOMATA_FILE.exists():
+    f = _user_automata_file()
+    if f.exists():
         try:
-            return json.loads(AUTOMATA_FILE.read_text(encoding="utf-8"))
+            return json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {"tasks": [], "history": []}
 
 def _save_automata(data: dict):
-    AUTOMATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    AUTOMATA_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    f = _user_automata_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
 async def _schedule_task(
     name: str, description: str, prompt: str,
@@ -1685,8 +1697,10 @@ async def _schedule_task(
     interval_seconds: int = None, run_at: str = None
 ) -> dict:
     data = _load_automata()
-    task_id = str(uuid.uuid4())[:8]
-    now = datetime.utcnow().isoformat()
+    # Full UUID — the scheduler UI, the toggle endpoint, and the daemon
+    # all match on the full id. Short ids would never line up.
+    task_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
 
     task = {
         "id": task_id,
@@ -1703,17 +1717,17 @@ async def _schedule_task(
         "last_run": None,
         "run_count": 0,
         "last_status": None,
-        "last_result": None,
     }
 
-    data["tasks"].append(task)
+    data.setdefault("tasks", []).append(task)
+    data.setdefault("history", [])
     _save_automata(data)
 
     schedule_desc = cron_expression or (f"toutes les {interval_seconds}s" if interval_seconds else run_at or "non défini")
     return {
         "ok": True,
         "task_id": task_id,
-        "message": f"Tâche '{name}' créée avec succès. Planning: {schedule_desc}. L'utilisateur peut la gérer depuis le dashboard Automata.",
+        "message": f"Tâche '{name}' créée avec succès. Planning: {schedule_desc}. Visible dans le dashboard Automata.",
     }
 
 async def _schedule_list() -> dict:
@@ -1726,9 +1740,9 @@ async def _schedule_list() -> dict:
         summary.append({
             "id": t["id"],
             "name": t["name"],
-            "description": t["description"],
-            "type": t["task_type"],
-            "enabled": t["enabled"],
+            "description": t.get("description", ""),
+            "type": t.get("task_type"),
+            "enabled": t.get("enabled", False),
             "schedule": t.get("cron_expression") or (f"{t.get('interval_seconds')}s" if t.get("interval_seconds") else t.get("run_at", "—")),
             "run_count": t.get("run_count", 0),
             "last_run": t.get("last_run"),
@@ -1737,14 +1751,15 @@ async def _schedule_list() -> dict:
 
 async def _schedule_delete(task_id: str) -> dict:
     data = _load_automata()
-    before = len(data["tasks"])
+    tasks = data.get("tasks", [])
     removed_name = None
-    for t in data["tasks"]:
+    for t in tasks:
         if t["id"] == task_id:
             removed_name = t["name"]
-    data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id]
-    if len(data["tasks"]) == before:
+            break
+    if removed_name is None:
         return {"ok": False, "error": f"Tâche '{task_id}' introuvable."}
+    data["tasks"] = [t for t in tasks if t["id"] != task_id]
     _save_automata(data)
     return {"ok": True, "message": f"Tâche '{removed_name}' ({task_id}) supprimée."}
 
