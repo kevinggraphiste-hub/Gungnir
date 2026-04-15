@@ -173,6 +173,9 @@ class Settings(BaseSettings):
             default_model="minimax-m2.7",
             models=["minimax-m2.7", "minimax-m2.5"]
         ),
+        # Ollama: default base_url works for local dev (non-Docker). For Docker
+        # production, the user must override this in settings — see the
+        # cheatsheet at the top of backend/core/providers/ollama_provider.py.
         "ollama": ProviderConfig(
             base_url="http://localhost:11434/v1",
             models=[]

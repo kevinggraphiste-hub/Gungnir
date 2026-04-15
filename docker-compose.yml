@@ -25,6 +25,12 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://gungnir:gungnir@db:5432/gungnir}
     env_file:
       - .env
+    # Lets the container reach services running on the Docker host (Linux).
+    # Used by the Ollama provider when Ollama is installed directly on the
+    # VPS — users should set base_url to http://host.docker.internal:11434/v1
+    # in the provider settings UI.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data
       - ./backend/plugins:/app/backend/plugins
