@@ -6,8 +6,42 @@ import {
   Settings as SettingsIcon, Globe, Palette, Key, Mic, RefreshCw,
   HeartPulse, HardDrive, Download, Upload, Trash2, CheckCircle, AlertCircle, Type, User,
   Server, Database, Cloud, MessageSquare, GitBranch, Zap, Search as SearchIcon, Loader2, Plus,
-  Stethoscope, Pipette
+  Stethoscope, Pipette, Info
 } from 'lucide-react'
+
+
+// ── InfoButton: small clickable "i" with a popover on click ─────────────────
+function InfoButton({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span className="relative inline-block align-middle ml-1">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(v => !v) }}
+        className="inline-flex items-center justify-center w-4 h-4 rounded-full transition-opacity hover:opacity-100"
+        style={{ background: 'transparent', color: 'var(--text-muted)', opacity: 0.7 }}
+        aria-label="Plus d'informations"
+      >
+        <Info className="w-3.5 h-3.5" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            className="absolute z-50 top-full left-0 mt-1.5 w-72 p-3 rounded-lg text-[11px] leading-relaxed shadow-xl"
+            style={{
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border)',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            {children}
+          </div>
+        </>
+      )}
+    </span>
+  )
+}
 
 const LANG_FLAG: Record<string, string> = {
   fr: 'fr', en: 'gb', es: 'es', pt: 'pt', it: 'it', de: 'de', nl: 'nl', ca: 'es-ct', be: 'be', br: 'fr',
@@ -1538,19 +1572,16 @@ export default function Settings() {
           {/* -- Heartbeat ------------------------------------------------- */}
           {activeTab === 'heartbeat' && (
             <div className="space-y-6">
-              {/* Intro pédagogique — explique ce qu'est le heartbeat en clair */}
-              <div className="p-4 rounded-lg border" style={{ background: 'color-mix(in srgb, var(--accent-primary) 6%, transparent)', borderColor: 'color-mix(in srgb, var(--accent-primary) 25%, transparent)' }}>
-                <div className="flex items-start gap-3">
-                  <HeartPulse className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: 'var(--accent-primary)' }} />
-                  <div className="space-y-2">
-                    <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Qu'est-ce que le heartbeat ?</div>
-                    <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                      C'est le <strong>pouls de ton agent</strong> : un réveil à intervalles réguliers qui pilote les automatismes en arrière-plan. À chaque battement, le système vérifie s'il y a des tâches planifiées à lancer (crons, interval), envoie les pings qui gardent tes connexions vocales vivantes, et réveille la conscience pour ses cycles de pensée.
-                      <br />
-                      <span className="text-[var(--text-muted)]">Si tu l'arrêtes, ton agent continue de répondre dans le chat mais n'exécute plus aucune automatisation : les crons ne se déclenchent plus, les appels vocaux coupent, la conscience dort.</span>
-                    </p>
-                  </div>
-                </div>
+              {/* Titre + "i" pédago compact */}
+              <div className="flex items-center gap-2">
+                <HeartPulse className="w-5 h-5" style={{ color: 'var(--accent-primary)' }} />
+                <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Heartbeat</h2>
+                <InfoButton>
+                  <strong>Qu'est-ce que le heartbeat&nbsp;?</strong><br />
+                  C'est le <em>pouls de ton agent</em> : un réveil à intervalles réguliers qui pilote les automatismes en arrière-plan — tâches planifiées, pings vocaux, cycles de conscience.
+                  <br /><br />
+                  <span className="text-[var(--text-muted)]">Si tu l'arrêtes, le chat continue de marcher mais les crons ne tournent plus, la voice coupe, et la conscience dort.</span>
+                </InfoButton>
               </div>
 
               {/* Status bar */}
@@ -1612,7 +1643,13 @@ export default function Settings() {
                         </span>
                       )}
                     </div>
-                    <p className="text-[var(--text-muted)] text-xs mt-1">Ralentit le heartbeat la nuit pour économiser tokens et CPU pendant que tu dors. Exemple typique : check toutes les 30 secondes le jour, toutes les 10 minutes la nuit. Tes crons programmés la nuit se déclenchent quand même, juste avec un peu plus de latence.</p>
+                    <InfoButton>
+                      Ralentit le heartbeat la nuit pour économiser tokens et CPU pendant que tu dors.
+                      <br /><br />
+                      <strong>Exemple :</strong> check toutes les 30&nbsp;s le jour, toutes les 10&nbsp;min la nuit.
+                      <br /><br />
+                      Tes crons programmés la nuit se déclenchent quand même, juste avec un peu plus de latence.
+                    </InfoButton>
                   </div>
                   <input type="checkbox" checked={hbConfig.day_night_enabled ?? false}
                     onChange={e => updateHbConfig('day_night_enabled', e.target.checked)}
@@ -1669,10 +1706,56 @@ export default function Settings() {
               {(() => {
                 const isNightEdit = hbConfig.day_night_enabled && hbEditMode === 'night'
                 const nightCfg = hbConfig.night_config || {}
-                const fields = [
-                  { key: 'check_interval_seconds', label: 'Intervalle de vérification des tâches', desc: 'Toutes les X secondes, le système scanne tes automatismes (crons, interval, run_at) pour voir s\'il y en a à lancer. Plus c\'est court, plus tes tâches sont précises, mais plus ça consomme. Règle : mets-le au moins 2× plus court que la tâche la plus rapide que tu planifies (ex : un cron à 1min → check à 30s max).', min: 5, max: 86400 },
-                  { key: 'ws_ping_interval_seconds', label: 'Intervalle ping WebSocket', desc: 'Garde vivantes les connexions vocales (ElevenLabs, OpenAI Realtime) en envoyant un petit signal keepalive toutes les X secondes. Si tu n\'utilises pas la voice, ce champ n\'a aucun impact sur ton agent.', min: 5, max: 7200 },
-                  { key: 'offset_seconds', label: 'Décalage initial', desc: 'Délai avant le premier battement après démarrage du serveur. Laisse à 0 sauf si tu veux temporiser le lancement des crons (par exemple pour attendre qu\'un autre service externe soit prêt).', min: 0, max: 86400, dayOnly: true },
+                const fields: Array<{
+                  key: string
+                  label: string
+                  info: React.ReactNode
+                  min: number
+                  max: number
+                  dayOnly?: boolean
+                }> = [
+                  {
+                    key: 'check_interval_seconds',
+                    label: 'Intervalle de vérification des tâches',
+                    info: (
+                      <>
+                        Toutes les X secondes, le système scanne tes automatismes (crons, interval, run_at) pour voir s'il y en a à lancer.
+                        <br /><br />
+                        Plus c'est court, plus tes tâches sont précises, mais plus ça consomme.
+                        <br /><br />
+                        <strong>Règle :</strong> mets-le au moins 2× plus court que la tâche la plus rapide que tu planifies (ex&nbsp;: un cron à 1&nbsp;min → check à 30&nbsp;s max).
+                      </>
+                    ),
+                    min: 5,
+                    max: 86400,
+                  },
+                  {
+                    key: 'ws_ping_interval_seconds',
+                    label: 'Intervalle ping WebSocket',
+                    info: (
+                      <>
+                        Garde vivantes les connexions vocales (ElevenLabs, OpenAI Realtime) en envoyant un petit signal keepalive toutes les X secondes.
+                        <br /><br />
+                        <span className="text-[var(--text-muted)]">Si tu n'utilises pas la voice, ce champ n'a aucun impact.</span>
+                      </>
+                    ),
+                    min: 5,
+                    max: 7200,
+                  },
+                  {
+                    key: 'offset_seconds',
+                    label: 'Décalage initial',
+                    info: (
+                      <>
+                        Délai avant le premier battement après démarrage du serveur.
+                        <br /><br />
+                        Laisse à 0 sauf si tu veux temporiser le lancement des crons (par exemple pour attendre qu'un service externe soit prêt).
+                      </>
+                    ),
+                    min: 0,
+                    max: 86400,
+                    dayOnly: true,
+                  },
                 ]
                 return fields.map(f => {
                   if (isNightEdit && f.dayOnly) return null
@@ -1683,7 +1766,10 @@ export default function Settings() {
                   const writeKey = isNightEdit ? `night.${f.key}` : f.key
                   return (
                     <div key={`${isNightEdit ? 'n' : 'd'}-${f.key}`}>
-                      <label className="text-[var(--text-secondary)] text-sm mb-2 block">{f.label}</label>
+                      <label className="text-[var(--text-secondary)] text-sm mb-2 flex items-center">
+                        <span>{f.label}</span>
+                        <InfoButton>{f.info}</InfoButton>
+                      </label>
                       <div className="flex gap-2">
                         <input type="number" min={bestUnit === 'h' ? Math.ceil(f.min / 3600) : bestUnit === 'm' ? Math.ceil(f.min / 60) : f.min}
                           value={displayValue}
@@ -1708,7 +1794,6 @@ export default function Settings() {
                           <option value="h">heures</option>
                         </select>
                       </div>
-                      <p className="text-[var(--text-muted)] text-xs mt-1">{f.desc}</p>
                     </div>
                   )
                 })
@@ -1716,7 +1801,16 @@ export default function Settings() {
 
               {/* Max concurrent tasks — no unit needed */}
               <div>
-                <label className="text-[var(--text-secondary)] text-sm mb-2 block">Tâches concurrentes max</label>
+                <label className="text-[var(--text-secondary)] text-sm mb-2 flex items-center">
+                  <span>Tâches concurrentes max</span>
+                  <InfoButton>
+                    Si plusieurs automatismes sont dus au même battement, c'est le nombre max lancé en parallèle.
+                    <br /><br />
+                    Les autres attendent le prochain cycle.
+                    <br /><br />
+                    <strong>Reco :</strong> 5-10 pour éviter de saturer tes providers LLM.
+                  </InfoButton>
+                </label>
                 {(() => {
                   const isNightEdit = hbConfig.day_night_enabled && hbEditMode === 'night'
                   const val = isNightEdit ? (hbConfig.night_config?.max_concurrent_tasks ?? 2) : (hbConfig.max_concurrent_tasks ?? 5)
@@ -1727,13 +1821,16 @@ export default function Settings() {
                       className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2.5 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                   )
                 })()}
-                <p className="text-[var(--text-muted)] text-xs mt-1">Si plusieurs automatismes sont dus au même battement, c'est le nombre max lancé en parallèle. Les autres attendent le prochain cycle. Garde une valeur raisonnable (5-10) pour éviter de saturer tes providers LLM.</p>
               </div>
 
               <div className="flex items-center justify-between">
-                <div>
+                <div className="flex items-center">
                   <span className="text-[var(--text-secondary)] text-sm">Démarrage automatique</span>
-                  <p className="text-[var(--text-muted)] text-xs">Démarre le heartbeat automatiquement au lancement du serveur. Si tu décoches, il faudra le lancer manuellement depuis cette page après chaque redémarrage.</p>
+                  <InfoButton>
+                    Démarre le heartbeat automatiquement au lancement du serveur.
+                    <br /><br />
+                    Si tu décoches, il faudra le lancer manuellement depuis cette page après chaque redémarrage.
+                  </InfoButton>
                 </div>
                 <input type="checkbox" checked={hbConfig.on_startup ?? true}
                   onChange={e => updateHbConfig('on_startup', e.target.checked)}

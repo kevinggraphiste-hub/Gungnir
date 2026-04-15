@@ -379,14 +379,35 @@ function OverviewTab({ data, setMood, setLevel, newQuestion, setNewQuestion, add
   const stats = data.state?.stats || {}
   const MOODS = ['neutre', 'concentré', 'curieux', 'satisfait', 'vigilant', 'créatif', 'introspectif']
 
+  const [introOpen, setIntroOpen] = useState(() => {
+    // Restore last open/close state so users don't have to re-close it on every visit
+    try { return localStorage.getItem('consciousness.introOpen') === '1' } catch { return false }
+  })
+  const toggleIntro = () => {
+    setIntroOpen(v => {
+      const next = !v
+      try { localStorage.setItem('consciousness.introOpen', next ? '1' : '0') } catch {}
+      return next
+    })
+  }
+
   return (
     <div className="space-y-4">
-      {/* Intro pédagogique — explique ce qu'est la conscience en clair */}
-      <div className="p-4 rounded-xl border" style={{ background: 'color-mix(in srgb, var(--accent-primary) 6%, transparent)', borderColor: 'color-mix(in srgb, var(--accent-primary) 25%, transparent)' }}>
-        <div className="flex items-start gap-3">
-          <Brain className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: 'var(--accent-primary)' }} />
-          <div className="space-y-2">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Qu'est-ce que la conscience&nbsp;?</div>
+      {/* Intro pédagogique — pliable, explique ce qu'est la conscience en clair */}
+      <div className="rounded-xl border overflow-hidden" style={{ background: 'color-mix(in srgb, var(--accent-primary) 6%, transparent)', borderColor: 'color-mix(in srgb, var(--accent-primary) 25%, transparent)' }}>
+        <button
+          type="button"
+          onClick={toggleIntro}
+          className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:opacity-90"
+        >
+          <Brain className="w-5 h-5 flex-shrink-0" style={{ color: 'var(--accent-primary)' }} />
+          <span className="text-sm font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>Qu'est-ce que la conscience&nbsp;?</span>
+          {introOpen
+            ? <ChevronUp className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+            : <ChevronDown className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />}
+        </button>
+        {introOpen && (
+          <div className="px-4 pb-4 pl-12 space-y-2">
             <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
               C'est l'<strong>architecture comportementale</strong> de ton agent : un ensemble de sous-systèmes qui tournent en arrière-plan (réveillés par le heartbeat) pour lui donner une forme d'initiative, de mémoire et d'auto-critique. Sans elle, Gungnir répond uniquement quand tu lui parles. Avec elle, il réfléchit entre tes messages, se souvient de ce qui s'est passé, et peut te proposer des actions de lui-même.
             </p>
@@ -414,7 +435,7 @@ function OverviewTab({ data, setMood, setLevel, newQuestion, setNewQuestion, add
               Les 3 niveaux (<em>basic</em> / <em>standard</em> / <em>full</em>) activent de plus en plus de sous-systèmes. Commence en <em>standard</em> pour voir ce que ça donne sans saturer tes tokens, passe en <em>full</em> quand tu veux l'expérience complète.
             </p>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Stats Grid */}
