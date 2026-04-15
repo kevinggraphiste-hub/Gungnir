@@ -7,7 +7,7 @@ from backend.core.providers import get_provider
 from backend.core.agents.mcp_client import mcp_manager
 from backend.core.db.engine import get_session
 from backend.core.db.models import MCPServerConfig as DBMCPServerConfig, User
-from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
+from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key, get_user_service_key
 from sqlalchemy import select, delete
 
 router = APIRouter()
@@ -240,54 +240,105 @@ SERVICE_CATEGORIES = {
 
 
 @router.get("/config/services")
-async def list_services():
-    """List all service providers with their config status."""
+async def list_services(request: Request, session: AsyncSession = Depends(get_session)):
+    """List services with metadata + the current user's has_api_key/has_token flags.
+
+    Secrets live strictly in UserSettings.service_keys. This endpoint returns the
+    catalog (labels, defaults, base_url) plus the caller's own credentials state.
+    """
     settings = Settings.load()
+    uid = getattr(request.state, "user_id", None) or 0
+    user_service_keys: dict = {}
+    if uid > 0:
+        try:
+            user_settings_row = await get_user_settings(uid, session)
+            user_service_keys = user_settings_row.service_keys or {}
+        except Exception:
+            pass
+
     services = {}
     for name, s in settings.services.items():
+        user_entry = user_service_keys.get(name) or {}
         services[name] = {
             **s.model_dump(),
             "label": SERVICE_LABELS.get(name, name),
-            # Mask secrets
-            "api_key": "***" if s.api_key else None,
-            "token": "***" if s.token else None,
+            "api_key": "***" if user_entry.get("api_key") else None,
+            "token": "***" if user_entry.get("token") else None,
+            "enabled": bool(user_entry.get("enabled")),
+            "base_url": user_entry.get("base_url") or s.base_url,
         }
     return {"services": services, "categories": SERVICE_CATEGORIES, "labels": SERVICE_LABELS}
 
 
 @router.get("/config/services/{service_name}")
-async def get_service(service_name: str):
-    """Get a single service configuration (secrets masked)."""
+async def get_service(service_name: str, request: Request, session: AsyncSession = Depends(get_session)):
+    """Get a single service config (metadata + user's has_secret flags)."""
     settings = Settings.load()
     svc = settings.services.get(service_name)
     if not svc:
         return JSONResponse({"error": f"Service '{service_name}' non trouvé"}, status_code=404)
+
+    uid = getattr(request.state, "user_id", None) or 0
+    user_entry: dict = {}
+    if uid > 0:
+        try:
+            user_settings_row = await get_user_settings(uid, session)
+            user_entry = (user_settings_row.service_keys or {}).get(service_name) or {}
+        except Exception:
+            pass
+
     data = svc.model_dump()
-    data["api_key"] = "***" if svc.api_key else None
-    data["token"] = "***" if svc.token else None
+    data["api_key"] = "***" if user_entry.get("api_key") else None
+    data["token"] = "***" if user_entry.get("token") else None
+    data["enabled"] = bool(user_entry.get("enabled"))
+    data["base_url"] = user_entry.get("base_url") or svc.base_url
     data["label"] = SERVICE_LABELS.get(service_name, service_name)
     return data
 
 
 @router.post("/config/services/{service_name}")
-async def configure_service(service_name: str, config: ServiceConfig):
-    """Configure a service provider."""
+async def configure_service(service_name: str, config: ServiceConfig, request: Request, session: AsyncSession = Depends(get_session)):
+    """Admin-only: write non-secret service metadata (base_url, generic options)
+    to the global settings. API keys and tokens are STRICTLY per-user — any
+    api_key/token sent here is dropped on purpose to prevent cross-user leaks."""
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        from backend.core.api.auth_helpers import require_admin
+        if not await require_admin(request, session):
+            return JSONResponse({"error": "Admin requis"}, status_code=403)
+
     settings = Settings.load()
-    existing = settings.services.get(service_name)
-    if existing:
-        # Preserve secrets if masked or empty in request
-        if not config.api_key or config.api_key == "***":
-            config.api_key = existing.api_key
-        if not config.token or config.token == "***":
-            config.token = existing.token
-    settings.services[service_name] = config
+    existing = settings.services.get(service_name) or ServiceConfig()
+    merged = ServiceConfig(
+        enabled=existing.enabled,
+        api_key=None,
+        token=None,
+        base_url=config.base_url or existing.base_url,
+        project_id=None,
+        region=None,
+        bucket=None,
+        database=None,
+        namespace=None,
+        webhook_url=None,
+        extra={},
+    )
+    settings.services[service_name] = merged
     settings.save()
-    return {"status": "saved", "service": service_name}
+    return {"status": "saved", "service": service_name, "note": "secrets are ignored — use /config/user/services/{service_name}"}
 
 
 @router.delete("/config/services/{service_name}")
-async def delete_service(service_name: str):
-    """Remove a service from configuration."""
+async def delete_service(service_name: str, request: Request, session: AsyncSession = Depends(get_session)):
+    """Admin-only: remove a service's global metadata entry.
+
+    Users keep their own per-user credentials in UserSettings.service_keys —
+    use DELETE /config/user/services/{service_name} for that.
+    """
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        from backend.core.api.auth_helpers import require_admin
+        if not await require_admin(request, session):
+            return JSONResponse({"error": "Admin requis"}, status_code=403)
     settings = Settings.load()
     if service_name not in settings.services:
         return JSONResponse({"error": f"Service '{service_name}' non trouvé"}, status_code=404)
@@ -297,23 +348,33 @@ async def delete_service(service_name: str):
 
 
 @router.post("/config/services/{service_name}/test")
-async def test_service(service_name: str):
-    """Test connectivity to a service provider."""
+async def test_service(service_name: str, request: Request, session: AsyncSession = Depends(get_session)):
+    """Test connectivity to a service using the CALLER's per-user credentials."""
     import asyncio
     import aiohttp
 
     settings = Settings.load()
-    svc = settings.services.get(service_name)
-    if not svc:
+    meta = settings.services.get(service_name)
+    if not meta:
         return JSONResponse({"error": f"Service '{service_name}' non trouvé"}, status_code=404)
-    if not svc.enabled:
-        return {"ok": False, "error": "Service désactivé"}
+
+    uid = getattr(request.state, "user_id", None) or 0
+    if uid <= 0:
+        return JSONResponse({"error": "Authentification requise pour tester un service"}, status_code=401)
+    user_settings_row = await get_user_settings(uid, session)
+    user_svc = get_user_service_key(user_settings_row, service_name) or {}
+
+    api_key = user_svc.get("api_key") or None
+    token = user_svc.get("token") or None
+    base_url = user_svc.get("base_url") or meta.base_url
+    enabled = user_svc.get("enabled", False)
+    if not enabled:
+        return {"ok": False, "error": "Service désactivé pour cet utilisateur"}
 
     # Basic connectivity test per service type
     try:
         if service_name == "redis":
-            # TCP ping
-            url = svc.base_url or "redis://localhost:6379"
+            url = base_url or "redis://localhost:6379"
             host = url.replace("redis://", "").split(":")[0]
             port = int(url.replace("redis://", "").split(":")[-1]) if ":" in url.replace("redis://", "") else 6379
             _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5)
@@ -322,7 +383,7 @@ async def test_service(service_name: str):
             return {"ok": True, "service": service_name, "message": "Connexion Redis OK"}
 
         elif service_name == "postgresql":
-            url = svc.base_url or "postgresql://localhost:5432"
+            url = base_url or "postgresql://localhost:5432"
             host = url.split("@")[-1].split("/")[0].split(":")[0] if "@" in url else url.replace("postgresql://", "").split(":")[0]
             port_str = url.split(":")[-1].split("/")[0]
             port = int(port_str) if port_str.isdigit() else 5432
@@ -332,26 +393,22 @@ async def test_service(service_name: str):
             return {"ok": True, "service": service_name, "message": "Connexion PostgreSQL OK"}
 
         elif service_name in ("n8n", "qdrant"):
-            # HTTP health check
-            url = svc.base_url
-            if not url:
+            if not base_url:
                 return {"ok": False, "error": "URL non configurée"}
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            async with aiohttp.ClientSession() as session_http:
+                async with session_http.get(base_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                     return {"ok": resp.status < 400, "service": service_name, "status": resp.status}
 
         else:
-            # Generic HTTP check with auth header
-            url = svc.base_url
-            if not url:
+            if not base_url:
                 return {"ok": False, "error": "URL non configurée"}
             headers = {}
-            if svc.api_key:
-                headers["Authorization"] = f"Bearer {svc.api_key}"
-            if svc.token:
-                headers["Authorization"] = f"Bearer {svc.token}"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            async with aiohttp.ClientSession() as session_http:
+                async with session_http.get(base_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                     return {"ok": resp.status < 400, "service": service_name, "status": resp.status}
 
     except asyncio.TimeoutError:
@@ -473,10 +530,18 @@ async def get_user_services(request: Request, session: AsyncSession = Depends(ge
 
 @router.post("/config/user/services/{service_name}")
 async def save_user_service(service_name: str, request: Request, session: AsyncSession = Depends(get_session)):
-    """Save a service config for the current user."""
+    """Save a service config for the current user. In open/setup mode the
+    credentials are written to user #1 (admin) rather than the global store."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
-        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+        first_user = await session.execute(select(User).order_by(User.id).limit(1))
+        fallback_user = first_user.scalar()
+        if fallback_user is None:
+            return JSONResponse(
+                {"error": "Créez un utilisateur avant de configurer un service (POST /api/users)."},
+                status_code=400,
+            )
+        user_id = fallback_user.id
     body = await request.json()
     user_settings = await get_user_settings(user_id, session)
 
@@ -510,6 +575,28 @@ async def save_user_service(service_name: str, request: Request, session: AsyncS
             pass  # Non-blocking
 
     return {"status": "saved", "service": service_name}
+
+
+@router.delete("/config/user/services/{service_name}")
+async def delete_user_service(service_name: str, request: Request, session: AsyncSession = Depends(get_session)):
+    """Remove the current user's credentials for a service. In open mode,
+    targets user #1 (admin)."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        first_user = await session.execute(select(User).order_by(User.id).limit(1))
+        fallback_user = first_user.scalar()
+        if fallback_user is None:
+            return {"ok": True}
+        user_id = fallback_user.id
+    user_settings = await get_user_settings(user_id, session)
+    service_keys = dict(user_settings.service_keys or {})
+    if service_name in service_keys:
+        del service_keys[service_name]
+        user_settings.service_keys = service_keys
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(user_settings, "service_keys")
+        await session.commit()
+    return {"ok": True, "deleted": service_name}
 
 
 @router.post("/config/user/app")

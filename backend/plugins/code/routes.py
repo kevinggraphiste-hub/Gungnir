@@ -37,9 +37,19 @@ router = APIRouter(dependencies=[Depends(_inject_user_id)])
 
 # ── Workspace ────────────────────────────────────────────────────────────────
 
-CONFIG_FILE = Path("data/code_config.json")
 DEFAULT_WORKSPACE = Path("data/workspace")
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.resolve()
+_CODE_CONFIG_ROOT = Path("data/code_configs")
+_LEGACY_CODE_CONFIG_FILE = Path("data/code_config.json")
+
+
+def _user_config_file() -> Path:
+    """Return the per-user code config path. Falls back to a shared file in
+    open/setup mode so the legacy behaviour still works before any user exists."""
+    uid = _current_user_id.get(0) or 0
+    if uid > 0:
+        return _CODE_CONFIG_ROOT / f"{uid}.json"
+    return _LEGACY_CODE_CONFIG_FILE
 
 # Directories allowed as workspace roots (project + user home subfolders)
 def _is_allowed_workspace(p: Path) -> bool:
@@ -66,17 +76,33 @@ def _is_allowed_workspace(p: Path) -> bool:
 
 
 def _load_config() -> dict:
-    if CONFIG_FILE.exists():
+    path = _user_config_file()
+    default = {"workspace": str(DEFAULT_WORKSPACE), "recent_files": [], "font_size": 14}
+    if path.exists():
         try:
-            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return {**default, **(data or {})}
         except Exception:
             pass
-    return {"workspace": str(DEFAULT_WORKSPACE), "recent_files": [], "font_size": 14}
+    # One-shot migration: if the legacy shared config still exists, copy it
+    # into the current user's file on first access so settings carry over.
+    uid = _current_user_id.get(0) or 0
+    if uid > 0 and _LEGACY_CODE_CONFIG_FILE.exists():
+        try:
+            legacy = json.loads(_LEGACY_CODE_CONFIG_FILE.read_text(encoding="utf-8"))
+            merged = {**default, **(legacy or {})}
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+            return merged
+        except Exception:
+            pass
+    return default
 
 
 def _save_config(cfg: dict):
-    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    path = _user_config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _workspace() -> Path:

@@ -1,5 +1,11 @@
 """
 Gungnir — Backup & Restore API Routes
+
+Backup operations are strictly admin-only: they capture and restore the whole
+instance (global config, SQLite DB, shared data files), so exposing them to
+non-admin users would leak everyone's data. Every endpoint here enforces
+``require_admin`` via the ``_ensure_admin`` helper. Open-mode (no auth active)
+falls through so first-time setup still works.
 """
 import json
 import logging
@@ -7,10 +13,26 @@ import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.core.db.engine import get_session
+from backend.core.api.auth_helpers import require_admin
 
 router = APIRouter()
 logger = logging.getLogger("gungnir")
+
+
+async def _ensure_admin(request: Request, session: AsyncSession):
+    """Return a 403 JSONResponse when the caller isn't admin, else None.
+
+    ``require_admin`` already handles the "open mode / no auth active" case
+    by returning True, so non-authenticated setup flows still work.
+    """
+    if not await require_admin(request, session):
+        return JSONResponse({"error": "Admin requis pour les opérations de backup"}, status_code=403)
+    return None
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
@@ -76,7 +98,10 @@ def _enforce_max_backups(max_backups: int):
 
 
 @router.get("/backup/config")
-async def get_backup_config():
+async def get_backup_config(request: Request, session: AsyncSession = Depends(get_session)):
+    deny = await _ensure_admin(request, session)
+    if deny is not None:
+        return deny
     config = _load_config()
     # Mask secrets in response
     safe_config = dict(config)
@@ -87,7 +112,10 @@ async def get_backup_config():
 
 
 @router.put("/backup/config")
-async def update_backup_config(data: dict):
+async def update_backup_config(data: dict, request: Request, session: AsyncSession = Depends(get_session)):
+    deny = await _ensure_admin(request, session)
+    if deny is not None:
+        return deny
     cfg = _load_config()
     cfg.update(data)
     _save_config(cfg)
@@ -95,7 +123,10 @@ async def update_backup_config(data: dict):
 
 
 @router.get("/backup/history")
-async def backup_history():
+async def backup_history(request: Request, session: AsyncSession = Depends(get_session)):
+    deny = await _ensure_admin(request, session)
+    if deny is not None:
+        return deny
     BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
     backups = []
     for f in sorted(BACKUPS_DIR.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True):
@@ -110,8 +141,11 @@ async def backup_history():
 
 
 @router.post("/backup/now")
-async def create_backup_now():
-    """Create a zip backup of all data files."""
+async def create_backup_now(request: Request, session: AsyncSession = Depends(get_session)):
+    """Create a zip backup of all data files. Admin-only."""
+    deny = await _ensure_admin(request, session)
+    if deny is not None:
+        return deny
     try:
         BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -136,8 +170,11 @@ async def create_backup_now():
 
 
 @router.post("/backup/restore")
-async def restore_backup(data: dict):
-    """Restore data files from a chosen backup zip."""
+async def restore_backup(data: dict, request: Request, session: AsyncSession = Depends(get_session)):
+    """Restore data files from a chosen backup zip. Admin-only (destructive)."""
+    deny = await _ensure_admin(request, session)
+    if deny is not None:
+        return deny
     filename = data.get("filename", "")
     if not filename:
         return {"ok": False, "error": "Nom de fichier requis"}
@@ -196,8 +233,11 @@ async def restore_backup(data: dict):
 
 
 @router.delete("/backup/{filename}")
-async def delete_backup(filename: str):
-    """Delete a specific backup file."""
+async def delete_backup(filename: str, request: Request, session: AsyncSession = Depends(get_session)):
+    """Delete a specific backup file. Admin-only."""
+    deny = await _ensure_admin(request, session)
+    if deny is not None:
+        return deny
     zip_path = BACKUPS_DIR / filename
     if not zip_path.exists():
         return {"ok": False, "error": "Fichier introuvable"}

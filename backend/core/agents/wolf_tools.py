@@ -2309,21 +2309,83 @@ _SERVICE_TEST_ENDPOINTS = {
 }
 
 
+async def _user_service_entry(service_name: str) -> tuple[dict, int]:
+    """Load the current wolf-user's entry for a given service. Returns
+    (entry_dict, user_id). entry_dict is empty if nothing is set."""
+    from backend.core.db.engine import async_session as _svc_sm
+    from backend.core.api.auth_helpers import get_user_settings as _svc_gus, get_user_service_key as _svc_gsk
+
+    uid = get_user_context() or 0
+    if uid <= 0:
+        return {}, 0
+    try:
+        async with _svc_sm() as _s:
+            us = await _svc_gus(uid, _s)
+            decoded = _svc_gsk(us, service_name) or {}
+            return decoded, uid
+    except Exception as _e:
+        print(f"[Wolf] service entry lookup failed uid={uid} name={service_name}: {_e}")
+        return {}, uid
+
+
+async def _persist_user_service_entry(user_id: int, service_name: str, update: dict) -> None:
+    """Merge `update` into the user's service_keys[service_name] and persist.
+    Secrets in `update` must already be plaintext — they are re-encrypted here."""
+    from backend.core.db.engine import async_session as _svc_sm
+    from backend.core.api.auth_helpers import get_user_settings as _svc_gus
+    from backend.core.config.settings import encrypt_value as _enc
+    from sqlalchemy.orm.attributes import flag_modified as _fm
+
+    async with _svc_sm() as _s:
+        us = await _svc_gus(user_id, _s)
+        svc_keys = dict(us.service_keys or {})
+        entry = dict(svc_keys.get(service_name) or {})
+        for k, v in update.items():
+            if k in ("api_key", "token") and isinstance(v, str) and v and not v.startswith(("FERNET:", "enc:")):
+                entry[k] = _enc(v)
+            else:
+                entry[k] = v
+        svc_keys[service_name] = entry
+        us.service_keys = svc_keys
+        _fm(us, "service_keys")
+        await _s.commit()
+
+
 async def _service_connect(action: str, name: str = None, base_url: str = None,
                            api_key: str = None, token: str = None, extra: dict = None) -> dict:
-    """Connect, disconnect, list, or test external services."""
+    """Connect, disconnect, list, or test the CURRENT user's external services.
+
+    Reads/writes the caller's UserSettings.service_keys — the legacy global
+    settings.services store is only consulted for catalog metadata (labels,
+    default base_url) and never for secrets.
+    """
     from backend.core.config.settings import Settings
 
     try:
         settings = Settings.load()
+        uid = get_user_context() or 0
+        if uid <= 0:
+            return {"ok": False, "error": "Authentification requise pour utiliser les services."}
 
         if action == "list":
+            entry_map, _ = await _user_service_entry("__all__")  # placeholder, we need the whole dict
+            # Fetch the raw dict directly so we can iterate over every service the user owns
+            from backend.core.db.engine import async_session as _sm_list
+            from backend.core.api.auth_helpers import get_user_settings as _gus_list
+            async with _sm_list() as _s:
+                us = await _gus_list(uid, _s)
+                user_entries = us.service_keys or {}
+
             result = []
-            for sname, sconf in settings.services.items():
-                has_auth = bool(sconf.api_key or sconf.token)
+            for sname in {**(settings.services or {}), **user_entries}.keys():
+                user_entry = user_entries.get(sname) or {}
+                meta = settings.services.get(sname)
+                base = user_entry.get("base_url") or (meta.base_url if meta else "")
+                has_auth = bool(user_entry.get("api_key") or user_entry.get("token"))
                 result.append({
-                    "name": sname, "enabled": sconf.enabled,
-                    "base_url": sconf.base_url or "",
+                    "name": sname,
+                    "enabled": bool(user_entry.get("enabled")),
+                    "base_url": base or "",
                     "has_auth": has_auth,
                 })
             return {"ok": True, "services": result, "count": len(result)}
@@ -2335,53 +2397,55 @@ async def _service_connect(action: str, name: str = None, base_url: str = None,
             if not base_url and not api_key and not token:
                 return {"ok": False, "error": "Au moins base_url ou api_key/token est requis."}
 
-            sconf = settings.services.get(name)
-            if not sconf:
-                # Nouveau service dynamique
-                from backend.core.config.settings import ServiceConfig
-                sconf = ServiceConfig()
-                settings.services[name] = sconf
-
+            update: dict = {"enabled": True}
             if base_url:
-                sconf.base_url = base_url.rstrip("/")
+                update["base_url"] = base_url.rstrip("/")
             if api_key:
-                sconf.api_key = api_key.strip()
+                update["api_key"] = api_key.strip()
             if token:
-                sconf.token = token.strip()
+                update["token"] = token.strip()
             if extra:
-                sconf.extra.update(extra)
-            sconf.enabled = True
-            settings.save()
-            return {"ok": True, "message": f"Service '{name}' connecté et activé.",
-                    "service": name, "base_url": sconf.base_url}
+                entry, _ = await _user_service_entry(name)
+                merged_extra = dict(entry.get("extra") or {})
+                merged_extra.update(extra)
+                update["extra"] = merged_extra
+
+            await _persist_user_service_entry(uid, name, update)
+            return {
+                "ok": True,
+                "message": f"Service '{name}' connecté et activé pour cet utilisateur.",
+                "service": name,
+                "base_url": update.get("base_url"),
+            }
 
         elif action == "disconnect":
-            sconf = settings.services.get(name)
-            if not sconf:
-                return {"ok": False, "error": f"Service '{name}' introuvable."}
-            sconf.enabled = False
-            settings.save()
+            entry, _ = await _user_service_entry(name)
+            if not entry:
+                return {"ok": False, "error": f"Service '{name}' introuvable pour cet utilisateur."}
+            await _persist_user_service_entry(uid, name, {"enabled": False})
             return {"ok": True, "message": f"Service '{name}' désactivé."}
 
         elif action == "test":
-            sconf = settings.services.get(name)
-            if not sconf or not sconf.enabled:
+            entry, _ = await _user_service_entry(name)
+            if not entry or not entry.get("enabled"):
                 return {"ok": False, "error": f"Service '{name}' non connecté ou désactivé."}
-            if not sconf.base_url:
+            meta = settings.services.get(name)
+            url_base = entry.get("base_url") or (meta.base_url if meta else None)
+            if not url_base:
                 return {"ok": False, "error": f"Service '{name}' n'a pas de base_url configurée."}
 
-            key = sconf.api_key or sconf.token or ""
+            key = entry.get("api_key") or entry.get("token") or ""
             auth_fn = _SERVICE_AUTH_HEADERS.get(name, lambda k: {"Authorization": f"Bearer {k}"})
             headers = auth_fn(key) if key else {}
             test_path = _SERVICE_TEST_ENDPOINTS.get(name, "/")
-            url = f"{sconf.base_url}{test_path}"
+            url = f"{url_base}{test_path}"
 
             import httpx
             async with httpx.AsyncClient(timeout=15) as client:
                 r = await client.get(url, headers=headers)
                 if r.status_code < 400:
                     return {"ok": True, "message": f"Connexion à '{name}' réussie.",
-                            "status": r.status_code, "url": sconf.base_url}
+                            "status": r.status_code, "url": url_base}
                 else:
                     return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
 
@@ -2401,29 +2465,33 @@ _BLOCKED_URL_PATTERNS = [
 
 async def _service_call(service: str, method: str, path: str,
                         body: dict = None, params: dict = None) -> dict:
-    """Execute a REST API call on a connected service."""
+    """Execute a REST API call on a connected service using the CURRENT user's credentials."""
     from backend.core.config.settings import Settings
     import httpx
 
     try:
         settings = Settings.load()
-        sconf = settings.services.get(service)
+        entry, uid = await _user_service_entry(service)
+        if uid <= 0:
+            return {"ok": False, "error": "Authentification requise pour appeler un service."}
+        if not entry:
+            return {"ok": False, "error": f"Service '{service}' non configuré pour cet utilisateur. Utilise service_connect pour l'ajouter."}
+        if not entry.get("enabled"):
+            return {"ok": False, "error": f"Service '{service}' désactivé pour cet utilisateur. Utilise service_connect(action='connect') d'abord."}
 
-        if not sconf:
-            return {"ok": False, "error": f"Service '{service}' inconnu. Utilise service_connect pour le configurer."}
-        if not sconf.enabled:
-            return {"ok": False, "error": f"Service '{service}' désactivé. Utilise service_connect(action='connect') d'abord."}
-        if not sconf.base_url:
+        meta = settings.services.get(service)
+        base = entry.get("base_url") or (meta.base_url if meta else None)
+        if not base:
             return {"ok": False, "error": f"Service '{service}' n'a pas de base_url. Utilise service_connect pour la configurer."}
 
         # Security: block metadata/internal URLs
-        full_url = f"{sconf.base_url}{path}"
+        full_url = f"{base}{path}"
         for blocked in _BLOCKED_URL_PATTERNS:
             if blocked in full_url.lower():
                 return {"ok": False, "error": f"URL bloquée pour raison de sécurité."}
 
-        # Build auth headers
-        key = sconf.api_key or sconf.token or ""
+        # Build auth headers from the user's own credentials
+        key = entry.get("api_key") or entry.get("token") or ""
         auth_fn = _SERVICE_AUTH_HEADERS.get(service, lambda k: {"Authorization": f"Bearer {k}"})
         headers = auth_fn(key) if key else {}
         headers["Content-Type"] = "application/json"

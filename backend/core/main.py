@@ -73,6 +73,35 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text("UPDATE users SET is_admin = TRUE WHERE id = 1"))
                 logger.info("Migration: added is_admin column, user #1 set as admin")
 
+            # Migration: user_id on cost_analytics / budget_settings / provider_budgets
+            if not await _has_col("cost_analytics", "user_id"):
+                await conn.execute(text("ALTER TABLE cost_analytics ADD COLUMN user_id INTEGER"))
+                # Backfill from conversations
+                await conn.execute(text(
+                    "UPDATE cost_analytics SET user_id = ("
+                    " SELECT user_id FROM conversations WHERE conversations.id = cost_analytics.conversation_id"
+                    ") WHERE user_id IS NULL"
+                ))
+                logger.info("Migration: added user_id column to cost_analytics (backfilled from conversations)")
+            if not await _has_col("budget_settings", "user_id"):
+                await conn.execute(text("ALTER TABLE budget_settings ADD COLUMN user_id INTEGER"))
+                await conn.execute(text("UPDATE budget_settings SET user_id = 1 WHERE user_id IS NULL"))
+                logger.info("Migration: added user_id column to budget_settings (assigned to user #1)")
+            if not await _has_col("provider_budgets", "user_id"):
+                await conn.execute(text("ALTER TABLE provider_budgets ADD COLUMN user_id INTEGER"))
+                await conn.execute(text("UPDATE provider_budgets SET user_id = 1 WHERE user_id IS NULL"))
+                logger.info("Migration: added user_id column to provider_budgets (assigned to user #1)")
+
+            # Drop the legacy single-column unique constraint on provider_budgets.provider
+            # (uniqueness is now enforced per (user_id, provider) at the application layer).
+            if _is_pg:
+                try:
+                    await conn.execute(text(
+                        "ALTER TABLE provider_budgets DROP CONSTRAINT IF EXISTS provider_budgets_provider_key"
+                    ))
+                except Exception as _drop_err:
+                    logger.debug(f"Drop provider_budgets_provider_key constraint: {_drop_err}")
+
     except Exception as e:
         logger.warning(f"Migration check skipped: {e}")
 
@@ -92,6 +121,113 @@ async def lifespan(app: FastAPI):
         except Exception as _plugin_err:
             import logging
             logging.getLogger("gungnir").error(f"Plugin {getattr(manifest, 'name', '?')} startup failed: {_plugin_err}")
+
+    # 4z. Services one-shot migration: move any secret stored in legacy
+    # settings.services[*] (api_key, token, plus non-secret fields the user
+    # had customised like base_url/project_id/...) into user #1's
+    # UserSettings.service_keys, then clear the legacy fields so the global
+    # JSON never leaks. Idempotent: skips entries the user already has.
+    try:
+        from sqlalchemy import select as _select_svc
+        from backend.core.db.engine import get_session as _get_session_svc
+        from backend.core.db.models import User as _User_svc, UserSettings as _US_svc
+        from backend.core.config.settings import encrypt_value as _enc_svc
+
+        settings_svc = Settings.load()
+        legacy_svc: dict[str, dict] = {}
+        for sname, sconf in (settings_svc.services or {}).items():
+            if not sconf:
+                continue
+            payload: dict = {}
+            if sconf.api_key:
+                payload["api_key"] = sconf.api_key
+            if sconf.token:
+                payload["token"] = sconf.token
+            # Non-secret but user-customized fields worth preserving
+            for f in ("base_url", "project_id", "region", "bucket", "database", "namespace", "webhook_url"):
+                v = getattr(sconf, f, None)
+                if v:
+                    payload[f] = v
+            if getattr(sconf, "extra", None):
+                payload["extra"] = dict(sconf.extra)
+            if sconf.enabled:
+                payload["enabled"] = True
+            if payload:
+                legacy_svc[sname] = payload
+
+        if legacy_svc:
+            async for _svs in _get_session_svc():
+                _target = await _svs.execute(_select_svc(_User_svc).order_by(_User_svc.id).limit(1))
+                _owner_sv = _target.scalar()
+                if _owner_sv is None:
+                    logger.info("Services legacy migration skipped: no users yet")
+                    break
+
+                _us_row = await _svs.execute(
+                    _select_svc(_US_svc).where(_US_svc.user_id == _owner_sv.id)
+                )
+                _us_sv = _us_row.scalar_one_or_none()
+                if _us_sv is None:
+                    _us_sv = _US_svc(user_id=_owner_sv.id, provider_keys={}, service_keys={})
+                    _svs.add(_us_sv)
+                    await _svs.flush()
+
+                existing_sv = dict(_us_sv.service_keys or {})
+                added_sv = 0
+                cleared_names: list[str] = []
+                for sname, payload in legacy_svc.items():
+                    if sname in existing_sv and (
+                        existing_sv[sname].get("api_key") or existing_sv[sname].get("token")
+                    ):
+                        # User already owns credentials for this service → leave alone
+                        continue
+                    entry = dict(existing_sv.get(sname) or {})
+                    if "api_key" in payload:
+                        entry["api_key"] = _enc_svc(payload["api_key"])
+                    if "token" in payload:
+                        entry["token"] = _enc_svc(payload["token"])
+                    for k in ("base_url", "project_id", "region", "bucket", "database", "namespace", "webhook_url"):
+                        if k in payload:
+                            entry[k] = payload[k]
+                    if "extra" in payload:
+                        entry["extra"] = payload["extra"]
+                    if payload.get("enabled"):
+                        entry["enabled"] = True
+                    existing_sv[sname] = entry
+                    added_sv += 1
+                    cleared_names.append(sname)
+
+                from sqlalchemy.orm.attributes import flag_modified as _svc_flag
+                _us_sv.service_keys = existing_sv
+                _svc_flag(_us_sv, "service_keys")
+                await _svs.commit()
+
+                if added_sv:
+                    # Clear secrets + user-specific fields from the global store
+                    for sname in cleared_names:
+                        sconf = settings_svc.services.get(sname)
+                        if not sconf:
+                            continue
+                        sconf.api_key = None
+                        sconf.token = None
+                        # Keep generic base_url (public endpoint metadata) — most
+                        # service defaults are public URLs anyway.
+                        sconf.project_id = None
+                        sconf.region = None
+                        sconf.bucket = None
+                        sconf.database = None
+                        sconf.namespace = None
+                        sconf.webhook_url = None
+                        if hasattr(sconf, "extra"):
+                            sconf.extra = {}
+                    settings_svc.save()
+                    logger.info(
+                        f"Services legacy migration: {added_sv} service(s) moved to user #{_owner_sv.id} "
+                        f"({', '.join(cleared_names)})"
+                    )
+                break
+    except Exception as e:
+        logger.warning(f"Services legacy migration failed: {e}")
 
     # 4a. Provider-keys one-shot migration: move any api_key stored in the
     # legacy global settings.providers[*] into user #1's UserSettings so the

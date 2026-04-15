@@ -671,12 +671,13 @@ async def chat(
         return {"error": "Conversation non autorisée"}
 
     # -- Budget check (graceful — uses separate session to avoid corrupting main transaction)
+    _budget_uid_check = getattr(request.state, "user_id", None) or 0
     try:
         from backend.core.cost.manager import get_cost_manager
         from backend.core.db.engine import async_session as _budget_session_maker
         cm = get_cost_manager()
         async with _budget_session_maker() as _budget_session:
-            budget_status = await cm.check_all_budgets(_budget_session)
+            budget_status = await cm.check_all_budgets(_budget_session, user_id=_budget_uid_check or None)
         if budget_status.get("should_block"):
             return {"error": f"Budget depasse : {budget_status.get('block_reason', 'limite atteinte')}. Augmentez votre budget ou attendez la prochaine periode."}
     except Exception as e:
@@ -1289,7 +1290,12 @@ Tu operes en mode **demande**. Comportement :
             from backend.core.cost.manager import get_cost_manager
             cost_manager = get_cost_manager()
             await cost_manager.record_message_cost(
-                session, convo_id, response.model, response.tokens_input, response.tokens_output
+                session,
+                convo_id,
+                response.model,
+                response.tokens_input,
+                response.tokens_output,
+                user_id=_current_uid or None,
             )
         except Exception as _cost_err:
             print(f"[Wolf] Cost recording skipped: {_cost_err}")
@@ -1330,12 +1336,13 @@ Tu operes en mode **demande**. Comportement :
 
 @router.post("/conversations/{convo_id}/chat/stream")
 async def chat_stream(convo_id: int, data: dict, request: Request):
-    # -- Budget check
+    # -- Budget check (scoped to the caller)
+    _stream_uid_budget = getattr(request.state, "user_id", None) or 0
     from backend.core.cost.manager import get_cost_manager
     from backend.core.db.engine import get_session as _get_session
     async for session in _get_session():
         cm = get_cost_manager()
-        budget_status = await cm.check_all_budgets(session)
+        budget_status = await cm.check_all_budgets(session, user_id=_stream_uid_budget or None)
         if budget_status.get("should_block"):
             yield {"error": f"Budget depasse : {budget_status.get('block_reason', 'limite atteinte')}"}
             return

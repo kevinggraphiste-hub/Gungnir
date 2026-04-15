@@ -160,6 +160,7 @@ class CostAnalytics(Base):
     __tablename__ = "cost_analytics"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     date = Column(Date, nullable=False)
     conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=True)
     model = Column(String(255), nullable=False)
@@ -173,6 +174,7 @@ class BudgetSettings(Base):
     __tablename__ = "budget_settings"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     monthly_limit = Column(Float, nullable=True)
     weekly_limit = Column(Float, nullable=True)
     alert_80 = Column(Boolean, default=True)
@@ -186,7 +188,8 @@ class ProviderBudget(Base):
     __tablename__ = "provider_budgets"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    provider = Column(String(100), unique=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    provider = Column(String(100), nullable=False)
     monthly_limit = Column(Float, nullable=True)
     weekly_limit = Column(Float, nullable=True)
 

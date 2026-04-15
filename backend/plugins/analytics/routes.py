@@ -12,7 +12,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 
@@ -22,6 +22,14 @@ from .manager import get_cost_manager
 logger = logging.getLogger("gungnir.plugins.analytics")
 router = APIRouter()
 cm = get_cost_manager()
+
+
+def _caller_user_id(request: Request) -> Optional[int]:
+    """Resolve the authenticated user_id from request.state. Any `user_id`
+    query parameter is intentionally ignored to prevent one user from reading
+    another user's cost data by spoofing localStorage."""
+    uid = getattr(request.state, "user_id", None)
+    return int(uid) if uid else None
 
 
 # ── Pydantic models ──────────────────────────────────────────────────────────
@@ -50,10 +58,11 @@ async def analytics_health():
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 @router.get("/summary")
-async def get_summary(user_id: Optional[int] = Query(None)):
+async def get_summary(request: Request):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_summary(session, user_id)
+            return await cm.get_summary(session, uid)
     except Exception as e:
         logger.error(f"Summary endpoint error: {e}")
         return {"total_cost": 0, "total_tokens": 0, "message_count": 0, "avg_cost_per_message": 0}
@@ -62,20 +71,22 @@ async def get_summary(user_id: Optional[int] = Query(None)):
 # ── Breakdowns ────────────────────────────────────────────────────────────────
 
 @router.get("/by-model")
-async def get_by_model(user_id: Optional[int] = Query(None)):
+async def get_by_model(request: Request):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_by_model(session, user_id)
+            return await cm.get_by_model(session, uid)
     except Exception as e:
         logger.error(f"By-model error: {e}")
         return []
 
 
 @router.get("/by-provider")
-async def get_by_provider(user_id: Optional[int] = Query(None)):
+async def get_by_provider(request: Request):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_by_provider(session, user_id)
+            return await cm.get_by_provider(session, uid)
     except Exception as e:
         logger.error(f"By-provider error: {e}")
         return []
@@ -84,40 +95,44 @@ async def get_by_provider(user_id: Optional[int] = Query(None)):
 # ── Time series ───────────────────────────────────────────────────────────────
 
 @router.get("/by-day")
-async def get_by_day(days: int = Query(30, ge=1, le=365), user_id: Optional[int] = Query(None)):
+async def get_by_day(request: Request, days: int = Query(30, ge=1, le=365)):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_daily(session, days, user_id)
+            return await cm.get_daily(session, days, uid)
     except Exception as e:
         logger.error(f"By-day error: {e}")
         return []
 
 
 @router.get("/by-week")
-async def get_by_week(weeks: int = Query(12, ge=1, le=104), user_id: Optional[int] = Query(None)):
+async def get_by_week(request: Request, weeks: int = Query(12, ge=1, le=104)):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_weekly(session, weeks, user_id)
+            return await cm.get_weekly(session, weeks, uid)
     except Exception as e:
         logger.error(f"By-week error: {e}")
         return []
 
 
 @router.get("/by-month")
-async def get_by_month(months: int = Query(12, ge=1, le=60), user_id: Optional[int] = Query(None)):
+async def get_by_month(request: Request, months: int = Query(12, ge=1, le=60)):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_monthly(session, months, user_id)
+            return await cm.get_monthly(session, months, uid)
     except Exception as e:
         logger.error(f"By-month error: {e}")
         return []
 
 
 @router.get("/by-year")
-async def get_by_year(user_id: Optional[int] = Query(None)):
+async def get_by_year(request: Request):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_yearly(session, user_id)
+            return await cm.get_yearly(session, uid)
     except Exception as e:
         logger.error(f"By-year error: {e}")
         return []
@@ -126,10 +141,11 @@ async def get_by_year(user_id: Optional[int] = Query(None)):
 # ── Heatmap ───────────────────────────────────────────────────────────────────
 
 @router.get("/heatmap")
-async def get_heatmap(days: int = Query(90, ge=1, le=365), user_id: Optional[int] = Query(None)):
+async def get_heatmap(request: Request, days: int = Query(90, ge=1, le=365)):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_heatmap(session, days, user_id)
+            return await cm.get_heatmap(session, days, uid)
     except Exception as e:
         logger.error(f"Heatmap error: {e}")
         return []
@@ -138,10 +154,11 @@ async def get_heatmap(days: int = Query(90, ge=1, le=365), user_id: Optional[int
 # ── Conversations ─────────────────────────────────────────────────────────────
 
 @router.get("/conversations")
-async def get_conversations(limit: int = Query(50, ge=1, le=200), user_id: Optional[int] = Query(None)):
+async def get_conversations(request: Request, limit: int = Query(50, ge=1, le=200)):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_conversations(session, limit, user_id)
+            return await cm.get_conversations(session, limit, uid)
     except Exception as e:
         logger.error(f"Conversations error: {e}")
         return []
@@ -150,30 +167,33 @@ async def get_conversations(limit: int = Query(50, ge=1, le=200), user_id: Optio
 # ── Budget ────────────────────────────────────────────────────────────────────
 
 @router.get("/budget")
-async def get_budget():
+async def get_budget(request: Request):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_budget(session)
+            return await cm.get_budget(session, user_id=uid)
     except Exception as e:
         logger.error(f"Get budget error: {e}")
         return {}
 
 
 @router.put("/budget")
-async def update_budget(data: BudgetUpdate):
+async def update_budget(data: BudgetUpdate, request: Request):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.update_budget(session, data.model_dump())
+            return await cm.update_budget(session, data.model_dump(), user_id=uid)
     except Exception as e:
         logger.error(f"Update budget error: {e}")
         return {"success": False, "error": str(e)}
 
 
 @router.get("/check-budget")
-async def check_budget(user_id: Optional[int] = Query(None)):
+async def check_budget(request: Request):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.check_budgets(session, user_id)
+            return await cm.check_budgets(session, uid)
     except Exception as e:
         logger.error(f"Check budget error: {e}")
         return {"alerts": [], "should_block": False, "block_reason": ""}
@@ -182,21 +202,23 @@ async def check_budget(user_id: Optional[int] = Query(None)):
 # ── Provider budgets ──────────────────────────────────────────────────────────
 
 @router.get("/provider-budgets")
-async def get_provider_budgets():
+async def get_provider_budgets(request: Request):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.get_provider_budgets(session)
+            return await cm.get_provider_budgets(session, user_id=uid)
     except Exception as e:
         logger.error(f"Provider budgets error: {e}")
         return []
 
 
 @router.put("/provider-budgets/{provider}")
-async def upsert_provider_budget(provider: str, data: ProviderBudgetUpdate):
+async def upsert_provider_budget(provider: str, data: ProviderBudgetUpdate, request: Request):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
             return await cm.upsert_provider_budget(
-                session, provider, data.monthly_limit, data.weekly_limit
+                session, provider, data.monthly_limit, data.weekly_limit, user_id=uid
             )
     except Exception as e:
         logger.error(f"Upsert provider budget error: {e}")
@@ -204,10 +226,11 @@ async def upsert_provider_budget(provider: str, data: ProviderBudgetUpdate):
 
 
 @router.delete("/provider-budgets/{provider}")
-async def delete_provider_budget(provider: str):
+async def delete_provider_budget(provider: str, request: Request):
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            return await cm.delete_provider_budget(session, provider)
+            return await cm.delete_provider_budget(session, provider, user_id=uid)
     except Exception as e:
         logger.error(f"Delete provider budget error: {e}")
         return {"success": False, "error": str(e)}
@@ -216,11 +239,12 @@ async def delete_provider_budget(provider: str):
 # ── Export ────────────────────────────────────────────────────────────────────
 
 @router.get("/export")
-async def export_csv(user_id: Optional[int] = Query(None)):
-    """Export cost records as CSV, filtered by user."""
+async def export_csv(request: Request):
+    """Export the current user's cost records as CSV."""
+    uid = _caller_user_id(request)
     try:
         async with async_session() as session:
-            records = await cm.get_user_records(session, user_id)
+            records = await cm.get_user_records(session, uid)
 
         buf = io.StringIO()
         writer = csv.writer(buf)
@@ -271,10 +295,11 @@ async def _gather_export_data(user_id: Optional[int] = None) -> dict:
 # ── Export JSON ──────────────────────────────────────────────────────────────
 
 @router.get("/export/json")
-async def export_json(user_id: Optional[int] = Query(None)):
-    """Export analytics as structured JSON."""
+async def export_json(request: Request):
+    """Export the current user's analytics as structured JSON."""
+    uid = _caller_user_id(request)
     try:
-        data = await _gather_export_data(user_id)
+        data = await _gather_export_data(uid)
         content = _json.dumps(data, indent=2, ensure_ascii=False)
         return StreamingResponse(
             iter([content]),
@@ -289,10 +314,11 @@ async def export_json(user_id: Optional[int] = Query(None)):
 # ── Export Markdown ──────────────────────────────────────────────────────────
 
 @router.get("/export/md")
-async def export_markdown(user_id: Optional[int] = Query(None)):
-    """Export analytics as Markdown report."""
+async def export_markdown(request: Request):
+    """Export the current user's analytics as Markdown report."""
+    uid = _caller_user_id(request)
     try:
-        data = await _gather_export_data(user_id)
+        data = await _gather_export_data(uid)
         s = data["summary"]
         md = f"""# Gungnir Analytics Report
 > Generated: {data['generated_at']}
@@ -503,10 +529,11 @@ _SCARLET_HTML_TEMPLATE = """<!DOCTYPE html>
 # ── Export HTML ──────────────────────────────────────────────────────────────
 
 @router.get("/export/html")
-async def export_html(user_id: Optional[int] = Query(None)):
-    """Export analytics as styled HTML report with ScarletWolf branding."""
+async def export_html(request: Request):
+    """Export the current user's analytics as styled HTML report."""
+    uid = _caller_user_id(request)
     try:
-        data = await _gather_export_data(user_id)
+        data = await _gather_export_data(uid)
         s = data["summary"]
 
         def _row(cells: list) -> str:
@@ -544,11 +571,11 @@ async def export_html(user_id: Optional[int] = Query(None)):
 # ── Export PDF ───────────────────────────────────────────────────────────────
 
 @router.get("/export/pdf")
-async def export_pdf(user_id: Optional[int] = Query(None)):
-    """Export analytics as PDF. Renders the HTML report then converts via weasyprint or falls back to HTML."""
+async def export_pdf(request: Request):
+    """Export the current user's analytics as PDF."""
+    uid = _caller_user_id(request)
     try:
-        # Re-use the HTML export content
-        data = await _gather_export_data(user_id)
+        data = await _gather_export_data(uid)
         s = data["summary"]
 
         def _row(cells: list) -> str:

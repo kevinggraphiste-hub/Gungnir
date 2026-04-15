@@ -337,7 +337,11 @@ export const api = {
     return handleResponse(response)
   },
 
-  // ── Services ───────────────────────────────────────────────────────
+  // ── Services (strictly per-user) ─────────────────────────────────
+  // getService*/listService still hit /config/services because the backend
+  // endpoint now merges the public catalog (labels, default base_url) with
+  // the CURRENT user's has_api_key/enabled flags. Write/delete goes to the
+  // per-user endpoint so secrets never touch the global store.
   getServices: async () => {
     const response = await apiFetch(`${API_BASE}/config/services`)
     return handleResponse(response)
@@ -349,7 +353,7 @@ export const api = {
   },
 
   saveService: async (name: string, data: Record<string, any>) => {
-    const response = await apiFetch(`${API_BASE}/config/services/${name}`, {
+    const response = await apiFetch(`${API_BASE}/config/user/services/${name}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -358,7 +362,7 @@ export const api = {
   },
 
   deleteService: async (name: string) => {
-    const response = await apiFetch(`${API_BASE}/config/services/${name}`, { method: 'DELETE' })
+    const response = await apiFetch(`${API_BASE}/config/user/services/${name}`, { method: 'DELETE' })
     return handleResponse(response)
   },
 

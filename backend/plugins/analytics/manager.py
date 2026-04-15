@@ -35,12 +35,22 @@ class CostManager:
         conversation_id: int, model: str,
         tokens_input: int, tokens_output: int,
         message_date: Optional[datetime] = None,
+        user_id: Optional[int] = None,
     ) -> float:
         """Record cost for a message. Returns calculated cost."""
         try:
             std_model = extract_model_name(model)
             cost = calculate_cost(std_model, tokens_input, tokens_output)
+
+            # Resolve user_id from the conversation if the caller didn't pass one
+            resolved_uid = user_id
+            if resolved_uid is None and conversation_id is not None:
+                conv = await session.get(Conversation, conversation_id)
+                if conv and conv.user_id is not None:
+                    resolved_uid = conv.user_id
+
             record = CostAnalytics(
+                user_id=resolved_uid,
                 date=(message_date or datetime.utcnow()).date(),
                 conversation_id=conversation_id,
                 model=std_model,
@@ -278,16 +288,23 @@ class CostManager:
         r = await session.execute(q)
         return float(r.scalar() or 0.0)
 
-    async def get_budget(self, session: AsyncSession) -> dict:
+    async def get_budget(self, session: AsyncSession, user_id: Optional[int] = None) -> dict:
+        default = {
+            "monthly_limit": None,
+            "weekly_limit": None,
+            "alert_80": True,
+            "alert_90": True,
+            "alert_100": True,
+            "block_on_limit": False,
+        }
         try:
-            r = await session.execute(
-                select(BudgetSettings).order_by(BudgetSettings.updated_at.desc()).limit(1)
-            )
+            q = select(BudgetSettings).order_by(BudgetSettings.updated_at.desc()).limit(1)
+            if user_id is not None:
+                q = q.where(BudgetSettings.user_id == int(user_id))
+            r = await session.execute(q)
             s = r.scalar_one_or_none()
             if not s:
-                return {"monthly_limit": None, "weekly_limit": None,
-                        "alert_80": True, "alert_90": True, "alert_100": True,
-                        "block_on_limit": False}
+                return default
             return {
                 "monthly_limit": float(s.monthly_limit) if s.monthly_limit else None,
                 "weekly_limit": float(s.weekly_limit) if s.weekly_limit else None,
@@ -296,21 +313,38 @@ class CostManager:
             }
         except Exception as e:
             logger.error(f"Get budget error: {e}")
-            return {"monthly_limit": None, "weekly_limit": None,
-                    "alert_80": True, "alert_90": True, "alert_100": True,
-                    "block_on_limit": False}
+            return default
 
-    async def update_budget(self, session: AsyncSession, settings: dict) -> dict:
+    async def update_budget(self, session: AsyncSession, settings: dict, user_id: Optional[int] = None) -> dict:
         try:
-            bs = BudgetSettings(
-                monthly_limit=float(settings["monthly_limit"]) if settings.get("monthly_limit") else None,
-                weekly_limit=float(settings["weekly_limit"]) if settings.get("weekly_limit") else None,
-                alert_80=settings.get("alert_80", True),
-                alert_90=settings.get("alert_90", True),
-                alert_100=settings.get("alert_100", True),
-                block_on_limit=settings.get("block_on_limit", False),
+            if user_id is None:
+                bs = BudgetSettings(
+                    user_id=None,
+                    monthly_limit=float(settings["monthly_limit"]) if settings.get("monthly_limit") else None,
+                    weekly_limit=float(settings["weekly_limit"]) if settings.get("weekly_limit") else None,
+                    alert_80=settings.get("alert_80", True),
+                    alert_90=settings.get("alert_90", True),
+                    alert_100=settings.get("alert_100", True),
+                    block_on_limit=settings.get("block_on_limit", False),
+                )
+                session.add(bs)
+                await session.commit()
+                return {"success": True}
+
+            uid = int(user_id)
+            r = await session.execute(
+                select(BudgetSettings).where(BudgetSettings.user_id == uid).order_by(BudgetSettings.id.desc()).limit(1)
             )
-            session.add(bs)
+            row = r.scalar_one_or_none()
+            if row is None:
+                row = BudgetSettings(user_id=uid)
+                session.add(row)
+            row.monthly_limit = float(settings["monthly_limit"]) if settings.get("monthly_limit") else None
+            row.weekly_limit = float(settings["weekly_limit"]) if settings.get("weekly_limit") else None
+            row.alert_80 = settings.get("alert_80", True)
+            row.alert_90 = settings.get("alert_90", True)
+            row.alert_100 = settings.get("alert_100", True)
+            row.block_on_limit = settings.get("block_on_limit", False)
             await session.commit()
             return {"success": True}
         except Exception as e:
@@ -318,9 +352,12 @@ class CostManager:
             await session.rollback()
             return {"success": False, "error": str(e)}
 
-    async def get_provider_budgets(self, session: AsyncSession) -> List[dict]:
+    async def get_provider_budgets(self, session: AsyncSession, user_id: Optional[int] = None) -> List[dict]:
         try:
-            r = await session.execute(select(ProviderBudget).order_by(ProviderBudget.provider))
+            q = select(ProviderBudget).order_by(ProviderBudget.provider)
+            if user_id is not None:
+                q = q.where(ProviderBudget.user_id == int(user_id))
+            r = await session.execute(q)
             return [{"id": pb.id, "provider": pb.provider,
                       "monthly_limit": float(pb.monthly_limit) if pb.monthly_limit else None,
                       "weekly_limit": float(pb.weekly_limit) if pb.weekly_limit else None}
@@ -331,15 +368,23 @@ class CostManager:
 
     async def upsert_provider_budget(self, session: AsyncSession,
                                       provider: str, monthly: float = None,
-                                      weekly: float = None) -> dict:
+                                      weekly: float = None, user_id: Optional[int] = None) -> dict:
         try:
-            r = await session.execute(select(ProviderBudget).where(ProviderBudget.provider == provider))
+            q = select(ProviderBudget).where(ProviderBudget.provider == provider)
+            if user_id is not None:
+                q = q.where(ProviderBudget.user_id == int(user_id))
+            r = await session.execute(q)
             pb = r.scalar_one_or_none()
             if pb:
                 pb.monthly_limit = monthly
                 pb.weekly_limit = weekly
             else:
-                pb = ProviderBudget(provider=provider, monthly_limit=monthly, weekly_limit=weekly)
+                pb = ProviderBudget(
+                    user_id=int(user_id) if user_id is not None else None,
+                    provider=provider,
+                    monthly_limit=monthly,
+                    weekly_limit=weekly,
+                )
                 session.add(pb)
             await session.commit()
             return {"success": True}
@@ -347,9 +392,12 @@ class CostManager:
             await session.rollback()
             return {"success": False, "error": str(e)}
 
-    async def delete_provider_budget(self, session: AsyncSession, provider: str) -> dict:
+    async def delete_provider_budget(self, session: AsyncSession, provider: str, user_id: Optional[int] = None) -> dict:
         try:
-            r = await session.execute(select(ProviderBudget).where(ProviderBudget.provider == provider))
+            q = select(ProviderBudget).where(ProviderBudget.provider == provider)
+            if user_id is not None:
+                q = q.where(ProviderBudget.user_id == int(user_id))
+            r = await session.execute(q)
             pb = r.scalar_one_or_none()
             if pb:
                 await session.delete(pb)
@@ -360,12 +408,12 @@ class CostManager:
             return {"success": False, "error": str(e)}
 
     async def check_budgets(self, session: AsyncSession, user_id: Optional[int] = None) -> dict:
-        """Check all budgets — returns alerts and block status."""
+        """Check all budgets for a user — returns alerts and block status."""
         alerts = []
         should_block = False
         block_reason = ""
 
-        budget = await self.get_budget(session)
+        budget = await self.get_budget(session, user_id=user_id)
         mc = await self._monthly_cost(session, user_id)
         wc = await self._weekly_cost(session, user_id)
 
@@ -386,7 +434,7 @@ class CostManager:
                 alerts.append({"level": 80, "scope": label, "percent": round(pct, 1),
                                "cost": round(cost, 4), "limit": limit})
 
-        for pb in await self.get_provider_budgets(session):
+        for pb in await self.get_provider_budgets(session, user_id=user_id):
             for suffix, period, key in [("mensuel", "month", "monthly_limit"),
                                          ("hebdo", "week", "weekly_limit")]:
                 limit = pb.get(key)
