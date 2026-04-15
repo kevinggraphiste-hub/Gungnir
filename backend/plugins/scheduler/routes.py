@@ -49,7 +49,7 @@ def _save_data(data: dict, data_file: Path):
     data_file.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
 
-# ── Update model ─────────────────────────────────────────────────────────────
+# ── Models ───────────────────────────────────────────────────────────────────
 
 class TaskUpdate(BaseModel):
     name: Optional[str] = None
@@ -60,6 +60,17 @@ class TaskUpdate(BaseModel):
     interval_seconds: Optional[int] = None
     run_at: Optional[str] = None
     enabled: Optional[bool] = None
+
+
+class TaskCreate(BaseModel):
+    name: str
+    description: str = ""
+    prompt: str
+    task_type: str  # "cron" | "interval" | "run_at"
+    cron_expression: Optional[str] = None
+    interval_seconds: Optional[int] = None
+    run_at: Optional[str] = None
+    enabled: bool = True
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -85,6 +96,47 @@ async def list_tasks(request: Request):
             "total_runs": sum(t.get("run_count", 0) for t in tasks),
         },
     }
+
+
+@router.post("/tasks")
+async def create_task(body: TaskCreate, request: Request):
+    """Create a new scheduled task for the current user."""
+    import uuid
+    if body.task_type not in ("cron", "interval", "run_at"):
+        raise HTTPException(400, f"task_type invalide: {body.task_type}")
+    if body.task_type == "cron" and not body.cron_expression:
+        raise HTTPException(400, "cron_expression requis pour task_type=cron")
+    if body.task_type == "interval" and not (body.interval_seconds and body.interval_seconds > 0):
+        raise HTTPException(400, "interval_seconds > 0 requis pour task_type=interval")
+    if body.task_type == "run_at" and not body.run_at:
+        raise HTTPException(400, "run_at requis pour task_type=run_at")
+    if not body.name.strip() or not body.prompt.strip():
+        raise HTTPException(400, "name et prompt sont obligatoires")
+
+    data_file = _user_automata_file(request)
+    data = _load_data(data_file)
+    now = datetime.now().isoformat()
+    task = {
+        "id": str(uuid.uuid4()),
+        "name": body.name.strip(),
+        "description": body.description,
+        "prompt": body.prompt,
+        "task_type": body.task_type,
+        "cron_expression": body.cron_expression,
+        "interval_seconds": body.interval_seconds,
+        "run_at": body.run_at,
+        "enabled": body.enabled,
+        "created_at": now,
+        "updated_at": now,
+        "last_run": None,
+        "run_count": 0,
+        "last_status": None,
+    }
+    data.setdefault("tasks", []).append(task)
+    data.setdefault("history", [])
+    _save_data(data, data_file)
+    logger.info(f"Task created: {task['name']} ({task['id']})")
+    return task
 
 
 @router.put("/tasks/{task_id}")

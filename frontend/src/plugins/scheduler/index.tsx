@@ -169,6 +169,7 @@ function TasksTab() {
   const [filter, setFilter] = useState<'all' | 'active' | 'paused'>('all')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -183,6 +184,10 @@ function TasksTab() {
   const del = async (id: string) => { await apiFetch(`/tasks/${id}`, { method: 'DELETE' }); setExpandedId(null); load() }
   const run = async (id: string) => { await apiFetch(`/tasks/${id}/run`, { method: 'POST' }); load() }
   const save = async (id: string, u: any) => { await apiFetch(`/tasks/${id}`, { method: 'PUT', body: JSON.stringify(u) }); setEditingId(null); load() }
+  const create = async (body: any) => {
+    const res = await apiFetch('/tasks', { method: 'POST', body: JSON.stringify(body) })
+    if (res) { setCreating(false); load() }
+  }
 
   const filtered = tasks.filter(t => filter === 'all' || (filter === 'active' ? t.enabled : !t.enabled))
 
@@ -199,18 +204,25 @@ function TasksTab() {
         <Badge label="Actives" value={stats.active} color="#22c55e" />
         <Badge label="En pause" value={stats.paused} color="#f59e0b" />
         <Badge label="Executions" value={stats.total_runs} color="var(--text-secondary)" />
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
           {(['all', 'active', 'paused'] as const).map(f => (
             <FilterBtn key={f} active={filter === f} onClick={() => setFilter(f)}>
               {f === 'all' ? 'Toutes' : f === 'active' ? 'Actives' : 'En pause'}
             </FilterBtn>
           ))}
+          <button onClick={() => setCreating(true)} style={{
+            background: 'var(--scarlet)', border: 'none', borderRadius: 6,
+            padding: '5px 12px', color: '#fff', cursor: 'pointer', marginLeft: 8,
+            fontSize: 11, fontWeight: 700,
+          }} title="Créer une nouvelle tâche">+ Nouvelle</button>
           <button onClick={load} style={{
             background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
-            padding: '3px 8px', color: 'var(--text-muted)', cursor: 'pointer', marginLeft: 8,
+            padding: '3px 8px', color: 'var(--text-muted)', cursor: 'pointer',
           }} title="Rafraichir">↻</button>
         </div>
       </div>
+
+      {creating && <CreateTaskModal onCreate={create} onCancel={() => setCreating(false)} />}
 
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
         {filtered.length === 0 ? (
@@ -879,6 +891,123 @@ function EditPanel({ task, onSave, onCancel }: { task: Task; onSave: (u: any) =>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button onClick={onCancel} style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>Annuler</button>
         <button onClick={save} style={{ padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--scarlet)', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>Enregistrer</button>
+      </div>
+    </div>
+  )
+}
+
+function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void; onCancel: () => void }) {
+  const [name, setName] = useState('')
+  const [desc, setDesc] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [taskType, setTaskType] = useState<'cron' | 'interval' | 'run_at'>('interval')
+  const [cron, setCron] = useState('0 9 * * *')
+  const [interval, setInterval_] = useState(3600)
+  const [runAt, setRunAt] = useState('')
+  const [enabled, setEnabled] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = () => {
+    if (!name.trim()) { setError('Nom requis'); return }
+    if (!prompt.trim()) { setError('Prompt requis'); return }
+    const body: any = { name: name.trim(), description: desc, prompt, task_type: taskType, enabled }
+    if (taskType === 'cron') body.cron_expression = cron
+    if (taskType === 'interval') body.interval_seconds = interval
+    if (taskType === 'run_at') body.run_at = runAt
+    setError(null)
+    onCreate(body)
+  }
+
+  const iStyle: React.CSSProperties = {
+    width: '100%', padding: '8px 12px', borderRadius: 8,
+    background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+    color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+  }
+  const lStyle: React.CSSProperties = {
+    fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4, display: 'block',
+  }
+
+  return (
+    <div onClick={onCancel} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+      zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '92%', maxWidth: 560, maxHeight: '88vh', overflow: 'auto',
+        background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 14,
+        padding: 24, display: 'flex', flexDirection: 'column', gap: 12,
+      }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>Nouvelle tâche planifiée</div>
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ flex: 1 }}><label style={lStyle}>Nom</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Résumé du matin" style={iStyle} /></div>
+          <div style={{ flex: 2 }}><label style={lStyle}>Description</label>
+            <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Optionnel" style={iStyle} /></div>
+        </div>
+
+        <div>
+          <label style={lStyle}>Type de planification</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {(['interval', 'cron', 'run_at'] as const).map(t => (
+              <button key={t} onClick={() => setTaskType(t)} style={{
+                flex: 1, padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                border: '1px solid var(--border)', cursor: 'pointer',
+                background: taskType === t ? 'var(--scarlet)' : 'var(--bg-tertiary)',
+                color: taskType === t ? '#fff' : 'var(--text-muted)',
+              }}>
+                {t === 'interval' ? 'Intervalle' : t === 'cron' ? 'Cron' : 'Date unique'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {taskType === 'cron' && (
+          <div>
+            <label style={lStyle}>Expression cron</label>
+            <input value={cron} onChange={e => setCron(e.target.value)} placeholder="0 9 * * 1-5" style={{ ...iStyle, fontFamily: "'JetBrains Mono', monospace" }} />
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+              Format : minute heure jour mois jour-semaine. Ex: <code>0 9 * * 1-5</code> = 9h du lundi au vendredi
+            </div>
+          </div>
+        )}
+        {taskType === 'interval' && (
+          <div>
+            <label style={lStyle}>Intervalle en secondes — {fmtInterval(interval)}</label>
+            <input type="number" min={10} value={interval} onChange={e => setInterval_(parseInt(e.target.value) || 0)} style={iStyle} />
+          </div>
+        )}
+        {taskType === 'run_at' && (
+          <div>
+            <label style={lStyle}>Date & heure (ISO 8601)</label>
+            <input type="datetime-local" value={runAt} onChange={e => setRunAt(e.target.value)} style={iStyle} />
+          </div>
+        )}
+
+        <div>
+          <label style={lStyle}>Prompt envoyé au LLM</label>
+          <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={4}
+            placeholder="Ex: Fais-moi un résumé rapide de l'actualité tech du jour en 3 bullet points."
+            style={{ ...iStyle, resize: 'vertical', fontFamily: "'JetBrains Mono', monospace" }} />
+        </div>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
+          Activer immédiatement
+        </label>
+
+        {error && <div style={{ fontSize: 11, color: '#dc2626' }}>{error}</div>}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+          <button onClick={onCancel} style={{
+            padding: '7px 16px', borderRadius: 8, border: '1px solid var(--border)',
+            background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+          }}>Annuler</button>
+          <button onClick={submit} style={{
+            padding: '7px 16px', borderRadius: 8, border: 'none',
+            background: 'var(--scarlet)', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 700,
+          }}>Créer</button>
+        </div>
       </div>
     </div>
   )
