@@ -93,15 +93,64 @@ async def lifespan(app: FastAPI):
             import logging
             logging.getLogger("gungnir").error(f"Plugin {getattr(manifest, 'name', '?')} startup failed: {_plugin_err}")
 
-    # 4. Start MCP servers
-    from backend.core.agents.mcp_client import mcp_manager
-    settings = Settings.load()
-    if settings.mcp_servers:
-        mcp_configs = [s.model_dump() for s in settings.mcp_servers]
-        await mcp_manager.start_all(mcp_configs)
-        mcp_tools = mcp_manager.get_all_schemas()
-        if mcp_tools:
-            logger.info(f"MCP: {len(mcp_tools)} tools from {len(mcp_manager.clients)} server(s)")
+    # 4. MCP one-shot migration: move legacy global settings.mcp_servers to
+    # per-user DB rows under user #1, then clear the legacy field. Servers are
+    # started lazily on first use (chat/scheduler/webhooks), not at boot.
+    from backend.core.agents.mcp_client import mcp_manager  # imported for shutdown hook
+    try:
+        settings = Settings.load()
+        legacy_servers = list(settings.mcp_servers or [])
+        if legacy_servers:
+            from sqlalchemy import select as _select
+            from backend.core.db.engine import get_session as _get_session
+            from backend.core.db.models import MCPServerConfig as _DBMCP, User as _User
+            from backend.core.config.settings import encrypt_value as _enc
+
+            async for _session in _get_session():
+                # Pick user #1 as the owner (the admin / historical single user).
+                # If no user exists yet (fresh install), skip — nothing to migrate to.
+                _target = await _session.execute(_select(_User).order_by(_User.id).limit(1))
+                _owner = _target.scalar()
+                if _owner is None:
+                    logger.info("MCP legacy migration skipped: no users yet")
+                    break
+
+                migrated = 0
+                for s in legacy_servers:
+                    # Idempotency: skip if an entry with this name already exists for the owner
+                    existing = await _session.execute(
+                        _select(_DBMCP).where(
+                            _DBMCP.user_id == _owner.id,
+                            _DBMCP.name == s.name,
+                        )
+                    )
+                    if existing.scalar():
+                        continue
+                    env_to_store = {}
+                    for k, v in (s.env or {}).items():
+                        if isinstance(v, str) and v and any(t in k.lower() for t in ("key", "secret", "token", "password")) and not v.startswith(("FERNET:", "enc:")):
+                            env_to_store[k] = _enc(v)
+                        else:
+                            env_to_store[k] = v
+                    _session.add(_DBMCP(
+                        user_id=_owner.id,
+                        name=s.name,
+                        command=s.command,
+                        args_json=list(s.args or []),
+                        env_json=env_to_store,
+                        enabled=s.enabled,
+                    ))
+                    migrated += 1
+                await _session.commit()
+
+                if migrated:
+                    # Clear the legacy field so we never migrate again
+                    settings.mcp_servers = []
+                    settings.save()
+                    logger.info(f"MCP legacy migration: {migrated} server(s) moved to user #{_owner.id}")
+                break
+    except Exception as e:
+        logger.warning(f"MCP legacy migration failed: {e}")
 
     # 5. Start auto-backup scheduler
     auto_backup_task = asyncio.create_task(_auto_backup_loop())

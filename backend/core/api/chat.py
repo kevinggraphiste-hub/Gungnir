@@ -1060,8 +1060,9 @@ Tu operes en mode **demande**. Comportement :
 
             if _native_tool_mode:
                 try:
-                    # Merge wolf tools + MCP tools
-                    _all_tools = WOLF_TOOL_SCHEMAS + mcp_manager.get_all_schemas()
+                    # Merge wolf tools + user's MCP tools (lazy-start on first use)
+                    await mcp_manager.ensure_user_started(_current_uid)
+                    _all_tools = WOLF_TOOL_SCHEMAS + mcp_manager.get_user_schemas(_current_uid)
                     response = await provider.chat(
                         chat_messages,
                         chosen_model,
@@ -1175,8 +1176,8 @@ Tu operes en mode **demande**. Comportement :
                         print(f"[Wolf] ASK_PERMISSION: allowed {tool_name} (user confirmed in message)")
 
                 if not _blocked:
-                    # Check wolf executors first, then MCP executors
-                    executor = WOLF_EXECUTORS.get(tool_name) or mcp_manager.get_all_executors().get(tool_name)
+                    # Check wolf executors first, then the user's MCP executors
+                    executor = WOLF_EXECUTORS.get(tool_name) or mcp_manager.get_user_executors(_current_uid).get(tool_name)
                     if executor:
                         try:
                             # Injecte le contexte user + conversation pour les outils

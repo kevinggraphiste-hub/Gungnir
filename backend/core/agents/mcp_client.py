@@ -147,56 +147,139 @@ class MCPStdioClient:
         return schemas
 
 
-# ── Global MCP Manager ────────────────────────────────────────────────────────
+# ── Per-user MCP Manager ─────────────────────────────────────────────────────
 
 class MCPManager:
-    """Manages all MCP server connections."""
+    """Manages MCP server subprocesses scoped by user_id.
+
+    Runtime state is routed per user: two users can run the same server name
+    concurrently without colliding, and a user's tools are never exposed to
+    another user's LLM calls. Lazy-started: servers boot on the first call to
+    ensure_user_started() for a given user.
+    """
 
     def __init__(self):
-        self.clients: dict[str, MCPStdioClient] = {}
+        # user_id → server_name → client
+        self.clients: dict[int, dict[str, MCPStdioClient]] = {}
+        # user_ids whose DB-backed configs have been loaded+started this process
+        self._ensured_users: set[int] = set()
 
-    async def start_all(self, configs: list[dict]):
-        """Start all configured MCP servers."""
-        for cfg in configs:
-            if not cfg.get("enabled", True):
-                continue
-            name = cfg["name"]
+    def _slot(self, user_id: int) -> dict[str, MCPStdioClient]:
+        return self.clients.setdefault(int(user_id), {})
+
+    async def start_client_for_user(
+        self,
+        user_id: int,
+        name: str,
+        command: str,
+        args: list[str],
+        env: dict[str, str],
+    ) -> MCPStdioClient:
+        """Start (or replace) a single MCP server for a user and return the client."""
+        slot = self._slot(user_id)
+        old = slot.pop(name, None)
+        if old:
             try:
-                client = MCPStdioClient(
-                    name=name,
-                    command=cfg["command"],
-                    args=cfg.get("args", []),
-                    env=cfg.get("env", {}),
-                )
-                await client.start()
-                self.clients[name] = client
+                await old.stop()
             except Exception as e:
-                logger.warning(f"Failed to start MCP server '{name}': {e}")
+                logger.warning(f"MCP stop (replace) failed for user={user_id} name={name}: {e}")
+        client = MCPStdioClient(name=name, command=command, args=args, env=env)
+        await client.start()
+        slot[name] = client
+        return client
 
-    async def stop_all(self):
-        """Stop all running MCP servers."""
-        for client in self.clients.values():
+    async def stop_client_for_user(self, user_id: int, name: str) -> bool:
+        """Stop a single MCP server for a user. Returns True if something was stopped."""
+        slot = self.clients.get(int(user_id))
+        if not slot:
+            return False
+        client = slot.pop(name, None)
+        if not client:
+            return False
+        try:
             await client.stop()
-        self.clients.clear()
+        except Exception as e:
+            logger.warning(f"MCP stop failed for user={user_id} name={name}: {e}")
+        return True
 
-    def get_all_schemas(self) -> list[dict]:
-        """Get wolf tool schemas from all connected MCP servers."""
+    def get_client_for_user(self, user_id: int, name: str) -> Optional[MCPStdioClient]:
+        return self.clients.get(int(user_id), {}).get(name)
+
+    async def ensure_user_started(self, user_id: int) -> None:
+        """Lazy-load the user's DB-backed MCP config and start any enabled servers.
+
+        Runs at most once per user per process. Does not touch webhook-integration
+        servers (those are started explicitly via their own start endpoint).
+        """
+        uid = int(user_id)
+        if uid in self._ensured_users or uid <= 0:
+            return
+        self._ensured_users.add(uid)  # mark first to avoid re-entry on failure
+        try:
+            from backend.core.db.engine import get_session
+            from backend.core.db.models import MCPServerConfig as DBMCPServerConfig
+            from backend.core.config.settings import decrypt_value
+            from sqlalchemy import select
+
+            async for session in get_session():
+                result = await session.execute(
+                    select(DBMCPServerConfig).where(
+                        DBMCPServerConfig.user_id == uid,
+                        DBMCPServerConfig.enabled == True,  # noqa: E712
+                    )
+                )
+                rows = result.scalars().all()
+                for row in rows:
+                    env = {
+                        k: (decrypt_value(v) if isinstance(v, str) else v)
+                        for k, v in (row.env_json or {}).items()
+                    }
+                    try:
+                        await self.start_client_for_user(
+                            uid, row.name, row.command, list(row.args_json or []), env
+                        )
+                        logger.info(f"MCP lazy-started for user={uid} name={row.name}")
+                    except Exception as e:
+                        logger.warning(f"MCP lazy-start failed user={uid} name={row.name}: {e}")
+                break
+        except Exception as e:
+            logger.warning(f"ensure_user_started failed user={uid}: {e}")
+
+    async def stop_user_servers(self, user_id: int) -> None:
+        """Stop every MCP server running for a user."""
+        slot = self.clients.pop(int(user_id), None)
+        if not slot:
+            return
+        for name, client in slot.items():
+            try:
+                await client.stop()
+            except Exception as e:
+                logger.warning(f"MCP stop failed user={user_id} name={name}: {e}")
+        self._ensured_users.discard(int(user_id))
+
+    async def stop_all(self) -> None:
+        """Shutdown hook: stop every running MCP server across all users."""
+        for uid in list(self.clients.keys()):
+            await self.stop_user_servers(uid)
+
+    def get_user_schemas(self, user_id: int) -> list[dict]:
+        """Wolf tool schemas from the user's running MCP servers."""
         schemas = []
-        for client in self.clients.values():
+        for client in self.clients.get(int(user_id), {}).values():
             schemas.extend(client.get_wolf_schemas())
         return schemas
 
-    def get_all_executors(self) -> dict[str, Any]:
-        """Get wolf executors for all MCP tools."""
+    def get_user_executors(self, user_id: int) -> dict[str, Any]:
+        """Wolf executors for the user's running MCP tools."""
         executors = {}
-        for client in self.clients.values():
+        for client in self.clients.get(int(user_id), {}).values():
             for t in client.tools:
                 tool_name = f"mcp_{client.name}_{t['name']}"
                 executors[tool_name] = _make_mcp_executor(client, t["name"])
         return executors
 
-    def get_server_status(self) -> list[dict]:
-        """Get status of all MCP servers."""
+    def get_user_server_status(self, user_id: int) -> list[dict]:
+        """Runtime status of the user's MCP servers."""
         return [
             {
                 "name": name,
@@ -204,7 +287,7 @@ class MCPManager:
                 "tools": len(client.tools),
                 "tool_names": [t["name"] for t in client.tools],
             }
-            for name, client in self.clients.items()
+            for name, client in self.clients.get(int(user_id), {}).items()
         ]
 
 

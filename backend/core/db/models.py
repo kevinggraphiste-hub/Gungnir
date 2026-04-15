@@ -247,6 +247,21 @@ class UserSubAgent(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class MCPServerConfig(Base):
+    """Per-user MCP server configuration."""
+    __tablename__ = "mcp_server_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    command = Column(String(255), nullable=False)
+    args_json = Column(JSON, default=list)           # list[str]
+    env_json = Column(JSON, default=dict)            # dict[str, str] — secrets encrypted via FERNET
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 # ── DB init ──────────────────────────────────────────────────────────────────
 
 async def init_db(engine):

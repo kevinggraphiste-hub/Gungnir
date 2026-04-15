@@ -6,7 +6,9 @@ from backend.core.config.settings import Settings, ProviderConfig, VoiceConfig, 
 from backend.core.providers import get_provider
 from backend.core.agents.mcp_client import mcp_manager
 from backend.core.db.engine import get_session
+from backend.core.db.models import MCPServerConfig as DBMCPServerConfig
 from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
+from sqlalchemy import select, delete
 
 router = APIRouter()
 
@@ -533,17 +535,50 @@ async def save_user_app_settings(request: Request, session: AsyncSession = Depen
     return {"status": "saved"}
 
 
-# ── MCP Servers ───────────────────────────────────────────────────────────────
+# ── MCP Servers (per-user) ───────────────────────────────────────────────────
+
+def _require_user_id(request: Request) -> int:
+    """Resolve the authenticated user_id from request.state, rejecting unauthenticated calls."""
+    uid = getattr(request.state, "user_id", None)
+    return int(uid) if uid else 0
+
+
+def _mask_env(env: dict) -> dict:
+    """Mask secret values in an env dict for safe display."""
+    return {
+        k: ("***" if any(t in k.lower() for t in ("key", "secret", "token", "password")) else v)
+        for k, v in (env or {}).items()
+    }
+
 
 @router.get("/mcp/servers")
-async def list_mcp_servers():
-    """List configured MCP servers and their status."""
-    settings = Settings.load()
-    configs = [s.model_dump() for s in settings.mcp_servers]
-    # Mask API keys in env
-    for c in configs:
-        c["env"] = {k: ("***" if "key" in k.lower() or "secret" in k.lower() else v) for k, v in c.get("env", {}).items()}
-    status = mcp_manager.get_server_status()
+async def list_mcp_servers(request: Request, session: AsyncSession = Depends(get_session)):
+    """List the current user's configured MCP servers and their runtime status."""
+    user_id = _require_user_id(request)
+    if not user_id:
+        return {"servers": [], "status": []}
+
+    # Lazy-start so newly created servers from prior sessions are running
+    await mcp_manager.ensure_user_started(user_id)
+
+    result = await session.execute(
+        select(DBMCPServerConfig).where(DBMCPServerConfig.user_id == user_id)
+    )
+    rows = result.scalars().all()
+    configs = [
+        {
+            "name": r.name,
+            "command": r.command,
+            "args": list(r.args_json or []),
+            "env": _mask_env({
+                k: (decrypt_value(v) if isinstance(v, str) else v)
+                for k, v in (r.env_json or {}).items()
+            }),
+            "enabled": r.enabled,
+        }
+        for r in rows
+    ]
+    status = mcp_manager.get_user_server_status(user_id)
     return {"servers": configs, "status": status}
 
 
@@ -560,8 +595,16 @@ MCP_BLOCKED_ARGS = [
 
 
 @router.post("/mcp/servers")
-async def add_mcp_server(config: MCPServerConfig):
-    """Add a new MCP server and start it."""
+async def add_mcp_server(
+    config: MCPServerConfig,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Add (or replace) an MCP server for the current user and start it."""
+    user_id = _require_user_id(request)
+    if not user_id:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+
     # Validate MCP command against allowlist
     cmd_base = config.command.strip().split("/")[-1].split("\\")[-1].lower()
     if cmd_base not in MCP_ALLOWED_COMMANDS:
@@ -578,37 +621,73 @@ async def add_mcp_server(config: MCPServerConfig):
                 status_code=400,
             )
 
-    settings = Settings.load()
-    # Replace if same name exists
-    settings.mcp_servers = [s for s in settings.mcp_servers if s.name != config.name]
-    settings.mcp_servers.append(config)
-    settings.save()
+    # Encrypt sensitive env values before persisting
+    env_to_store = {}
+    for k, v in (config.env or {}).items():
+        if not isinstance(v, str) or not v:
+            env_to_store[k] = v
+            continue
+        if any(t in k.lower() for t in ("key", "secret", "token", "password")) and not v.startswith(("FERNET:", "enc:")):
+            env_to_store[k] = encrypt_value(v)
+        else:
+            env_to_store[k] = v
 
-    # Start the server
+    # Upsert: delete existing entry with same (user_id, name), then insert
+    await session.execute(
+        delete(DBMCPServerConfig).where(
+            DBMCPServerConfig.user_id == user_id,
+            DBMCPServerConfig.name == config.name,
+        )
+    )
+    row = DBMCPServerConfig(
+        user_id=user_id,
+        name=config.name,
+        command=config.command,
+        args_json=list(config.args or []),
+        env_json=env_to_store,
+        enabled=config.enabled,
+    )
+    session.add(row)
+    await session.commit()
+
+    # Start the server for this user
     if config.enabled:
         try:
-            await mcp_manager.start_all([config.model_dump()])
-            tools = mcp_manager.get_all_schemas()
-            return {"ok": True, "tools_discovered": len(tools), "server": config.name}
+            runtime_env = {
+                k: (decrypt_value(v) if isinstance(v, str) else v)
+                for k, v in env_to_store.items()
+            }
+            client = await mcp_manager.start_client_for_user(
+                user_id, config.name, config.command, list(config.args or []), runtime_env
+            )
+            return {"ok": True, "tools_discovered": len(client.tools), "server": config.name}
         except Exception as e:
             import logging
-            logging.getLogger("gungnir").error(f"MCP start error for {config.name}: {e}")
+            logging.getLogger("gungnir").error(f"MCP start error user={user_id} name={config.name}: {e}")
             return {"ok": False, "error": "Erreur au démarrage du serveur MCP", "server": config.name}
     return {"ok": True, "server": config.name, "status": "saved (disabled)"}
 
 
 @router.delete("/mcp/servers/{server_name}")
-async def remove_mcp_server(server_name: str):
-    """Remove an MCP server and stop it."""
-    settings = Settings.load()
-    before = len(settings.mcp_servers)
-    settings.mcp_servers = [s for s in settings.mcp_servers if s.name != server_name]
-    if len(settings.mcp_servers) == before:
-        return JSONResponse({"error": f"MCP server '{server_name}' not found"}, status_code=404)
-    settings.save()
+async def remove_mcp_server(
+    server_name: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Remove an MCP server owned by the current user and stop it."""
+    user_id = _require_user_id(request)
+    if not user_id:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
 
-    # Stop the client if running
-    client = mcp_manager.clients.pop(server_name, None)
-    if client:
-        await client.stop()
+    result = await session.execute(
+        delete(DBMCPServerConfig).where(
+            DBMCPServerConfig.user_id == user_id,
+            DBMCPServerConfig.name == server_name,
+        )
+    )
+    if (result.rowcount or 0) == 0:
+        return JSONResponse({"error": f"MCP server '{server_name}' not found"}, status_code=404)
+    await session.commit()
+
+    await mcp_manager.stop_client_for_user(user_id, server_name)
     return {"ok": True, "deleted": server_name}

@@ -238,6 +238,9 @@ class Settings(BaseSettings):
         "serper": ServiceConfig(base_url="https://google.serper.dev"),
         "tavily": ServiceConfig(base_url="https://api.tavily.com"),
     })
+    # Legacy field — MCP servers are now stored per-user in the `mcp_server_configs`
+    # DB table. Kept for the one-shot migration in main.py lifespan; no code path
+    # writes to it after the initial boot that migrates the data to user #1.
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
 
     _config_path: Path = DATA_DIR / "config.json"

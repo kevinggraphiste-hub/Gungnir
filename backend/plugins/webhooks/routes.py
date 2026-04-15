@@ -333,10 +333,11 @@ async def webhooks_health(request: Request):
     webhooks = _load_json(_user_webhooks_file(request), [])
     active_integrations = sum(1 for i in integrations if i.get("enabled"))
 
-    # MCP status
+    # MCP status — scoped to the current user
     try:
         from backend.core.agents.mcp_client import mcp_manager
-        mcp_status = mcp_manager.get_server_status()
+        _uid = getattr(request.state, "user_id", None) or 0
+        mcp_status = mcp_manager.get_user_server_status(_uid)
     except Exception:
         mcp_status = []
 
@@ -371,10 +372,11 @@ async def list_integrations(request: Request):
     """List all user-configured integrations with their status."""
     integrations = _load_json(_user_integrations_file(request), [])
 
-    # Get MCP status for running info
+    # Get this user's MCP status for running info
     try:
         from backend.core.agents.mcp_client import mcp_manager
-        mcp_status = {s["name"]: s for s in mcp_manager.get_server_status()}
+        _uid = getattr(request.state, "user_id", None) or 0
+        mcp_status = {s["name"]: s for s in mcp_manager.get_user_server_status(_uid)}
     except Exception:
         mcp_status = {}
 
@@ -443,14 +445,13 @@ async def remove_integration(integration_id: str, request: Request):
 
     _save_json(integrations_file, integrations)
 
-    # Stop MCP server if running
+    # Stop MCP server if running — scoped to this user
     if removed:
         try:
             from backend.core.agents.mcp_client import mcp_manager
+            _uid = getattr(request.state, "user_id", None) or 0
             server_name = removed.get("mcp_server_name") or integration_id
-            client = mcp_manager.clients.pop(server_name, None)
-            if client:
-                await client.stop()
+            if await mcp_manager.stop_client_for_user(_uid, server_name):
                 logger.info(f"Stopped MCP server for integration: {integration_id}")
         except Exception as e:
             logger.warning(f"Error stopping MCP for {integration_id}: {e}")
@@ -482,24 +483,19 @@ async def start_integration_mcp(integration_id: str, request: Request):
     env_values = integ.get("env_values", {})
 
     try:
-        from backend.core.agents.mcp_client import mcp_manager, MCPStdioClient
+        from backend.core.agents.mcp_client import mcp_manager
 
-        # Stop if already running
-        old_client = mcp_manager.clients.pop(server_name, None)
-        if old_client:
-            await old_client.stop()
-
-        # Start new
-        client = MCPStdioClient(
-            name=server_name,
-            command=mcp_command,
-            args=mcp_args + extra_args,
-            env=env_values,
+        _uid = getattr(request.state, "user_id", None) or 0
+        # start_client_for_user replaces any existing entry with the same name
+        client = await mcp_manager.start_client_for_user(
+            _uid,
+            server_name,
+            mcp_command,
+            mcp_args + extra_args,
+            env_values,
         )
-        await client.start()
-        mcp_manager.clients[server_name] = client
 
-        logger.info(f"MCP started for integration '{integration_id}': {len(client.tools)} tools")
+        logger.info(f"MCP started for integration '{integration_id}' (user={_uid}): {len(client.tools)} tools")
         return {
             "ok": True,
             "integration": integration_id,
@@ -519,13 +515,12 @@ async def stop_integration_mcp(integration_id: str, request: Request):
     """Stop the MCP server for an integration."""
     try:
         from backend.core.agents.mcp_client import mcp_manager
+        _uid = getattr(request.state, "user_id", None) or 0
         integrations = _load_json(_user_integrations_file(request), [])
         integ = next((i for i in integrations if i["id"] == integration_id), None)
         server_name = (integ.get("mcp_server_name") if integ else None) or integration_id
 
-        client = mcp_manager.clients.pop(server_name, None)
-        if client:
-            await client.stop()
+        if await mcp_manager.stop_client_for_user(_uid, server_name):
             return {"ok": True, "stopped": server_name}
         return {"ok": False, "error": "Serveur non actif"}
     except Exception as e:
@@ -537,11 +532,12 @@ async def get_integration_tools(integration_id: str, request: Request):
     """List tools provided by an integration's MCP server."""
     try:
         from backend.core.agents.mcp_client import mcp_manager
+        _uid = getattr(request.state, "user_id", None) or 0
         integrations = _load_json(_user_integrations_file(request), [])
         integ = next((i for i in integrations if i["id"] == integration_id), None)
         server_name = (integ.get("mcp_server_name") if integ else None) or integration_id
 
-        client = mcp_manager.clients.get(server_name)
+        client = mcp_manager.get_client_for_user(_uid, server_name)
         if not client:
             return {"tools": [], "error": "Serveur MCP non actif"}
 
@@ -563,12 +559,13 @@ async def get_integration_tools(integration_id: str, request: Request):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/mcp/status")
-async def mcp_global_status():
-    """Get status of all running MCP servers (from integrations + core config)."""
+async def mcp_global_status(request: Request):
+    """Get status of running MCP servers for the current user (integrations + core config)."""
     try:
         from backend.core.agents.mcp_client import mcp_manager
-        status = mcp_manager.get_server_status()
-        schemas = mcp_manager.get_all_schemas()
+        _uid = getattr(request.state, "user_id", None) or 0
+        status = mcp_manager.get_user_server_status(_uid)
+        schemas = mcp_manager.get_user_schemas(_uid)
         return {
             "servers": status,
             "total_tools": len(schemas),

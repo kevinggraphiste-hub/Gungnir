@@ -2505,11 +2505,12 @@ async def _doctor_check(scope: str = "full") -> dict:
         else:
             add_check("Node.js: npx", "warning", "npx non trouvé — MCP servers ne pourront pas démarrer")
 
-    # ── MCP
+    # ── MCP (scoped to the current user)
     if scope in ("full", "mcp"):
         try:
             from backend.core.agents.mcp_client import mcp_manager
-            status_list = mcp_manager.get_server_status()
+            _uid = get_user_context() or 0
+            status_list = mcp_manager.get_user_server_status(_uid)
             if status_list:
                 total_tools = sum(s.get("tools", 0) for s in status_list)
                 add_check("MCP Servers", "ok", f"{len(status_list)} serveurs, {total_tools} outils")

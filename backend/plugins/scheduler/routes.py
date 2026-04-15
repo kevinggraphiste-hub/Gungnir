@@ -473,9 +473,11 @@ async def modify_n8n_workflow(workflow_id: str, req: ModifyRequest, request: Req
         ChatMessage(role="user", content=user_content),
     ]
 
-    # 4. Get MCP tool schemas (n8n tools)
-    mcp_tools = mcp_manager.get_all_schemas()
-    mcp_executors = mcp_manager.get_all_executors()
+    # 4. Get this user's MCP tool schemas (n8n tools) — lazy-start if needed
+    _uid = getattr(request.state, "user_id", None) or 0
+    await mcp_manager.ensure_user_started(_uid)
+    mcp_tools = mcp_manager.get_user_schemas(_uid)
+    mcp_executors = mcp_manager.get_user_executors(_uid)
 
     if not mcp_tools:
         return {"ok": False, "error": "Aucun serveur MCP connecte. Configurez le MCP n8n dans les parametres."}
