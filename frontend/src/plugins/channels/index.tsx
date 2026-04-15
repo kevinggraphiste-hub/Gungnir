@@ -356,10 +356,15 @@ export default function ChannelsPlugin() {
 function ChannelsList({ channels, catalog, expandedChannel, setExpandedChannel, onToggle, onEdit, onDelete }: any) {
   if (channels.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 gap-3" style={{ color: 'var(--text-muted)' }}>
-        <Radio className="w-12 h-12 opacity-30" />
-        <p className="text-sm">Aucun canal configuré</p>
-        <p className="text-xs opacity-60">Ajoutez un canal pour connecter Gungnir au monde extérieur</p>
+      <div className="flex flex-col items-center justify-center py-16 gap-3 rounded-xl border border-dashed mx-6 my-4"
+        style={{ color: 'var(--text-muted)', borderColor: 'var(--border)', background: 'var(--bg-secondary)' }}>
+        <Radio className="w-10 h-10 opacity-40" />
+        <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Aucun canal configuré</p>
+        <p className="text-xs max-w-md text-center leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+          Un canal connecte ton agent à une plateforme externe (Telegram, Discord, Slack, email, widget…) pour qu'il puisse recevoir et répondre à des messages sans passer par cette interface.
+          <br /><br />
+          Clique sur <strong>Ajouter</strong> en haut à droite pour parcourir le catalogue et connecter ta première plateforme en 2 minutes.
+        </p>
       </div>
     )
   }

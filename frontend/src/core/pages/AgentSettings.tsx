@@ -528,7 +528,7 @@ export default function AgentSettings() {
     { id: 'mode', label: 'Mode', icon: SettingsIcon },
     { id: 'model', label: 'Modèle', icon: Cpu },
     { id: 'skills', label: 'Skills', icon: Sparkles },
-    { id: 'subagents', label: 'Sub-agents', icon: Users },
+    { id: 'subagents', label: 'Sous-agents', icon: Users },
     { id: 'personality', label: 'Personnalité', icon: Bot },
     { id: 'inter-agent', label: 'Conversations inter-agents', icon: MessageSquare },
     { id: 'security', label: 'Sécurité', icon: Shield },
@@ -536,31 +536,33 @@ export default function AgentSettings() {
 
   return (
     <div className="max-w-6xl mx-auto p-6 h-full overflow-y-auto">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(to bottom right, color-mix(in srgb, var(--accent-primary) 15%, transparent), color-mix(in srgb, var(--accent-secondary) 10%, transparent))' }}>
-          <Bot className="w-6 h-6" style={{ color: 'var(--accent-primary)' }} />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Configuration Agent</h1>
-          <p style={{ color: 'var(--text-muted)' }}>Mode, skills, sous-agents et sécurité</p>
+      {/* Header — aligned on the Consciousness plugin style */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <Bot className="w-7 h-7" style={{ color: 'var(--accent-primary)' }} />
+          <div>
+            <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Configuration Agent</h1>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Mode d'autonomie, modèles, skills, sous-agents, personnalité et sécurité</p>
+          </div>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-6">
+      {/* Tab bar — aligned on the Consciousness plugin style */}
+      <div className="flex gap-1 flex-wrap pb-1 mb-6">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm whitespace-nowrap transition-colors border"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-colors"
             style={activeTab === tab.id
-              ? { background: 'color-mix(in srgb, var(--accent-primary) 15%, transparent)', color: 'var(--accent-primary)', borderColor: 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' }
-              : { background: 'var(--bg-secondary)', color: 'var(--text-secondary)', borderColor: 'var(--border)' }
+              ? { background: 'color-mix(in srgb, var(--accent-primary) 15%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)' }
+              : { color: 'var(--text-muted)', border: '1px solid transparent' }
             }
           >
-            <tab.icon className="w-4 h-4" />
+            <tab.icon className="w-3.5 h-3.5" />
             {tab.label}
             {tab.id === 'security' && securityScan && (
-              <span className="w-2 h-2 rounded-full" style={{ background: securityScan.score >= 80 ? 'var(--accent-success)' : 'var(--accent-danger)' }} />
+              <span className="w-2 h-2 rounded-full ml-0.5" style={{ background: securityScan.score >= 80 ? 'var(--accent-success)' : 'var(--accent-danger)' }} />
             )}
           </button>
         ))}
@@ -1214,7 +1216,13 @@ export default function AgentSettings() {
                 )
               })}
               {skills.length === 0 && (
-                <p className="text-sm text-center py-6" style={{ color: 'var(--text-muted)' }}>Aucun skill disponible</p>
+                <div className="text-center py-10 px-6 rounded-xl border border-dashed" style={{ borderColor: 'var(--border)', background: 'var(--bg-primary)' }}>
+                  <Sparkles className="w-8 h-8 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+                  <p className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Aucun skill configuré</p>
+                  <p className="text-xs max-w-sm mx-auto mb-4" style={{ color: 'var(--text-muted)' }}>
+                    Les skills sont des compétences spécialisées que tu actives pour orienter l'agent sur une tâche précise (code review, rédaction, debug…). Crée le tien via le formulaire ci-dessus ou importe un fichier JSON / Markdown.
+                  </p>
+                </div>
               )}
             </div>
           </div>
@@ -1375,7 +1383,13 @@ export default function AgentSettings() {
             {/* ── Liste des sous-agents ── */}
             <div className="space-y-3">
               {subAgents.length === 0 && (
-                <div className="text-center py-10 text-sm" style={{ color: 'var(--text-muted)' }}>Aucun sous-agent — {agentName} peut en créer automatiquement via le chat.</div>
+                <div className="text-center py-10 px-6 rounded-xl border border-dashed" style={{ borderColor: 'var(--border)', background: 'var(--bg-primary)' }}>
+                  <Users className="w-8 h-8 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+                  <p className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Aucun sous-agent configuré</p>
+                  <p className="text-xs max-w-sm mx-auto" style={{ color: 'var(--text-muted)' }}>
+                    Un sous-agent est une entité spécialisée avec sa propre identité et son propre provider/modèle. {agentName} peut en créer automatiquement en discutant avec toi, ou tu peux en définir via le formulaire ci-dessus.
+                  </p>
+                </div>
               )}
 
               {subAgents.map((agent: any) => {

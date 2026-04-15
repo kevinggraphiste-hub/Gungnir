@@ -290,11 +290,15 @@ export default function WebhooksPlugin() {
             {activeTab === 'integrations' && (
               <div className="space-y-3">
                 {integrations.length === 0 ? (
-                  <div className="text-center py-16 space-y-3">
-                    <Plug className="w-12 h-12 mx-auto opacity-20" style={{ color: 'var(--text-muted)' }} />
-                    <p style={{ color: 'var(--text-muted)' }}>Aucune intégration configurée</p>
+                  <div className="text-center py-12 px-6 rounded-xl border border-dashed space-y-3"
+                    style={{ borderColor: 'var(--border)', background: 'var(--bg-secondary)' }}>
+                    <Plug className="w-10 h-10 mx-auto opacity-40" style={{ color: 'var(--text-muted)' }} />
+                    <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Aucune intégration configurée</p>
+                    <p className="text-xs max-w-md mx-auto leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                      Une intégration branche un service externe (GitHub, Notion, n8n, Linear, Supabase…) à ton agent sous forme d'<em>outils</em> qu'il pourra invoquer pendant une conversation ou un cron.
+                    </p>
                     <button onClick={() => setShowCatalog(true)}
-                      className="px-4 py-2 rounded-lg text-sm"
+                      className="px-4 py-2 rounded-lg text-sm font-medium"
                       style={{ background: 'var(--accent-primary)', color: '#fff' }}>
                       <Plus className="w-4 h-4 inline mr-1" /> Parcourir le catalogue
                     </button>
@@ -407,9 +411,13 @@ export default function WebhooksPlugin() {
                 </div>
 
                 {webhooks.length === 0 ? (
-                  <p className="text-center py-12 text-sm" style={{ color: 'var(--text-muted)' }}>
-                    Aucun webhook configuré
-                  </p>
+                  <div className="text-center py-10 px-6 rounded-xl border border-dashed space-y-2"
+                    style={{ borderColor: 'var(--border)', background: 'var(--bg-secondary)' }}>
+                    <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Aucun webhook configuré</p>
+                    <p className="text-xs max-w-md mx-auto leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                      Un webhook sortant laisse ton agent notifier un service externe quand quelque chose se passe (ex : envoyer un résumé quotidien sur Slack, déclencher un workflow n8n, pousser un rapport sur Discord…). Clique sur <strong>Nouveau webhook</strong> pour en créer un.
+                    </p>
+                  </div>
                 ) : (
                   webhooks.map(wh => (
                     <div key={wh.id} className="border rounded-lg p-4 flex items-center justify-between"
