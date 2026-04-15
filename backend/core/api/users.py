@@ -156,7 +156,13 @@ async def update_user(user_id: int, request: Request, session: AsyncSession = De
 
 @router.delete("/users/{user_id}")
 async def delete_user(user_id: int, request: Request, session: AsyncSession = Depends(get_session)):
-    """Supprime un utilisateur. Admin only."""
+    """Hard-delete a user and every row/file scoped to them.
+
+    Admin-only. Refuses to delete the last remaining admin so the instance
+    never ends up locked out. The heavy lifting (cascade delete across the
+    14 user-scoped tables + wipe of the per-user filesystem dirs + per-user
+    cache eviction) reuses the same helpers used by the backup restore flow.
+    """
     uid = getattr(request.state, "user_id", None)
     if uid is not None:
         from backend.core.api.auth_helpers import require_admin
@@ -166,9 +172,72 @@ async def delete_user(user_id: int, request: Request, session: AsyncSession = De
     user = await session.get(User, user_id)
     if not user:
         return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
-    await session.delete(user)
-    await session.commit()
-    return {"ok": True}
+
+    # Refuse to delete the last remaining admin — otherwise nobody can get
+    # back into admin-only features (providers catalog, backup, doctor…).
+    if user.is_admin:
+        admin_count_res = await session.execute(
+            select(User).where(User.is_admin == True, User.is_active == True)  # noqa: E712
+        )
+        admin_count = len(admin_count_res.scalars().all())
+        if admin_count <= 1:
+            return JSONResponse(
+                {"error": "Impossible de supprimer le dernier administrateur de l'instance"},
+                status_code=400,
+            )
+
+    try:
+        # 1. Cascade delete every user-scoped row (reuses the backup helper).
+        from backend.core.api.backup_routes import _delete_user_db, _wipe_user_files
+        await _delete_user_db(session, user_id)
+
+        # 2. Remove the user's own backup directory so their zips go with them.
+        try:
+            import shutil
+            from backend.core.api.backup_routes import _user_backup_dir
+            d = _user_backup_dir(user_id)
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+        except Exception as _berr:
+            pass
+
+        # 3. Delete the user row itself.
+        await session.delete(user)
+        await session.commit()
+
+        # 4. Wipe the per-user filesystem tree (automata, consciousness,
+        #    workspace, soul, kb, webhooks, integrations, code_configs…).
+        _wipe_user_files(user_id)
+
+        # 5. Evict per-user caches so nothing points at a ghost user.
+        try:
+            from backend.core.agents.mcp_client import mcp_manager as _mcp
+            await _mcp.stop_user_servers(user_id)
+        except Exception:
+            pass
+        try:
+            from backend.plugins.consciousness.engine import consciousness_manager as _cm
+            _cm.evict(user_id)
+        except Exception:
+            pass
+        try:
+            from backend.core.agents.mode_manager import mode_pool as _mp
+            _mp._instances.pop(user_id, None)
+        except Exception:
+            pass
+
+        return {"ok": True, "id": user_id}
+    except Exception as e:
+        import logging
+        logging.getLogger("gungnir").error(f"User delete failed for uid={user_id}: {e}", exc_info=True)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        return JSONResponse(
+            {"error": f"Erreur lors de la suppression de l'utilisateur: {str(e)[:200]}"},
+            status_code=500,
+        )
 
 
 @router.get("/users/me")
