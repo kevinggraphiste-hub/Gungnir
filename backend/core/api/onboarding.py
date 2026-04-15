@@ -73,6 +73,31 @@ async def _require_user(request: Request) -> int | None:
     return int(uid) if uid else None
 
 
+async def _looks_like_established_user(session: AsyncSession, uid: int, us: UserSettings) -> bool:
+    """True if this user already has enough history that we shouldn't drag them
+    through the welcome onboarding. Checks, in order:
+      1. agent_name already set in UserSettings (they configured it before)
+      2. any existing conversation owned by them
+      3. an existing per-user soul.md on disk
+    This prevents the onboarding from triggering on pre-existing users after
+    the onboarding_state column is added to UserSettings."""
+    if us.agent_name:
+        return True
+    convo_count = await session.execute(
+        select(Conversation.id).where(Conversation.user_id == uid).limit(1)
+    )
+    if convo_count.first():
+        return True
+    try:
+        from pathlib import Path as _P
+        soul_file = _P(__file__).parent.parent.parent.parent / "data" / "soul" / str(uid) / "soul.md"
+        if soul_file.exists() and soul_file.stat().st_size > 0:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 @router.get("/onboarding/state")
 async def get_onboarding_state(request: Request, session: AsyncSession = Depends(get_session)):
     """Return the caller's onboarding progress + API-key readiness.
@@ -95,6 +120,20 @@ async def get_onboarding_state(request: Request, session: AsyncSession = Depends
     step = state.get("step") or "pending"
     welcome_id = state.get("convo_id")
 
+    # Auto-mark as done for users who clearly already went through setup:
+    # existing conversations, existing soul, or an agent_name already chosen.
+    # Only kicks in when the stored step is still "pending" — once an admin
+    # explicitly triggered onboarding (step == "in_progress") we leave it
+    # alone so they can finish the flow even without prior history.
+    if step == "pending" and await _looks_like_established_user(session, uid, us):
+        state["step"] = "done"
+        state["auto_skipped"] = True
+        us.onboarding_state = dict(state)
+        flag_modified(us, "onboarding_state")
+        await session.commit()
+        step = "done"
+        logger.info(f"Onboarding auto-skipped for established user {uid}")
+
     # Sanity check: if the stored welcome conversation was deleted, drop the id
     if welcome_id:
         convo = await session.get(Conversation, welcome_id)
@@ -111,6 +150,22 @@ async def get_onboarding_state(request: Request, session: AsyncSession = Depends
         "welcome_convo_id": welcome_id,
         "agent_name": us.agent_name or "",
     }
+
+
+@router.post("/onboarding/reset")
+async def reset_onboarding(request: Request, session: AsyncSession = Depends(get_session)):
+    """Dev/test only: reset the caller's onboarding state so the welcome flow
+    triggers again on the next chat load. Useful when debugging the flow."""
+    uid = await _require_user(request)
+    if uid is None:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+    us = await get_user_settings(uid, session)
+    us.onboarding_state = {"step": "pending"}
+    us.agent_name = ""
+    flag_modified(us, "onboarding_state")
+    await session.commit()
+    logger.info(f"Onboarding reset for user {uid}")
+    return {"ok": True, "step": "pending"}
 
 
 @router.post("/onboarding/welcome")

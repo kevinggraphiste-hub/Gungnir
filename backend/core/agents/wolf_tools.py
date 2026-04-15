@@ -2712,8 +2712,32 @@ async def _finalize_onboarding(
     UserSettings, saves the soul to data/soul/<uid>/soul.md, and flips the
     active ModeManager to the requested mode."""
     uid = get_user_context() or 0
+    logger.info(
+        f"[onboarding] finalize_onboarding called uid={uid} "
+        f"name={agent_name!r} formality={formality!r} mode={mode!r} "
+        f"soul_len={len(soul or '')}"
+    )
     if uid <= 0:
         return {"ok": False, "error": "Aucun utilisateur authentifié pour finaliser l'onboarding."}
+
+    # Runtime guard: refuse to run if this user has already finished onboarding.
+    # Prevents the tool being (mis)used outside of a welcome conversation to
+    # silently rewrite someone's soul/mode/agent_name.
+    try:
+        from backend.core.db.engine import async_session as _oa_guard_sm
+        from backend.core.db.models import UserSettings as _oa_guard_US
+        from sqlalchemy import select as _oa_guard_sel
+        async with _oa_guard_sm() as _gs:
+            _gr = await _gs.execute(_oa_guard_sel(_oa_guard_US).where(_oa_guard_US.user_id == uid))
+            _grow = _gr.scalar_one_or_none()
+            if _grow and _grow.onboarding_state and _grow.onboarding_state.get("step") == "done":
+                logger.warning(f"[onboarding] finalize_onboarding refused: user {uid} already onboarded")
+                return {
+                    "ok": False,
+                    "error": "L'onboarding est déjà terminé pour cet utilisateur. Utilise soul_write si tu veux mettre à jour l'identité.",
+                }
+    except Exception as _ge:
+        logger.warning(f"[onboarding] guard check failed uid={uid}: {_ge}")
 
     clean_name = (agent_name or "").strip() or "Gungnir"
     clean_formality = formality if formality in ("tu", "vous") else "tu"

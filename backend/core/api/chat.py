@@ -1177,9 +1177,20 @@ Tu operes en mode **demande**. Comportement :
                 # Gate : mode-based tool access control
                 _current_mode = mode_manager.current_mode.value
 
+                # Onboarding exemption: finalize_onboarding is a one-shot setup
+                # tool that MUST run regardless of the active autonomy mode
+                # during an active welcome conversation. Without this exemption
+                # ask_permission mode silently blocks the call and the LLM
+                # silently gives up, leaving onboarding as cosmetic chat only.
+                _is_onboarding_finalize = (
+                    tool_name == "finalize_onboarding" and _is_onboarding_convo
+                )
+
                 # RESTRAINED : vérifier que l'utilisateur a explicitement demandé cette action
                 _blocked = False
-                if _current_mode == "restrained" and not _restrained_check_user_intent(tool_name, message):
+                if _is_onboarding_finalize:
+                    print(f"[Wolf] ONBOARDING: auto-approving finalize_onboarding for user={_current_uid}")
+                elif _current_mode == "restrained" and not _restrained_check_user_intent(tool_name, message):
                     tool_result = {"ok": False, "error": f"Mode restreint : l'outil '{tool_name}' n'a pas ete demande explicitement par l'utilisateur. Reponds sans utiliser d'outils."}
                     print(f"[Wolf] RESTRAINED: blocked {tool_name} (no explicit user intent in: '{message[:80]}...')")
                     _blocked = True
