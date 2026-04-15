@@ -1,9 +1,16 @@
 """
-Gungnir — Heartbeat API Routes
+Gungnir — Heartbeat API Routes (strict per-user)
 
-Gère le cycle heartbeat : battement périodique qui permet à la conscience
-de réfléchir en arrière-plan, maintenir les connexions WebSocket,
-et exécuter des tâches planifiées.
+Each user has their own heartbeat config and status at
+data/heartbeat/{uid}/state.json. A single master scanner loop walks the
+per-user directories every MASTER_TICK_RESOLUTION seconds and beats each
+user whose own check_interval has elapsed since their own last_tick.
+
+There is no shared state between users:
+  • One state file per user
+  • Routes always operate on the caller's own state (request.state.user_id)
+  • Tick side effects (event bus, consciousness tagging) are scoped to the
+    user being beaten — never iterate or mutate other users' instances.
 """
 import json
 import asyncio
@@ -18,7 +25,8 @@ logger = logging.getLogger("gungnir.heartbeat")
 router = APIRouter()
 
 DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
-HB_FILE = DATA_DIR / "heartbeat.json"
+HB_DIR = DATA_DIR / "heartbeat"
+MASTER_TICK_RESOLUTION = 5  # seconds — granularity of the master scanner
 
 DEFAULT_CONFIG = {
     "enabled": False,
@@ -29,10 +37,10 @@ DEFAULT_CONFIG = {
     "max_concurrent_tasks": 5,
     "on_startup": False,
     "started_at": None,
-    # Mode Jour/Nuit — quand activé, applique night_config entre night_start_hour et day_start_hour
+    # Mode Jour/Nuit — applique night_config entre night_start_hour et day_start_hour
     "day_night_enabled": False,
-    "day_start_hour": 7,      # 07:00 → début du mode jour
-    "night_start_hour": 22,   # 22:00 → début du mode nuit
+    "day_start_hour": 7,
+    "night_start_hour": 22,
     "night_config": {
         "check_interval_seconds": 300,
         "ws_ping_interval_seconds": 60,
@@ -40,24 +48,26 @@ DEFAULT_CONFIG = {
     },
 }
 
+DEFAULT_STATUS = {
+    "last_tick": None,
+    "tick_count": 0,
+}
+
+
+# ── Time helpers ──────────────────────────────────────────────────────────────
 
 def _is_night_time(cfg: dict) -> bool:
-    """Détermine si on est actuellement en période de nuit selon la config."""
     if not cfg.get("day_night_enabled"):
         return False
-    from datetime import datetime
     hour = datetime.now().hour
     day_start = int(cfg.get("day_start_hour", 7))
     night_start = int(cfg.get("night_start_hour", 22))
-    # Cas normal : jour (ex 7h) puis nuit (ex 22h) qui traverse minuit
     if night_start > day_start:
         return hour >= night_start or hour < day_start
-    # Cas inverse (rare) : nuit en fenêtre continue entre night_start et day_start
     return night_start <= hour < day_start
 
 
 def _effective_config(cfg: dict) -> dict:
-    """Retourne la config effective en appliquant les overrides nuit si actifs."""
     if not _is_night_time(cfg):
         return cfg
     night = cfg.get("night_config") or {}
@@ -68,108 +78,142 @@ def _effective_config(cfg: dict) -> dict:
     return merged
 
 
-def _load() -> dict:
-    """Charge la config heartbeat depuis le fichier JSON."""
-    if HB_FILE.exists():
+def _parse_iso(value):
+    if not value:
+        return None
+    try:
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+# ── Per-user storage ──────────────────────────────────────────────────────────
+
+def _user_hb_file(user_id: int) -> Path:
+    p = HB_DIR / str(user_id) / "state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _load_user(user_id: int) -> dict:
+    f = _user_hb_file(user_id)
+    if f.exists():
         try:
-            return json.loads(HB_FILE.read_text(encoding="utf-8"))
+            data = json.loads(f.read_text(encoding="utf-8"))
+            data.setdefault("config", {**DEFAULT_CONFIG})
+            data.setdefault("status", {**DEFAULT_STATUS})
+            return data
         except Exception:
             pass
-    return {"config": {**DEFAULT_CONFIG}, "tasks": []}
+    return {"config": {**DEFAULT_CONFIG}, "status": {**DEFAULT_STATUS}}
 
 
-def _save(data: dict):
-    """Sauvegarde la config heartbeat."""
-    HB_FILE.parent.mkdir(parents=True, exist_ok=True)
-    HB_FILE.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+def _save_user(user_id: int, data: dict):
+    f = _user_hb_file(user_id)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
 
-# ── Background heartbeat loop ─────────────────────────────────────────────
+def _resolve_user_id(request: Request) -> int:
+    """Extract user_id from request. Falls back to 0 for unauthenticated /
+    open-mode requests so the route is still usable in setup flows."""
+    return getattr(request.state, "user_id", None) or 0
+
+
+# ── Background heartbeat master loop ──────────────────────────────────────────
 
 _heartbeat_task: asyncio.Task | None = None
 
 
-async def _heartbeat_loop():
-    """System-wide proof-of-life ticker.
+async def _beat_user(user_id: int, data: dict, eff_cfg: dict, now: datetime):
+    """Persist a beat for a single user and fire user-scoped side effects.
 
-    Heartbeat is a base service of the platform — it ticks regardless of
-    which optional features (consciousness, automata, plugins, ...) are
-    enabled. Each tick does THREE things, in this order:
-
-      1. (System) Stamps last_tick and increments tick_count in
-         heartbeat.json. This is the canonical "is the server alive"
-         indicator that the UI / monitoring / clients can read via
-         GET /api/heartbeat.
-
-      2. (System) Fires a `system.heartbeat.tick` event on the event_bus
-         with {timestamp, tick, interval}. ANY plugin or core service
-         can subscribe via event_bus.on("system.heartbeat.tick", ...)
-         and react to the beat without coupling to the heartbeat module.
-
-      3. (Plugin overlay) Tags every consciousness engine instance with
-         enabled=True so its dashboard shows a real heartbeats counter.
-         This is opt-in by virtue of the consciousness plugin being
-         opt-in — it does not gate the system-level beat.
-
-    Heartbeat does NOT call the LLM or generate thoughts. That is the
-    consciousness daemon's job (plugins/consciousness/__init__.py). This
-    loop is intentionally cheap so it can run continuously as a base
-    feature without burning resources.
+    Strictly user-isolated: only this user's state is written, only this
+    user's consciousness instance is tagged, only an event mentioning this
+    user_id is emitted. No iteration over other users.
     """
+    now_iso = now.isoformat()
+    status = data.get("status") or {}
+    status["last_tick"] = now_iso
+    status["tick_count"] = int(status.get("tick_count", 0)) + 1
+    data["status"] = status
+    _save_user(user_id, data)
+
+    # Emit user-scoped event so plugins can react per-user
+    try:
+        from backend.core.services.event_bus import event_bus
+        await event_bus.emit(
+            "user.heartbeat.tick",
+            user_id=user_id,
+            timestamp=now_iso,
+            tick=status["tick_count"],
+            interval=int(eff_cfg.get("check_interval_seconds", 30) or 30),
+        )
+    except Exception as e:
+        logger.warning(f"Heartbeat: event emit failed for user {user_id}: {e}")
+
+    # Tag ONLY this user's consciousness instance
+    try:
+        from backend.plugins.consciousness.engine import consciousness_manager
+        instance = consciousness_manager._instances.get(user_id)
+        if instance and instance.enabled:
+            instance._state["last_heartbeat"] = now_iso
+            stats = instance._state.setdefault("stats", {})
+            stats["heartbeats"] = int(stats.get("heartbeats", 0)) + 1
+            try:
+                instance.save_state()
+            except Exception as e:
+                logger.warning(f"Heartbeat: save_state failed for user {user_id}: {e}")
+    except Exception as e:
+        logger.warning(f"Heartbeat: consciousness tag failed for user {user_id}: {e}")
+
+    logger.debug(f"Heartbeat tick #{status['tick_count']} for user {user_id} at {now_iso}")
+
+
+async def _heartbeat_loop():
+    """Master scanner — ticks every MASTER_TICK_RESOLUTION seconds, beats each
+    user whose own check_interval has elapsed since their last_tick."""
+    logger.info(f"Heartbeat master loop started (resolution {MASTER_TICK_RESOLUTION}s)")
     while True:
         try:
-            data = _load()
-            cfg = data.get("config", {})
+            await asyncio.sleep(MASTER_TICK_RESOLUTION)
+            now = datetime.now(timezone.utc)
 
-            if not cfg.get("enabled") or cfg.get("paused"):
-                await asyncio.sleep(5)
+            if not HB_DIR.exists():
                 continue
 
-            # Applique les overrides jour/nuit si activés
-            eff = _effective_config(cfg)
-            interval = eff.get("check_interval_seconds", 30)
+            for user_dir in HB_DIR.iterdir():
+                if not user_dir.is_dir():
+                    continue
+                try:
+                    user_id = int(user_dir.name)
+                except ValueError:
+                    continue
 
-            now_iso = datetime.now(timezone.utc).isoformat()
+                data = _load_user(user_id)
+                cfg = data.get("config", {})
+                if not cfg.get("enabled") or cfg.get("paused"):
+                    continue
 
-            # 1. SYSTEM — persist the beat in heartbeat.json
-            status = data.get("status") or {}
-            status["last_tick"] = now_iso
-            status["tick_count"] = int(status.get("tick_count", 0)) + 1
-            data["status"] = status
-            _save(data)
+                eff = _effective_config(cfg)
+                interval = int(eff.get("check_interval_seconds", 30) or 30)
 
-            # 2. SYSTEM — emit on the event bus so any subscriber can react
-            try:
-                from backend.core.services.event_bus import event_bus
-                await event_bus.emit(
-                    "system.heartbeat.tick",
-                    timestamp=now_iso,
-                    tick=status["tick_count"],
-                    interval=interval,
-                )
-            except Exception as e:
-                logger.warning(f"Heartbeat: event emit failed: {e}")
+                last = _parse_iso(data.get("status", {}).get("last_tick"))
+                if last and (now - last).total_seconds() < interval:
+                    continue
 
-            # 3. PLUGIN OVERLAY — tag enabled consciousness instances
-            try:
-                from backend.plugins.consciousness.engine import consciousness_manager
-                for uid, instance in list(consciousness_manager._instances.items()):
-                    if not instance.enabled:
-                        continue
-                    instance._state["last_heartbeat"] = now_iso
-                    stats = instance._state.setdefault("stats", {})
-                    stats["heartbeats"] = int(stats.get("heartbeats", 0)) + 1
-                    try:
-                        instance.save_state()
-                    except Exception as e:
-                        logger.warning(f"Heartbeat: save_state failed for user {uid}: {e}")
-            except Exception as e:
-                logger.warning(f"Heartbeat: consciousness tag pass failed: {e}")
-
-            logger.debug(f"Heartbeat tick #{status['tick_count']} at {now_iso}")
-            await asyncio.sleep(interval)
+                try:
+                    await _beat_user(user_id, data, eff, now)
+                except Exception as e:
+                    logger.warning(f"Heartbeat: _beat_user failed for {user_id}: {e}")
 
         except asyncio.CancelledError:
+            logger.info("Heartbeat master loop cancelled")
             break
         except Exception as e:
             logger.warning(f"Heartbeat loop error: {e}")
@@ -177,7 +221,8 @@ async def _heartbeat_loop():
 
 
 def _ensure_loop():
-    """Démarre la boucle heartbeat si elle n'est pas active."""
+    """Start the master scanner loop if not already running.
+    Safe to call multiple times — idempotent."""
     global _heartbeat_task
     if _heartbeat_task is None or _heartbeat_task.done():
         try:
@@ -188,23 +233,58 @@ def _ensure_loop():
 
 
 def _stop_loop():
-    """Arrête la boucle heartbeat."""
     global _heartbeat_task
     if _heartbeat_task and not _heartbeat_task.done():
         _heartbeat_task.cancel()
         _heartbeat_task = None
 
 
-# ── Routes ─────────────────────────────────────────────────────────────────
+def _autostart_scan() -> dict:
+    """Walk all per-user state files and mark on_startup=true users as enabled,
+    so the master loop picks them up. Called by main.py at server boot.
+
+    Returns a legacy-shaped dict so older code doing
+    `_load().get("config", {}).get("on_startup")` keeps working.
+    """
+    any_startup = False
+    if HB_DIR.exists():
+        for user_dir in HB_DIR.iterdir():
+            if not user_dir.is_dir():
+                continue
+            try:
+                user_id = int(user_dir.name)
+            except ValueError:
+                continue
+            data = _load_user(user_id)
+            if data.get("config", {}).get("on_startup"):
+                any_startup = True
+                data["config"]["enabled"] = True
+                data["config"]["paused"] = False
+                data["config"]["started_at"] = datetime.now(timezone.utc).isoformat()
+                _save_user(user_id, data)
+    return {"config": {"on_startup": any_startup}}
+
+
+# Legacy aliases — kept so imports in main.py keep working without touching
+# every call site. They now delegate to the per-user logic.
+def _load() -> dict:
+    return _autostart_scan()
+
+
+def _save(_data: dict):
+    pass  # no-op: per-user save happens via _save_user()
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/heartbeat")
-async def get_heartbeat():
-    """Statut complet du heartbeat — incluant last_tick & tick_count."""
-    data = _load()
+async def get_heartbeat(request: Request):
+    """Statut du heartbeat de l'utilisateur courant."""
+    uid = _resolve_user_id(request)
+    data = _load_user(uid)
     cfg = data.get("config", {})
     beat_status = data.get("status") or {}
 
-    # Determine running status
     running = _heartbeat_task is not None and not _heartbeat_task.done()
     state = "stopped"
     if cfg.get("enabled") and running:
@@ -218,36 +298,35 @@ async def get_heartbeat():
         "loop_active": running,
         "last_tick": beat_status.get("last_tick"),
         "tick_count": beat_status.get("tick_count", 0),
+        "user_id": uid,
     }
 
 
 @router.put("/heartbeat/config")
 async def update_heartbeat_config(request: Request):
-    """Met à jour la configuration du heartbeat.
-
-    Accepte aussi la clé `night_config` (objet) pour les overrides nuit.
-    """
+    """Met à jour la configuration heartbeat de l'utilisateur courant."""
+    uid = _resolve_user_id(request)
     request_data = await request.json()
-    data = _load()
+    data = _load_user(uid)
     cfg = data.get("config", {})
 
     for key, val in request_data.items():
         if key == "night_config" and isinstance(val, dict):
             current_night = cfg.get("night_config") or {}
-            # Fusion partielle : on garde les clés non fournies
             cfg["night_config"] = {**current_night, **val}
         elif key in DEFAULT_CONFIG:
             cfg[key] = val
 
     data["config"] = cfg
-    _save(data)
+    _save_user(uid, data)
     return {"ok": True, "config": cfg, "night_active": _is_night_time(cfg)}
 
 
 @router.get("/heartbeat/effective")
-async def get_effective_config():
-    """Retourne la config effective (avec overrides jour/nuit appliqués)."""
-    data = _load()
+async def get_effective_config(request: Request):
+    """Config effective (avec overrides jour/nuit) de l'utilisateur courant."""
+    uid = _resolve_user_id(request)
+    data = _load_user(uid)
     cfg = data.get("config", {})
     return {
         "effective": _effective_config(cfg),
@@ -256,43 +335,43 @@ async def get_effective_config():
 
 
 @router.post("/heartbeat/start")
-async def start_heartbeat():
-    """Démarre le heartbeat."""
-    data = _load()
+async def start_heartbeat(request: Request):
+    """Active le heartbeat de l'utilisateur courant."""
+    uid = _resolve_user_id(request)
+    data = _load_user(uid)
     data["config"]["enabled"] = True
     data["config"]["paused"] = False
     data["config"]["started_at"] = datetime.now(timezone.utc).isoformat()
-    _save(data)
-    _ensure_loop()
+    _save_user(uid, data)
+    _ensure_loop()  # idempotent — starts the master scanner if not already up
     return {"ok": True, "status": "running"}
 
 
 @router.post("/heartbeat/pause")
-async def pause_heartbeat():
-    """Met en pause le heartbeat."""
-    data = _load()
+async def pause_heartbeat(request: Request):
+    uid = _resolve_user_id(request)
+    data = _load_user(uid)
     data["config"]["paused"] = True
-    _save(data)
+    _save_user(uid, data)
     return {"ok": True, "status": "paused"}
 
 
 @router.post("/heartbeat/resume")
-async def resume_heartbeat():
-    """Reprend le heartbeat après une pause."""
-    data = _load()
+async def resume_heartbeat(request: Request):
+    uid = _resolve_user_id(request)
+    data = _load_user(uid)
     data["config"]["paused"] = False
-    _save(data)
+    _save_user(uid, data)
     _ensure_loop()
     return {"ok": True, "status": "running"}
 
 
 @router.post("/heartbeat/stop")
-async def stop_heartbeat():
-    """Arrête le heartbeat."""
-    data = _load()
+async def stop_heartbeat(request: Request):
+    uid = _resolve_user_id(request)
+    data = _load_user(uid)
     data["config"]["enabled"] = False
     data["config"]["paused"] = False
     data["config"]["started_at"] = None
-    _save(data)
-    _stop_loop()
+    _save_user(uid, data)
     return {"ok": True, "status": "stopped"}
