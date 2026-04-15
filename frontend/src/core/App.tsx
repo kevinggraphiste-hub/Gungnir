@@ -8,6 +8,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 
 import Sidebar from './components/Sidebar'
+import CommandPalette from './components/CommandPalette'
 import { PluginErrorBoundary } from './components/ErrorBoundary'
 import { useStore } from './stores/appStore'
 import { api, apiFetch, clearAuthToken } from './services/api'
@@ -50,6 +51,19 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
   const loadPlugins = usePluginStore((s) => s.loadPlugins)
   const plugins = usePluginStore((s) => s.plugins)
   const pluginsLoaded = usePluginStore((s) => s.pluginsLoaded)
+
+  // Command palette (Ctrl+K / Cmd+K — jumps to any page, tab, skill, action)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // Register logout handler in store so Sidebar can access it
   useEffect(() => {
@@ -153,6 +167,7 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
           </Routes>
         </Suspense>
       </main>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   )
 }
