@@ -738,11 +738,36 @@ async def restore_backup(data: dict, request: Request, session: AsyncSession = D
             _wipe_user_files(uid)
             extracted = _extract_user_files_from_zip(uid, zf)
 
+        # ── Targeted post-restore reload (per-user only) ───────────────────
+        # Everything below is scoped to this user's caches: stop their MCP
+        # subprocesses so next chat lazy-starts from the restored config,
+        # evict their consciousness instance so the new tick re-reads from
+        # disk + DB, and drop their ModeManager so permissions reload.
+        # Other users are never touched.
+        try:
+            from backend.core.agents.mcp_client import mcp_manager as _mcp_post
+            await _mcp_post.stop_user_servers(uid)
+        except Exception as _mcp_err:
+            logger.warning(f"Restore: MCP stop for user {uid} failed: {_mcp_err}")
+
+        try:
+            from backend.plugins.consciousness.engine import consciousness_manager as _cm_post
+            _cm_post.evict(uid)
+        except Exception as _cm_err:
+            logger.warning(f"Restore: consciousness evict for user {uid} failed: {_cm_err}")
+
+        try:
+            from backend.core.agents.mode_manager import mode_pool as _mp_post
+            _mp_post._instances.pop(uid, None)
+        except Exception as _mp_err:
+            logger.warning(f"Restore: mode_pool evict for user {uid} failed: {_mp_err}")
+
         return {
             "ok": True,
             "message": f"Restauration de {filename} réussie.",
             "row_counts": counts,
             "files_restored": extracted,
+            "reloaded": ["mcp", "consciousness", "mode_pool"],
         }
     except Exception as e:
         logger.error(f"Per-user restore failed for uid={uid}: {e}", exc_info=True)
