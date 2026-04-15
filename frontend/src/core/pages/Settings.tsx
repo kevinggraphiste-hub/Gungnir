@@ -1497,6 +1497,24 @@ export default function Settings() {
                 </div>
               </div>
 
+              {/* Live proof of life — last_tick + tick_count */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-lg border" style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
+                  <div className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Dernier battement</div>
+                  <div className="text-sm font-mono" style={{ color: hbStatus?.last_tick ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                    {hbStatus?.last_tick
+                      ? new Date(hbStatus.last_tick).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                      : 'jamais'}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg border" style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
+                  <div className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Battements totaux</div>
+                  <div className="text-sm font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {(hbStatus?.tick_count ?? 0).toLocaleString('fr-FR')}
+                  </div>
+                </div>
+              </div>
+
               {/* Mode Jour/Nuit — toggle + plages horaires */}
               <div className="p-4 rounded-lg border" style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
                 <div className="flex items-center justify-between mb-3">

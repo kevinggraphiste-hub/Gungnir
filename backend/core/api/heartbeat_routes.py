@@ -90,7 +90,32 @@ _heartbeat_task: asyncio.Task | None = None
 
 
 async def _heartbeat_loop():
-    """Boucle de fond : exécute les tâches heartbeat périodiquement."""
+    """System-wide proof-of-life ticker.
+
+    Heartbeat is a base service of the platform — it ticks regardless of
+    which optional features (consciousness, automata, plugins, ...) are
+    enabled. Each tick does THREE things, in this order:
+
+      1. (System) Stamps last_tick and increments tick_count in
+         heartbeat.json. This is the canonical "is the server alive"
+         indicator that the UI / monitoring / clients can read via
+         GET /api/heartbeat.
+
+      2. (System) Fires a `system.heartbeat.tick` event on the event_bus
+         with {timestamp, tick, interval}. ANY plugin or core service
+         can subscribe via event_bus.on("system.heartbeat.tick", ...)
+         and react to the beat without coupling to the heartbeat module.
+
+      3. (Plugin overlay) Tags every consciousness engine instance with
+         enabled=True so its dashboard shows a real heartbeats counter.
+         This is opt-in by virtue of the consciousness plugin being
+         opt-in — it does not gate the system-level beat.
+
+    Heartbeat does NOT call the LLM or generate thoughts. That is the
+    consciousness daemon's job (plugins/consciousness/__init__.py). This
+    loop is intentionally cheap so it can run continuously as a base
+    feature without burning resources.
+    """
     while True:
         try:
             data = _load()
@@ -104,16 +129,44 @@ async def _heartbeat_loop():
             eff = _effective_config(cfg)
             interval = eff.get("check_interval_seconds", 30)
 
-            # Trigger consciousness background think for all active user instances
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            # 1. SYSTEM — persist the beat in heartbeat.json
+            status = data.get("status") or {}
+            status["last_tick"] = now_iso
+            status["tick_count"] = int(status.get("tick_count", 0)) + 1
+            data["status"] = status
+            _save(data)
+
+            # 2. SYSTEM — emit on the event bus so any subscriber can react
+            try:
+                from backend.core.services.event_bus import event_bus
+                await event_bus.emit(
+                    "system.heartbeat.tick",
+                    timestamp=now_iso,
+                    tick=status["tick_count"],
+                    interval=interval,
+                )
+            except Exception as e:
+                logger.warning(f"Heartbeat: event emit failed: {e}")
+
+            # 3. PLUGIN OVERLAY — tag enabled consciousness instances
             try:
                 from backend.plugins.consciousness.engine import consciousness_manager
                 for uid, instance in list(consciousness_manager._instances.items()):
-                    if instance.enabled and hasattr(instance, 'background_think'):
-                        await instance.background_think()
-                        logger.debug(f"Heartbeat: consciousness tick for user {uid}")
-            except Exception:
-                pass  # Consciousness plugin may not be loaded
+                    if not instance.enabled:
+                        continue
+                    instance._state["last_heartbeat"] = now_iso
+                    stats = instance._state.setdefault("stats", {})
+                    stats["heartbeats"] = int(stats.get("heartbeats", 0)) + 1
+                    try:
+                        instance.save_state()
+                    except Exception as e:
+                        logger.warning(f"Heartbeat: save_state failed for user {uid}: {e}")
+            except Exception as e:
+                logger.warning(f"Heartbeat: consciousness tag pass failed: {e}")
 
+            logger.debug(f"Heartbeat tick #{status['tick_count']} at {now_iso}")
             await asyncio.sleep(interval)
 
         except asyncio.CancelledError:
@@ -146,22 +199,25 @@ def _stop_loop():
 
 @router.get("/heartbeat")
 async def get_heartbeat():
-    """Statut complet du heartbeat."""
+    """Statut complet du heartbeat — incluant last_tick & tick_count."""
     data = _load()
     cfg = data.get("config", {})
+    beat_status = data.get("status") or {}
 
     # Determine running status
     running = _heartbeat_task is not None and not _heartbeat_task.done()
-    status = "stopped"
+    state = "stopped"
     if cfg.get("enabled") and running:
-        status = "paused" if cfg.get("paused") else "running"
+        state = "paused" if cfg.get("paused") else "running"
 
     return {
-        "status": status,
+        "status": state,
         "running": cfg.get("enabled", False) and not cfg.get("paused", False),
         "config": cfg,
         "tasks": data.get("tasks", []),
         "loop_active": running,
+        "last_tick": beat_status.get("last_tick"),
+        "tick_count": beat_status.get("tick_count", 0),
     }
 
 
