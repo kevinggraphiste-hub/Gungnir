@@ -545,12 +545,12 @@ export default function AgentSettings() {
         </div>
       </div>
 
-      <div className="flex gap-4 mb-6 overflow-x-auto">
+      <div className="flex flex-wrap gap-2 mb-6">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg whitespace-nowrap transition-colors border"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm whitespace-nowrap transition-colors border"
             style={activeTab === tab.id
               ? { background: 'color-mix(in srgb, var(--accent-primary) 15%, transparent)', color: 'var(--accent-primary)', borderColor: 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' }
               : { background: 'var(--bg-secondary)', color: 'var(--text-secondary)', borderColor: 'var(--border)' }
