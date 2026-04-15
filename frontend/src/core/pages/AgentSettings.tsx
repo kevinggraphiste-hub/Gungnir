@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { useStore } from '../stores/appStore'
 import { api, apiFetch } from '../services/api'
+import InfoButton from '../components/InfoButton'
 
 // ── Emoji picker inline pour les skills ──────────────────────────────────────
 const SKILL_EMOJIS = [
@@ -793,6 +794,17 @@ export default function AgentSettings() {
 
         {activeTab === 'skills' && (
           <div className="space-y-5">
+            {/* Intro */}
+            <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+              <span>Skills (compétences)</span>
+              <InfoButton>
+                <strong>Un skill</strong> est une compétence spécialisée que tu peux activer pour orienter l'agent sur une tâche précise — par exemple un skill <em>code_reviewer</em>, <em>writer</em>, <em>debugger</em>…
+                <br /><br />
+                Chaque skill contient un prompt système spécifique, une liste d'outils recommandés, et des exemples. Quand tu l'actives, l'agent prend le ton et les comportements définis dans le skill pour cette conversation.
+                <br /><br />
+                Gungnir fournit plusieurs templates par défaut (tu peux les modifier ou les supprimer — ce que tu supprimes reste supprimé pour toi). Tu peux aussi créer les tiens de zéro ou les importer depuis un fichier JSON/MD.
+              </InfoButton>
+            </div>
             {/* New skill form */}
             <div className="bg-[var(--bg-primary)] rounded-xl border border-[var(--border)] p-5">
               <div className="flex items-center justify-between mb-4">
@@ -1210,6 +1222,17 @@ export default function AgentSettings() {
 
         {activeTab === 'subagents' && (
           <div className="space-y-5">
+            {/* Intro */}
+            <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+              <span>Sous-agents</span>
+              <InfoButton>
+                <strong>Un sous-agent</strong> est un agent spécialisé que l'agent principal peut invoquer pour déléguer une tâche précise — par exemple un sous-agent <em>agent_seo_expert</em>, <em>agent_analyste_vulnerabilites</em>, <em>agent_expert_comptable</em>…
+                <br /><br />
+                Contrairement aux skills (qui sont des modes temporaires), les sous-agents sont des <em>entités</em> avec leur propre identité, leur propre prompt, leurs propres outils, et même leur propre provider/modèle. L'agent principal peut leur envoyer une tâche et récupérer le résultat.
+                <br /><br />
+                Tu peux voir le détail des échanges inter-agents dans l'onglet <em>Conversations inter-agents</em>.
+              </InfoButton>
+            </div>
 
             {/* ── Formulaire création ── */}
             <div className="rounded-xl border p-5 space-y-3" style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>

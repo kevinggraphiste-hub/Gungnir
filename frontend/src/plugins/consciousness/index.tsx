@@ -13,6 +13,7 @@ import {
   Activity, Lightbulb, Clock, ChevronDown, ChevronUp, Info, Star,
   BarChart3, Layers, MessageSquare, Radio, Database, Search, Plug, Save
 } from 'lucide-react'
+import InfoButton from '@core/components/InfoButton'
 
 const API = '/api/plugins/consciousness'
 
@@ -587,7 +588,16 @@ function VolitionTab({ data, resetVolition }: any) {
       {/* Pyramid Visual */}
       <div className="rounded-xl p-6" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
         <div className="flex items-center justify-between mb-4">
-          <div className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Pyramide de Besoins</div>
+          <div className="text-sm font-bold flex items-center" style={{ color: 'var(--text-primary)' }}>
+            <span>Pyramide de Besoins</span>
+            <InfoButton>
+              <strong>La volition</strong> est le moteur d'initiative de l'agent. Chaque besoin interne (curiosité, compréhension, progression, intégrité, survie) a une <em>urgence</em> qui monte avec le temps ou selon les événements.
+              <br /><br />
+              Quand l'urgence d'un besoin dépasse un seuil, l'agent peut te proposer une action de lui-même — c'est ce qu'on appelle une <em>impulsion</em>.
+              <br /><br />
+              Plus un besoin est haut dans la pyramide, plus il est prioritaire. Le bouton <em>Reset urgences</em> remet tous les compteurs à zéro.
+            </InfoButton>
+          </div>
           <button onClick={resetVolition} className="flex items-center gap-1 px-2 py-1 rounded text-[10px]"
             style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
             <RefreshCw className="w-3 h-3" /> Reset urgences
@@ -694,7 +704,14 @@ function ThoughtsTab({ data, newThought, setNewThought, addThought }: any) {
     <div className="space-y-4">
       {/* Add thought */}
       <div className="rounded-xl p-4" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
-        <div className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Ajouter une pensée</div>
+        <div className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center" style={{ color: 'var(--text-muted)' }}>
+          <span>Ajouter une pensée</span>
+          <InfoButton>
+            <strong>Les pensées</strong> sont des fragments de raisonnement que l'agent génère en arrière-plan, réveillé par le heartbeat. Elles peuvent être des observations, des connexions entre idées, des prédictions ou des insights.
+            <br /><br />
+            Tu peux en ajouter manuellement pour amorcer une réflexion. L'agent les utilisera dans ses prochaines réponses et peut les référencer via le tool <code>kb_read</code>.
+          </InfoButton>
+        </div>
         <div className="flex gap-2">
           <input value={newThought} onChange={e => setNewThought(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && addThought()}
@@ -758,7 +775,17 @@ function RewardTab({ data }: any) {
 
   return (
     <div className="space-y-4">
-      {/* Summary */}
+      {/* Intro + summary */}
+      <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+        <span>Système de récompense</span>
+        <InfoButton>
+          <strong>Reward</strong> est le système d'évaluation de l'agent. Chaque interaction reçoit un score sur plusieurs dimensions (utilité, clarté, pertinence, ton…), positif ou négatif.
+          <br /><br />
+          Ces scores servent à ajuster le comportement de l'agent au fil du temps : une tendance négative sur une dimension pousse l'agent à corriger le tir sur les prochaines réponses.
+          <br /><br />
+          Tu peux noter tes propres interactions avec les boutons de feedback dans le chat pour influencer l'évolution.
+        </InfoButton>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard icon={Star} label="Score moyen" value={summary.average?.toFixed(2) || '—'} color="#f59e0b" />
         <StatCard icon={BarChart3} label="Total scoré" value={summary.count || 0} color="var(--accent-primary)" />
@@ -820,6 +847,17 @@ function RewardTab({ data }: any) {
 function ChallengerTab({ data }: any) {
   return (
     <div className="space-y-4">
+      {/* Intro */}
+      <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+        <span>Auto-critique</span>
+        <InfoButton>
+          <strong>Le Challenger</strong> est le sous-système d'auto-critique. À chaque cycle, il audite les dernières réponses de l'agent pour détecter des incohérences, des affirmations non vérifiées, des angles morts, ou des contradictions avec ce qu'il a déjà dit.
+          <br /><br />
+          Les <em>alertes critiques</em> sont des erreurs que l'agent devrait corriger immédiatement. Les <em>découvertes récentes</em> sont des pistes d'amélioration qu'il peut intégrer dans ses prochaines réponses.
+          <br /><br />
+          Le but : empêcher l'agent de s'installer dans des biais ou des erreurs répétées.
+        </InfoButton>
+      </div>
       {/* Critical Alerts */}
       {data.critical_findings?.length > 0 && (
         <div className="rounded-xl p-4" style={{ background: 'color-mix(in srgb, #ef4444 8%, var(--bg-secondary))', border: '1px solid color-mix(in srgb, #ef4444 25%, transparent)' }}>
@@ -1024,6 +1062,13 @@ function VectorTab() {
           <div className="flex items-center gap-2">
             <Database className="w-4 h-4" style={{ color: 'var(--accent-primary)' }} />
             <span className="text-sm font-semibold">Mémoire vectorielle</span>
+            <InfoButton>
+              <strong>La mémoire vectorielle</strong> est un rappel sémantique de longue durée : tes conversations, tes notes, tes documents sont transformés en vecteurs numériques et stockés dans une base (Qdrant, Chroma…).
+              <br /><br />
+              Quand tu poses une question, l'agent peut rechercher dans cette mémoire les bouts de contexte les plus pertinents et les injecter dans sa réponse — même s'ils datent d'il y a plusieurs mois.
+              <br /><br />
+              Sans elle, l'agent oublie tout ce qui sort de la conversation courante. Avec elle, il peut se souvenir de tes projets, de tes préférences, de tes échanges passés.
+            </InfoButton>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
