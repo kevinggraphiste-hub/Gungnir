@@ -217,11 +217,20 @@ async def run_task_now(task_id: str, request: Request):
 
 @router.get("/history")
 async def get_history(request: Request):
-    """Get execution history (last 50 entries)."""
+    """Get execution history (last 50 entries, all tasks)."""
     data_file = _user_automata_file(request)
     data = _load_data(data_file)
     history = data.get("history", [])
     return {"entries": history[-50:], "total": len(history)}
+
+
+@router.get("/tasks/{task_id}/history")
+async def get_task_history(task_id: str, request: Request):
+    """Execution history for a single task (chronological, last 100)."""
+    data_file = _user_automata_file(request)
+    data = _load_data(data_file)
+    entries = [e for e in data.get("history", []) if e.get("task_id") == task_id]
+    return {"entries": entries[-100:], "total": len(entries)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

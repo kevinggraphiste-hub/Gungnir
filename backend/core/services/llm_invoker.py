@@ -66,9 +66,26 @@ async def invoke_llm_for_user(
     try:
         p = get_provider(provider_name, api_key, base_url)
         response = await p.chat(messages, chosen_model)
+        content = (response.content or "").strip()
+        if not content:
+            # Some providers (seen with minimax via openrouter) intermittently
+            # return a 200 with an empty body + zero tokens. Treat it as an
+            # error so callers can surface the real failure instead of logging
+            # a fake "success".
+            logger.warning(
+                f"LLM returned empty content for user {user_id} "
+                f"(provider={provider_name}, model={chosen_model}, "
+                f"tokens_in={response.tokens_input}, tokens_out={response.tokens_output})"
+            )
+            return {
+                "ok": False,
+                "error": f"Réponse vide du provider {provider_name} ({chosen_model})",
+                "model": response.model or chosen_model,
+                "provider": provider_name,
+            }
         return {
             "ok": True,
-            "content": response.content,
+            "content": content,
             "model": response.model or chosen_model,
             "provider": provider_name,
             "tokens_input": response.tokens_input,
