@@ -119,7 +119,7 @@ def _is_task_due(task: dict, now: datetime) -> bool:
 
 
 async def _execute_task(user_id: int, task: dict) -> dict:
-    """Invoke the user's LLM with the task prompt. Returns history entry."""
+    """Invoke the user's LLM with the task prompt + user tools. Returns history entry."""
     from backend.core.services.llm_invoker import invoke_llm_for_user
 
     prompt = task.get("prompt", "")
@@ -133,7 +133,47 @@ async def _execute_task(user_id: int, task: dict) -> dict:
             "error": "prompt vide",
         }
 
-    result = await invoke_llm_for_user(user_id, prompt)
+    # Build per-user tool set: WOLF core tools + user's MCP tools.
+    # The wolf execution context must be set before calling tools that rely on
+    # get_user_context()/get_conversation_context() (filesystem, workspace, etc.).
+    tools: list[dict] | None = None
+    executors: dict | None = None
+    try:
+        from backend.core.agents.wolf_tools import (
+            WOLF_TOOL_SCHEMAS,
+            WOLF_EXECUTORS,
+            set_user_context,
+        )
+        from backend.core.agents.mcp_client import mcp_manager
+
+        await mcp_manager.ensure_user_started(user_id)
+        mcp_schemas = mcp_manager.get_user_schemas(user_id)
+        mcp_executors = mcp_manager.get_user_executors(user_id)
+
+        tools = list(WOLF_TOOL_SCHEMAS) + list(mcp_schemas)
+        executors = {**WOLF_EXECUTORS, **mcp_executors}
+        set_user_context(user_id)
+    except Exception as e:
+        # If tool wiring fails, fall back to text-only — the task still runs.
+        logger.warning(f"Tool wiring failed for user={user_id} task={task.get('id')}: {e}")
+        tools = None
+        executors = None
+
+    try:
+        result = await invoke_llm_for_user(
+            user_id,
+            prompt,
+            tools=tools,
+            executors=executors,
+        )
+    finally:
+        # Reset the wolf user context so subsequent ticks don't leak it
+        try:
+            from backend.core.agents.wolf_tools import set_user_context as _reset_uid
+            _reset_uid(0)
+        except Exception:
+            pass
+
     entry = {
         "id": str(uuid.uuid4()),
         "task_id": task.get("id"),
@@ -148,11 +188,13 @@ async def _execute_task(user_id: int, task: dict) -> dict:
             "provider": result.get("provider"),
             "tokens_input": result.get("tokens_input", 0),
             "tokens_output": result.get("tokens_output", 0),
+            "tool_events": result.get("tool_events", []),
         })
     else:
         entry.update({
             "status": "error",
             "error": result.get("error", "unknown"),
+            "tool_events": result.get("tool_events", []),
         })
     return entry
 

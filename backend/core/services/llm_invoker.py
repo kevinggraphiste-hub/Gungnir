@@ -7,7 +7,10 @@ LLM with the same per-user key precedence: user keys first, global fallback.
 """
 from __future__ import annotations
 
+import json as _json
 import logging
+import uuid as _uuid
+from typing import Any, Awaitable, Callable
 
 from backend.core.config.settings import Settings
 from backend.core.db.engine import async_session
@@ -16,6 +19,8 @@ from backend.core.providers import get_provider, ChatMessage
 
 logger = logging.getLogger("gungnir.llm_invoker")
 
+ExecutorFn = Callable[..., Awaitable[Any]]
+
 
 async def invoke_llm_for_user(
     user_id: int,
@@ -23,11 +28,20 @@ async def invoke_llm_for_user(
     system_prompt: str | None = None,
     provider: str | None = None,
     model: str | None = None,
+    tools: list[dict] | None = None,
+    executors: dict[str, ExecutorFn] | None = None,
+    max_tool_rounds: int = 5,
 ) -> dict:
     """Invoke a user's configured LLM from a non-HTTP context.
 
+    When ``tools`` and ``executors`` are provided, the invoker runs a
+    tool-calling loop (up to ``max_tool_rounds`` rounds) that mirrors the
+    chat.py native tool-call flow. Unknown tool names are returned as errors
+    to the LLM so it can fall back to a text answer.
+
     Returns a dict:
-        { "ok": True, "content": "...", "model": "...", "provider": "..." }
+        { "ok": True, "content": "...", "model": "...", "provider": "...",
+          "tool_calls": [...] }
       or
         { "ok": False, "error": "..." }
     """
@@ -63,34 +77,116 @@ async def invoke_llm_for_user(
         messages.append(ChatMessage(role="system", content=system_prompt))
     messages.append(ChatMessage(role="user", content=prompt))
 
+    tool_events: list[dict] = []
+    totals_in = 0
+    totals_out = 0
+
     try:
         p = get_provider(provider_name, api_key, base_url)
-        response = await p.chat(messages, chosen_model)
-        content = (response.content or "").strip()
+
+        # ── Text-only path (no tools wired) ──────────────────────────────────
+        if not tools or not executors:
+            response = await p.chat(messages, chosen_model)
+        else:
+            # ── Tool-calling loop ────────────────────────────────────────────
+            response = None
+            for _round in range(max_tool_rounds):
+                try:
+                    response = await p.chat(
+                        messages,
+                        chosen_model,
+                        tools=tools,
+                        tool_choice="auto",
+                    )
+                except Exception as tool_err:
+                    # Provider doesn't support tools on this model — retry text-only
+                    logger.warning(
+                        f"LLM tool call failed for user {user_id} "
+                        f"(provider={provider_name}, model={chosen_model}): {tool_err}. Retrying without tools."
+                    )
+                    clean = [
+                        ChatMessage(role=m.role, content=m.content or "")
+                        for m in messages
+                        if m.role != "tool"
+                    ]
+                    response = await p.chat(clean, chosen_model)
+                    break
+
+                totals_in += getattr(response, "tokens_input", 0) or 0
+                totals_out += getattr(response, "tokens_output", 0) or 0
+
+                if not response.tool_calls:
+                    break  # Final text answer
+
+                # Execute each tool call, then feed results back to the LLM
+                messages.append(ChatMessage(
+                    role="assistant",
+                    content=response.content or "",
+                    tool_calls=response.tool_calls,
+                ))
+                for tc in response.tool_calls:
+                    fn = tc.get("function", {})
+                    tool_name = fn.get("name", "")
+                    call_id = tc.get("id") or str(_uuid.uuid4())[:8]
+                    try:
+                        raw_args = fn.get("arguments", "{}")
+                        args = _json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                    except Exception:
+                        args = {}
+
+                    executor = executors.get(tool_name)
+                    if executor is None:
+                        tool_result = {"ok": False, "error": f"Outil '{tool_name}' inconnu."}
+                    else:
+                        try:
+                            tool_result = await executor(**args)
+                        except Exception as ex:
+                            tool_result = {"ok": False, "error": str(ex)}
+
+                    tool_events.append({"tool": tool_name, "args": args, "result": tool_result})
+                    messages.append(ChatMessage(
+                        role="tool",
+                        content=_json.dumps(tool_result, ensure_ascii=False),
+                        tool_call_id=call_id,
+                    ))
+
+            # If we exhausted the rounds while still asking for tools, force a
+            # final text-only answer so the cron doesn't record an empty pass.
+            if response is not None and response.tool_calls:
+                try:
+                    response = await p.chat(messages, chosen_model)
+                except Exception as final_err:
+                    logger.warning(
+                        f"Final no-tools wrap-up failed for user {user_id}: {final_err}"
+                    )
+
+        # ── Common result handling ──────────────────────────────────────────
+        content = (response.content or "").strip() if response is not None else ""
         if not content:
-            # Some providers (seen with minimax via openrouter) intermittently
-            # return a 200 with an empty body + zero tokens. Treat it as an
-            # error so callers can surface the real failure instead of logging
-            # a fake "success".
             logger.warning(
                 f"LLM returned empty content for user {user_id} "
                 f"(provider={provider_name}, model={chosen_model}, "
-                f"tokens_in={response.tokens_input}, tokens_out={response.tokens_output})"
+                f"tokens_in={getattr(response, 'tokens_input', 0)}, "
+                f"tokens_out={getattr(response, 'tokens_output', 0)}, "
+                f"tools_used={len(tool_events)})"
             )
             return {
                 "ok": False,
                 "error": f"Réponse vide du provider {provider_name} ({chosen_model})",
-                "model": response.model or chosen_model,
+                "model": getattr(response, "model", None) or chosen_model,
                 "provider": provider_name,
+                "tool_events": tool_events,
             }
+
         return {
             "ok": True,
             "content": content,
-            "model": response.model or chosen_model,
+            "model": getattr(response, "model", None) or chosen_model,
             "provider": provider_name,
-            "tokens_input": response.tokens_input,
-            "tokens_output": response.tokens_output,
+            "tokens_input": (getattr(response, "tokens_input", 0) or 0) + totals_in,
+            "tokens_output": (getattr(response, "tokens_output", 0) or 0) + totals_out,
+            "tool_events": tool_events,
         }
     except Exception as e:
         logger.error(f"LLM invocation failed for user {user_id}: {e}")
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), "tool_events": tool_events}
