@@ -499,6 +499,17 @@ export const api = {
     return handleResponse(response)
   },
 
+  impersonateUser: async (id: number) => {
+    const response = await apiFetch(`${API_BASE}/users/${id}/impersonate`, { method: 'POST' })
+    const result = await handleResponse(response)
+    // Mint a fresh token for the target user so the next request is authed
+    // as them instead of the admin who triggered the impersonation.
+    if (result.token) {
+      setAuthToken(result.token)
+    }
+    return result
+  },
+
   loginUser: async (data: { username: string; password: string }) => {
     const response = await apiFetch(`${API_BASE}/users/login`, {
       method: 'POST',

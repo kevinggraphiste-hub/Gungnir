@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X, User, Plus, Trash2, Pencil, Check } from 'lucide-react'
-import { api } from '../services/api'
+import { api, clearAuthToken } from '../services/api'
 
 interface UserData {
   id: number
@@ -45,15 +45,43 @@ export default function UserModal({ isOpen, onClose, currentUser, onUserChange }
         avatar_url: createForm.avatar_url || undefined,
       })
       setUsers(prev => [...prev, user])
-      // Auto-sélectionner le profil créé
-      onUserChange(user)
-      localStorage.setItem('gungnir_current_user', JSON.stringify(user))
       setShowCreate(false)
       setCreateForm({ username: '', display_name: '', password: '', avatar_url: '' })
-      setMessage({ type: 'ok', text: `Profil "${user.display_name || user.username}" créé et sélectionné` })
-      setTimeout(() => setMessage(null), 2000)
+      // ⚠️ Do NOT auto-switch the current user here: without rotating the
+      // Bearer token, the backend keeps authenticating the admin that made
+      // the call, so every "test" action would silently land on the admin's
+      // account. The user can either log in as the new user themselves
+      // (with their password) or use the "Tester en tant que" button on the
+      // new user's row, which hits /users/{id}/impersonate.
+      setMessage({ type: 'ok', text: `Profil "${user.display_name || user.username}" créé. Utilise « Tester en tant que » pour t'y connecter.` })
+      setTimeout(() => setMessage(null), 3500)
     } catch (err: any) { setMessage({ type: 'err', text: err.message }) }
     setLoading(false)
+  }
+
+  const handleImpersonate = async (user: UserData) => {
+    if (!confirm(`Te connecter en tant que « ${user.display_name || user.username} » ? Tu seras redirigé et ton token actuel sera remplacé.`)) return
+    setLoading(true)
+    try {
+      const result = await api.impersonateUser(user.id)
+      // api.impersonateUser already called setAuthToken with the new token.
+      // Update the local current user pointer and force a full page reload so
+      // every cached piece of UI state (conversations, skills, heartbeat,
+      // consciousness, etc.) reloads under the new identity.
+      onUserChange(result.user)
+      localStorage.setItem('gungnir_current_user', JSON.stringify(result.user))
+      // Clear any other per-user cached keys so nothing leaks from the old session
+      const userScoped = [
+        'gungnir_favorite_models', 'gungnir_titles_generated',
+        'gungnir_provider', 'gungnir_model', 'gungnir_agent_name',
+        'consciousness.introOpen',
+      ]
+      userScoped.forEach(k => { try { localStorage.removeItem(k) } catch {} })
+      window.location.href = '/'
+    } catch (err: any) {
+      setMessage({ type: 'err', text: err.message })
+      setLoading(false)
+    }
   }
 
   const handleUpdate = async (id: number) => {
@@ -97,18 +125,24 @@ export default function UserModal({ isOpen, onClose, currentUser, onUserChange }
     setLoading(false)
   }
 
-  const handleSelectUser = (user: UserData) => {
-    onUserChange(user)
-    localStorage.setItem('gungnir_current_user', JSON.stringify(user))
-    setMessage({ type: 'ok', text: `Profil: ${user.display_name}` })
-    setTimeout(() => setMessage(null), 1500)
-  }
+  // NOTE: cosmetic "select user" is deliberately removed. It used to just
+  // flip the currentUser pointer in localStorage without touching the
+  // Bearer token — so the UI looked like a different user but every API
+  // call was still authenticated as the originator, silently writing the
+  // originator's data. Use handleImpersonate (admin-only) to actually
+  // switch identities, or log in via handleLogin with real credentials.
 
   const handleLogout = () => {
+    // Real logout: drop the Bearer token AND the cached current user so no
+    // request can keep leaking as the previous identity.
+    clearAuthToken()
     onUserChange(null)
     localStorage.removeItem('gungnir_current_user')
     setMessage({ type: 'ok', text: 'Déconnecté' })
-    setTimeout(() => setMessage(null), 1500)
+    setTimeout(() => {
+      setMessage(null)
+      window.location.href = '/'
+    }, 800)
   }
 
   const startEditing = (user: UserData) => {
@@ -212,7 +246,7 @@ export default function UserModal({ isOpen, onClose, currentUser, onUserChange }
                   </div>
                 ) : (
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 cursor-pointer flex-1" onClick={() => handleSelectUser(user)}>
+                    <div className="flex items-center gap-3 flex-1">
                       <div className="w-9 h-9 rounded-full flex items-center justify-center font-medium text-sm"
                         style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}>
                         {user.avatar_url
@@ -220,11 +254,33 @@ export default function UserModal({ isOpen, onClose, currentUser, onUserChange }
                           : user.display_name.charAt(0).toUpperCase()}
                       </div>
                       <div>
-                        <div className="text-sm" style={{ color: 'var(--text-primary)' }}>{user.display_name}</div>
+                        <div className="text-sm flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+                          {user.display_name}
+                          {currentUser?.id === user.id && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded uppercase font-semibold tracking-wider"
+                              style={{ background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', color: 'var(--accent-primary)' }}>
+                              actuel
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs" style={{ color: 'var(--text-muted)' }}>@{user.username}</div>
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
+                      {currentUser?.id !== user.id && (
+                        <button
+                          onClick={() => handleImpersonate(user)}
+                          className="px-2 py-1 rounded-md text-[10px] font-medium transition-colors hover:opacity-90"
+                          style={{
+                            background: 'color-mix(in srgb, var(--accent-primary) 15%, transparent)',
+                            color: 'var(--accent-primary)',
+                            border: '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)',
+                          }}
+                          title="Se connecter en tant que ce user (admin uniquement)"
+                        >
+                          Tester en tant que
+                        </button>
+                      )}
                       <button onClick={() => startEditing(user)} className="p-1.5 transition-colors" style={{ color: 'var(--text-muted)' }}>
                         <Pencil className="w-3.5 h-3.5" />
                       </button>

@@ -154,6 +154,47 @@ async def update_user(user_id: int, request: Request, session: AsyncSession = De
     return {"ok": True, "id": user.id, "display_name": user.display_name}
 
 
+@router.post("/users/{user_id}/impersonate")
+async def impersonate_user(user_id: int, request: Request, session: AsyncSession = Depends(get_session)):
+    """Admin-only: mint a fresh Bearer token for another user so an admin can
+    actually test as them (onboarding flow, per-user isolation, etc.) instead
+    of just cosmetically switching the UI while staying authenticated as
+    themselves.
+
+    Rotates the target user's ``api_token`` to a freshly generated value
+    (the raw token is returned once; only its hash is stored). This means
+    the target user will have to log in again if they were active elsewhere,
+    which is acceptable for testing workflows.
+    """
+    uid = getattr(request.state, "user_id", None)
+    if uid is not None:
+        from backend.core.api.auth_helpers import require_admin
+        if not await require_admin(request, session):
+            return JSONResponse({"error": "Admin requis"}, status_code=403)
+
+    target = await session.get(User, user_id)
+    if not target:
+        return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
+    if not target.is_active:
+        return JSONResponse({"error": "Utilisateur désactivé"}, status_code=400)
+
+    raw_token = secrets.token_hex(32)
+    target.api_token = _hash_token(raw_token)
+    await session.commit()
+
+    return {
+        "ok": True,
+        "token": raw_token,
+        "user": {
+            "id": target.id,
+            "username": target.username,
+            "display_name": target.display_name,
+            "avatar_url": target.avatar_url,
+            "is_admin": bool(target.is_admin),
+        },
+    }
+
+
 @router.delete("/users/{user_id}")
 async def delete_user(user_id: int, request: Request, session: AsyncSession = Depends(get_session)):
     """Hard-delete a user and every row/file scoped to them.
