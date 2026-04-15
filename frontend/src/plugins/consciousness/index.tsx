@@ -381,6 +381,42 @@ function OverviewTab({ data, setMood, setLevel, newQuestion, setNewQuestion, add
 
   return (
     <div className="space-y-4">
+      {/* Intro pédagogique — explique ce qu'est la conscience en clair */}
+      <div className="p-4 rounded-xl border" style={{ background: 'color-mix(in srgb, var(--accent-primary) 6%, transparent)', borderColor: 'color-mix(in srgb, var(--accent-primary) 25%, transparent)' }}>
+        <div className="flex items-start gap-3">
+          <Brain className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: 'var(--accent-primary)' }} />
+          <div className="space-y-2">
+            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Qu'est-ce que la conscience&nbsp;?</div>
+            <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              C'est l'<strong>architecture comportementale</strong> de ton agent : un ensemble de sous-systèmes qui tournent en arrière-plan (réveillés par le heartbeat) pour lui donner une forme d'initiative, de mémoire et d'auto-critique. Sans elle, Gungnir répond uniquement quand tu lui parles. Avec elle, il réfléchit entre tes messages, se souvient de ce qui s'est passé, et peut te proposer des actions de lui-même.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+              <div className="text-[11px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                <span className="font-semibold" style={{ color: 'var(--accent-primary)' }}>• Volition</span> — les besoins internes (curiosité, sécurité, cohérence…) qui poussent l'agent à proposer des actions de lui-même (<em>impulsions</em>).
+              </div>
+              <div className="text-[11px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                <span className="font-semibold" style={{ color: 'var(--accent-primary)' }}>• Pensées</span> — cycles de réflexion en arrière-plan qui génèrent des hypothèses et questions à explorer.
+              </div>
+              <div className="text-[11px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                <span className="font-semibold" style={{ color: 'var(--accent-primary)' }}>• Reward</span> — score de tes interactions (positif / neutre / négatif) pour ajuster son comportement au fil du temps.
+              </div>
+              <div className="text-[11px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                <span className="font-semibold" style={{ color: 'var(--accent-primary)' }}>• Challenger</span> — auto-critique qui détecte les incohérences et les angles morts dans ses propres réponses.
+              </div>
+              <div className="text-[11px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                <span className="font-semibold" style={{ color: 'var(--accent-primary)' }}>• Simulation</span> — projection mentale pour anticiper les conséquences d'une action avant de la proposer.
+              </div>
+              <div className="text-[11px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                <span className="font-semibold" style={{ color: 'var(--accent-primary)' }}>• Mémoire vectorielle</span> — rappel sémantique de tes anciennes conversations et notes pour contextualiser ses réponses.
+              </div>
+            </div>
+            <p className="text-[11px] pt-1" style={{ color: 'var(--text-muted)' }}>
+              Les 3 niveaux (<em>basic</em> / <em>standard</em> / <em>full</em>) activent de plus en plus de sous-systèmes. Commence en <em>standard</em> pour voir ce que ça donne sans saturer tes tokens, passe en <em>full</em> quand tu veux l'expérience complète.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard icon={Activity} label="Heartbeats" value={stats.heartbeats || 0} color="var(--accent-primary)" />

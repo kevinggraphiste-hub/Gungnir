@@ -1538,6 +1538,21 @@ export default function Settings() {
           {/* -- Heartbeat ------------------------------------------------- */}
           {activeTab === 'heartbeat' && (
             <div className="space-y-6">
+              {/* Intro pédagogique — explique ce qu'est le heartbeat en clair */}
+              <div className="p-4 rounded-lg border" style={{ background: 'color-mix(in srgb, var(--accent-primary) 6%, transparent)', borderColor: 'color-mix(in srgb, var(--accent-primary) 25%, transparent)' }}>
+                <div className="flex items-start gap-3">
+                  <HeartPulse className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: 'var(--accent-primary)' }} />
+                  <div className="space-y-2">
+                    <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Qu'est-ce que le heartbeat ?</div>
+                    <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                      C'est le <strong>pouls de ton agent</strong> : un réveil à intervalles réguliers qui pilote les automatismes en arrière-plan. À chaque battement, le système vérifie s'il y a des tâches planifiées à lancer (crons, interval), envoie les pings qui gardent tes connexions vocales vivantes, et réveille la conscience pour ses cycles de pensée.
+                      <br />
+                      <span className="text-[var(--text-muted)]">Si tu l'arrêtes, ton agent continue de répondre dans le chat mais n'exécute plus aucune automatisation : les crons ne se déclenchent plus, les appels vocaux coupent, la conscience dort.</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               {/* Status bar */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -1597,7 +1612,7 @@ export default function Settings() {
                         </span>
                       )}
                     </div>
-                    <p className="text-[var(--text-muted)] text-xs mt-1">Paramètres distincts pour la journée et la nuit (réduit la charge la nuit).</p>
+                    <p className="text-[var(--text-muted)] text-xs mt-1">Ralentit le heartbeat la nuit pour économiser tokens et CPU pendant que tu dors. Exemple typique : check toutes les 30 secondes le jour, toutes les 10 minutes la nuit. Tes crons programmés la nuit se déclenchent quand même, juste avec un peu plus de latence.</p>
                   </div>
                   <input type="checkbox" checked={hbConfig.day_night_enabled ?? false}
                     onChange={e => updateHbConfig('day_night_enabled', e.target.checked)}
@@ -1655,9 +1670,9 @@ export default function Settings() {
                 const isNightEdit = hbConfig.day_night_enabled && hbEditMode === 'night'
                 const nightCfg = hbConfig.night_config || {}
                 const fields = [
-                  { key: 'check_interval_seconds', label: 'Intervalle de vérification des tâches', desc: 'Fréquence à laquelle le heartbeat vérifie les tâches planifiées.', min: 5, max: 86400 },
-                  { key: 'ws_ping_interval_seconds', label: 'Intervalle ping WebSocket', desc: 'Fréquence des pings keepalive sur les connexions vocales.', min: 5, max: 7200 },
-                  { key: 'offset_seconds', label: 'Décalage initial', desc: 'Délai avant le premier cycle après démarrage.', min: 0, max: 86400, dayOnly: true },
+                  { key: 'check_interval_seconds', label: 'Intervalle de vérification des tâches', desc: 'Toutes les X secondes, le système scanne tes automatismes (crons, interval, run_at) pour voir s\'il y en a à lancer. Plus c\'est court, plus tes tâches sont précises, mais plus ça consomme. Règle : mets-le au moins 2× plus court que la tâche la plus rapide que tu planifies (ex : un cron à 1min → check à 30s max).', min: 5, max: 86400 },
+                  { key: 'ws_ping_interval_seconds', label: 'Intervalle ping WebSocket', desc: 'Garde vivantes les connexions vocales (ElevenLabs, OpenAI Realtime) en envoyant un petit signal keepalive toutes les X secondes. Si tu n\'utilises pas la voice, ce champ n\'a aucun impact sur ton agent.', min: 5, max: 7200 },
+                  { key: 'offset_seconds', label: 'Décalage initial', desc: 'Délai avant le premier battement après démarrage du serveur. Laisse à 0 sauf si tu veux temporiser le lancement des crons (par exemple pour attendre qu\'un autre service externe soit prêt).', min: 0, max: 86400, dayOnly: true },
                 ]
                 return fields.map(f => {
                   if (isNightEdit && f.dayOnly) return null
@@ -1712,13 +1727,13 @@ export default function Settings() {
                       className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2.5 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                   )
                 })()}
-                <p className="text-[var(--text-muted)] text-xs mt-1">Nombre max de tâches planifiées en parallèle.</p>
+                <p className="text-[var(--text-muted)] text-xs mt-1">Si plusieurs automatismes sont dus au même battement, c'est le nombre max lancé en parallèle. Les autres attendent le prochain cycle. Garde une valeur raisonnable (5-10) pour éviter de saturer tes providers LLM.</p>
               </div>
 
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-[var(--text-secondary)] text-sm">Démarrage automatique</span>
-                  <p className="text-[var(--text-muted)] text-xs">Démarrer le heartbeat au lancement du serveur.</p>
+                  <p className="text-[var(--text-muted)] text-xs">Démarre le heartbeat automatiquement au lancement du serveur. Si tu décoches, il faudra le lancer manuellement depuis cette page après chaque redémarrage.</p>
                 </div>
                 <input type="checkbox" checked={hbConfig.on_startup ?? true}
                   onChange={e => updateHbConfig('on_startup', e.target.checked)}
