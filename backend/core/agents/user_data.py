@@ -1,19 +1,86 @@
 """
 Gungnir — Per-user data layer for skills, personalities, sub-agents.
 All data is stored in the DB with user_id isolation.
-Defaults are seeded from JSON files on first access.
+Defaults are seeded from JSON files on first access, but any template the
+user explicitly deleted is tombstoned in UserSettings.deleted_defaults so
+it never respawns.
 """
 import json
 from pathlib import Path
 from datetime import datetime
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
-from backend.core.db.models import UserSkill, UserPersonality, UserSubAgent
+from backend.core.db.models import UserSkill, UserPersonality, UserSubAgent, UserSettings
 
 DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 # Bundled defaults shipped with the code (not overridden by Docker volume)
 BUNDLED_DEFAULTS_DIR = Path(__file__).parent.parent.parent / "data"
+
+
+# ── Tombstones for deleted template defaults ───────────────────────────────
+
+async def _get_user_settings_row(session: AsyncSession, user_id: int) -> UserSettings:
+    """Fetch or create the UserSettings row for ``user_id``. Used here only to
+    read/write the ``deleted_defaults`` tombstone dict; callers that also need
+    provider_keys / service_keys should use backend.core.api.auth_helpers."""
+    result = await session.execute(
+        select(UserSettings).where(UserSettings.user_id == user_id)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = UserSettings(user_id=user_id, provider_keys={}, service_keys={}, deleted_defaults={})
+        session.add(row)
+        await session.flush()
+    return row
+
+
+async def _get_tombstoned(session: AsyncSession, user_id: int, kind: str) -> set[str]:
+    """Return the set of template names the user has explicitly deleted for
+    this kind (``skills`` / ``personalities`` / ``sub_agents``)."""
+    row = await _get_user_settings_row(session, user_id)
+    tomb = row.deleted_defaults or {}
+    names = tomb.get(kind) or []
+    return set(names)
+
+
+async def _add_tombstone(session: AsyncSession, user_id: int, kind: str, name: str) -> None:
+    """Record that the user explicitly deleted a template so the seed won't
+    re-create it on the next list call."""
+    row = await _get_user_settings_row(session, user_id)
+    tomb = dict(row.deleted_defaults or {})
+    existing = list(tomb.get(kind) or [])
+    if name not in existing:
+        existing.append(name)
+    tomb[kind] = existing
+    row.deleted_defaults = tomb
+    flag_modified(row, "deleted_defaults")
+    await session.flush()
+
+
+async def _remove_tombstone(session: AsyncSession, user_id: int, kind: str, name: str) -> None:
+    """Undo a tombstone when the user re-creates a template by the same name.
+    Letting them re-insert it with its original content instead of manually
+    re-filling every field."""
+    row = await _get_user_settings_row(session, user_id)
+    tomb = dict(row.deleted_defaults or {})
+    existing = list(tomb.get(kind) or [])
+    if name in existing:
+        existing = [n for n in existing if n != name]
+        tomb[kind] = existing
+        row.deleted_defaults = tomb
+        flag_modified(row, "deleted_defaults")
+        await session.flush()
+
+
+def _name_in_defaults(name: str, filename: str, key: str | None = None) -> bool:
+    """True if ``name`` appears in the bundled/persistent defaults file —
+    i.e. the item is a shipped template and deletion needs a tombstone."""
+    for item in _load_defaults(filename, key):
+        if item.get("name") == name:
+            return True
+    return False
 
 
 # ── Seed defaults ────────────────────────────────────────────────────────────
@@ -69,75 +136,83 @@ def _load_defaults(filename: str, key: str | None = None) -> list[dict]:
 
 
 async def _seed_skills(session: AsyncSession, user_id: int):
-    """Seed default skills for a new user, and backfill any new defaults."""
+    """Seed default skills on first access + backfill any new template that
+    the user hasn't explicitly deleted. Templates in the tombstone are skipped
+    so deletion is permanent even though the seed runs on every list call."""
     existing = await session.execute(
         select(UserSkill).where(UserSkill.user_id == user_id)
     )
     existing_names = {s.name for s in existing.scalars().all()}
+    tombstoned = await _get_tombstoned(session, user_id, "skills")
 
     defaults = _load_defaults("skills.json", "skills")
     max_pos = len(existing_names)
     added = 0
     for i, s in enumerate(defaults):
         name = s.get("name", f"skill_{i}")
-        if name not in existing_names:
-            session.add(UserSkill(
-                user_id=user_id,
-                name=name,
-                data_json=s,
-                is_active=False,
-                position=max_pos + added,
-            ))
-            added += 1
+        if name in existing_names or name in tombstoned:
+            continue
+        session.add(UserSkill(
+            user_id=user_id,
+            name=name,
+            data_json=s,
+            is_active=False,
+            position=max_pos + added,
+        ))
+        added += 1
     if added:
         await session.flush()
 
 
 async def _seed_personalities(session: AsyncSession, user_id: int):
-    """Seed default personalities for a new user, and backfill any new defaults."""
+    """Seed + backfill personalities. Tombstoned defaults are skipped."""
     existing = await session.execute(
         select(UserPersonality).where(UserPersonality.user_id == user_id)
     )
     existing_names = {p.name for p in existing.scalars().all()}
+    tombstoned = await _get_tombstoned(session, user_id, "personalities")
 
     defaults = _load_defaults("personalities.json", "personalities")
     max_pos = len(existing_names)
     added = 0
     for i, p in enumerate(defaults):
         name = p.get("name", f"personality_{i}")
-        if name not in existing_names:
-            session.add(UserPersonality(
-                user_id=user_id,
-                name=name,
-                data_json=p,
-                is_active=(not existing_names and p.get("name") == "default"),
-                position=max_pos + added,
-            ))
-            added += 1
+        if name in existing_names or name in tombstoned:
+            continue
+        session.add(UserPersonality(
+            user_id=user_id,
+            name=name,
+            data_json=p,
+            is_active=(not existing_names and p.get("name") == "default"),
+            position=max_pos + added,
+        ))
+        added += 1
     if added:
         await session.flush()
 
 
 async def _seed_sub_agents(session: AsyncSession, user_id: int):
-    """Seed default sub-agents for a new user, and backfill any new defaults."""
+    """Seed + backfill sub-agents. Tombstoned defaults are skipped."""
     existing = await session.execute(
         select(UserSubAgent).where(UserSubAgent.user_id == user_id)
     )
     existing_names = {a.name for a in existing.scalars().all()}
+    tombstoned = await _get_tombstoned(session, user_id, "sub_agents")
 
     defaults = _load_defaults("agents.json", "agents")
     max_pos = len(existing_names)
     added = 0
     for i, a in enumerate(defaults):
         name = a.get("name", f"agent_{i}")
-        if name not in existing_names:
-            session.add(UserSubAgent(
-                user_id=user_id,
-                name=name,
-                data_json=a,
-                position=max_pos + added,
-            ))
-            added += 1
+        if name in existing_names or name in tombstoned:
+            continue
+        session.add(UserSubAgent(
+            user_id=user_id,
+            name=name,
+            data_json=a,
+            position=max_pos + added,
+        ))
+        added += 1
     if added:
         await session.flush()
 
@@ -189,6 +264,7 @@ async def create_skill(session: AsyncSession, user_id: int, name: str, data: dic
 
     data["name"] = name
     session.add(UserSkill(user_id=user_id, name=name, data_json=data, position=pos))
+    await _remove_tombstone(session, user_id, "skills", name)
     await session.flush()
     return {"success": True, "name": name}
 
@@ -217,6 +293,10 @@ async def delete_skill(session: AsyncSession, user_id: int, name: str) -> dict:
     )
     if result.rowcount == 0:
         return {"success": False, "error": "Skill introuvable"}
+    # If this name is a shipped default, tombstone it so the seed won't
+    # respawn it on the next list call.
+    if _name_in_defaults(name, "skills.json", "skills"):
+        await _add_tombstone(session, user_id, "skills", name)
     return {"success": True}
 
 
@@ -292,6 +372,7 @@ async def create_personality(session: AsyncSession, user_id: int, name: str, dat
 
     data["name"] = name
     session.add(UserPersonality(user_id=user_id, name=name, data_json=data, position=pos))
+    await _remove_tombstone(session, user_id, "personalities", name)
     await session.flush()
     return {"success": True}
 
@@ -322,6 +403,8 @@ async def delete_personality(session: AsyncSession, user_id: int, name: str) -> 
     )
     if result.rowcount == 0:
         return {"success": False, "error": "Personnalité introuvable"}
+    if _name_in_defaults(name, "personalities.json", "personalities"):
+        await _add_tombstone(session, user_id, "personalities", name)
     return {"success": True}
 
 
@@ -392,6 +475,7 @@ async def create_sub_agent(session: AsyncSession, user_id: int, name: str, data:
 
     data["name"] = name
     session.add(UserSubAgent(user_id=user_id, name=name, data_json=data, position=pos))
+    await _remove_tombstone(session, user_id, "sub_agents", name)
     await session.flush()
     return {"success": True, "name": name}
 
@@ -444,4 +528,6 @@ async def delete_sub_agent(session: AsyncSession, user_id: int, name: str) -> di
     )
     if result.rowcount == 0:
         return {"success": False, "error": "Agent introuvable"}
+    if _name_in_defaults(name, "agents.json", "agents"):
+        await _add_tombstone(session, user_id, "sub_agents", name)
     return {"success": True}

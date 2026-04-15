@@ -131,6 +131,10 @@ class UserSettings(Base):
     provider_keys = Column(JSON, default=dict)
     # JSON blob: {"qdrant": {"api_key": "enc:...", "base_url": "..."}, ...}
     service_keys = Column(JSON, default=dict)
+    # Tombstone for bundled defaults the user explicitly deleted, so the seed
+    # functions don't re-create them on the next list call. Shape:
+    # {"skills": ["old_template"], "personalities": [...], "sub_agents": [...]}
+    deleted_defaults = Column(JSON, default=dict)
     # User preferences (active provider/model/language)
     active_provider = Column(String(100), default="openrouter")
     active_model = Column(String(255), default="")

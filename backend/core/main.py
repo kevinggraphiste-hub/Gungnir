@@ -73,6 +73,18 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text("UPDATE users SET is_admin = TRUE WHERE id = 1"))
                 logger.info("Migration: added is_admin column, user #1 set as admin")
 
+            # Migration: deleted_defaults JSON column on user_settings
+            if not await _has_col("user_settings", "deleted_defaults"):
+                if _is_pg:
+                    await conn.execute(text(
+                        "ALTER TABLE user_settings ADD COLUMN deleted_defaults JSONB DEFAULT '{}'::jsonb"
+                    ))
+                else:
+                    await conn.execute(text(
+                        "ALTER TABLE user_settings ADD COLUMN deleted_defaults JSON DEFAULT '{}'"
+                    ))
+                logger.info("Migration: added deleted_defaults column to user_settings")
+
             # Migration: user_id on cost_analytics / budget_settings / provider_budgets
             if not await _has_col("cost_analytics", "user_id"):
                 await conn.execute(text("ALTER TABLE cost_analytics ADD COLUMN user_id INTEGER"))
