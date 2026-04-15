@@ -122,6 +122,33 @@ async def lifespan(app: FastAPI):
             import logging
             logging.getLogger("gungnir").error(f"Plugin {getattr(manifest, 'name', '?')} startup failed: {_plugin_err}")
 
+    # 4y. Legacy backup zips one-shot migration: move any pre-refactor zip
+    # stored directly under data/backups/ into data/backups/_admin/ so it
+    # still shows up in the admin history after the per-user refactor.
+    # Idempotent: once moved, there's nothing left at the top level.
+    try:
+        from pathlib import Path as _PathBU
+        _backups_root = _PathBU("data/backups")
+        if _backups_root.exists() and _backups_root.is_dir():
+            _admin_dir = _backups_root / "_admin"
+            _admin_dir.mkdir(parents=True, exist_ok=True)
+            _moved = 0
+            for _zip in _backups_root.glob("*.zip"):
+                if not _zip.is_file():
+                    continue
+                _dest = _admin_dir / _zip.name
+                if _dest.exists():
+                    continue
+                try:
+                    _zip.rename(_dest)
+                    _moved += 1
+                except Exception as _mv_err:
+                    logger.warning(f"Could not move legacy backup {_zip.name}: {_mv_err}")
+            if _moved:
+                logger.info(f"Legacy backups migration: {_moved} zip(s) moved to data/backups/_admin/")
+    except Exception as e:
+        logger.warning(f"Legacy backups migration failed: {e}")
+
     # 4z. Services one-shot migration: move any secret stored in legacy
     # settings.services[*] (api_key, token, plus non-secret fields the user
     # had customised like base_url/project_id/...) into user #1's
