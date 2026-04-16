@@ -464,21 +464,27 @@ async def search_stream(req: SearchRequest, request: Request):
     uid = _uid(request)
     search_keys = await _get_user_search_keys(uid)
 
+    # Resolve LLM BEFORE the stream while request context is active
+    pre_provider, pre_model, pre_provider_name = None, "", ""
+    pre_llm_error = None
+    if req.pro_search or req.focus == "academic":
+        try:
+            pre_provider, pre_model, pre_provider_name = await _get_user_llm(uid, req.provider, req.model)
+        except Exception as e:
+            pre_llm_error = str(e)
+            logger.warning(f"HuntR LLM resolution failed for user {uid}: {e}")
+
     async def _stream():
         t0 = time.time()
         config = HuntRConfig.load()
+        provider, model, provider_name = pre_provider, pre_model, pre_provider_name
 
         try:
             # ── 1. Query Understanding + Expansion ─────────────────────
             yield _sse("status", {"message": "Analyse de la requête...", "step": 1})
 
-            provider, model, provider_name = None, "", ""
-            if req.pro_search:
-                try:
-                    provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
-                except Exception as e:
-                    logger.warning(f"HuntR Pro LLM failed for user {uid}: {e}")
-                    yield _sse("status", {"message": f"⚠ LLM indisponible : {e}", "step": 1})
+            if pre_llm_error and (req.pro_search or req.focus == "academic"):
+                yield _sse("status", {"message": f"⚠ LLM indisponible : {pre_llm_error}", "step": 1})
 
             # Get session context for follow-up
             session_ctx = _get_session_context(req.session_id, config.max_follow_ups)
@@ -624,12 +630,9 @@ async def search_stream(req: SearchRequest, request: Request):
 
             # ── 5. Pro : LLM Answer Generation ────────────────────────
             if not provider:
-                try:
-                    provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
-                except Exception as e:
-                    yield _sse("error", {"message": f"LLM non disponible: {e}"})
-                    yield _sse("done", {"time_ms": _elapsed(t0), "error": True})
-                    return
+                yield _sse("error", {"message": f"LLM non disponible: {pre_llm_error or 'Aucun provider configuré'}"})
+                yield _sse("done", {"time_ms": _elapsed(t0), "error": True})
+                return
 
             yield _sse("status", {"message": "[Pro] Génération de la réponse...", "step": 5})
 
@@ -697,13 +700,15 @@ async def search_sync(req: SearchRequest, request: Request):
     uid = _uid(request)
     search_keys = await _get_user_search_keys(uid)
 
+    provider, model, provider_name = None, "", ""
+    if req.pro_search or req.focus == "academic":
+        try:
+            provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
+        except Exception as e:
+            if req.pro_search:
+                return JSONResponse({"error": f"LLM non disponible: {e}"}, status_code=400)
+
     try:
-        provider, model, provider_name = None, "", ""
-        if req.pro_search:
-            try:
-                provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
-            except Exception:
-                pass
 
         session_ctx = _get_session_context(req.session_id, config.max_follow_ups)
         understanding = await _expand_query(
