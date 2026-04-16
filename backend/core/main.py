@@ -168,6 +168,38 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Global agent_name cleanup failed: {e}")
 
+    # 4x-bis. Same pollution at the per-user level: the old _soul_write tool
+    # path also wrote into UserSettings.agent_name for the user that happened
+    # to be running the test (user #1 in Kevin's case, with value "Loki").
+    # chat.py reads that column directly and APPENDS "tu t'appelles X" to
+    # the system prompt, so even if the soul.md file is clean the chat
+    # response still uses the polluted name. Reset the known polluted value
+    # ("Loki") across all users so the default "Gungnir" wins again.
+    # Any user who actually completed the proper onboarding flow keeps their
+    # name — onboarding writes legitimate values, not "Loki".
+    try:
+        from sqlalchemy import update as _sa_update, select as _sa_select
+        from backend.core.db.models import UserSettings as _UserSettings
+        async with engine.begin() as _cleanup_conn:
+            _poll_res = await _cleanup_conn.execute(
+                _sa_select(_UserSettings.user_id, _UserSettings.agent_name).where(
+                    _UserSettings.agent_name == "Loki"
+                )
+            )
+            _poll_rows = list(_poll_res)
+            if _poll_rows:
+                _uids = [r[0] for r in _poll_rows]
+                await _cleanup_conn.execute(
+                    _sa_update(_UserSettings)
+                    .where(_UserSettings.agent_name == "Loki")
+                    .values(agent_name="")
+                )
+                logger.info(
+                    f"Per-user agent_name cleanup: cleared 'Loki' pollution for user ids {_uids}"
+                )
+    except Exception as e:
+        logger.warning(f"Per-user agent_name cleanup failed: {e}")
+
     # 4y. Legacy backup zips one-shot migration: move any pre-refactor zip
     # stored directly under data/backups/ into data/backups/_admin/ so it
     # still shows up in the admin history after the per-user refactor.

@@ -786,12 +786,15 @@ async def chat(
     # silently rename the agent for every user on the instance (happened with
     # soul_write during an early onboarding test).
     _agent_name = "Gungnir"
+    _agent_name_source = "default"
     try:
         _user_settings_row = await get_user_settings(_current_uid, session)
         if _user_settings_row.agent_name:
             _agent_name = _user_settings_row.agent_name
+            _agent_name_source = f"user_settings.agent_name (uid={_current_uid})"
     except Exception:
         pass
+    print(f"[Wolf] agent_name resolved to '{_agent_name}' from {_agent_name_source}")
     _user_soul_file = _get_soul_file(_current_uid)
     # Per-user soul resolution: own soul.md, or a fresh default generated
     # from the user's agent name. The legacy data/soul.md global fallback is
