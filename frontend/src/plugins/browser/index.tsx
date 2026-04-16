@@ -328,6 +328,8 @@ export default function HuntRPlugin() {
           pro_search: proSearch,
           topic: topic,
           max_results: 10,
+          provider: selectedProvider,
+          model: selectedModel,
         }),
         signal: controller.signal,
       })

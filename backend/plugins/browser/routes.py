@@ -41,6 +41,11 @@ class SearchRequest(BaseModel):
     pro_search: bool = False
     max_results: int = Field(default=10, ge=1, le=20)
     topic: str = Field(default="web")  # web | news | academic | code
+    # Optional overrides from the frontend — le chat envoie deja le
+    # provider/model actifs du store Zustand, HuntR fait pareil pour eviter
+    # les desyncs avec user_settings en DB.
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
     def safe_topic(self) -> str:
         return self.topic if self.topic in VALID_TOPICS else "web"
@@ -61,12 +66,22 @@ async def _resolve_tavily(user_id: int, session: AsyncSession) -> TavilyProvider
     return TavilyProvider(api_key=svc["api_key"])
 
 
-async def _resolve_llm(user_id: int, session: AsyncSession):
-    """Get the user's active LLM provider + model. Raises on failure."""
+async def _resolve_llm(
+    user_id: int,
+    session: AsyncSession,
+    override_provider: Optional[str] = None,
+    override_model: Optional[str] = None,
+):
+    """Get the user's active LLM provider + model. Raises on failure.
+
+    Overrides prennent la priorite sur user_settings : le frontend envoie
+    deja le provider/model actifs du store Zustand (meme source de verite
+    que le chat), ce qui evite les desyncs avec la DB.
+    """
     us = await get_user_settings(user_id, session)
     settings = Settings.load()
 
-    pname = us.active_provider or "openrouter"
+    pname = override_provider or us.active_provider or "openrouter"
     user_prov = get_user_provider_key(us, pname)
     api_key = user_prov.get("api_key") if user_prov else None
     if not api_key:
@@ -75,7 +90,8 @@ async def _resolve_llm(user_id: int, session: AsyncSession):
     cfg = settings.providers.get(pname)
     base_url = (user_prov.get("base_url") if user_prov else None) or \
                (cfg.base_url if cfg else None)
-    model = us.active_model or \
+    model = override_model or \
+            us.active_model or \
             (cfg.default_model if cfg else None) or \
             (cfg.models[0] if cfg and cfg.models else None)
     if not model:
@@ -336,7 +352,11 @@ async def search_stream(req: SearchRequest, request: Request,
                 status_code=400,
             )
         try:
-            llm_provider, llm_model = await _resolve_llm(uid, session)
+            llm_provider, llm_model = await _resolve_llm(
+                uid, session,
+                override_provider=req.provider,
+                override_model=req.model,
+            )
         except Exception as e:
             llm_error = str(e)
 
