@@ -565,18 +565,31 @@ async def get_soul(request: Request, session: AsyncSession = Depends(get_session
 
 
 @router.post("/agent/soul")
-async def save_soul(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
+async def save_soul(request: Request, session: AsyncSession = Depends(get_session)):
     """Persist the CURRENT user's soul.md and, if a name can be extracted
     from the content, update THIS user's agent_name in UserSettings.
     Strictly per-user — the legacy Settings.app.agent_name global is never
     touched (that was the cross-user pollution vector)."""
-    content = data.get("content", "").strip()
-    if not content:
-        return {"success": False, "error": "Contenu vide"}
     uid = _uid(request)
+    try:
+        body = await request.json()
+    except Exception as e:
+        print(f"[Agent] POST /agent/soul: body parse failed uid={uid}: {e}")
+        return {"success": False, "error": "Requête invalide"}
+
+    content = (body.get("content") or "").strip()
+    if not content:
+        print(f"[Agent] POST /agent/soul: empty content for uid={uid}")
+        return {"success": False, "error": "Contenu vide"}
+
     soul_file = _get_soul_file(uid)
-    soul_file.parent.mkdir(parents=True, exist_ok=True)
-    soul_file.write_text(content, encoding="utf-8")
+    try:
+        soul_file.parent.mkdir(parents=True, exist_ok=True)
+        soul_file.write_text(content, encoding="utf-8")
+        print(f"[Agent] soul saved for uid={uid} → {soul_file.resolve()} ({len(content)} chars)")
+    except Exception as e:
+        print(f"[Agent] soul write FAILED for uid={uid} → {soul_file}: {e}")
+        return {"success": False, "error": f"Écriture fichier échouée: {str(e)[:200]}"}
 
     # Try to extract and persist per-user agent name
     import re
@@ -590,13 +603,11 @@ async def save_soul(request: Request, data: dict, session: AsyncSession = Depend
             us = await _gus(uid, session)
             us.agent_name = new_name
             await session.commit()
-            print(f"[Agent] soul saved for uid={uid} + agent_name set to '{new_name}' (per-user)")
+            print(f"[Agent] per-user agent_name updated to '{new_name}' for uid={uid}")
         except Exception as e:
-            print(f"[Agent] soul saved for uid={uid} but agent_name update failed: {e}")
-    else:
-        print(f"[Agent] soul saved for uid={uid} (no name extracted from content)")
+            print(f"[Agent] agent_name update failed for uid={uid}: {e}")
 
-    return {"success": True}
+    return {"success": True, "path": str(soul_file.relative_to(soul_file.parent.parent.parent)) if soul_file.parent.parent.parent.exists() else str(soul_file)}
 
 
 @router.get("/personality")
