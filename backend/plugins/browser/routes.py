@@ -73,49 +73,40 @@ async def _get_user_search_keys(user_id: int) -> dict:
 
 async def _get_user_llm(user_id: int, provider_name: Optional[str] = None,
                         model_name: Optional[str] = None):
-    """Get LLM provider using per-user API keys first, then global decrypted."""
+    """Get LLM provider — same resolution logic as chat.py (which works).
+    get_user_provider_key already decrypts the key."""
     from backend.core.db.engine import get_session
     from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
-    from backend.core.config.settings import decrypt_value
 
     async for session in get_session():
         us = await get_user_settings(user_id, session)
         settings = Settings.load()
 
-        # Resolve provider name
-        if not provider_name:
-            if us.active_provider:
-                provider_name = us.active_provider
-            else:
-                for name, cfg in settings.providers.items():
-                    if cfg.enabled:
-                        provider_name = name
-                        break
-        if not provider_name:
-            provider_name = "openrouter"
+        # Provider: explicit > user's active > openrouter
+        pname = provider_name or us.active_provider or "openrouter"
 
-        # Resolve API key: per-user first, then global (decrypted)
-        cfg = settings.providers.get(provider_name)
-        user_prov = get_user_provider_key(us, provider_name)
-        api_key = (user_prov or {}).get("api_key") if user_prov else None
-        if not api_key and cfg and cfg.api_key:
-            api_key = decrypt_value(cfg.api_key)
+        # Key: strictly per-user (same as chat.py line 681)
+        user_prov = get_user_provider_key(us, pname)
+        api_key = user_prov.get("api_key") if user_prov else None
         if not api_key:
-            raise ValueError(f"Aucune clé API pour '{provider_name}' (user {user_id})")
+            raise ValueError(f"Aucune clé API pour '{pname}' (user {user_id})")
 
-        base_url = (cfg.base_url if cfg else None) or None
+        # Base URL from user override or global metadata
+        base_url = (user_prov.get("base_url") if user_prov else None)
+        cfg = settings.providers.get(pname)
+        if not base_url and cfg:
+            base_url = cfg.base_url
 
-        # Resolve model
-        if not model_name:
-            model_name = (us.active_model if us.active_model else None) or \
-                         (cfg.default_model if cfg else None) or \
-                         (cfg.models[0] if cfg and cfg.models else None)
-        if not model_name:
-            raise ValueError(f"Aucun modèle pour '{provider_name}'")
+        # Model: explicit > user's active > provider default
+        mname = model_name or us.active_model or (cfg.default_model if cfg else None)
+        if not mname and cfg and cfg.models:
+            mname = cfg.models[0]
+        if not mname:
+            raise ValueError(f"Aucun modèle pour '{pname}'")
 
-        return get_provider(provider_name, api_key, base_url), model_name, provider_name
+        return get_provider(pname, api_key, base_url), mname, pname
 
-    raise ValueError(f"Impossible de résoudre le provider LLM pour user {user_id}")
+    raise ValueError(f"Pas de session DB disponible pour user {user_id}")
 
 
 router = APIRouter()
@@ -222,7 +213,7 @@ QUERY_EXPANSION_PROMPT = (
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _get_llm(provider_name: Optional[str] = None, model_name: Optional[str] = None):
-    """Get LLM provider + model from Gungnir global config (decrypted). Fallback only."""
+    """Fallback: get LLM from global config. Only used if _get_user_llm isn't called."""
     from backend.core.config.settings import decrypt_value
     settings = Settings.load()
     if not provider_name:
@@ -235,7 +226,10 @@ def _get_llm(provider_name: Optional[str] = None, model_name: Optional[str] = No
     cfg = settings.providers.get(provider_name)
     if not cfg or not cfg.api_key:
         raise ValueError(f"Provider '{provider_name}' non configuré")
-    api_key = decrypt_value(cfg.api_key)
+    try:
+        api_key = decrypt_value(cfg.api_key)
+    except Exception:
+        api_key = cfg.api_key  # might already be plain text
     if not model_name:
         model_name = cfg.default_model or (cfg.models[0] if cfg.models else None)
     if not model_name:
@@ -517,11 +511,14 @@ async def search_stream(req: SearchRequest, request: Request):
             yield _sse("status", {"message": "Analyse de la requête...", "step": 1})
 
             provider, model, provider_name = None, "", ""
+            llm_error = None
             if req.pro_search:
                 try:
                     provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
-                except Exception:
-                    pass
+                except Exception as e:
+                    llm_error = str(e)
+                    logger.warning(f"HuntR Pro LLM resolution failed for user {uid}: {e}")
+                    yield _sse("status", {"message": f"⚠ Mode Pro indisponible : {e}", "step": 1})
 
             # Get session context for follow-up
             session_ctx = _get_session_context(req.session_id, config.max_follow_ups)
