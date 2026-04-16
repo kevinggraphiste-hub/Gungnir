@@ -3,7 +3,7 @@ Gungnir — Core API Router
 
 Aggregates all core route modules.
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from backend.core.api.config_routes import router as config_router
 from backend.core.api.conversations import router as conversations_router
@@ -26,9 +26,12 @@ async def health():
 
 # Doctor — diagnostic complet
 @core_router.get("/doctor")
-async def doctor(scope: str = "full"):
+async def doctor(scope: str = "full", request: Request = None):
     """Run a full system diagnostic."""
-    from backend.core.agents.wolf_tools import _doctor_check
+    from backend.core.agents.wolf_tools import _doctor_check, set_user_context
+    # Set user context so doctor can check per-user provider keys
+    uid = (getattr(request.state, "user_id", None) or 1) if request else 1
+    set_user_context(uid)
     return await _doctor_check(scope)
 
 # Mount core route modules

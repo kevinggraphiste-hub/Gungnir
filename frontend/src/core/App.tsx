@@ -134,6 +134,14 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
               localStorage.setItem('gungnir_agent_name', appData.agent_name)
               useStore.setState({ agentName: appData.agent_name })
             }
+            if (appData?.active_provider) {
+              localStorage.setItem('gungnir_provider', appData.active_provider)
+              useStore.setState({ selectedProvider: appData.active_provider })
+            }
+            if (appData?.active_model) {
+              localStorage.setItem('gungnir_model', appData.active_model)
+              useStore.setState({ selectedModel: appData.active_model })
+            }
           }
         } catch { /* backend may not be ready yet */ }
 
