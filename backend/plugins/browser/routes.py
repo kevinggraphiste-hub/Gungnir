@@ -304,13 +304,16 @@ async def search_stream(req: SearchRequest, request: Request,
             ]
 
             try:
-                resp = await llm_provider.chat(messages, llm_model, max_tokens=2048)
+                resp = await llm_provider.chat(messages, llm_model)
                 answer = resp.content or ""
+                logger.info(f"[HuntR] LLM response: {len(answer)} chars, model={llm_model}")
             except Exception as e:
-                logger.warning(f"[HuntR] LLM failed: {e}")
+                logger.error(f"[HuntR] LLM call failed: {e}", exc_info=True)
                 answer = ""
+                yield _sse("status", {"message": f"⚠ Erreur LLM : {e}"})
 
             if not answer.strip():
+                logger.warning(f"[HuntR] LLM returned empty, falling back to classic")
                 answer = _format_classic_answer(query, results)
 
             yield _sse("content", {"answer": answer})
