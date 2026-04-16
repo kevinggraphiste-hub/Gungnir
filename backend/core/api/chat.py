@@ -748,7 +748,7 @@ async def chat(
     # Detection commande de changement de personnalite
     from backend.core.agents.skills import personality_manager as pm
     from backend.core.agents import user_data as _ud
-    _current_uid = getattr(request.state, "user_id", None) or 0
+    _current_uid = getattr(request.state, "user_id", None) or 1
     set_user_context(_current_uid)
     personality_cmd = pm.detect_personality_command(message)
     if personality_cmd:

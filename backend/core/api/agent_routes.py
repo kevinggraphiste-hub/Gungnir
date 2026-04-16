@@ -15,8 +15,10 @@ from backend.core.agents import user_data as ud
 router = APIRouter()
 
 def _uid(request: Request) -> int:
-    """Extract user_id from auth middleware, fallback to 0 for unauthenticated."""
-    return getattr(request.state, "user_id", None) or 0
+    """Extract user_id from auth middleware, fallback to 1 for unauthenticated.
+    Must match config_routes fallback (user #1 = admin) so per-user soul/kb
+    paths stay consistent."""
+    return getattr(request.state, "user_id", None) or 1
 
 
 # Display-name validation for skills / sub-agents / personalities.
@@ -551,6 +553,7 @@ async def get_soul(request: Request, session: AsyncSession = Depends(get_session
     yet), fix the content on the fly and persist the correction."""
     uid = _uid(request)
     soul_file = _get_soul_file(uid)
+    print(f"[Soul GET] uid={uid}, soul_file={soul_file}, exists={soul_file.exists()}")
 
     # Resolve the user's current agent_name from DB
     current_name = ""
@@ -559,26 +562,35 @@ async def get_soul(request: Request, session: AsyncSession = Depends(get_session
         us = await _gus(uid, session)
         if us.agent_name:
             current_name = us.agent_name
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[Soul GET] get_user_settings failed uid={uid}: {e}")
+    print(f"[Soul GET] current_name from DB = '{current_name}'")
 
     if soul_file.exists():
         content = soul_file.read_text(encoding="utf-8")
+        print(f"[Soul GET] file content first 200 chars: {content[:200]!r}")
         # Self-healing: detect stale name in soul and replace with current
         if current_name and current_name not in content:
             import re
             m = re.search(r'Tu es \*\*(.+?)\*\*', content)
+            print(f"[Soul GET] name '{current_name}' NOT in content, regex match={m.group(1) if m else 'NONE'}")
             if m:
                 old_name = m.group(1)
                 if old_name != current_name:
                     content = content.replace(old_name, current_name)
                     try:
                         soul_file.write_text(content, encoding="utf-8")
-                    except Exception:
-                        pass
+                        print(f"[Soul GET] HEALED: replaced '{old_name}' → '{current_name}' in {soul_file}")
+                    except Exception as e:
+                        print(f"[Soul GET] HEAL WRITE FAILED: {e}")
+        elif current_name:
+            print(f"[Soul GET] name '{current_name}' already in content, no healing needed")
+        else:
+            print(f"[Soul GET] no current_name in DB, skipping healing")
     else:
         name = current_name or "Gungnir"
         content = _get_default_soul(name)
+        print(f"[Soul GET] no file, generated default with name='{name}'")
     return {"content": content}
 
 

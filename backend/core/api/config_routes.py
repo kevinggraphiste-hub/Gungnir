@@ -646,6 +646,7 @@ async def save_user_app_settings(request: Request, session: AsyncSession = Depen
     if "agent_name" in body:
         new_name = (body.get("agent_name") or "").strip()
         old_name = (user_settings.agent_name or "").strip()
+        print(f"[Config POST] agent_name change: user_id={user_id}, old='{old_name}' → new='{new_name}'")
         user_settings.agent_name = new_name
 
         # Propagate the rename into the per-user soul file so the two stay
@@ -661,6 +662,7 @@ async def save_user_app_settings(request: Request, session: AsyncSession = Depen
             try:
                 from backend.core.agents.wolf_tools import _soul_path
                 soul_file = _soul_path(user_id)
+                print(f"[Config POST] soul_path for uid={user_id}: {soul_file}, exists={soul_file.exists()}")
                 if soul_file.exists():
                     content = soul_file.read_text(encoding="utf-8")
                     if replace_from in content:
