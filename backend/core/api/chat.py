@@ -802,8 +802,9 @@ async def chat(
     _user_soul_file = _get_soul_file(_current_uid)
     if _user_soul_file.exists():
         soul_content = _user_soul_file.read_text(encoding="utf-8")
-        # Self-healing: if soul still references an old agent name, fix it
-        if _agent_name and _agent_name not in soul_content:
+        # Self-healing: check the identity pattern "Tu es **X**" against
+        # the current agent name. Replace the old name everywhere if stale.
+        if _agent_name:
             import re
             m = re.search(r'Tu es \*\*(.+?)\*\*', soul_content)
             if m and m.group(1) != _agent_name:

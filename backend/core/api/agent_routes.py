@@ -569,24 +569,24 @@ async def get_soul(request: Request, session: AsyncSession = Depends(get_session
     if soul_file.exists():
         content = soul_file.read_text(encoding="utf-8")
         print(f"[Soul GET] file content first 200 chars: {content[:200]!r}")
-        # Self-healing: detect stale name in soul and replace with current
-        if current_name and current_name not in content:
+        # Self-healing: check if the identity pattern "Tu es **X**" matches
+        # the current agent name. A simple `name in content` check is wrong
+        # because substring matches (e.g. "chips" inside "GchipsT") give
+        # false positives and skip the healing.
+        if current_name:
             import re
             m = re.search(r'Tu es \*\*(.+?)\*\*', content)
-            print(f"[Soul GET] name '{current_name}' NOT in content, regex match={m.group(1) if m else 'NONE'}")
-            if m:
-                old_name = m.group(1)
-                if old_name != current_name:
-                    content = content.replace(old_name, current_name)
-                    try:
-                        soul_file.write_text(content, encoding="utf-8")
-                        print(f"[Soul GET] HEALED: replaced '{old_name}' → '{current_name}' in {soul_file}")
-                    except Exception as e:
-                        print(f"[Soul GET] HEAL WRITE FAILED: {e}")
-        elif current_name:
-            print(f"[Soul GET] name '{current_name}' already in content, no healing needed")
-        else:
-            print(f"[Soul GET] no current_name in DB, skipping healing")
+            soul_name = m.group(1) if m else None
+            print(f"[Soul GET] soul identity name='{soul_name}', expected='{current_name}'")
+            if soul_name and soul_name != current_name:
+                content = content.replace(soul_name, current_name)
+                try:
+                    soul_file.write_text(content, encoding="utf-8")
+                    print(f"[Soul GET] HEALED: replaced '{soul_name}' → '{current_name}' in {soul_file}")
+                except Exception as e:
+                    print(f"[Soul GET] HEAL WRITE FAILED: {e}")
+            else:
+                print(f"[Soul GET] soul identity matches, no healing needed")
     else:
         name = current_name or "Gungnir"
         content = _get_default_soul(name)

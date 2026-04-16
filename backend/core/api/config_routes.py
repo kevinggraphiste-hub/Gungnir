@@ -654,24 +654,25 @@ async def save_user_app_settings(request: Request, session: AsyncSession = Depen
         # leave the soul body saying "Ame de Odin / Tu es **Odin**" everywhere,
         # creating a confusing discrepancy between the Settings name and what
         # the LLM actually reads from the soul.
-        # Determine the name to replace in the soul file:
-        # - normal rename: old_name → new_name
-        # - first-time naming (old_name empty): replace the default "Gungnir"
-        replace_from = old_name if old_name else "Gungnir"
-        if new_name and replace_from != new_name:
+        # Propagate the rename into the soul file using the identity
+        # pattern "Tu es **X**" as the authoritative source of the old name.
+        # A naive .replace(old_name, new_name) corrupts unrelated words
+        # (e.g. "GPT" → "GnewNameT") so we extract the name from the
+        # identity pattern and only replace THAT.
+        if new_name:
             try:
+                import re
                 from backend.core.agents.wolf_tools import _soul_path
                 soul_file = _soul_path(user_id)
                 print(f"[Config POST] soul_path for uid={user_id}: {soul_file}, exists={soul_file.exists()}")
                 if soul_file.exists():
                     content = soul_file.read_text(encoding="utf-8")
-                    if replace_from in content:
-                        content = content.replace(replace_from, new_name)
+                    m = re.search(r'Tu es \*\*(.+?)\*\*', content)
+                    soul_name = m.group(1) if m else None
+                    if soul_name and soul_name != new_name:
+                        content = content.replace(soul_name, new_name)
                         soul_file.write_text(content, encoding="utf-8")
-                        import logging
-                        logging.getLogger("gungnir").info(
-                            f"Soul file updated: replaced '{replace_from}' → '{new_name}' in {soul_file} for user {user_id}"
-                        )
+                        print(f"[Config POST] Soul updated: '{soul_name}' → '{new_name}' in {soul_file}")
             except Exception as e:
                 import logging
                 logging.getLogger("gungnir").warning(f"Soul file rename propagation failed uid={user_id}: {e}")
