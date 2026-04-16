@@ -605,7 +605,7 @@ export default function HuntRPlugin() {
                     background: 'var(--bg-secondary)', border: '1px solid var(--border)',
                     lineHeight: 1.7, fontSize: 14,
                   }}>
-                    <MarkdownRenderer text={result.answer} onCiteClick={scrollToSource} />
+                    <MarkdownRenderer text={result.answer} citations={result.citations} onCiteClick={scrollToSource} />
                   </div>
                 )}
 
@@ -654,13 +654,25 @@ export default function HuntRPlugin() {
                         return (
                           <a key={c.index} id={`huntr-source-${c.index}`}
                             href={c.url} target="_blank" rel="noopener noreferrer"
+                            className="huntr-source-card"
                             style={{
                               display: 'flex', gap: 8, padding: 8, borderRadius: 8,
                               background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                              textDecoration: 'none', color: 'inherit', transition: 'border-color 0.15s',
+                              textDecoration: 'none', color: 'inherit',
+                              transition: 'border-color 0.2s, transform 0.2s, box-shadow 0.2s',
                             }}
-                            onMouseOver={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--scarlet)'}
-                            onMouseOut={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'}
+                            onMouseOver={e => {
+                              const el = e.currentTarget as HTMLElement
+                              el.style.borderColor = 'var(--scarlet)'
+                              el.style.transform = 'scale(1.03)'
+                              el.style.boxShadow = '0 4px 12px rgba(220,38,38,0.15)'
+                            }}
+                            onMouseOut={e => {
+                              const el = e.currentTarget as HTMLElement
+                              el.style.borderColor = 'var(--border)'
+                              el.style.transform = 'scale(1)'
+                              el.style.boxShadow = 'none'
+                            }}
                           >
                             <div style={{
                               width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
@@ -814,29 +826,107 @@ function scrollToSource(idx: number) {
 }
 
 
-// ── Markdown Renderer with citation buttons ───────────────────────────────
+// ── Citation tooltip ──────────────────────────────────────────────────────
 
-function MarkdownRenderer({ text, onCiteClick }: { text: string; onCiteClick?: (idx: number) => void }) {
+function CitationBadge({ idx, citation, onClick }: {
+  idx: number; citation?: Citation; onClick?: (idx: number) => void
+}) {
+  const [hover, setHover] = useState(false)
+  let host = ''
+  if (citation?.url) {
+    try { host = new URL(citation.url).hostname.replace('www.', '') } catch {}
+  }
+
+  return (
+    <span style={{ position: 'relative', display: 'inline-block' }}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <button onClick={() => onClick?.(idx)}
+        style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 16, height: 16, borderRadius: '50%', fontSize: 9, fontWeight: 700,
+          background: 'var(--scarlet)', color: '#fff',
+          border: 'none', cursor: 'pointer', verticalAlign: 'super', margin: '0 1px',
+          transition: 'transform 0.15s',
+          transform: hover ? 'scale(1.2)' : 'scale(1)',
+        }}
+      >
+        {idx}
+      </button>
+      {/* Tooltip */}
+      {hover && citation && (
+        <div style={{
+          position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
+          marginBottom: 6, width: 280, padding: '10px 12px', borderRadius: 10,
+          background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.25)', zIndex: 100,
+          pointerEvents: 'none', animation: 'huntr-fadeIn 0.15s ease-out',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <div style={{
+              width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 9, fontWeight: 700, background: 'var(--scarlet)', color: '#fff',
+            }}>{idx}</div>
+            <span style={{
+              fontSize: 12, fontWeight: 600, color: 'var(--text-primary)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+            }}>
+              {citation.title || host}
+            </span>
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 3 }}>
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            {host}
+          </div>
+          {citation.snippet && (
+            <p style={{
+              fontSize: 11, color: 'var(--text-secondary)', margin: 0,
+              lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 3,
+              WebkitBoxOrient: 'vertical', overflow: 'hidden',
+            }}>
+              {citation.snippet}
+            </p>
+          )}
+        </div>
+      )}
+    </span>
+  )
+}
+
+
+// ── Markdown Renderer with citation tooltips ──────────────────────────────
+
+function MarkdownRenderer({ text, citations, onCiteClick }: {
+  text: string; citations?: Citation[]; onCiteClick?: (idx: number) => void
+}) {
   if (!text) return null
+
+  const citationMap = new Map<number, Citation>()
+  if (citations) citations.forEach(c => citationMap.set(c.index, c))
 
   const lines = text.split('\n')
   const elements: JSX.Element[] = []
   let key = 0
 
+  const parse = (t: string) => inlineParse(t, key, citationMap, onCiteClick)
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
 
     if (line.startsWith('### ')) {
-      elements.push(<h4 key={key++} style={{ fontSize: 14, fontWeight: 700, margin: '12px 0 4px', color: 'var(--text-primary)' }}>{inlineParse(line.slice(4), key, onCiteClick)}</h4>)
+      elements.push(<h4 key={key++} style={{ fontSize: 14, fontWeight: 700, margin: '12px 0 4px', color: 'var(--text-primary)' }}>{parse(line.slice(4))}</h4>)
     } else if (line.startsWith('## ')) {
-      elements.push(<h3 key={key++} style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 4px', color: 'var(--text-primary)' }}>{inlineParse(line.slice(3), key, onCiteClick)}</h3>)
+      elements.push(<h3 key={key++} style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 4px', color: 'var(--text-primary)' }}>{parse(line.slice(3))}</h3>)
     } else if (line.startsWith('# ')) {
-      elements.push(<h2 key={key++} style={{ fontSize: 16, fontWeight: 700, margin: '16px 0 6px', color: 'var(--text-primary)' }}>{inlineParse(line.slice(2), key, onCiteClick)}</h2>)
+      elements.push(<h2 key={key++} style={{ fontSize: 16, fontWeight: 700, margin: '16px 0 6px', color: 'var(--text-primary)' }}>{parse(line.slice(2))}</h2>)
     } else if (/^[-*]\s/.test(line)) {
       elements.push(
         <div key={key++} style={{ display: 'flex', gap: 8, margin: '2px 0', paddingLeft: 8 }}>
           <span style={{ color: 'var(--scarlet)', flexShrink: 0 }}>&#8226;</span>
-          <span style={{ color: 'var(--text-secondary)' }}>{inlineParse(line.slice(2), key, onCiteClick)}</span>
+          <span style={{ color: 'var(--text-secondary)' }}>{parse(line.slice(2))}</span>
         </div>
       )
     } else if (/^\d+\.\s/.test(line)) {
@@ -845,7 +935,7 @@ function MarkdownRenderer({ text, onCiteClick }: { text: string; onCiteClick?: (
         elements.push(
           <div key={key++} style={{ display: 'flex', gap: 8, margin: '2px 0', paddingLeft: 8 }}>
             <span style={{ color: 'var(--scarlet)', flexShrink: 0, fontWeight: 600, fontSize: 12 }}>{match[1]}.</span>
-            <span style={{ color: 'var(--text-secondary)' }}>{inlineParse(match[2], key, onCiteClick)}</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{parse(match[2])}</span>
           </div>
         )
       }
@@ -869,7 +959,7 @@ function MarkdownRenderer({ text, onCiteClick }: { text: string; onCiteClick?: (
     } else if (!line.trim()) {
       elements.push(<div key={key++} style={{ height: 6 }} />)
     } else {
-      elements.push(<p key={key++} style={{ margin: '2px 0', color: 'var(--text-secondary)' }}>{inlineParse(line, key, onCiteClick)}</p>)
+      elements.push(<p key={key++} style={{ margin: '2px 0', color: 'var(--text-secondary)' }}>{parse(line)}</p>)
     }
   }
 
@@ -877,7 +967,11 @@ function MarkdownRenderer({ text, onCiteClick }: { text: string; onCiteClick?: (
 }
 
 
-function inlineParse(text: string, baseKey: number, onCiteClick?: (idx: number) => void): (string | JSX.Element)[] {
+function inlineParse(
+  text: string, baseKey: number,
+  citationMap: Map<number, Citation>,
+  onCiteClick?: (idx: number) => void
+): (string | JSX.Element)[] {
   const parts: (string | JSX.Element)[] = []
   const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[(\d+)\]|\[([^\]]+)\]\(([^)]+)\))/g
   let lastIndex = 0
@@ -899,19 +993,7 @@ function inlineParse(text: string, baseKey: number, onCiteClick?: (idx: number) 
       }}>{match[4]}</code>)
     } else if (match[5]) {
       const idx = parseInt(match[5])
-      parts.push(
-        <button key={key} onClick={() => onCiteClick?.(idx)}
-          title={`Source ${idx}`}
-          style={{
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            width: 16, height: 16, borderRadius: '50%', fontSize: 9, fontWeight: 700,
-            background: 'var(--scarlet)', color: '#fff',
-            border: 'none', cursor: 'pointer', verticalAlign: 'super', margin: '0 1px',
-          }}
-        >
-          {idx}
-        </button>
-      )
+      parts.push(<CitationBadge key={key} idx={idx} citation={citationMap.get(idx)} onClick={onCiteClick} />)
     } else if (match[6] && match[7]) {
       parts.push(
         <a key={key} href={match[7]} target="_blank" rel="noopener noreferrer"
