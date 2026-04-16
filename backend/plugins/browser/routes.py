@@ -77,6 +77,10 @@ async def _resolve_llm(user_id: int, session: AsyncSession):
     if not model:
         raise ValueError(f"Aucun modèle configuré pour '{pname}'")
 
+    # Debug: log key info (masked)
+    key_preview = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
+    logger.info(f"[HuntR] LLM resolved: provider={pname}, model={model}, key={key_preview}, base_url={base_url}")
+
     return get_provider(pname, api_key, base_url), model
 
 
