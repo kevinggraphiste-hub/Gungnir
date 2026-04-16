@@ -46,21 +46,28 @@ async def invoke_llm_for_user(
         { "ok": False, "error": "..." }
     """
     settings = Settings.load()
-    provider_name = provider or settings.app.active_provider or "openrouter"
 
-    # Resolve API key: STRICT per-user. A background task must run as a known
-    # user, and that user must have their own key — no global fallback.
+    # Resolve provider/model from per-user settings first, then global fallback
     api_key = None
     base_url = None
+    user_active_provider = None
+    user_active_model = None
     try:
         async with async_session() as session:
             user_settings = await get_user_settings(user_id, session)
+            user_active_provider = user_settings.active_provider
+            user_active_model = user_settings.active_model
+            provider_name = provider or user_active_provider or settings.app.active_provider or "openrouter"
             user_prov = get_user_provider_key(user_settings, provider_name)
             if user_prov and user_prov.get("api_key"):
                 api_key = user_prov["api_key"]
                 base_url = user_prov.get("base_url")
     except Exception as e:
         logger.warning(f"User key lookup failed for user {user_id}: {e}")
+
+    if not api_key:
+        # provider_name may not be set if the session block failed entirely
+        provider_name = provider or user_active_provider or settings.app.active_provider or "openrouter"
 
     provider_config = settings.providers.get(provider_name)
     if not api_key:
@@ -73,7 +80,7 @@ async def invoke_llm_for_user(
     if not base_url and provider_config:
         base_url = provider_config.base_url
 
-    chosen_model = model or (provider_config.default_model if provider_config else None)
+    chosen_model = model or user_active_model or (provider_config.default_model if provider_config else None)
     if not chosen_model:
         return {"ok": False, "error": f"Aucun modèle par défaut pour '{provider_name}'"}
 
