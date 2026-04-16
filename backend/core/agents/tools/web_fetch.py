@@ -13,6 +13,9 @@ Capacités :
 import aiohttp
 import asyncio
 import ipaddress
+import logging
+
+logger = logging.getLogger("gungnir.web_fetch")
 import re
 import socket
 from typing import Optional
@@ -299,12 +302,39 @@ async def web_fetch(url: str, extract: str = "text", timeout: int = 15) -> dict:
 
 async def web_search_lite(query: str, num_results: int = 10) -> dict:
     """
-    Recherche web légère via DuckDuckGo HTML (pas besoin de Playwright).
-    Parse directement la page de résultats DuckDuckGo.
+    Recherche web via la librairie duckduckgo-search (stable, pas de parsing HTML).
+    Fallback sur le parsing HTML si la librairie échoue.
     """
-    search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
-
     try:
+        # Primary: use duckduckgo-search library (reliable, no HTML parsing)
+        from duckduckgo_search import DDGS
+        import asyncio
+
+        def _sync_search():
+            with DDGS() as ddgs:
+                return list(ddgs.text(query, max_results=num_results))
+
+        raw = await asyncio.get_event_loop().run_in_executor(None, _sync_search)
+        results = []
+        for r in raw:
+            results.append({
+                'title': r.get('title', ''),
+                'url': r.get('href', '') or r.get('link', ''),
+                'snippet': (r.get('body', '') or r.get('snippet', ''))[:500],
+            })
+        if results:
+            return {
+                "ok": True,
+                "query": query,
+                "results": results,
+                "results_count": len(results),
+            }
+    except Exception as e:
+        logger.debug(f"duckduckgo-search library failed, trying HTML fallback: {e}")
+
+    # Fallback: parse DDG HTML directly
+    try:
+        search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(
             connector=connector,
@@ -316,38 +346,25 @@ async def web_search_lite(query: str, num_results: int = 10) -> dict:
                     return {"ok": False, "error": f"DuckDuckGo HTTP {resp.status}"}
                 html = await resp.text(errors='replace')
 
-        # Parser les résultats DDG
         results = []
-        # Pattern: <a class="result__a" href="...">TITLE</a> ... <a class="result__snippet">SNIPPET</a>
         result_blocks = re.findall(
             r'<a\s+rel="nofollow"\s+class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>'
             r'.*?'
             r'<a\s+class="result__snippet"[^>]*>(.*?)</a>',
             html, re.DOTALL
         )
-
         for href, title_html, snippet_html in result_blocks[:num_results]:
-            # Nettoyer le HTML des titres et snippets
             title = re.sub(r'<[^>]+>', '', title_html).strip()
             snippet = re.sub(r'<[^>]+>', '', snippet_html).strip()
-            # DDG encode les URLs avec un redirect
             if '/l/?uddg=' in href:
                 from urllib.parse import unquote
                 match = re.search(r'uddg=([^&]+)', href)
                 if match:
                     href = unquote(match.group(1))
-            results.append({
-                'title': title,
-                'url': href,
-                'snippet': snippet[:300],
-            })
+            results.append({'title': title, 'url': href, 'snippet': snippet[:300]})
 
         if not results:
-            # Fallback: pattern plus simple
-            links = re.findall(
-                r'class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>',
-                html, re.DOTALL
-            )
+            links = re.findall(r'class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html, re.DOTALL)
             for href, title_html in links[:num_results]:
                 title = re.sub(r'<[^>]+>', '', title_html).strip()
                 if '/l/?uddg=' in href:
@@ -355,14 +372,9 @@ async def web_search_lite(query: str, num_results: int = 10) -> dict:
                     match = re.search(r'uddg=([^&]+)', href)
                     if match:
                         href = unquote(match.group(1))
-                results.append({'title': title, 'url': href, 'snippet': ''})
+                results.append({'title': title, 'url': href, 'snippet': title})
 
-        return {
-            "ok": True,
-            "query": query,
-            "results": results,
-            "results_count": len(results),
-        }
+        return {"ok": True, "query": query, "results": results, "results_count": len(results)}
 
     except Exception as e:
         return {"ok": False, "error": f"Erreur recherche : {type(e).__name__}: {e}"}
