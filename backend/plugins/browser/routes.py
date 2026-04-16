@@ -494,7 +494,6 @@ async def search_stream(req: SearchRequest, request: Request, session: AsyncSess
     async def _stream():
         t0 = time.time()
         config = HuntRConfig.load()
-        provider, model, provider_name = pre_provider, pre_model, pre_provider_name
 
         try:
             # ── 1. Query Understanding + Expansion ─────────────────────
@@ -509,8 +508,8 @@ async def search_stream(req: SearchRequest, request: Request, session: AsyncSess
             # Smart expansion (LLM in pro, heuristic in normal)
             understanding = await _expand_query(
                 req.query,
-                provider if req.pro_search else None,
-                model,
+                pre_provider if req.pro_search else None,
+                pre_model,
                 session_ctx,
             )
             search_query = understanding["rewritten"] or req.query
