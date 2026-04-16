@@ -226,33 +226,25 @@ async def search_stream(req: SearchRequest, request: Request,
         try:
             query = req.query.strip()
 
-            # ── Search phase (shared: try Tavily first, DDG fallback) ──
-            results: list[SearchResult] = []
+            if not req.pro_search:
+                # ══════════════════════════════════════════════════════
+                # MODE CLASSIQUE — DDG only, 100% gratuit, 0 API key
+                # ══════════════════════════════════════════════════════
+                yield _sse("status", {"message": "Recherche (DuckDuckGo)...", "step": 1})
 
-            pro_steps = 4 if req.pro_search else 1
-
-            if tavily:
-                yield _sse("status", {"message": "Recherche web...", "step": 1, "total_steps": pro_steps})
-                results = await tavily.search(query, max_results=req.max_results)
-
-            if not results:
-                yield _sse("status", {"message": "Recherche (DuckDuckGo)...", "step": 1, "total_steps": pro_steps})
                 ddg = DDGProvider()
                 results = await ddg.search(query, max_results=req.max_results)
+                engines = ["duckduckgo"]
 
-            engines = list(set(r.source for r in results)) if results else ["duckduckgo"]
-
-            yield _sse("search", {
-                "count": len(results),
-                "engines": engines,
-                "results": [
-                    {"title": r.title, "url": r.url, "snippet": r.snippet,
-                     "source": r.source}
-                    for r in results[:10]
-                ],
-            })
-
-            if not req.pro_search:
+                yield _sse("search", {
+                    "count": len(results),
+                    "engines": engines,
+                    "results": [
+                        {"title": r.title, "url": r.url, "snippet": r.snippet,
+                         "source": r.source}
+                        for r in results[:10]
+                    ],
+                })
                 # ══════════════════════════════════════════════════════
                 # MODE CLASSIQUE — formatted results, no LLM
                 # ══════════════════════════════════════════════════════
@@ -277,10 +269,20 @@ async def search_stream(req: SearchRequest, request: Request,
                 return
 
             # ══════════════════════════════════════════════════════════
-            # MODE PRO — 4 steps: search → sources → synthesis → done
+            # MODE PRO — Tavily + LLM (4 steps)
             # ══════════════════════════════════════════════════════════
 
-            engines = list(set(r.source for r in results))
+            # Step 1: Tavily search
+            yield _sse("status", {"message": "Recherche approfondie (Tavily)...", "step": 1, "total_steps": 4})
+            results = await tavily.search(query, max_results=req.max_results)
+
+            if not results:
+                # Fallback DDG si Tavily échoue
+                yield _sse("status", {"message": "Fallback DuckDuckGo...", "step": 1, "total_steps": 4})
+                ddg = DDGProvider()
+                results = await ddg.search(query, max_results=req.max_results)
+
+            engines = list(set(r.source for r in results)) if results else ["tavily"]
 
             # Step 2: sources found
             yield _sse("status", {"message": f"{len(results)} sources trouvées", "step": 2, "total_steps": 4})
