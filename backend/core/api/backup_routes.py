@@ -52,6 +52,7 @@ from backend.core.db.models import (
     UserPersonality,
     UserSubAgent,
     MCPServerConfig,
+    HuntRSearch,
 )
 from backend.core.api.auth_helpers import require_admin
 
@@ -146,6 +147,14 @@ _USER_DATA_ROOTS = [
     "workspace",
     "skills",
     "personalities",
+    # Extended coverage (manifest v4) — makes the backup capture the full
+    # per-user footprint on disk: browser/HuntR cache, per-user logs, user
+    # uploads and local caches. Restoring one of these folders is harmless
+    # when it's absent from the zip (restore skips missing entries).
+    "browser",
+    "logs",
+    "files",
+    "cache",
 ]
 
 
@@ -230,6 +239,7 @@ async def _export_user_db(session: AsyncSession, uid: int) -> dict:
         ("user_personalities", UserPersonality, UserPersonality.user_id),
         ("user_sub_agents", UserSubAgent, UserSubAgent.user_id),
         ("mcp_server_configs", MCPServerConfig, MCPServerConfig.user_id),
+        ("huntr_searches", HuntRSearch, HuntRSearch.user_id),
         ("cost_analytics", CostAnalytics, CostAnalytics.user_id),
         ("budget_settings", BudgetSettings, BudgetSettings.user_id),
         ("provider_budgets", ProviderBudget, ProviderBudget.user_id),
@@ -297,6 +307,7 @@ async def _delete_user_db(session: AsyncSession, uid: int) -> None:
         (CostAnalytics, CostAnalytics.user_id),
         (BudgetSettings, BudgetSettings.user_id),
         (ProviderBudget, ProviderBudget.user_id),
+        (HuntRSearch, HuntRSearch.user_id),
         (Conversation, Conversation.user_id),
         (ConversationFolder, ConversationFolder.user_id),
         (ConversationTag, ConversationTag.user_id),
@@ -461,6 +472,14 @@ async def _import_user_db(session: AsyncSession, uid: int, export: dict) -> dict
         session.add(AgentTask(**kwargs))
     counts["agent_tasks"] = len(export.get("agent_tasks") or [])
 
+    # ── huntr_searches (user-scoped, no FK to conversations) ────────────
+    for row in export.get("huntr_searches") or []:
+        kwargs = {c.name: _parse_value(c, row.get(c.name)) for c in HuntRSearch.__table__.columns}
+        kwargs.pop("id", None)
+        kwargs["user_id"] = uid
+        session.add(HuntRSearch(**kwargs))
+    counts["huntr_searches"] = len(export.get("huntr_searches") or [])
+
     # ── cost_analytics ──────────────────────────────────────────────────
     for row in export.get("cost_analytics") or []:
         old_convo = row.get("conversation_id")
@@ -620,14 +639,24 @@ async def create_user_backup(session: AsyncSession, uid: int) -> dict:
         username = user_row.get("username") or f"user{uid}"
 
         manifest = {
-            "version": "3.0",
+            "version": "4.0",
             "kind": "per_user",
             "user_id": uid,
             "username": username,
             "created_at": datetime.utcnow().isoformat() + "Z",
             "row_counts": row_counts,
             "file_count": len(file_entries),
+            "covers": {
+                "db_tables": sorted(row_counts.keys()),
+                "file_roots": list(_USER_DATA_ROOTS) + ["code_configs"],
+                "backup_config": True,
+            },
         }
+
+        # User's own backup-plugin configuration (provider choice, max_backups,
+        # github/supabase tokens). Stored in plaintext on disk today, archived
+        # alongside the rest so a restore rewires the automation too.
+        backup_cfg = _load_user_config(uid)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"gungnir_user{uid}_{timestamp}.zip"
@@ -637,6 +666,7 @@ async def create_user_backup(session: AsyncSession, uid: int) -> dict:
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
             zf.writestr("db_export.json", json.dumps(export, indent=2, ensure_ascii=False, default=str))
+            zf.writestr("backup_config.json", json.dumps(backup_cfg, indent=2, ensure_ascii=False))
             for abs_path, arcname in file_entries:
                 try:
                     zf.write(abs_path, f"files/{arcname}")
@@ -732,6 +762,18 @@ async def restore_backup(data: dict, request: Request, session: AsyncSession = D
 
             _wipe_user_files(uid)
             extracted = _extract_user_files_from_zip(uid, zf)
+
+            # Manifest v4+: restore the user's backup-plugin config if archived.
+            # Legacy v3 zips silently skip this step — old restores keep working.
+            try:
+                cfg_bytes = zf.read("backup_config.json")
+                cfg = json.loads(cfg_bytes.decode("utf-8"))
+                if isinstance(cfg, dict):
+                    _save_user_config(uid, cfg)
+            except KeyError:
+                pass
+            except Exception as _cfg_err:
+                logger.warning(f"Restore: backup_config rehydration for uid={uid} failed: {_cfg_err}")
 
         # ── Targeted post-restore reload (per-user only) ───────────────────
         # Everything below is scoped to this user's caches: stop their MCP

@@ -1141,7 +1141,28 @@ Tu operes en mode **demande**. Comportement :
         except Exception as _e:
             print(f"[Wolf] tasks_block injection failed: {_e}")
 
-        full_system = _soul_content.strip() + _personality_block + _skill_block + consciousness_block + tools_block + mode_block + onboarding_block + tasks_block
+        style_block = (
+            "\n\n## Style de reponse\n"
+            "Tu reponds en Markdown propre et aere, pense 'lecture confortable', pas 'bloc de texte brut'.\n"
+            "\n"
+            "Regles :\n"
+            "- Pour les reponses courtes (<3 phrases), reste naturel, pas de titre.\n"
+            "- Des que la reponse couvre 2 aspects ou plus, structure avec des `## Titres` thematiques.\n"
+            "- Si c'est un sujet complexe ou detaille, demarre par un `# Titre principal` qui reformule la demande, puis enchaine avec 2-4 sections `## ...`, et termine par une courte synthese (derniere ligne ou petit paragraphe).\n"
+            "- Paragraphes aeres (saute une ligne entre deux paragraphes), phrases courtes.\n"
+            "- Mets en **gras** les termes-cles, les chiffres qui comptent, les actions a faire.\n"
+            "- Utilise des listes `- ...` pour les enumerations (options, etapes, ingredients).\n"
+            "- Utilise des listes numerotees `1. ...` pour une procedure ordonnee.\n"
+            "- Blocs de code triples-backticks avec le langage (```python, ```bash, ```json).\n"
+            "- `code inline` pour les noms de fichiers, commandes courtes, variables.\n"
+            "- Tableaux Markdown quand tu compares plusieurs elements sur plusieurs criteres.\n"
+            "\n"
+            "Interdits :\n"
+            "- Pas de `####` ou plus profond : reste au niveau `#` / `##` / `###`.\n"
+            "- Pas de murs de texte sans respiration.\n"
+            "- Pas de titre factice juste pour faire joli (un titre = un vrai regroupement).\n"
+        )
+        full_system = _soul_content.strip() + _personality_block + _skill_block + consciousness_block + tools_block + mode_block + onboarding_block + tasks_block + style_block
         chat_messages.insert(0, ChatMessage(role="system", content=full_system))
 
         # -- Boucle tool calling

@@ -113,51 +113,205 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
   )
 }
 
-// Rendu d'un message : parse les fences ```lang ... ``` et alterne texte brut / CodeBlock
+// ── Inline markdown rendering ────────────────────────────────────────
+// Supports: **bold**, *italic* / _italic_, `code`, [label](url)
+function renderInline(text: string): React.ReactNode[] {
+  const out: React.ReactNode[] = []
+  const pattern = /(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_|`[^`\n]+`|\[[^\]\n]+\]\([^)\n]+\))/g
+  let last = 0
+  let key = 0
+  let m: RegExpExecArray | null
+  while ((m = pattern.exec(text)) !== null) {
+    if (m.index > last) out.push(<span key={key++}>{text.slice(last, m.index)}</span>)
+    const tok = m[0]
+    if (tok.startsWith('**') && tok.endsWith('**')) {
+      out.push(<strong key={key++} style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{tok.slice(2, -2)}</strong>)
+    } else if (tok.startsWith('*') && tok.endsWith('*')) {
+      out.push(<em key={key++}>{tok.slice(1, -1)}</em>)
+    } else if (tok.startsWith('_') && tok.endsWith('_')) {
+      out.push(<em key={key++}>{tok.slice(1, -1)}</em>)
+    } else if (tok.startsWith('`') && tok.endsWith('`')) {
+      out.push(
+        <code key={key++} className="px-1 py-0.5 rounded text-[0.85em] font-mono"
+          style={{ background: 'color-mix(in srgb, var(--scarlet) 12%, transparent)', color: 'var(--accent-primary-light, var(--accent-primary))', border: '1px solid color-mix(in srgb, var(--scarlet) 15%, transparent)' }}>
+          {tok.slice(1, -1)}
+        </code>
+      )
+    } else if (tok.startsWith('[')) {
+      const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok)
+      if (linkMatch) {
+        out.push(
+          <a key={key++} href={linkMatch[2]} target="_blank" rel="noopener noreferrer"
+            style={{ color: 'var(--scarlet)', textDecoration: 'underline' }}>
+            {linkMatch[1]}
+          </a>
+        )
+      } else {
+        out.push(<span key={key++}>{tok}</span>)
+      }
+    }
+    last = pattern.lastIndex
+  }
+  if (last < text.length) out.push(<span key={key++}>{text.slice(last)}</span>)
+  return out
+}
+
+// ── Block markdown rendering (headings, lists, quotes, tables, paragraphs) ──
+function renderMarkdownBlock(text: string, keyPrefix: string): React.ReactNode {
+  const lines = text.split('\n')
+  const nodes: React.ReactNode[] = []
+  let i = 0
+  let k = 0
+  const pushKey = () => `${keyPrefix}-${k++}`
+
+  while (i < lines.length) {
+    const line = lines[i]
+    const trimmed = line.trim()
+
+    if (trimmed === '') { i++; continue }
+
+    // Headings
+    const h = /^(#{1,3})\s+(.+)$/.exec(trimmed)
+    if (h) {
+      const level = h[1].length
+      const inner = renderInline(h[2])
+      if (level === 1) {
+        nodes.push(<h1 key={pushKey()} style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.3, margin: '18px 0 10px', color: 'var(--text-primary)' }}>{inner}</h1>)
+      } else if (level === 2) {
+        nodes.push(<h2 key={pushKey()} style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.35, margin: '16px 0 8px', paddingBottom: 4, borderBottom: '1px solid color-mix(in srgb, var(--scarlet) 25%, transparent)', color: 'var(--text-primary)' }}>{inner}</h2>)
+      } else {
+        nodes.push(<h3 key={pushKey()} style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 6px', color: 'var(--text-primary)' }}>{inner}</h3>)
+      }
+      i++; continue
+    }
+
+    // Blockquote
+    if (trimmed.startsWith('>')) {
+      const qLines: string[] = []
+      while (i < lines.length && lines[i].trim().startsWith('>')) {
+        qLines.push(lines[i].trim().replace(/^>\s?/, ''))
+        i++
+      }
+      nodes.push(
+        <blockquote key={pushKey()} style={{ margin: '8px 0', padding: '6px 12px', borderLeft: '3px solid var(--scarlet)', background: 'color-mix(in srgb, var(--scarlet) 6%, transparent)', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          {renderInline(qLines.join(' '))}
+        </blockquote>
+      )
+      continue
+    }
+
+    // Unordered list
+    if (/^[-*]\s+/.test(trimmed)) {
+      const items: string[] = []
+      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*]\s+/, ''))
+        i++
+      }
+      nodes.push(
+        <ul key={pushKey()} style={{ margin: '6px 0', paddingLeft: 22, listStyle: 'disc' }}>
+          {items.map((it, j) => <li key={j} style={{ margin: '3px 0', lineHeight: 1.65 }}>{renderInline(it)}</li>)}
+        </ul>
+      )
+      continue
+    }
+
+    // Ordered list
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const items: string[] = []
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+\.\s+/, ''))
+        i++
+      }
+      nodes.push(
+        <ol key={pushKey()} style={{ margin: '6px 0', paddingLeft: 22, listStyle: 'decimal' }}>
+          {items.map((it, j) => <li key={j} style={{ margin: '3px 0', lineHeight: 1.65 }}>{renderInline(it)}</li>)}
+        </ol>
+      )
+      continue
+    }
+
+    // Table (| a | b | separator row | --- | --- |)
+    if (trimmed.startsWith('|') && i + 1 < lines.length && /^\|?\s*:?-+/.test(lines[i + 1].trim())) {
+      const header = trimmed.replace(/^\||\|$/g, '').split('|').map(s => s.trim())
+      i += 2
+      const rows: string[][] = []
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        rows.push(lines[i].trim().replace(/^\||\|$/g, '').split('|').map(s => s.trim()))
+        i++
+      }
+      nodes.push(
+        <div key={pushKey()} style={{ overflowX: 'auto', margin: '10px 0' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.92em' }}>
+            <thead>
+              <tr>{header.map((h2, j) => <th key={j} style={{ textAlign: 'left', padding: '6px 10px', borderBottom: '2px solid var(--scarlet)', color: 'var(--text-primary)', fontWeight: 700 }}>{renderInline(h2)}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((row, ri) => (
+                <tr key={ri} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                  {row.map((c, ci) => <td key={ci} style={{ padding: '6px 10px', verticalAlign: 'top' }}>{renderInline(c)}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+      continue
+    }
+
+    // Paragraph: consume consecutive non-empty, non-special lines
+    const pLines: string[] = []
+    while (i < lines.length) {
+      const l = lines[i]
+      const lt = l.trim()
+      if (lt === '') break
+      if (/^(#{1,3})\s+/.test(lt)) break
+      if (lt.startsWith('>')) break
+      if (/^[-*]\s+/.test(lt)) break
+      if (/^\d+\.\s+/.test(lt)) break
+      if (lt.startsWith('|')) break
+      pLines.push(l)
+      i++
+    }
+    if (pLines.length > 0) {
+      nodes.push(
+        <p key={pushKey()} style={{ margin: '6px 0', lineHeight: 1.7 }}>
+          {renderInline(pLines.join('\n'))}
+        </p>
+      )
+    }
+  }
+
+  return <>{nodes}</>
+}
+
+// Rendu d'un message : parse les fences ```lang ... ```, alterne blocs markdown / CodeBlock
 function MessageContent({ content }: { content: string }) {
-  const parts: Array<{ type: 'text' | 'code'; content: string; language?: string }> = []
+  const parts: Array<{ type: 'md' | 'code'; content: string; language?: string }> = []
   const regex = /```(\w+)?\n?([\s\S]*?)```/g
   let lastIndex = 0
   let match: RegExpExecArray | null
   while ((match = regex.exec(content)) !== null) {
     if (match.index > lastIndex) {
-      parts.push({ type: 'text', content: content.slice(lastIndex, match.index) })
+      parts.push({ type: 'md', content: content.slice(lastIndex, match.index) })
     }
     parts.push({ type: 'code', content: match[2].replace(/\n$/, ''), language: match[1] })
     lastIndex = regex.lastIndex
   }
   if (lastIndex < content.length) {
-    parts.push({ type: 'text', content: content.slice(lastIndex) })
+    parts.push({ type: 'md', content: content.slice(lastIndex) })
   }
   if (parts.length === 0) {
-    parts.push({ type: 'text', content })
+    parts.push({ type: 'md', content })
   }
 
   return (
-    <>
-      {parts.map((part, i) => {
-        if (part.type === 'code') {
-          return <CodeBlock key={i} code={part.content} language={part.language} />
-        }
-        // Rendu du texte avec `inline code` détecté
-        const inlineSegments = part.content.split(/(`[^`\n]+`)/g)
-        return (
-          <span key={i} className="whitespace-pre-wrap">
-            {inlineSegments.map((seg, j) => {
-              if (seg.startsWith('`') && seg.endsWith('`') && seg.length > 2) {
-                return (
-                  <code key={j} className="px-1 py-0.5 rounded text-[0.85em] font-mono"
-                    style={{ background: 'color-mix(in srgb, var(--scarlet) 12%, transparent)', color: 'var(--accent-primary-light, var(--accent-primary))', border: '1px solid color-mix(in srgb, var(--scarlet) 15%, transparent)' }}>
-                    {seg.slice(1, -1)}
-                  </code>
-                )
-              }
-              return <span key={j}>{seg}</span>
-            })}
-          </span>
-        )
-      })}
-    </>
+    <div className="markdown-body" style={{ color: 'var(--text-primary)' }}>
+      {parts.map((part, i) =>
+        part.type === 'code'
+          ? <CodeBlock key={i} code={part.content} language={part.language} />
+          : <div key={i}>{renderMarkdownBlock(part.content, `b${i}`)}</div>
+      )}
+    </div>
   )
 }
 
