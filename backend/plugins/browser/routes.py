@@ -51,16 +51,15 @@ async def _get_user_brave_key(user_id: int) -> str:
     config = HuntRConfig.load()
     brave_key = config.brave_api_key or ""
     try:
-        from backend.core.db.engine import get_session
+        from backend.core.db.engine import async_session
         from backend.core.api.auth_helpers import get_user_settings
         from backend.core.config.settings import decrypt_value
-        async for session in get_session():
+        async with async_session() as session:
             us = await get_user_settings(user_id, session)
             if us.service_keys:
                 user_brave = us.service_keys.get("brave")
                 if user_brave and user_brave.get("api_key"):
                     brave_key = decrypt_value(user_brave["api_key"])
-            break
     except Exception:
         pass
     return brave_key
@@ -69,17 +68,17 @@ async def _get_user_brave_key(user_id: int) -> str:
 async def _get_user_llm(user_id: int, provider_name: Optional[str] = None,
                         model_name: Optional[str] = None):
     """Get user's LLM provider — exact same logic as chat.py.
-    Reads the user's active provider/model and their per-user API key."""
-    from backend.core.db.engine import get_session
+    Uses async_session() directly (not the get_session generator)
+    so it works reliably inside SSE streams."""
+    from backend.core.db.engine import async_session
     from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
 
-    async for session in get_session():
+    async with async_session() as session:
         us = await get_user_settings(user_id, session)
         settings = Settings.load()
 
         pname = provider_name or us.active_provider or "openrouter"
 
-        # get_user_provider_key already decrypts
         user_prov = get_user_provider_key(us, pname)
         api_key = user_prov.get("api_key") if user_prov else None
         if not api_key:
@@ -99,8 +98,6 @@ async def _get_user_llm(user_id: int, provider_name: Optional[str] = None,
             raise ValueError(f"Aucun modèle pour '{pname}'")
 
         return get_provider(pname, api_key, base_url), mname, pname
-
-    raise ValueError("Session DB indisponible")
 
 
 router = APIRouter()
@@ -624,6 +621,7 @@ async def search_stream(req: SearchRequest, request: Request):
                     provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
                 except Exception as e:
                     yield _sse("error", {"message": f"LLM non disponible: {e}"})
+                    yield _sse("done", {"time_ms": _elapsed(t0), "error": True})
                     return
 
             yield _sse("status", {"message": "[Pro] Génération de la réponse...", "step": 5})
@@ -644,13 +642,18 @@ async def search_stream(req: SearchRequest, request: Request):
                         f"Réponds avec des citations inline [1], [2], etc."
             ))
 
-            # Stream answer token by token
+            # Stream answer token by token (fallback to non-stream if unavailable)
             answer_chunks = []
-            async for chunk in provider.chat_stream(messages, model=model, max_tokens=2048):
-                answer_chunks.append(chunk)
-                yield _sse("chunk", {"content": chunk})
-
-            answer = "".join(answer_chunks)
+            try:
+                async for chunk in provider.chat_stream(messages, model=model, max_tokens=2048):
+                    answer_chunks.append(chunk)
+                    yield _sse("chunk", {"content": chunk})
+                answer = "".join(answer_chunks)
+            except (AttributeError, NotImplementedError):
+                # Provider doesn't support streaming — use regular chat
+                resp = await provider.chat(messages, model=model, max_tokens=2048)
+                answer = resp.content or ""
+                yield _sse("chunk", {"content": answer})
             yield _sse("content", {"answer": answer})
             yield _sse("citation", {"citations": citations})
 
@@ -674,6 +677,7 @@ async def search_stream(req: SearchRequest, request: Request):
         except Exception as e:
             logger.error(f"HuntR search error: {e}", exc_info=True)
             yield _sse("error", {"message": str(e)})
+            yield _sse("done", {"time_ms": 0, "error": True})
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
