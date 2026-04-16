@@ -75,7 +75,27 @@ if ! docker compose images app 2>/dev/null | grep -q gungnir; then
     docker compose build app
 fi
 
-# 5. Lancer le migrator Python dans un container `app` ephemere
+# 5. Wipe optionnel de la base Postgres — si le container `app` a deja tourne,
+#    il a pu semer des donnees (users, user_settings...) qui bloqueront le
+#    migrator via ON CONFLICT DO NOTHING (tu garderais les seeds au lieu de
+#    tes donnees legacy).
+ROWCOUNT=$(docker compose exec -T db psql -U gungnir -d gungnir -tAc \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null || echo "0")
+if [ "$ROWCOUNT" -gt "0" ]; then
+    warn "La base Postgres contient deja $ROWCOUNT table(s)."
+    warn "Pour une migration propre depuis SQLite, il faut reinitialiser le schema."
+    read -p "  → Vider la base Postgres avant migration ? [oui/NON] : " CONFIRM
+    if [ "$CONFIRM" = "oui" ] || [ "$CONFIRM" = "OUI" ] || [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ]; then
+        log "Wipe du schema Postgres…"
+        docker compose exec -T db psql -U gungnir -d gungnir -c \
+            "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO gungnir;"
+        log "Schema vide."
+    else
+        warn "Skip du wipe — le migrator va probablement skipper des lignes (ON CONFLICT)."
+    fi
+fi
+
+# 6. Lancer le migrator Python dans un container `app` ephemere
 log "Lancement du migrator…"
 log ""
 docker compose run --rm \
