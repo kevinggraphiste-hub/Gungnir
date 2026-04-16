@@ -644,8 +644,32 @@ async def save_user_app_settings(request: Request, session: AsyncSession = Depen
     body = await request.json()
     user_settings = await get_user_settings(user_id, session)
     if "agent_name" in body:
-        clean_name = (body.get("agent_name") or "").strip()
-        user_settings.agent_name = clean_name
+        new_name = (body.get("agent_name") or "").strip()
+        old_name = (user_settings.agent_name or "").strip()
+        user_settings.agent_name = new_name
+
+        # Propagate the rename into the per-user soul file so the two stay
+        # coherent. Without this, renaming "Odin" → "Tori" in Settings would
+        # leave the soul body saying "Ame de Odin / Tu es **Odin**" everywhere,
+        # creating a confusing discrepancy between the Settings name and what
+        # the LLM actually reads from the soul.
+        if old_name and new_name and old_name != new_name:
+            try:
+                from backend.core.agents.wolf_tools import _soul_path
+                soul_file = _soul_path(user_id)
+                if soul_file.exists():
+                    content = soul_file.read_text(encoding="utf-8")
+                    if old_name in content:
+                        content = content.replace(old_name, new_name)
+                        soul_file.write_text(content, encoding="utf-8")
+                        import logging
+                        logging.getLogger("gungnir").info(
+                            f"Soul file updated: replaced '{old_name}' → '{new_name}' in {soul_file} for user {user_id}"
+                        )
+            except Exception as e:
+                import logging
+                logging.getLogger("gungnir").warning(f"Soul file rename propagation failed uid={user_id}: {e}")
+
     if "active_provider" in body:
         user_settings.active_provider = body["active_provider"]
     if "active_model" in body:
