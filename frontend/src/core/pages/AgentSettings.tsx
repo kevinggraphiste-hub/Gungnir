@@ -156,6 +156,16 @@ export default function AgentSettings() {
   const [isSavingSoul, setIsSavingSoul] = useState(false)
   const [soulSaveFlash, setSoulSaveFlash] = useState<'ok' | 'err' | null>(null)
 
+  // Track previous agent name so we can find-replace in the soul when it changes
+  const prevAgentName = useRef(agentName)
+  useEffect(() => {
+    const oldName = prevAgentName.current
+    if (oldName && agentName && oldName !== agentName && soulLoaded && soulContent.includes(oldName)) {
+      setSoulContent(prev => prev.replaceAll(oldName, agentName))
+    }
+    prevAgentName.current = agentName
+  }, [agentName])
+
   // Provider/model fetching — config d'abord (immédiat) puis API (enrichissement)
   const [providerModelsMap, setProviderModelsMap] = useState<Record<string, string[]>>({})
   const [modelSearch, setModelSearch] = useState('')

@@ -653,18 +653,22 @@ async def save_user_app_settings(request: Request, session: AsyncSession = Depen
         # leave the soul body saying "Ame de Odin / Tu es **Odin**" everywhere,
         # creating a confusing discrepancy between the Settings name and what
         # the LLM actually reads from the soul.
-        if old_name and new_name and old_name != new_name:
+        # Determine the name to replace in the soul file:
+        # - normal rename: old_name → new_name
+        # - first-time naming (old_name empty): replace the default "Gungnir"
+        replace_from = old_name if old_name else "Gungnir"
+        if new_name and replace_from != new_name:
             try:
                 from backend.core.agents.wolf_tools import _soul_path
                 soul_file = _soul_path(user_id)
                 if soul_file.exists():
                     content = soul_file.read_text(encoding="utf-8")
-                    if old_name in content:
-                        content = content.replace(old_name, new_name)
+                    if replace_from in content:
+                        content = content.replace(replace_from, new_name)
                         soul_file.write_text(content, encoding="utf-8")
                         import logging
                         logging.getLogger("gungnir").info(
-                            f"Soul file updated: replaced '{old_name}' → '{new_name}' in {soul_file} for user {user_id}"
+                            f"Soul file updated: replaced '{replace_from}' → '{new_name}' in {soul_file} for user {user_id}"
                         )
             except Exception as e:
                 import logging
