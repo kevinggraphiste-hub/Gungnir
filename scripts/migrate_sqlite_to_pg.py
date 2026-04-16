@@ -54,7 +54,12 @@ def _normalize_pg_url(url: str) -> str:
 
 
 async def _copy_table(src_engine: AsyncEngine, dst_engine: AsyncEngine, table) -> tuple[int, int]:
-    """Copie une table avec ON CONFLICT DO NOTHING. Retourne (lus, inseres)."""
+    """Copie une table avec ON CONFLICT DO NOTHING. Retourne (lus, inseres).
+
+    Tolere les schemas SQLite plus anciens : ne SELECT que les colonnes
+    presentes dans la source. Les colonnes manquantes cote PG prennent
+    leur valeur par defaut definie dans le modele.
+    """
     pk_cols = [c.name for c in table.primary_key.columns]
     if not pk_cols:
         log.warning(f"  → {table.name} : pas de PK, utilisation d'INSERT simple")
@@ -72,7 +77,25 @@ async def _copy_table(src_engine: AsyncEngine, dst_engine: AsyncEngine, table) -
             log.info(f"  → {table.name} : absente de la source, skip")
             return (0, 0)
 
-        result = await src_conn.stream(select(table))
+        # Intersection colonnes SQLite ∩ colonnes du modele — tolere
+        # le drift de schema (colonnes ajoutees apres coup)
+        r = await src_conn.execute(text(f'PRAGMA table_info("{table.name}")'))
+        sqlite_col_names = {row.name for row in r}
+        common = [c for c in table.columns if c.name in sqlite_col_names]
+        if not common:
+            log.info(f"  → {table.name} : aucune colonne commune, skip")
+            return (0, 0)
+
+        missing = sqlite_col_names ^ {c.name for c in table.columns}
+        if missing:
+            only_src = sqlite_col_names - {c.name for c in table.columns}
+            only_dst = {c.name for c in table.columns} - sqlite_col_names
+            if only_src:
+                log.info(f"    (colonnes source ignorees : {sorted(only_src)})")
+            if only_dst:
+                log.info(f"    (colonnes dest en defaut : {sorted(only_dst)})")
+
+        result = await src_conn.stream(select(*common))
         async for partition in result.partitions(BATCH_SIZE):
             rows = [dict(row._mapping) for row in partition]
             read += len(rows)
