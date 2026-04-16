@@ -115,7 +115,6 @@ export default function HuntRPlugin() {
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
-  const searchingRef = useRef(false)
 
   useEffect(() => {
     fetch(`${API}/history?limit=30`)
@@ -134,9 +133,13 @@ export default function HuntRPlugin() {
 
   const doSearch = useCallback(async (query?: string, forceFocus?: string) => {
     const q = (query || searchQuery).trim()
-    if (!q || searchingRef.current) return
+    if (!q) return
 
-    searchingRef.current = true
+    // Abort any previous search — no ref guard needed
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
     setSearching(true)
     setSearchStatus('Initialisation...')
     setCurrentStep(0)
@@ -144,10 +147,6 @@ export default function HuntRPlugin() {
     setLiveSources([])
     setSearchError('')
     if (query) setSearchQuery(query)
-
-    abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
 
     try {
       const resp = await fetch(`${API}/search/stream`, {
@@ -168,6 +167,7 @@ export default function HuntRPlugin() {
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
+      let streamDone = false
       const finalResult: Partial<SearchResult> = {
         answer: '', citations: [], related_questions: [],
         search_count: 0, passages_used: 0, pro_search: proSearch,
@@ -175,95 +175,99 @@ export default function HuntRPlugin() {
       }
       let streamedAnswer = ''
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+      try {
+        while (!streamDone) {
+          const { done, value } = await reader.read()
+          if (done) break
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const chunk = JSON.parse(line.slice(6))
-            const data = chunk.data || {}
-            switch (chunk.type) {
-              case 'status':
-                setSearchStatus(data.message || '')
-                if (data.step) setCurrentStep(data.step)
-                if (data.focus) setFocus(data.focus)
-                break
-              case 'search':
-                finalResult.search_count = data.count || 0
-                finalResult.engines = data.engines || []
-                // Show live sources immediately
-                if (data.results) {
-                  setLiveSources(data.results)
-                }
-                setSearchStatus(`${data.count} resultats via ${(data.engines || []).join(', ')}`)
-                break
-              case 'sources':
-                // Progressive source display during scraping
-                if (data.sources) {
-                  setLiveSources(prev => {
-                    const urls = new Set(prev.map(s => s.url))
-                    const news = data.sources.filter((s: LiveSource) => !urls.has(s.url))
-                    return [...prev, ...news]
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            try {
+              const chunk = JSON.parse(line.slice(6))
+              const data = chunk.data || {}
+              switch (chunk.type) {
+                case 'status':
+                  setSearchStatus(data.message || '')
+                  if (data.step) setCurrentStep(data.step)
+                  if (data.focus) setFocus(data.focus)
+                  break
+                case 'search':
+                  finalResult.search_count = data.count || 0
+                  finalResult.engines = data.engines || []
+                  if (data.results) {
+                    setLiveSources(data.results)
+                  }
+                  setSearchStatus(`${data.count} resultats via ${(data.engines || []).join(', ')}`)
+                  break
+                case 'sources':
+                  if (data.sources) {
+                    setLiveSources(prev => {
+                      const urls = new Set(prev.map(s => s.url))
+                      const news = data.sources.filter((s: LiveSource) => !urls.has(s.url))
+                      return [...prev, ...news]
+                    })
+                  }
+                  break
+                case 'chunk':
+                  streamedAnswer += data.content || ''
+                  finalResult.answer = streamedAnswer
+                  setSearchResult({ ...finalResult } as SearchResult)
+                  break
+                case 'content':
+                  finalResult.answer = data.answer || streamedAnswer
+                  setSearchResult({ ...finalResult } as SearchResult)
+                  break
+                case 'citation':
+                  finalResult.citations = data.citations || []
+                  setSearchResult({ ...finalResult } as SearchResult)
+                  break
+                case 'related':
+                  finalResult.related_questions = data.questions || []
+                  setSearchResult({ ...finalResult } as SearchResult)
+                  break
+                case 'done':
+                  Object.assign(finalResult, {
+                    time_ms: data.time_ms || 0,
+                    search_count: data.search_count || finalResult.search_count,
+                    passages_used: data.passages_used || 0,
+                    pro_search: data.pro_search ?? proSearch,
+                    intent: data.intent || '',
+                    focus: data.focus || focus,
+                    engines: data.engines || finalResult.engines,
                   })
-                }
-                break
-              case 'chunk':
-                streamedAnswer += data.content || ''
-                finalResult.answer = streamedAnswer
-                setSearchResult({ ...finalResult } as SearchResult)
-                break
-              case 'content':
-                finalResult.answer = data.answer || streamedAnswer
-                setSearchResult({ ...finalResult } as SearchResult)
-                break
-              case 'citation':
-                finalResult.citations = data.citations || []
-                setSearchResult({ ...finalResult } as SearchResult)
-                break
-              case 'related':
-                finalResult.related_questions = data.questions || []
-                setSearchResult({ ...finalResult } as SearchResult)
-                break
-              case 'done':
-                Object.assign(finalResult, {
-                  time_ms: data.time_ms || 0,
-                  search_count: data.search_count || finalResult.search_count,
-                  passages_used: data.passages_used || 0,
-                  pro_search: data.pro_search ?? proSearch,
-                  intent: data.intent || '',
-                  focus: data.focus || focus,
-                  engines: data.engines || finalResult.engines,
-                })
-                setSearchResult({ ...finalResult } as SearchResult)
-                fetch(`${API}/history?limit=30`)
-                  .then(r => r.json())
-                  .then(d => setHistory(d.history || []))
-                  .catch(() => {})
-                break
-              case 'error':
-                setSearchError(data.message || 'Erreur inconnue')
-                break
-            }
-          } catch { /* skip malformed SSE */ }
+                  setSearchResult({ ...finalResult } as SearchResult)
+                  fetch(`${API}/history?limit=30`)
+                    .then(r => r.json())
+                    .then(d => setHistory(d.history || []))
+                    .catch(() => {})
+                  streamDone = true
+                  break
+                case 'error':
+                  setSearchError(data.message || 'Erreur inconnue')
+                  streamDone = true
+                  break
+              }
+            } catch { /* skip malformed SSE */ }
+          }
         }
+      } finally {
+        // Always close the reader — don't wait for server to hang up
+        reader.cancel().catch(() => {})
       }
-      setSearchStatus('')
     } catch (e: any) {
       if (e.name !== 'AbortError') {
         setSearchError(e.message)
-        setSearchStatus('')
       }
     } finally {
-      searchingRef.current = false
+      // Always unlock — no condition, no ref check
       setSearching(false)
+      setSearchStatus('')
     }
-  }, [searchQuery, proSearch, focus, sessionId])
+  }, [searchQuery, proSearch, focus, sessionId, selectedProvider, selectedModel])
 
   const scrollToSource = (idx: number) => {
     const el = document.getElementById(`huntr-source-${idx}`)
