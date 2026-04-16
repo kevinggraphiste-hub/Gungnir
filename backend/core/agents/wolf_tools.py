@@ -695,6 +695,7 @@ WOLF_TOOL_SCHEMAS = [
                     "cron_expression": {"type": "string", "description": "Expression cron 5 champs: minute heure jour mois jour_semaine. Ex: '0 9 * * 1-5' = 9h du lundi au vendredi"},
                     "interval_seconds": {"type": "integer", "description": "Intervalle en secondes (pour type=interval). Ex: 3600 = toutes les heures"},
                     "run_at":      {"type": "string", "description": "Date/heure ISO pour exécution unique (type=once). Ex: '2026-04-05T14:00:00'"},
+                    "skill_name":  {"type": "string", "description": "Nom du skill à appliquer lors de l'exécution. Si omis, le skill actif de l'utilisateur sera utilisé."},
                 },
                 "required": ["name", "description", "prompt"]
             }
@@ -1735,7 +1736,8 @@ def _save_automata(data: dict):
 async def _schedule_task(
     name: str, description: str, prompt: str,
     task_type: str = "cron", cron_expression: str = None,
-    interval_seconds: int = None, run_at: str = None
+    interval_seconds: int = None, run_at: str = None,
+    skill_name: str = None,
 ) -> dict:
     data = _load_automata()
     # Full UUID — the scheduler UI, the toggle endpoint, and the daemon
@@ -1752,6 +1754,7 @@ async def _schedule_task(
         "cron_expression": cron_expression,
         "interval_seconds": interval_seconds,
         "run_at": run_at,
+        "skill_name": skill_name or "",
         "enabled": True,
         "created_at": now,
         "updated_at": now,

@@ -21,6 +21,7 @@ interface Task {
   cron_expression?: string
   interval_seconds?: number
   run_at?: string
+  skill_name?: string
   enabled: boolean
   created_at: string
   updated_at: string
@@ -921,8 +922,20 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
   const [cron, setCron] = useState('0 9 * * *')
   const [interval, setInterval_] = useState(3600)
   const [runAt, setRunAt] = useState('')
+  const [skillName, setSkillName] = useState('')
+  const [skills, setSkills] = useState<{ name: string; description?: string }[]>([])
   const [enabled, setEnabled] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const token = localStorage.getItem('gungnir_auth_token')
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    fetch('/api/skills', { headers })
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setSkills(data) })
+      .catch(() => {})
+  }, [])
 
   const submit = () => {
     if (!name.trim()) { setError('Nom requis'); return }
@@ -931,6 +944,7 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
     if (taskType === 'cron') body.cron_expression = cron
     if (taskType === 'interval') body.interval_seconds = interval
     if (taskType === 'run_at') body.run_at = runAt
+    if (skillName) body.skill_name = skillName
     setError(null)
     onCreate(body)
   }
@@ -1006,6 +1020,19 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
           <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={4}
             placeholder="Ex: Fais-moi un résumé rapide de l'actualité tech du jour en 3 bullet points."
             style={{ ...iStyle, resize: 'vertical', fontFamily: "'JetBrains Mono', monospace" }} />
+        </div>
+
+        <div>
+          <label style={lStyle}>Skill (optionnel)</label>
+          <select value={skillName} onChange={e => setSkillName(e.target.value)} style={iStyle}>
+            <option value="">— Skill actif de l'utilisateur —</option>
+            {skills.map(s => (
+              <option key={s.name} value={s.name}>{s.name}{s.description ? ` — ${s.description}` : ''}</option>
+            ))}
+          </select>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+            Le skill sera injecté dans le contexte LLM lors de l'exécution. Par défaut, le skill actif de l'utilisateur est utilisé.
+          </div>
         </div>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>

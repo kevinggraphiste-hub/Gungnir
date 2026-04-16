@@ -59,6 +59,7 @@ class TaskUpdate(BaseModel):
     cron_expression: Optional[str] = None
     interval_seconds: Optional[int] = None
     run_at: Optional[str] = None
+    skill_name: Optional[str] = None
     enabled: Optional[bool] = None
 
 
@@ -70,6 +71,7 @@ class TaskCreate(BaseModel):
     cron_expression: Optional[str] = None
     interval_seconds: Optional[int] = None
     run_at: Optional[str] = None
+    skill_name: str = ""
     enabled: bool = True
 
 
@@ -125,6 +127,7 @@ async def create_task(body: TaskCreate, request: Request):
         "cron_expression": body.cron_expression,
         "interval_seconds": body.interval_seconds,
         "run_at": body.run_at,
+        "skill_name": body.skill_name or "",
         "enabled": body.enabled,
         "created_at": now,
         "updated_at": now,

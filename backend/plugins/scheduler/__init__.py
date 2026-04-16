@@ -119,7 +119,8 @@ def _is_task_due(task: dict, now: datetime) -> bool:
 
 
 async def _execute_task(user_id: int, task: dict) -> dict:
-    """Invoke the user's LLM with the task prompt + user tools. Returns history entry."""
+    """Invoke the user's LLM with the task prompt + user tools + skill context.
+    Builds a system prompt from the user's soul + optional skill, similar to chat.py."""
     from backend.core.services.llm_invoker import invoke_llm_for_user
 
     prompt = task.get("prompt", "")
@@ -134,8 +135,6 @@ async def _execute_task(user_id: int, task: dict) -> dict:
         }
 
     # Build per-user tool set: WOLF core tools + user's MCP tools.
-    # The wolf execution context must be set before calling tools that rely on
-    # get_user_context()/get_conversation_context() (filesystem, workspace, etc.).
     tools: list[dict] | None = None
     executors: dict | None = None
     try:
@@ -154,15 +153,54 @@ async def _execute_task(user_id: int, task: dict) -> dict:
         executors = {**WOLF_EXECUTORS, **mcp_executors}
         set_user_context(user_id)
     except Exception as e:
-        # If tool wiring fails, fall back to text-only — the task still runs.
         logger.warning(f"Tool wiring failed for user={user_id} task={task.get('id')}: {e}")
         tools = None
         executors = None
+
+    # Build system prompt: soul + skill (like chat.py does)
+    system_prompt = None
+    try:
+        from backend.core.db.engine import get_session
+        from backend.core.api.auth_helpers import get_user_settings
+        from backend.core.agents.wolf_tools import _soul_path
+        from backend.core.agents import user_data as _ud
+        from backend.core.api.chat import _get_default_soul
+
+        async for session in get_session():
+            us = await get_user_settings(user_id, session)
+            agent_name = us.agent_name or "Gungnir"
+
+            # Load soul
+            soul_file = _soul_path(user_id)
+            if soul_file.exists():
+                soul_content = soul_file.read_text(encoding="utf-8")
+            else:
+                soul_content = _get_default_soul(agent_name)
+
+            # Resolve skill: task-specific skill_name > user's active skill
+            skill_block = ""
+            task_skill = task.get("skill_name", "")
+            if task_skill:
+                skill_data = await _ud.get_skill(session, user_id, task_skill)
+                if skill_data and skill_data.get("prompt"):
+                    skill_block = f"\n\n## Skill actif : {skill_data['name']}\n{skill_data['prompt']}"
+            else:
+                active_skill = await _ud.get_active_skill(session, user_id)
+                if active_skill and active_skill.get("prompt"):
+                    skill_block = f"\n\n## Skill actif : {active_skill['name']}\n{active_skill['prompt']}"
+
+            system_prompt = soul_content + skill_block
+            system_prompt += f"\n\n**Ton nom :** Tu t'appelles **{agent_name}**."
+            system_prompt += "\n**Contexte :** Tu exécutes une tâche planifiée automatiquement (cron/scheduler)."
+            break
+    except Exception as e:
+        logger.warning(f"System prompt build failed for user={user_id}: {e}")
 
     try:
         result = await invoke_llm_for_user(
             user_id,
             prompt,
+            system_prompt=system_prompt,
             tools=tools,
             executors=executors,
         )
