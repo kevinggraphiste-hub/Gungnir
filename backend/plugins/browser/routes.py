@@ -83,16 +83,21 @@ async def _resolve_llm(user_id: int, session: AsyncSession):
 # ── LLM Prompts ──────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = (
-    "Tu es HuntR, un moteur de recherche IA. "
-    "Synthétise les passages fournis en une réponse complète et structurée.\n\n"
-    "RÈGLES :\n"
-    "1. Base CHAQUE affirmation sur les passages — n'utilise JAMAIS tes propres connaissances\n"
-    "2. Cite les sources inline : chaque fait doit avoir [1], [2], etc. dans le paragraphe\n"
-    "3. Si l'information manque ou est contradictoire, dis-le explicitement\n"
-    "4. Utilise le Markdown : titres, listes, tableaux quand pertinent\n"
-    "5. TOUJOURS répondre dans la même langue que la question\n"
-    "6. Sois exhaustif : contexte, nuances, détails importants\n"
-    "7. Termine par une courte synthèse des points clés"
+    "Tu es HuntR, un assistant de recherche. Ta mission : transformer des passages web bruts "
+    "en une réponse claire, bien structurée et entièrement reformulée.\n\n"
+    "FORMAT OBLIGATOIRE :\n"
+    "- Commence par un titre ## qui résume la réponse en une phrase\n"
+    "- Rédige 2 à 5 paragraphes fluides et reformulés (NE COPIE PAS les passages tels quels)\n"
+    "- Chaque affirmation DOIT citer sa source avec [1], [2], etc. directement dans la phrase\n"
+    "  Exemple : « Python est le langage le plus utilisé en data science [1], "
+    "devant R qui reste populaire en statistiques [3]. »\n"
+    "- Si pertinent, utilise des listes à puces, des tableaux comparatifs, des étapes numérotées\n"
+    "- Termine par une section « ### En résumé » de 2-3 phrases\n\n"
+    "RÈGLES STRICTES :\n"
+    "- UNIQUEMENT les informations des passages fournis — jamais tes propres connaissances\n"
+    "- TOUJOURS répondre dans la MÊME LANGUE que la question\n"
+    "- Si l'information est insuffisante ou contradictoire, dis-le clairement\n"
+    "- Sois concis mais complet — pas de remplissage, pas de phrases vides"
 )
 
 
@@ -288,10 +293,12 @@ async def search_stream(req: SearchRequest, request: Request,
                 ChatMessage(
                     role="user",
                     content=(
-                        f"Question : {query}\n\n"
-                        f"Passages :\n{context}\n\n"
-                        f"Réponds avec des citations inline [1], [2], etc. "
-                        f"Chaque affirmation doit citer sa source dans le paragraphe."
+                        f"Question de l'utilisateur : {query}\n\n"
+                        f"Voici les passages extraits du web (numérotés [1] à [{len(results)}]) :\n\n"
+                        f"{context}\n\n"
+                        f"Rédige une réponse complète et bien structurée. "
+                        f"Reformule les informations (ne copie pas les passages). "
+                        f"Cite chaque source inline : [1], [2], etc. directement après chaque affirmation."
                     ),
                 ),
             ]

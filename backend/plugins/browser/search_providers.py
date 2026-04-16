@@ -2,10 +2,9 @@
 HuntR — Search Providers
 
 Two providers, same interface:
-  - DDGProvider  : free, no API key, returns snippets only
+  - DDGProvider  : free, no API key, uses core web_search_lite (with HTML fallback)
   - TavilyProvider : requires per-user API key, returns full extracted content
 """
-import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -23,30 +22,30 @@ class SearchResult:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# DuckDuckGo — free, no key
+# DuckDuckGo — free, no key, uses Gungnir core (with HTML fallback)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class DDGProvider:
-    """Free web search via duckduckgo-search library. Returns snippets only."""
+    """Free web search via core web_search_lite (DDGS lib + HTML fallback)."""
 
     async def search(self, query: str, max_results: int = 10) -> list[SearchResult]:
         try:
-            from duckduckgo_search import DDGS
+            from backend.core.agents.tools.web_fetch import web_search_lite
 
-            def _sync():
-                with DDGS() as ddgs:
-                    return list(ddgs.text(query, max_results=max_results))
+            data = await web_search_lite(query, num_results=max_results)
+            if not data.get("ok"):
+                logger.warning(f"[HuntR][DDG] search failed: {data.get('error', 'unknown')}")
+                return []
 
-            raw = await asyncio.get_event_loop().run_in_executor(None, _sync)
             results = []
-            for r in raw:
-                url = r.get("href", "") or r.get("link", "")
+            for r in data.get("results", []):
+                url = r.get("url", "") or r.get("href", "")
                 if not url:
                     continue
                 results.append(SearchResult(
                     title=r.get("title", ""),
                     url=url,
-                    snippet=(r.get("body", "") or r.get("snippet", ""))[:500],
+                    snippet=(r.get("snippet", "") or r.get("body", ""))[:500],
                     content="",
                     source="duckduckgo",
                 ))
