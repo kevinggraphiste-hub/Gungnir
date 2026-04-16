@@ -262,6 +262,25 @@ class UserSubAgent(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class HuntRSearch(Base):
+    """Per-user HuntR search history (replaces in-memory dict)."""
+    __tablename__ = "huntr_searches"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    query = Column(Text, nullable=False)
+    mode = Column(String(20), default="classique")       # "classique" | "pro"
+    answer = Column(Text, default="")
+    citations = Column(JSON, default=list)               # [{index, url, title, snippet}]
+    related_questions = Column(JSON, default=list)       # [str]
+    engines = Column(JSON, default=list)                 # ["duckduckgo", "tavily"]
+    sources_count = Column(Integer, default=0)
+    time_ms = Column(Integer, default=0)
+    model = Column(String(255), default="")
+    is_favorite = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), index=True)
+
+
 class MCPServerConfig(Base):
     """Per-user MCP server configuration."""
     __tablename__ = "mcp_server_configs"

@@ -38,6 +38,7 @@ interface LiveSource {
 }
 
 interface HistoryEntry {
+  id?: number
   query: string
   mode: string
   sources_count: number
@@ -48,6 +49,7 @@ interface HistoryEntry {
   related_questions?: string[]
   engines?: string[]
   model?: string
+  is_favorite?: boolean
 }
 
 interface UserCapabilities {
@@ -83,6 +85,117 @@ function formatTimeAgo(ts: number): string {
   return `il y a ${Math.floor(diff / 86400)}j`
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;')
+}
+
+function markdownToHtml(md: string, citations: Citation[]): string {
+  if (!md) return ''
+  const citMap = new Map<number, Citation>()
+  citations.forEach(c => citMap.set(c.index, c))
+
+  const lines = md.split('\n')
+  const out: string[] = []
+  let inCode = false
+  const codeBuf: string[] = []
+
+  const inline = (txt: string): string => {
+    let s = escapeHtml(txt)
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>')
+    s = s.replace(/\[(\d+)\]/g, (_m, idx) => {
+      const c = citMap.get(parseInt(idx))
+      const href = c?.url || '#'
+      return `<sup><a href="${escapeHtml(href)}" class="hr-cite">[${idx}]</a></sup>`
+    })
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    return s
+  }
+
+  for (const line of lines) {
+    if (line.startsWith('```')) {
+      if (inCode) {
+        out.push(`<pre><code>${escapeHtml(codeBuf.join('\n'))}</code></pre>`)
+        codeBuf.length = 0
+        inCode = false
+      } else { inCode = true }
+      continue
+    }
+    if (inCode) { codeBuf.push(line); continue }
+    if (line.startsWith('### ')) out.push(`<h4>${inline(line.slice(4))}</h4>`)
+    else if (line.startsWith('## ')) out.push(`<h3>${inline(line.slice(3))}</h3>`)
+    else if (line.startsWith('# ')) out.push(`<h2>${inline(line.slice(2))}</h2>`)
+    else if (/^[-*]\s/.test(line)) out.push(`<li>${inline(line.slice(2))}</li>`)
+    else if (!line.trim()) out.push('')
+    else out.push(`<p>${inline(line)}</p>`)
+  }
+  return out.join('\n')
+}
+
+function exportAsPdf(query: string, result: SearchResult) {
+  const body = markdownToHtml(result.answer || '', result.citations || [])
+  const sources = (result.citations || []).map(c => {
+    const host = (() => { try { return new URL(c.url).hostname.replace('www.', '') } catch { return c.url } })()
+    return `<li><span class="idx">[${c.index}]</span> <a href="${escapeHtml(c.url)}">${escapeHtml(c.title || host)}</a><div class="host">${escapeHtml(host)}</div></li>`
+  }).join('')
+  const meta = [
+    result.pro_search ? 'Mode Pro' : 'Mode Classique',
+    ...(result.engines || []),
+    result.model || '',
+    `${result.search_count} sources`,
+    new Date().toLocaleString('fr-FR'),
+  ].filter(Boolean).map(escapeHtml).join(' • ')
+
+  const html = `<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>HuntR — ${escapeHtml(query)}</title>
+<style>
+  @page { margin: 18mm; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #1a1a1a; line-height: 1.55; max-width: 780px; margin: 0 auto; }
+  header { border-bottom: 3px solid #dc2626; padding-bottom: 10px; margin-bottom: 18px; }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header h1 .r { color: #dc2626; }
+  header .q { font-size: 15px; color: #333; margin: 6px 0 2px; font-weight: 600; }
+  header .meta { font-size: 11px; color: #666; }
+  h2 { font-size: 17px; color: #111; margin: 16px 0 6px; border-bottom: 1px solid #eee; padding-bottom: 3px; }
+  h3 { font-size: 14px; color: #222; margin: 14px 0 4px; }
+  h4 { font-size: 13px; color: #333; margin: 10px 0 3px; }
+  p { margin: 4px 0 8px; font-size: 12.5px; }
+  li { font-size: 12.5px; margin: 3px 0; }
+  a { color: #dc2626; text-decoration: none; }
+  a.hr-cite { color: #dc2626; font-weight: 700; }
+  code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; font-size: 11.5px; }
+  pre { background: #f4f4f4; padding: 10px; border-radius: 6px; overflow: auto; font-size: 11px; }
+  .sources { margin-top: 24px; border-top: 2px solid #dc2626; padding-top: 12px; }
+  .sources h2 { border: none; margin-top: 0; }
+  .sources ol { list-style: none; padding: 0; }
+  .sources li { margin: 8px 0; padding: 8px; background: #fafafa; border-left: 3px solid #dc2626; border-radius: 3px; }
+  .sources .idx { font-weight: 700; color: #dc2626; margin-right: 5px; }
+  .sources .host { font-size: 10.5px; color: #888; margin-top: 2px; }
+  footer { margin-top: 30px; font-size: 10px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 10px; }
+</style></head><body>
+<header>
+  <h1>Hunt<span class="r">R</span></h1>
+  <div class="q">${escapeHtml(query)}</div>
+  <div class="meta">${meta}</div>
+</header>
+<main>${body}</main>
+<section class="sources"><h2>Sources (${(result.citations || []).length})</h2><ol>${sources}</ol></section>
+<footer>Généré par HuntR — Gungnir</footer>
+<script>window.addEventListener('load', () => setTimeout(() => window.print(), 250));</script>
+</body></html>`
+
+  const w = window.open('', '_blank', 'width=900,height=700')
+  if (!w) {
+    alert('Popup bloquée. Autorisez les popups pour exporter en PDF.')
+    return
+  }
+  w.document.open()
+  w.document.write(html)
+  w.document.close()
+}
+
 // ── Main Component ────────────────────────────────────────────────────────
 
 export default function HuntRPlugin() {
@@ -100,21 +213,54 @@ export default function HuntRPlugin() {
   const [caps, setCaps] = useState<UserCapabilities | null>(null)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [showHistory, setShowHistory] = useState(false)
+  const [favoritesOnly, setFavoritesOnly] = useState(false)
+  const [activeHistoryId, setActiveHistoryId] = useState<number | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  // ── Init: check user capabilities + history ───────────────────────
+  const refreshHistory = useCallback(() => {
+    const qs = favoritesOnly ? '?limit=30&favorites_only=true' : '?limit=30'
+    fetch(`${API}/history${qs}`)
+      .then(r => r.json())
+      .then(d => setHistory(d.history || []))
+      .catch(() => {})
+  }, [favoritesOnly])
+
+  // ── Init: check user capabilities ─────────────────────────────────
   useEffect(() => {
     fetch(`${API}/user-capabilities`)
       .then(r => r.json())
       .then(d => setCaps(d))
       .catch(() => {})
-    fetch(`${API}/history?limit=30`)
-      .then(r => r.json())
-      .then(d => setHistory(d.history || []))
-      .catch(() => {})
   }, [])
+
+  // ── Reload history when filter changes ────────────────────────────
+  useEffect(() => { refreshHistory() }, [refreshHistory])
+
+  const toggleFavorite = useCallback(async (entry: HistoryEntry) => {
+    if (!entry.id) return
+    const next = !entry.is_favorite
+    // Optimistic update
+    setHistory(h => h.map(x => x.id === entry.id ? { ...x, is_favorite: next } : x))
+    try {
+      await fetch(`${API}/history/${entry.id}/favorite`, {
+        method: next ? 'POST' : 'DELETE',
+      })
+    } catch {
+      // Revert on error
+      setHistory(h => h.map(x => x.id === entry.id ? { ...x, is_favorite: !next } : x))
+    }
+  }, [])
+
+  const deleteEntry = useCallback(async (id: number) => {
+    setHistory(h => h.filter(x => x.id !== id))
+    try {
+      await fetch(`${API}/history/${id}`, { method: 'DELETE' })
+    } catch {
+      refreshHistory()
+    }
+  }, [refreshHistory])
 
   // ── Search ────────────────────────────────────────────────────────
   const doSearch = useCallback(async (overrideQuery?: string) => {
@@ -214,11 +360,8 @@ export default function HuntRPlugin() {
                   final.model = d.model
                   final.error = d.error
                   setResult({ ...final } as SearchResult)
-                  // Refresh history
-                  fetch(`${API}/history?limit=30`)
-                    .then(r => r.json())
-                    .then(d => setHistory(d.history || []))
-                    .catch(() => {})
+                  setActiveHistoryId(null)
+                  refreshHistory()
                   streamDone = true
                   break
                 case 'error':
@@ -240,7 +383,7 @@ export default function HuntRPlugin() {
       setSearching(false)
       setStatus('')
     }
-  }, [query, proSearch, selectedProvider, selectedModel])
+  }, [query, proSearch, selectedProvider, selectedModel, refreshHistory])
 
   const handleClear = () => {
     setResult(null)
@@ -262,6 +405,7 @@ export default function HuntRPlugin() {
       setStatus('')
       setCurrentStep(0)
       setTotalSteps(0)
+      setActiveHistoryId(h.id ?? null)
       setResult({
         answer: h.answer,
         citations: h.citations || [],
@@ -629,6 +773,24 @@ export default function HuntRPlugin() {
                     <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                       {result.search_count} sources &middot; {result.time_ms}ms
                     </span>
+                    {result.answer && !searching && (
+                      <button
+                        onClick={() => exportAsPdf(query, result)}
+                        title="Exporter la réponse en PDF"
+                        style={{
+                          marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4,
+                          padding: '3px 10px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                          background: 'var(--bg-tertiary)', color: 'var(--scarlet)',
+                          border: '1px solid var(--scarlet)', cursor: 'pointer',
+                        }}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                          <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        PDF
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -798,45 +960,129 @@ export default function HuntRPlugin() {
         {/* History sidebar */}
         {showHistory && (
           <div style={{
-            width: 240, borderLeft: '1px solid var(--border)',
+            width: 260, borderLeft: '1px solid var(--border)',
             background: 'var(--bg-secondary)', overflow: 'auto',
             padding: 10, flexShrink: 0,
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <h3 style={{ margin: 0, fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>Historique</h3>
-              {history.length > 0 && (
-                <button onClick={() => { fetch(`${API}/history`, { method: 'DELETE' }); setHistory([]) }}
+              {history.length > 0 && !favoritesOnly && (
+                <button
+                  onClick={async () => {
+                    if (!confirm('Effacer l\'historique (hors favoris) ?')) return
+                    await fetch(`${API}/history?keep_favorites=true`, { method: 'DELETE' })
+                    refreshHistory()
+                  }}
+                  title="Effacer (conserve les favoris)"
                   style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10 }}>
                   Effacer
                 </button>
               )}
             </div>
+
+            {/* Filter tabs */}
+            <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+              <button
+                onClick={() => setFavoritesOnly(false)}
+                style={{
+                  flex: 1, padding: '4px 6px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                  background: !favoritesOnly ? 'var(--scarlet-light)' : 'var(--bg-tertiary)',
+                  color: !favoritesOnly ? 'var(--scarlet)' : 'var(--text-muted)',
+                  border: '1px solid var(--border)', cursor: 'pointer',
+                }}
+              >Tout</button>
+              <button
+                onClick={() => setFavoritesOnly(true)}
+                style={{
+                  flex: 1, padding: '4px 6px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                  background: favoritesOnly ? 'var(--scarlet-light)' : 'var(--bg-tertiary)',
+                  color: favoritesOnly ? 'var(--scarlet)' : 'var(--text-muted)',
+                  border: '1px solid var(--border)', cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 3,
+                }}
+              >
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                Favoris
+              </button>
+            </div>
+
             {history.length === 0 ? (
-              <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Aucune recherche récente</p>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                {favoritesOnly ? 'Aucun favori' : 'Aucune recherche récente'}
+              </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {history.map((h, i) => (
-                  <button key={i}
-                    onClick={() => loadFromHistory(h)}
-                    style={{
-                      padding: '7px 8px', borderRadius: 6, fontSize: 11,
-                      background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
-                      border: '1px solid transparent', cursor: 'pointer',
-                      textAlign: 'left', lineHeight: 1.3,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}
-                    onMouseOver={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'}
-                    onMouseOut={e => (e.currentTarget as HTMLElement).style.borderColor = 'transparent'}
-                  >
-                    {h.query}
-                    <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, display: 'flex', gap: 5, alignItems: 'center' }}>
-                      <span>{h.sources_count} sources</span>
-                      {h.mode === 'pro' && <span style={{ color: 'var(--amber, #f59e0b)' }}>Pro</span>}
-                      {h.answer ? <span style={{ color: 'var(--scarlet)' }}>cache</span> : null}
-                      <span>{formatTimeAgo(h.timestamp)}</span>
+                {history.map((h) => {
+                  const isActive = h.id != null && h.id === activeHistoryId
+                  return (
+                    <div key={h.id ?? h.timestamp}
+                      style={{
+                        display: 'flex', alignItems: 'stretch', gap: 2,
+                        borderRadius: 6,
+                        background: 'var(--bg-tertiary)',
+                        border: isActive ? '1px solid var(--scarlet)' : '1px solid transparent',
+                        transition: 'border-color 0.15s',
+                      }}
+                      onMouseOver={e => { if (!isActive) (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)' }}
+                      onMouseOut={e => { if (!isActive) (e.currentTarget as HTMLElement).style.borderColor = 'transparent' }}
+                    >
+                      <button
+                        onClick={() => loadFromHistory(h)}
+                        style={{
+                          flex: 1, padding: '7px 8px', fontSize: 11,
+                          background: 'transparent', color: 'var(--text-primary)',
+                          border: 'none', cursor: 'pointer',
+                          textAlign: 'left', lineHeight: 1.3, minWidth: 0,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {h.query}
+                        </div>
+                        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <span>{h.sources_count} sources</span>
+                          {h.mode === 'pro' && <span style={{ color: 'var(--amber, #f59e0b)' }}>Pro</span>}
+                          {h.answer ? <span style={{ color: 'var(--scarlet)' }}>cache</span> : null}
+                          <span>{formatTimeAgo(h.timestamp)}</span>
+                        </div>
+                      </button>
+                      <div style={{ display: 'flex', flexDirection: 'column', padding: 2, gap: 2 }}>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleFavorite(h) }}
+                          title={h.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+                          style={{
+                            background: 'transparent', border: 'none', cursor: 'pointer',
+                            padding: 3, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            color: h.is_favorite ? 'var(--amber, #f59e0b)' : 'var(--text-muted)',
+                          }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24"
+                            fill={h.is_favorite ? 'currentColor' : 'none'}
+                            stroke="currentColor" strokeWidth="2">
+                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                          </svg>
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); if (h.id) deleteEntry(h.id) }}
+                          title="Supprimer"
+                          style={{
+                            background: 'transparent', border: 'none', cursor: 'pointer',
+                            padding: 3, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            color: 'var(--text-muted)',
+                          }}
+                          onMouseOver={e => (e.currentTarget as HTMLElement).style.color = '#ef4444'}
+                          onMouseOut={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/>
+                            <path d="M10 11v6M14 11v6"/>
+                          </svg>
+                        </button>
+                      </div>
                     </div>
-                  </button>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>

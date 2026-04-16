@@ -5,13 +5,15 @@ Two modes:
   - Classique (free) : DuckDuckGo → formatted results, no LLM
   - Pro              : Tavily (per-user key) → LLM synthesis with inline citations
 
-Everything is per-user: search API keys, LLM provider/model.
+Everything is per-user: search API keys, LLM provider/model, search history,
+favorites, and Tavily cache.
 """
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete, desc
 import json
 import time
 import logging
@@ -19,19 +21,17 @@ import logging
 from backend.core.config.settings import Settings
 from backend.core.providers import get_provider, ChatMessage
 from backend.core.db.engine import get_session
+from backend.core.db.models import HuntRSearch
 from backend.core.api.auth_helpers import (
     get_user_settings, get_user_provider_key, get_user_service_key,
 )
 
 from .search_providers import DDGProvider, TavilyProvider, SearchResult
+from .cache import tavily_cache
 
 logger = logging.getLogger("gungnir.plugins.huntr")
 
 router = APIRouter()
-
-# ── In-memory history (plugin-scoped) ────────────────────────────────────
-_search_history: list[dict] = []
-MAX_HISTORY = 50
 
 
 # ── Request model ────────────────────────────────────────────────────────
@@ -77,7 +77,6 @@ async def _resolve_llm(user_id: int, session: AsyncSession):
     if not model:
         raise ValueError(f"Aucun modèle configuré pour '{pname}'")
 
-    # Debug: log key info (masked)
     key_preview = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
     logger.info(f"[HuntR] LLM resolved: provider={pname}, model={model}, key={key_preview}, base_url={base_url}")
 
@@ -156,7 +155,6 @@ def _build_llm_context(results: list[SearchResult], max_chars: int = 15000) -> s
         text = r.content or r.snippet
         if not text:
             continue
-        # Limit each passage
         if len(text) > 2000:
             text = text[:2000] + "..."
         entry = f"[{i}] {r.title}\nSource: {r.url}\n{text}\n"
@@ -176,21 +174,49 @@ def _related_fallback(query: str) -> list[str]:
     ]
 
 
-def _save_to_history(query: str, mode: str, sources: int, time_ms: int,
-                     answer: str = "", citations: list[dict] | None = None,
-                     related: list[str] | None = None, engines: list[str] | None = None,
-                     model: str = ""):
-    _search_history.insert(0, {
-        "query": query, "mode": mode, "sources_count": sources,
-        "time_ms": time_ms, "timestamp": time.time(),
-        "answer": answer,
-        "citations": citations or [],
-        "related_questions": related or [],
-        "engines": engines or [],
-        "model": model,
-    })
-    while len(_search_history) > MAX_HISTORY:
-        _search_history.pop()
+def _row_to_dict(row: HuntRSearch) -> dict:
+    """Serialize a HuntRSearch row as a history entry for the frontend."""
+    return {
+        "id": row.id,
+        "query": row.query,
+        "mode": row.mode,
+        "sources_count": row.sources_count,
+        "time_ms": row.time_ms,
+        "timestamp": row.created_at.timestamp() if row.created_at else 0,
+        "answer": row.answer or "",
+        "citations": row.citations or [],
+        "related_questions": row.related_questions or [],
+        "engines": row.engines or [],
+        "model": row.model or "",
+        "is_favorite": bool(row.is_favorite),
+    }
+
+
+async def _save_to_history(
+    session: AsyncSession, user_id: int,
+    query: str, mode: str, sources: int, time_ms: int,
+    answer: str = "", citations: list[dict] | None = None,
+    related: list[str] | None = None, engines: list[str] | None = None,
+    model: str = "",
+) -> HuntRSearch:
+    """Persist a search to DB (per-user)."""
+    row = HuntRSearch(
+        user_id=user_id,
+        query=query,
+        mode=mode,
+        answer=answer,
+        citations=citations or [],
+        related_questions=related or [],
+        engines=engines or [],
+        sources_count=sources,
+        time_ms=time_ms,
+        model=model,
+        is_favorite=False,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return row
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -203,7 +229,7 @@ async def search_stream(req: SearchRequest, request: Request,
     uid = _uid(request)
 
     # ── Resolve per-user resources BEFORE the stream ─────────────────
-    tavily = await _resolve_tavily(uid, session)  # always try (used in both modes)
+    tavily = await _resolve_tavily(uid, session)
     llm_provider = None
     llm_model = ""
     llm_error = None
@@ -220,11 +246,52 @@ async def search_stream(req: SearchRequest, request: Request,
         except Exception as e:
             llm_error = str(e)
 
+    # Cache check (Pro only — Classique reste 100% gratuit/frais)
+    cache_key = None
+    cached_payload = None
+    if req.pro_search:
+        cache_key = tavily_cache.make_key(uid, req.query, "pro", req.max_results)
+        cached_payload = tavily_cache.get(cache_key)
+
     async def _stream():
         t0 = time.time()
 
         try:
             query = req.query.strip()
+
+            # ══════════════════════════════════════════════════════════
+            # CACHE HIT (Pro) — replay the cached answer as SSE events
+            # ══════════════════════════════════════════════════════════
+            if cached_payload is not None:
+                yield _sse("status", {"message": "Résultat mis en cache (récent)", "step": 4, "total_steps": 4})
+                yield _sse("search", {
+                    "count": cached_payload["sources_count"],
+                    "engines": cached_payload["engines"],
+                    "results": cached_payload["live_results"],
+                })
+                yield _sse("citation", {"citations": cached_payload["citations"]})
+                yield _sse("content", {"answer": cached_payload["answer"]})
+                yield _sse("related", {"questions": cached_payload["related"]})
+
+                # Still log as a separate history entry so the user sees it
+                await _save_to_history(
+                    session, uid, query, "pro",
+                    cached_payload["sources_count"], _elapsed(t0),
+                    answer=cached_payload["answer"],
+                    citations=cached_payload["citations"],
+                    related=cached_payload["related"],
+                    engines=cached_payload["engines"],
+                    model=cached_payload["model"],
+                )
+                yield _sse("done", {
+                    "time_ms": _elapsed(t0),
+                    "search_count": cached_payload["sources_count"],
+                    "pro_search": True,
+                    "engines": cached_payload["engines"],
+                    "model": cached_payload["model"],
+                    "cached": True,
+                })
+                return
 
             if not req.pro_search:
                 # ══════════════════════════════════════════════════════
@@ -245,20 +312,19 @@ async def search_stream(req: SearchRequest, request: Request,
                         for r in results[:10]
                     ],
                 })
-                # ══════════════════════════════════════════════════════
-                # MODE CLASSIQUE — formatted results, no LLM
-                # ══════════════════════════════════════════════════════
+
                 citations = _build_citations(results)
                 answer = _format_classic_answer(query, results)
-
                 related = _related_fallback(query)
+
                 yield _sse("citation", {"citations": citations})
                 yield _sse("content", {"answer": answer})
                 yield _sse("related", {"questions": related})
 
-                _save_to_history(query, "classique", len(results), _elapsed(t0),
-                                 answer=answer, citations=citations,
-                                 related=related, engines=engines)
+                await _save_to_history(session, uid, query, "classique",
+                                       len(results), _elapsed(t0),
+                                       answer=answer, citations=citations,
+                                       related=related, engines=engines)
 
                 yield _sse("done", {
                     "time_ms": _elapsed(t0),
@@ -277,24 +343,20 @@ async def search_stream(req: SearchRequest, request: Request,
             results = await tavily.search(query, max_results=req.max_results)
 
             if not results:
-                # Fallback DDG si Tavily échoue
                 yield _sse("status", {"message": "Fallback DuckDuckGo...", "step": 1, "total_steps": 4})
                 ddg = DDGProvider()
                 results = await ddg.search(query, max_results=req.max_results)
 
             engines = list(set(r.source for r in results)) if results else ["tavily"]
 
+            live_results = [
+                {"title": r.title, "url": r.url, "snippet": r.snippet, "source": r.source}
+                for r in results[:10]
+            ]
+
             # Step 2: sources found
             yield _sse("status", {"message": f"{len(results)} sources trouvées", "step": 2, "total_steps": 4})
-            yield _sse("search", {
-                "count": len(results),
-                "engines": engines,
-                "results": [
-                    {"title": r.title, "url": r.url, "snippet": r.snippet,
-                     "source": r.source}
-                    for r in results[:10]
-                ],
-            })
+            yield _sse("search", {"count": len(results), "engines": engines, "results": live_results})
 
             # Step 3: preparing context
             yield _sse("status", {"message": "Préparation du contexte...", "step": 3, "total_steps": 4})
@@ -356,10 +418,23 @@ async def search_stream(req: SearchRequest, request: Request,
             yield _sse("content", {"answer": answer})
             yield _sse("related", {"questions": related})
 
-            _save_to_history(query, "pro", len(results), _elapsed(t0),
-                             answer=answer, citations=citations,
-                             related=related, engines=engines,
-                             model=llm_model)
+            await _save_to_history(session, uid, query, "pro",
+                                   len(results), _elapsed(t0),
+                                   answer=answer, citations=citations,
+                                   related=related, engines=engines,
+                                   model=llm_model)
+
+            # Store in cache (only if LLM succeeded — don't cache fallbacks)
+            if llm_ok and cache_key:
+                tavily_cache.set(cache_key, {
+                    "answer": answer,
+                    "citations": citations,
+                    "related": related,
+                    "engines": engines,
+                    "sources_count": len(results),
+                    "live_results": live_results,
+                    "model": llm_model,
+                })
 
             yield _sse("done", {
                 "time_ms": _elapsed(t0),
@@ -378,23 +453,74 @@ async def search_stream(req: SearchRequest, request: Request,
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Utility endpoints
+# History endpoints (per-user, DB-backed)
 # ═══════════════════════════════════════════════════════════════════════════
 
 @router.get("/health")
 async def health():
-    return {"plugin": "huntr", "status": "ok", "version": "3.0.0"}
+    return {"plugin": "huntr", "status": "ok", "version": "3.1.0"}
 
 
 @router.get("/history")
-async def get_history(limit: int = 30):
-    return {"history": _search_history[:limit]}
+async def get_history(request: Request, limit: int = 30, favorites_only: bool = False,
+                      session: AsyncSession = Depends(get_session)):
+    uid = _uid(request)
+    stmt = select(HuntRSearch).where(HuntRSearch.user_id == uid)
+    if favorites_only:
+        stmt = stmt.where(HuntRSearch.is_favorite == True)
+    stmt = stmt.order_by(desc(HuntRSearch.created_at)).limit(max(1, min(limit, 200)))
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+    return {"history": [_row_to_dict(r) for r in rows]}
 
 
 @router.delete("/history")
-async def clear_history():
-    _search_history.clear()
+async def clear_history(request: Request, keep_favorites: bool = True,
+                        session: AsyncSession = Depends(get_session)):
+    """Clear the user's history. By default keeps favorites."""
+    uid = _uid(request)
+    stmt = delete(HuntRSearch).where(HuntRSearch.user_id == uid)
+    if keep_favorites:
+        stmt = stmt.where(HuntRSearch.is_favorite == False)
+    await session.execute(stmt)
+    await session.commit()
     return {"status": "ok"}
+
+
+@router.delete("/history/{entry_id}")
+async def delete_entry(entry_id: int, request: Request,
+                       session: AsyncSession = Depends(get_session)):
+    uid = _uid(request)
+    row = await session.get(HuntRSearch, entry_id)
+    if not row or row.user_id != uid:
+        raise HTTPException(status_code=404, detail="Entrée introuvable")
+    await session.delete(row)
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.post("/history/{entry_id}/favorite")
+async def favorite_entry(entry_id: int, request: Request,
+                         session: AsyncSession = Depends(get_session)):
+    uid = _uid(request)
+    row = await session.get(HuntRSearch, entry_id)
+    if not row or row.user_id != uid:
+        raise HTTPException(status_code=404, detail="Entrée introuvable")
+    row.is_favorite = True
+    await session.commit()
+    return {"status": "ok", "is_favorite": True}
+
+
+@router.delete("/history/{entry_id}/favorite")
+async def unfavorite_entry(entry_id: int, request: Request,
+                           session: AsyncSession = Depends(get_session)):
+    uid = _uid(request)
+    row = await session.get(HuntRSearch, entry_id)
+    if not row or row.user_id != uid:
+        raise HTTPException(status_code=404, detail="Entrée introuvable")
+    row.is_favorite = False
+    await session.commit()
+    return {"status": "ok", "is_favorite": False}
 
 
 @router.get("/user-capabilities")

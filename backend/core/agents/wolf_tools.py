@@ -500,6 +500,29 @@ WOLF_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "huntr_search",
+            "description": (
+                "Recherche web Perplexity-like via HuntR : retourne une réponse structurée, "
+                "reformulée et sourcée (citations numérotées [1][2][3]). Deux modes : "
+                "'classique' (DuckDuckGo, gratuit, liste de résultats) ou 'pro' (Tavily + "
+                "synthèse LLM de l'utilisateur, nécessite une clé Tavily configurée). "
+                "Préfère huntr_search à web_search quand tu veux une réponse rédigée et "
+                "sourcée plutôt qu'une simple liste de liens."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query":       {"type": "string", "description": "Question ou requête à rechercher"},
+                    "pro_search":  {"type": "boolean", "description": "true = Tavily + synthèse LLM, false = DDG + liste (défaut: false)", "default": False},
+                    "max_results": {"type": "integer", "description": "Nombre max de sources (1-20, défaut: 10)", "default": 10},
+                },
+                "required": ["query"]
+            }
+        }
+    },
     # ── Outils browser avancés ────────────────────────────────────────────────
     {
         "type": "function",
@@ -1118,7 +1141,7 @@ def _get_tools_for_agent(agent_tools: list[str] | None) -> list[dict]:
         return [s for s in WOLF_TOOL_SCHEMAS if s["function"]["name"] in name_set]
     # Par défaut : outils web + KB + communication inter-agents
     web_tool_names = {
-        "web_fetch", "web_search", "web_crawl",
+        "web_fetch", "web_search", "huntr_search", "web_crawl",
         "browser_navigate", "browser_goto", "browser_get_text", "browser_get_html",
         "browser_click", "browser_type", "browser_press_key", "browser_scroll",
         "browser_screenshot", "browser_evaluate", "browser_close", "browser_list_pages",
@@ -1584,6 +1607,163 @@ async def _web_search(query: str, num_results: int = 10) -> dict:
     except Exception:
         pass
     return result  # Retourner l'erreur originale
+
+
+async def _huntr_search(query: str, pro_search: bool = False, max_results: int = 10) -> dict:
+    """HuntR search (per-user) : réponse structurée + citations. Non-streaming pour l'agent.
+
+    En mode Pro, réutilise la clé Tavily + le provider LLM actif de l'utilisateur
+    courant (get_user_context). Ecrit le résultat dans HuntRSearch (historique DB)
+    et alimente le cache Tavily.
+    """
+    uid = get_user_context()
+    if not uid or uid <= 0:
+        return {"ok": False, "error": "huntr_search requires an authenticated user context"}
+
+    from backend.core.db.engine import async_session
+    from backend.core.db.models import HuntRSearch
+    from backend.plugins.browser.search_providers import DDGProvider
+    from backend.plugins.browser.cache import tavily_cache
+    from backend.plugins.browser.routes import (
+        _resolve_tavily, _resolve_llm, _build_citations, _build_llm_context,
+        _format_classic_answer, _related_fallback, SYSTEM_PROMPT,
+    )
+    from backend.core.providers import ChatMessage
+    import time as _time
+
+    query = (query or "").strip()
+    if not query:
+        return {"ok": False, "error": "query is empty"}
+    max_results = max(1, min(int(max_results or 10), 20))
+    mode = "pro" if pro_search else "classique"
+
+    t0 = _time.time()
+
+    async with async_session() as session:
+        # Cache (Pro only)
+        cache_key = tavily_cache.make_key(uid, query, "pro", max_results) if pro_search else None
+        if cache_key:
+            cached = tavily_cache.get(cache_key)
+            if cached:
+                row = HuntRSearch(
+                    user_id=uid, query=query, mode="pro",
+                    answer=cached["answer"], citations=cached["citations"],
+                    related_questions=cached["related"], engines=cached["engines"],
+                    sources_count=cached["sources_count"],
+                    time_ms=int((_time.time() - t0) * 1000),
+                    model=cached["model"],
+                )
+                session.add(row)
+                await session.commit()
+                return {
+                    "ok": True, "mode": "pro", "cached": True,
+                    "answer": cached["answer"],
+                    "citations": cached["citations"],
+                    "sources_count": cached["sources_count"],
+                    "engines": cached["engines"],
+                    "model": cached["model"],
+                }
+
+        if not pro_search:
+            # ── Classique : DDG only ────────────────────────────────
+            ddg = DDGProvider()
+            results = await ddg.search(query, max_results=max_results)
+            engines = ["duckduckgo"]
+            citations = _build_citations(results)
+            answer = _format_classic_answer(query, results)
+            related = _related_fallback(query)
+            time_ms = int((_time.time() - t0) * 1000)
+
+            row = HuntRSearch(
+                user_id=uid, query=query, mode="classique",
+                answer=answer, citations=citations, related_questions=related,
+                engines=engines, sources_count=len(results), time_ms=time_ms,
+            )
+            session.add(row)
+            await session.commit()
+
+            return {
+                "ok": True, "mode": "classique",
+                "answer": answer,
+                "citations": citations,
+                "sources_count": len(results),
+                "engines": engines,
+                "time_ms": time_ms,
+            }
+
+        # ── Pro : Tavily + LLM ──────────────────────────────────────
+        tavily = await _resolve_tavily(uid, session)
+        if not tavily:
+            return {"ok": False, "error": "Mode Pro requires a Tavily API key (Settings → Services → Tavily)"}
+
+        try:
+            llm_provider, llm_model = await _resolve_llm(uid, session)
+        except Exception as e:
+            return {"ok": False, "error": f"LLM unavailable: {e}"}
+
+        results = await tavily.search(query, max_results=max_results)
+        if not results:
+            ddg = DDGProvider()
+            results = await ddg.search(query, max_results=max_results)
+
+        engines = list(set(r.source for r in results)) if results else ["tavily"]
+        citations = _build_citations(results)
+        context = _build_llm_context(results)
+
+        messages = [
+            ChatMessage(role="system", content=SYSTEM_PROMPT),
+            ChatMessage(
+                role="user",
+                content=(
+                    f"QUESTION : {query}\n\nPASSAGES WEB :\n\n{context}\n\n"
+                    f"Rédige une réponse structurée (# / ## / ## / ## / ## Conclusion), "
+                    f"cite [1], [2]... DANS les phrases."
+                ),
+            ),
+        ]
+
+        answer = ""
+        try:
+            async for token in llm_provider.chat_stream(messages, llm_model, max_tokens=4096):
+                answer += token
+        except Exception as e:
+            return {"ok": False, "error": f"LLM synthesis failed: {e}"}
+
+        if not answer.strip():
+            answer = _format_classic_answer(query, results)
+
+        related = _related_fallback(query)
+        time_ms = int((_time.time() - t0) * 1000)
+
+        row = HuntRSearch(
+            user_id=uid, query=query, mode="pro",
+            answer=answer, citations=citations, related_questions=related,
+            engines=engines, sources_count=len(results), time_ms=time_ms,
+            model=llm_model,
+        )
+        session.add(row)
+        await session.commit()
+
+        if cache_key:
+            tavily_cache.set(cache_key, {
+                "answer": answer, "citations": citations, "related": related,
+                "engines": engines, "sources_count": len(results),
+                "live_results": [
+                    {"title": r.title, "url": r.url, "snippet": r.snippet, "source": r.source}
+                    for r in results[:10]
+                ],
+                "model": llm_model,
+            })
+
+        return {
+            "ok": True, "mode": "pro", "cached": False,
+            "answer": answer,
+            "citations": citations,
+            "sources_count": len(results),
+            "engines": engines,
+            "model": llm_model,
+            "time_ms": time_ms,
+        }
 
 
 async def _browser_goto(page_id: str, url: str) -> dict:
@@ -2851,6 +3031,7 @@ WOLF_EXECUTORS: dict[str, Any] = {
     "browser_crawl":              _browser_crawl,
     # Nouveaux outils web
     "web_search":                 _web_search,
+    "huntr_search":               _huntr_search,
     "browser_goto":               _browser_goto,
     "browser_get_html":           _browser_get_html,
     "browser_wait_for_selector":  _browser_wait_for_selector,
@@ -2894,7 +3075,7 @@ READ_ONLY_TOOLS = {
     "browser_navigate", "browser_get_text", "browser_screenshot", "browser_evaluate",
     "browser_click", "browser_type", "browser_close",
     "browser_get_links", "browser_get_page_info", "browser_press_key", "browser_crawl",
-    "web_search", "browser_goto", "browser_get_html", "browser_wait_for_selector",
+    "web_search", "huntr_search", "browser_goto", "browser_get_html", "browser_wait_for_selector",
     "browser_scroll", "browser_extract_table", "browser_query_selector_all",
     "browser_select_option", "browser_fill_form", "browser_list_pages",
     # Lecture seule filesystem + doctor + setup
