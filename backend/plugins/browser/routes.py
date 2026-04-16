@@ -465,13 +465,28 @@ async def search_stream(req: SearchRequest, request: Request, session: AsyncSess
     uid = _uid(request)
     search_keys = await _get_user_search_keys(uid)
 
-    # Resolve LLM BEFORE the stream using the request-scoped DB session
-    # (same session as chat.py Depends — guarantees proper key decryption)
-    pre_provider, pre_model, pre_provider_name = None, "", ""
+    # Resolve LLM BEFORE the stream — copy-paste from chat.py (lines 675-701)
+    pre_provider = None
+    pre_model = ""
     pre_llm_error = None
     if req.pro_search or req.focus == "academic":
         try:
-            pre_provider, pre_model, pre_provider_name = await _get_user_llm(uid, session, req.provider, req.model)
+            pname = req.provider or "openrouter"
+            user_settings = await get_user_settings(uid, session)
+            if user_settings.active_provider:
+                pname = user_settings.active_provider
+            user_prov = get_user_provider_key(user_settings, pname)
+            api_key = user_prov.get("api_key") if user_prov else None
+            if api_key:
+                cfg = Settings.load().providers.get(pname)
+                base_url = (user_prov.get("base_url") if user_prov else None) or \
+                           (cfg.base_url if cfg else None)
+                pre_model = req.model or (user_settings.active_model if user_settings.active_model else None) or \
+                            (cfg.default_model if cfg else None) or ""
+                pre_provider = get_provider(pname, api_key, base_url)
+                logger.info(f"[HuntR] LLM resolved: provider={pname}, model={pre_model}, user={uid}")
+            else:
+                pre_llm_error = f"Aucune clé API pour '{pname}'"
         except Exception as e:
             pre_llm_error = str(e)
             logger.warning(f"HuntR LLM resolution failed for user {uid}: {e}")
@@ -613,11 +628,13 @@ async def search_stream(req: SearchRequest, request: Request, session: AsyncSess
                 "step": 4,
             })
 
-            # ── Mode Normal : no LLM ──────────────────────────────────
+            # ── Build raw answer from passages (same for Normal and Pro) ──
+            answer = _fallback_answer(req.query, passages, language)
+            yield _sse("citation", {"citations": citations})
+
+            # ── Mode Normal : return raw answer directly ─────────────
             if not req.pro_search:
-                answer = _fallback_answer(req.query, passages, language)
                 yield _sse("content", {"answer": answer})
-                yield _sse("citation", {"citations": citations})
                 related = _related_fallback(req.query, language)
                 yield _sse("related", {"questions": related})
                 _save_session_turn(req.session_id, req.query, answer[:200], config)
@@ -632,60 +649,58 @@ async def search_stream(req: SearchRequest, request: Request, session: AsyncSess
                 })
                 return
 
-            # ── 5. Pro : LLM Answer Generation ────────────────────────
-            if not provider:
-                yield _sse("error", {"message": f"LLM non disponible: {pre_llm_error or 'Aucun provider configuré'}"})
-                yield _sse("done", {"time_ms": _elapsed(t0), "error": True})
+            # ── 5. Pro : LLM reformulates the raw answer ─────────────
+            if not pre_provider:
+                # No LLM available — return raw answer like normal mode
+                yield _sse("content", {"answer": answer})
+                yield _sse("status", {"message": f"⚠ LLM indisponible ({pre_llm_error}), résultat brut"})
+                yield _sse("done", {
+                    "time_ms": _elapsed(t0), "search_count": len(results),
+                    "passages_used": len(passages), "pro_search": True,
+                    "intent": understanding["intent"], "focus": focus,
+                    "engines": engines_used, "error": True,
+                })
                 return
 
-            yield _sse("status", {"message": "[Pro] Génération de la réponse...", "step": 5})
+            yield _sse("status", {"message": "[Pro] Synthèse LLM en cours...", "step": 5})
 
+            # Build context with citations for the LLM
             context = _build_context(passages, max_total=16000, max_words=400)
-
-            # Build messages with session context for follow-up
             sys_prompt = SYSTEM_PROMPT_ACADEMIC if focus == "academic" else SYSTEM_PROMPT_PRO
             messages = [ChatMessage(role="system", content=sys_prompt)]
-            if session_ctx:
-                messages.append(ChatMessage(
-                    role="system",
-                    content=f"Contexte de la conversation précédente:\n{session_ctx}"
-                ))
             messages.append(ChatMessage(
                 role="user",
                 content=f"Question: {req.query}\n\nPassages:\n{context}\n\n"
-                        f"Réponds avec des citations inline [1], [2], etc."
+                        f"Réponds avec des citations inline [1], [2], etc. "
+                        f"Inclus les sources directement dans les paragraphes."
             ))
 
-            # Stream answer token by token (fallback to non-stream if unavailable)
-            answer_chunks = []
+            # Call LLM — regular chat (not stream, simpler and reliable)
             try:
-                async for chunk in provider.chat_stream(messages, model=model, max_tokens=2048):
-                    answer_chunks.append(chunk)
-                    yield _sse("chunk", {"content": chunk})
-                answer = "".join(answer_chunks)
-            except (AttributeError, NotImplementedError):
-                # Provider doesn't support streaming — use regular chat
-                resp = await provider.chat(messages, model=model, max_tokens=2048)
-                answer = resp.content or ""
-                yield _sse("chunk", {"content": answer})
-            yield _sse("content", {"answer": answer})
-            yield _sse("citation", {"citations": citations})
+                resp = await pre_provider.chat(messages, pre_model, max_tokens=2048)
+                pro_answer = resp.content or answer
+            except Exception as llm_err:
+                logger.warning(f"[HuntR] LLM call failed, using raw answer: {llm_err}")
+                pro_answer = answer
 
-            # Related questions
-            yield _sse("status", {"message": "Questions de suivi...", "step": 5})
-            related = await _generate_related(provider, model, req.query, answer[:500])
+            yield _sse("content", {"answer": pro_answer})
+
+            # Related questions via LLM
+            try:
+                related = await _generate_related(pre_provider, pre_model, req.query, pro_answer[:500])
+            except Exception:
+                related = _related_fallback(req.query, language)
             yield _sse("related", {"questions": related})
 
-            # Save session + history
-            _save_session_turn(req.session_id, req.query, answer[:300], config)
+            _save_session_turn(req.session_id, req.query, pro_answer[:300], config)
             _save_to_history(req.query, len(results), "pro",
                              understanding["intent"], focus,
-                             provider_name, model, _elapsed(t0), engines_used)
+                             engines=engines_used, time_ms=_elapsed(t0))
             yield _sse("done", {
                 "time_ms": _elapsed(t0), "search_count": len(results),
                 "passages_used": len(passages), "pro_search": True,
                 "intent": understanding["intent"], "focus": focus,
-                "engines": engines_used, "model": model,
+                "engines": engines_used, "model": pre_model,
             })
 
         except Exception as e:
