@@ -87,6 +87,8 @@ export default function HuntRPlugin() {
   const [proSearch, setProSearch] = useState(false)
   const [searching, setSearching] = useState(false)
   const [status, setStatus] = useState('')
+  const [currentStep, setCurrentStep] = useState(0)
+  const [totalSteps, setTotalSteps] = useState(0)
   const [result, setResult] = useState<SearchResult | null>(null)
   const [liveSources, setLiveSources] = useState<LiveSource[]>([])
   const [error, setError] = useState('')
@@ -120,6 +122,8 @@ export default function HuntRPlugin() {
 
     setSearching(true)
     setStatus('Initialisation...')
+    setCurrentStep(0)
+    setTotalSteps(0)
     setResult(null)
     setLiveSources([])
     setError('')
@@ -171,6 +175,8 @@ export default function HuntRPlugin() {
               switch (chunk.type) {
                 case 'status':
                   setStatus(d.message || '')
+                  if (d.step) setCurrentStep(d.step)
+                  if (d.total_steps) setTotalSteps(d.total_steps)
                   break
                 case 'search':
                   final.search_count = d.count || 0
@@ -450,19 +456,43 @@ export default function HuntRPlugin() {
               )}
             </div>
 
-            {/* Status */}
+            {/* Status + progress bar */}
             {status && (
               <div style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '8px 14px', borderRadius: 8, margin: '6px 0',
+                padding: '10px 14px', borderRadius: 10, margin: '6px 0',
                 background: 'var(--bg-secondary)', border: '1px solid var(--border)',
               }}>
-                <div style={{
-                  width: 14, height: 14, borderRadius: '50%',
-                  border: '2px solid var(--scarlet)', borderTopColor: 'transparent',
-                  animation: 'huntr-spin 0.8s linear infinite', flexShrink: 0,
-                }} />
-                <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{status}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: totalSteps > 1 ? 8 : 0 }}>
+                  <div style={{
+                    width: 14, height: 14, borderRadius: '50%',
+                    border: '2px solid var(--scarlet)', borderTopColor: 'transparent',
+                    animation: 'huntr-spin 0.8s linear infinite', flexShrink: 0,
+                  }} />
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12, flex: 1 }}>{status}</span>
+                  {totalSteps > 1 && (
+                    <span style={{ color: 'var(--text-muted)', fontSize: 10, flexShrink: 0 }}>
+                      {currentStep}/{totalSteps}
+                    </span>
+                  )}
+                </div>
+                {/* Progress bar (Pro mode only) */}
+                {totalSteps > 1 && (
+                  <div style={{ display: 'flex', gap: 3 }}>
+                    {Array.from({ length: totalSteps }, (_, i) => {
+                      const step = i + 1
+                      const isActive = step <= currentStep
+                      const isCurrent = step === currentStep
+                      return (
+                        <div key={step} style={{
+                          flex: 1, height: 4, borderRadius: 2,
+                          background: isActive ? 'var(--scarlet)' : 'var(--bg-tertiary)',
+                          opacity: isCurrent ? 1 : isActive ? 0.7 : 0.3,
+                          transition: 'all 0.4s ease',
+                        }} />
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )}
 

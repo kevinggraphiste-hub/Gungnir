@@ -215,12 +215,14 @@ async def search_stream(req: SearchRequest, request: Request,
             # ── Search phase (shared: try Tavily first, DDG fallback) ──
             results: list[SearchResult] = []
 
+            pro_steps = 4 if req.pro_search else 1
+
             if tavily:
-                yield _sse("status", {"message": "Recherche (Tavily)...", "step": 1})
+                yield _sse("status", {"message": "Recherche web...", "step": 1, "total_steps": pro_steps})
                 results = await tavily.search(query, max_results=req.max_results)
 
             if not results:
-                yield _sse("status", {"message": "Recherche (DuckDuckGo)...", "step": 1})
+                yield _sse("status", {"message": "Recherche (DuckDuckGo)...", "step": 1, "total_steps": pro_steps})
                 ddg = DDGProvider()
                 results = await ddg.search(query, max_results=req.max_results)
 
@@ -258,11 +260,13 @@ async def search_stream(req: SearchRequest, request: Request,
                 return
 
             # ══════════════════════════════════════════════════════════
-            # MODE PRO — LLM synthesis
+            # MODE PRO — 4 steps: search → sources → synthesis → done
             # ══════════════════════════════════════════════════════════
 
             engines = list(set(r.source for r in results))
 
+            # Step 2: sources found
+            yield _sse("status", {"message": f"{len(results)} sources trouvées", "step": 2, "total_steps": 4})
             yield _sse("search", {
                 "count": len(results),
                 "engines": engines,
@@ -273,12 +277,13 @@ async def search_stream(req: SearchRequest, request: Request,
                 ],
             })
 
+            # Step 3: preparing context
+            yield _sse("status", {"message": "Préparation du contexte...", "step": 3, "total_steps": 4})
             citations = _build_citations(results)
             yield _sse("citation", {"citations": citations})
 
             # ── LLM synthesis ─────────────────────────────────────────
             if not llm_provider:
-                # No LLM → formatted results like classic mode
                 answer = _format_classic_answer(query, results)
                 yield _sse("content", {"answer": answer})
                 yield _sse("status", {"message": f"⚠ LLM indisponible ({llm_error})"})
@@ -289,7 +294,8 @@ async def search_stream(req: SearchRequest, request: Request,
                 })
                 return
 
-            yield _sse("status", {"message": "Synthèse LLM en cours...", "step": 2})
+            # Step 4: LLM synthesis
+            yield _sse("status", {"message": "Synthèse par l'IA en cours...", "step": 4, "total_steps": 4})
 
             context = _build_llm_context(results)
             messages = [
