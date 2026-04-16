@@ -515,6 +515,7 @@ async def search_stream(req: SearchRequest, request: Request):
 
             # ── 2. Multi-Engine Search ─────────────────────────────────
             yield _sse("status", {"message": "Recherche multi-sources...", "step": 2})
+            logger.info(f"[HuntR] Search start: query={req.query[:50]}, focus={focus}, pro={req.pro_search}, tavily={'yes' if search_keys['tavily'] else 'no'}, brave={'yes' if search_keys['brave'] else 'no'}")
 
             results = await multi_search(
                 search_query,
@@ -533,7 +534,7 @@ async def search_stream(req: SearchRequest, request: Request):
                     extra = await multi_search(
                         sq, max_results=5,
                         brave_api_key=search_keys["brave"],
-                tavily_api_key=search_keys["tavily"],
+                        tavily_api_key=search_keys["tavily"],
                         searxng_url=config.searxng_url,
                         focus=focus, pro=False, language=language,
                     )
@@ -545,6 +546,7 @@ async def search_stream(req: SearchRequest, request: Request):
 
             # Detect which engines returned results
             engines_used = list(set(r.get("source", "unknown") for r in results))
+            logger.info(f"[HuntR] Search done: {len(results)} results from {engines_used}")
 
             # Send search results (sources shown in real-time)
             yield _sse("search", {

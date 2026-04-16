@@ -70,19 +70,24 @@ async def search_ddg(query: str, max_results: int = 15, time_filter: str = "") -
     try:
         from backend.core.agents.tools.web_fetch import web_search_lite
         result = await web_search_lite(query, num_results=max_results)
+        if not result.get("ok"):
+            logger.warning(f"DDG search failed: {result.get('error', 'unknown')}")
+            return []
         items = result.get("results", []) if isinstance(result, dict) else []
-        return [
+        logger.info(f"DDG returned {len(items)} results for: {query[:50]}")
+        out = [
             {
                 "title": r.get("title", ""),
                 "url": r.get("url") or r.get("href", ""),
-                "snippet": r.get("snippet", ""),
+                "snippet": r.get("snippet", "") or r.get("body", ""),
                 "source": "duckduckgo",
                 "text": "",
             }
             for r in items if r.get("url") or r.get("href")
         ]
+        return out
     except Exception as e:
-        logger.debug(f"DDG search error: {e}")
+        logger.warning(f"DDG search exception: {e}")
         return []
 
 
