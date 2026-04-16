@@ -45,11 +45,16 @@ FOCUS_MODES = {
     },
     "academic": {
         "label": "Academic",
-        "description": "arXiv, Wikipedia, publications scientifiques",
+        "description": "Sources fiables uniquement : Wikipedia, arXiv, publications scientifiques",
         "site_filter": "",
         "boost_domains": ["arxiv.org", "scholar.google.com", "wikipedia.org",
-                          "nature.com", "sciencedirect.com", "pubmed.ncbi.nlm.nih.gov"],
+                          "nature.com", "sciencedirect.com", "pubmed.ncbi.nlm.nih.gov",
+                          "hal.science", "jstor.org", "springer.com", "wiley.com",
+                          "ieee.org", "acm.org", "researchgate.net", "semanticscholar.org",
+                          "ncbi.nlm.nih.gov", "who.int", "europa.eu", "cairn.info",
+                          "persee.fr", "openedition.org", "theses.fr"],
         "time_filter": "",
+        "strict_filter": True,  # Only allow results from boost_domains
     },
 }
 
@@ -248,6 +253,8 @@ async def multi_search(
     seen_urls = set()
     boost_domains = set(mode.get("boost_domains", []))
 
+    strict = mode.get("strict_filter", False)
+
     for batch in raw_results:
         if isinstance(batch, Exception):
             continue
@@ -255,17 +262,22 @@ async def multi_search(
             url = r.get("url", "")
             if not url or url in seen_urls:
                 continue
-            seen_urls.add(url)
 
-            # Domain boost scoring
+            # Domain matching
             try:
                 from urllib.parse import urlparse
                 domain = urlparse(url).hostname or ""
                 domain = domain.replace("www.", "")
-                r["domain_boost"] = 2.0 if any(d in domain for d in boost_domains) else 1.0
+                is_trusted = any(d in domain for d in boost_domains)
             except Exception:
-                r["domain_boost"] = 1.0
+                is_trusted = False
 
+            # In strict mode (academic), drop results from non-trusted domains
+            if strict and not is_trusted:
+                continue
+
+            seen_urls.add(url)
+            r["domain_boost"] = 2.0 if is_trusted else 1.0
             r["position"] = len(results) + 1
             results.append(r)
 

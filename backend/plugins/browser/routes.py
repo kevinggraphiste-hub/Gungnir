@@ -17,7 +17,7 @@ Features :
 
 100% self-contained — crash-proof, no core state mutations.
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -37,6 +37,82 @@ from .engine import (
 )
 
 logger = logging.getLogger("gungnir.plugins.huntr")
+
+
+# ── Per-user key resolution ──────────────────────────────────────────────
+
+def _uid(request: Request) -> int:
+    """Extract user_id from auth middleware, fallback to 1."""
+    return getattr(request.state, "user_id", None) or 1
+
+
+async def _get_user_search_keys(user_id: int) -> dict:
+    """Resolve per-user Brave API key and SearXNG URL.
+    Falls back to global HuntR config if user has no keys."""
+    config = HuntRConfig.load()
+    brave_key = config.brave_api_key
+    searxng_url = config.searxng_url
+    try:
+        from backend.core.db.engine import get_session
+        from backend.core.api.auth_helpers import get_user_settings
+        from backend.core.config.settings import decrypt_value
+        async for session in get_session():
+            us = await get_user_settings(user_id, session)
+            if us.service_keys:
+                user_brave = us.service_keys.get("brave")
+                if user_brave and user_brave.get("api_key"):
+                    brave_key = decrypt_value(user_brave["api_key"])
+                user_searxng = us.service_keys.get("searxng")
+                if user_searxng and user_searxng.get("base_url"):
+                    searxng_url = user_searxng["base_url"]
+            break
+    except Exception:
+        pass
+    return {"brave_api_key": brave_key, "searxng_url": searxng_url}
+
+
+async def _get_user_llm(user_id: int, provider_name: Optional[str] = None,
+                        model_name: Optional[str] = None):
+    """Get LLM provider using per-user API keys first, then global."""
+    try:
+        from backend.core.db.engine import get_session
+        from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
+        async for session in get_session():
+            us = await get_user_settings(user_id, session)
+            settings = Settings.load()
+            # Find provider
+            if not provider_name:
+                # Try user's active provider first
+                if us.active_provider:
+                    provider_name = us.active_provider
+                else:
+                    for name, cfg in settings.providers.items():
+                        if cfg.enabled and cfg.api_key:
+                            provider_name = name
+                            break
+            if not provider_name:
+                raise ValueError("Aucun provider LLM configuré")
+            # Get user's key for this provider, fallback to global
+            user_prov = get_user_provider_key(us, provider_name)
+            cfg = settings.providers.get(provider_name)
+            api_key = (user_prov or {}).get("api_key") if user_prov else None
+            if not api_key and cfg:
+                from backend.core.config.settings import decrypt_value
+                api_key = decrypt_value(cfg.api_key) if cfg.api_key else None
+            if not api_key:
+                raise ValueError(f"Provider '{provider_name}' non configuré")
+            base_url = (cfg.base_url if cfg else None) or None
+            if not model_name:
+                model_name = (us.active_model if us.active_model else None) or \
+                             (cfg.default_model if cfg else None) or \
+                             (cfg.models[0] if cfg and cfg.models else None)
+            if not model_name:
+                raise ValueError(f"Aucun modèle pour '{provider_name}'")
+            return get_provider(provider_name, api_key, base_url), model_name, provider_name
+    except Exception:
+        pass
+    # Ultimate fallback to global config
+    return _get_llm(provider_name, model_name)
 router = APIRouter()
 
 # ── In-memory state (plugin-scoped, not core) ─────────────────────────────
@@ -98,6 +174,22 @@ SYSTEM_PROMPT_PRO = (
     "7. TOUJOURS répondre dans la même langue que la question\n"
     "8. Comparaisons → tableaux. Tutoriels → étapes numérotées.\n"
     "9. Brève synthèse à la fin"
+)
+
+SYSTEM_PROMPT_ACADEMIC = (
+    "Tu es HuntR Academic, un assistant de recherche scientifique rigoureux. "
+    "Tu synthétises UNIQUEMENT à partir de sources académiques vérifiées.\n\n"
+    "RÈGLES STRICTES :\n"
+    "1. Base CHAQUE affirmation sur les passages fournis — JAMAIS tes propres connaissances\n"
+    "2. Cite les sources inline [1], [2] — chaque fait doit avoir sa citation\n"
+    "3. Utilise un ton neutre, factuel et objectif — pas d'opinions ni de jugements\n"
+    "4. Distingue clairement : fait établi vs hypothèse vs résultat préliminaire\n"
+    "5. Mentionne les limites méthodologiques si elles sont visibles dans les sources\n"
+    "6. Si l'information est insuffisante ou contradictoire, dis-le explicitement\n"
+    "7. Markdown : titres, tableaux comparatifs, listes structurées\n"
+    "8. TOUJOURS répondre dans la même langue que la question\n"
+    "9. Privilégie les méta-analyses et revues systématiques quand disponibles\n"
+    "10. Termine par une synthèse des points clés et les lacunes identifiées"
 )
 
 RELATED_PROMPT = (
@@ -399,13 +491,15 @@ async def update_config(req: ConfigUpdateRequest):
 
 
 @router.post("/search/stream")
-async def search_stream(req: SearchRequest):
+async def search_stream(req: SearchRequest, request: Request):
     """
     Full HuntR pipeline via SSE.
 
     Events: status, search, sources (real-time), chunk (pro streaming),
             content, citation, related, done, error
     """
+    uid = _uid(request)
+    user_keys = await _get_user_search_keys(uid)
 
     async def _stream():
         t0 = time.time()
@@ -418,7 +512,7 @@ async def search_stream(req: SearchRequest):
             provider, model, provider_name = None, "", ""
             if req.pro_search:
                 try:
-                    provider, model, provider_name = _get_llm(req.provider, req.model)
+                    provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
                 except Exception:
                     pass
 
@@ -455,8 +549,8 @@ async def search_stream(req: SearchRequest):
             results = await multi_search(
                 search_query,
                 max_results=req.max_results,
-                brave_api_key=config.brave_api_key,
-                searxng_url=config.searxng_url,
+                brave_api_key=user_keys["brave_api_key"],
+                searxng_url=user_keys["searxng_url"],
                 focus=focus,
                 pro=req.pro_search,
                 language=language,
@@ -467,8 +561,8 @@ async def search_stream(req: SearchRequest):
                 for sq in understanding["sub_queries"][:2]:
                     extra = await multi_search(
                         sq, max_results=5,
-                        brave_api_key=config.brave_api_key,
-                        searxng_url=config.searxng_url,
+                        brave_api_key=user_keys["brave_api_key"],
+                        searxng_url=user_keys["searxng_url"],
                         focus=focus, pro=False, language=language,
                     )
                     seen = {r["url"] for r in results}
@@ -561,7 +655,8 @@ async def search_stream(req: SearchRequest):
             context = _build_context(passages, max_total=16000, max_words=400)
 
             # Build messages with session context for follow-up
-            messages = [ChatMessage(role="system", content=SYSTEM_PROMPT_PRO)]
+            sys_prompt = SYSTEM_PROMPT_ACADEMIC if focus == "academic" else SYSTEM_PROMPT_PRO
+            messages = [ChatMessage(role="system", content=sys_prompt)]
             if session_ctx:
                 messages.append(ChatMessage(
                     role="system",
@@ -608,16 +703,18 @@ async def search_stream(req: SearchRequest):
 
 
 @router.post("/search")
-async def search_sync(req: SearchRequest):
+async def search_sync(req: SearchRequest, request: Request):
     """Synchronous search (non-streaming)."""
     t0 = time.time()
     config = HuntRConfig.load()
+    uid = _uid(request)
+    user_keys = await _get_user_search_keys(uid)
 
     try:
         provider, model, provider_name = None, "", ""
         if req.pro_search:
             try:
-                provider, model, provider_name = _get_llm(req.provider, req.model)
+                provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
             except Exception:
                 pass
 
@@ -630,13 +727,13 @@ async def search_sync(req: SearchRequest):
 
         results = await multi_search(
             search_query, req.max_results,
-            config.brave_api_key, config.searxng_url,
+            user_keys["brave_api_key"], user_keys["searxng_url"],
             focus, req.pro_search, understanding["language"],
         )
         if understanding.get("sub_queries"):
             for sq in understanding["sub_queries"][:2]:
-                extra = await multi_search(sq, 5, config.brave_api_key,
-                                           config.searxng_url, focus, False)
+                extra = await multi_search(sq, 5, user_keys["brave_api_key"],
+                                           user_keys["searxng_url"], focus, False)
                 seen = {r["url"] for r in results}
                 for r in extra:
                     if r["url"] not in seen:
@@ -677,7 +774,8 @@ async def search_sync(req: SearchRequest):
             provider, model, provider_name = _get_llm(req.provider, req.model)
 
         context = _build_context(passages, max_total=16000, max_words=400)
-        messages = [ChatMessage(role="system", content=SYSTEM_PROMPT_PRO)]
+        sys_prompt = SYSTEM_PROMPT_ACADEMIC if focus == "academic" else SYSTEM_PROMPT_PRO
+        messages = [ChatMessage(role="system", content=sys_prompt)]
         if session_ctx:
             messages.append(ChatMessage(
                 role="system",
