@@ -1,14 +1,52 @@
 """
-HuntR — Search Providers
+HuntR — Search Providers (multi-topic).
 
 Two providers, same interface:
-  - DDGProvider  : free, no API key, uses core web_search_lite (with HTML fallback)
-  - TavilyProvider : requires per-user API key, returns full extracted content
+  - DDGProvider    : free, no API key. Supports topic=web|news|academic|code.
+  - TavilyProvider : per-user API key. Supports topic via Tavily params.
 """
 import logging
 from dataclasses import dataclass
 
 logger = logging.getLogger("gungnir.plugins.huntr")
+
+
+# ── Topic presets ───────────────────────────────────────────────────────────
+
+ACADEMIC_DOMAINS = [
+    "arxiv.org",
+    "scholar.google.com",
+    "jstor.org",
+    "pubmed.ncbi.nlm.nih.gov",
+    "ncbi.nlm.nih.gov",
+    "researchgate.net",
+    "semanticscholar.org",
+    "sciencedirect.com",
+    "nature.com",
+    "plos.org",
+    "hal.science",
+]
+
+CODE_DOMAINS = [
+    "github.com",
+    "stackoverflow.com",
+    "stackexchange.com",
+    "developer.mozilla.org",
+    "dev.to",
+    "docs.python.org",
+    "docs.rs",
+    "pkg.go.dev",
+    "docs.oracle.com",
+    "kubernetes.io",
+    "docs.docker.com",
+]
+
+VALID_TOPICS = {"web", "news", "academic", "code"}
+
+
+def _site_filter(domains: list[str]) -> str:
+    """Build a DDG-compatible site: filter OR-chain."""
+    return "(" + " OR ".join(f"site:{d}" for d in domains) + ")"
 
 
 @dataclass
@@ -22,16 +60,32 @@ class SearchResult:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# DuckDuckGo — free, no key, uses Gungnir core (with HTML fallback)
+# DuckDuckGo — free, no key
 # ═══════════════════════════════════════════════════════════════════════════
 
 class DDGProvider:
-    """Free web search via core web_search_lite (DDGS lib + HTML fallback)."""
+    """Free web search via DDG. Supports multi-topic."""
 
-    async def search(self, query: str, max_results: int = 10) -> list[SearchResult]:
+    async def search(self, query: str, max_results: int = 10,
+                     topic: str = "web") -> list[SearchResult]:
+        topic = topic if topic in VALID_TOPICS else "web"
+
+        if topic == "news":
+            return await self._search_news(query, max_results)
+        if topic == "academic":
+            return await self._search_text(
+                f"{query} {_site_filter(ACADEMIC_DOMAINS)}", max_results
+            )
+        if topic == "code":
+            return await self._search_text(
+                f"{query} {_site_filter(CODE_DOMAINS)}", max_results
+            )
+        return await self._search_text(query, max_results)
+
+    async def _search_text(self, query: str, max_results: int) -> list[SearchResult]:
+        """Standard DDG text search via core web_search_lite (has HTML fallback)."""
         try:
             from backend.core.agents.tools.web_fetch import web_search_lite
-
             data = await web_search_lite(query, num_results=max_results)
             if not data.get("ok"):
                 logger.warning(f"[HuntR][DDG] search failed: {data.get('error', 'unknown')}")
@@ -49,11 +103,51 @@ class DDGProvider:
                     content="",
                     source="duckduckgo",
                 ))
-            logger.info(f"[HuntR][DDG] {len(results)} results for: {query[:60]}")
+            logger.info(f"[HuntR][DDG text] {len(results)} results for: {query[:60]}")
             return results
         except Exception as e:
-            logger.warning(f"[HuntR][DDG] search failed: {e}")
+            logger.warning(f"[HuntR][DDG text] search failed: {e}")
             return []
+
+    async def _search_news(self, query: str, max_results: int) -> list[SearchResult]:
+        """DDG news search — uses duckduckgo-search lib directly."""
+        try:
+            import asyncio
+            from duckduckgo_search import DDGS
+
+            def _blocking():
+                with DDGS() as ddgs:
+                    return list(ddgs.news(query, max_results=max_results, safesearch="moderate"))
+
+            raw = await asyncio.to_thread(_blocking)
+
+            results = []
+            for r in raw:
+                url = r.get("url", "")
+                if not url:
+                    continue
+                title = r.get("title", "")
+                body = r.get("body", "") or ""
+                source_name = r.get("source", "")
+                date = r.get("date", "")
+                # Annotate snippet with date/source for LLM context
+                snippet_prefix = ""
+                if date:
+                    snippet_prefix += f"[{date}] "
+                if source_name:
+                    snippet_prefix += f"{source_name} — "
+                results.append(SearchResult(
+                    title=title,
+                    url=url,
+                    snippet=(snippet_prefix + body)[:500],
+                    content="",
+                    source="duckduckgo",
+                ))
+            logger.info(f"[HuntR][DDG news] {len(results)} news for: {query[:60]}")
+            return results
+        except Exception as e:
+            logger.warning(f"[HuntR][DDG news] search failed: {e}, fallback to text")
+            return await self._search_text(f"{query} actualités", max_results)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -61,16 +155,19 @@ class DDGProvider:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TavilyProvider:
-    """Tavily Search API — returns clean extracted content ready for LLM."""
+    """Tavily Search API — multi-topic support (news/academic/code via include_domains)."""
 
     def __init__(self, api_key: str):
         self.api_key = api_key
 
     async def search(self, query: str, max_results: int = 10,
-                     search_depth: str = "basic") -> list[SearchResult]:
+                     search_depth: str = "basic",
+                     topic: str = "web",
+                     news_days: int = 7) -> list[SearchResult]:
+        topic = topic if topic in VALID_TOPICS else "web"
         try:
             import aiohttp
-            payload = {
+            payload: dict = {
                 "api_key": self.api_key,
                 "query": query,
                 "max_results": min(max_results, 20),
@@ -78,6 +175,16 @@ class TavilyProvider:
                 "include_answer": False,
                 "include_raw_content": False,
             }
+
+            if topic == "news":
+                payload["topic"] = "news"
+                payload["days"] = max(1, min(news_days, 30))
+            elif topic == "academic":
+                payload["include_domains"] = ACADEMIC_DOMAINS
+            elif topic == "code":
+                payload["include_domains"] = CODE_DOMAINS
+            # else topic=web → no extra params
+
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=15)
             ) as session:
@@ -95,14 +202,20 @@ class TavilyProvider:
                 url = r.get("url", "")
                 if not url:
                     continue
+                # News topic returns 'published_date' in some cases
+                prefix = ""
+                pd = r.get("published_date") or r.get("date")
+                if topic == "news" and pd:
+                    prefix = f"[{pd}] "
+                content = r.get("content", "") or ""
                 results.append(SearchResult(
                     title=r.get("title", ""),
                     url=url,
-                    snippet=r.get("content", "")[:500],
-                    content=r.get("content", ""),
+                    snippet=(prefix + content)[:500],
+                    content=prefix + content,
                     source="tavily",
                 ))
-            logger.info(f"[HuntR][Tavily] {len(results)} results for: {query[:60]}")
+            logger.info(f"[HuntR][Tavily {topic}] {len(results)} results for: {query[:60]}")
             return results
         except Exception as e:
             logger.warning(f"[HuntR][Tavily] search failed: {e}")

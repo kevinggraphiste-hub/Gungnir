@@ -24,10 +24,24 @@ interface SearchResult {
   related_questions: string[]
   search_count: number
   pro_search: boolean
+  topic: Topic
   engines: string[]
   time_ms: number
   model?: string
   error?: boolean
+}
+
+type Topic = 'web' | 'news' | 'academic' | 'code'
+
+const TOPICS: { id: Topic; label: string; icon: string; desc: string }[] = [
+  { id: 'web',      label: 'Web',        icon: 'globe',    desc: 'Recherche générale' },
+  { id: 'news',     label: 'Actu',       icon: 'news',     desc: "Actualités récentes" },
+  { id: 'academic', label: 'Académique', icon: 'book',     desc: 'Papiers & recherche' },
+  { id: 'code',     label: 'Code',       icon: 'code',     desc: 'Dev, docs, StackOverflow' },
+]
+
+const TOPIC_LABELS: Record<Topic, string> = {
+  web: 'Web', news: 'Actu', academic: 'Académique', code: 'Code',
 }
 
 interface LiveSource {
@@ -41,6 +55,7 @@ interface HistoryEntry {
   id?: number
   query: string
   mode: string
+  topic?: Topic
   sources_count: number
   time_ms: number
   timestamp: number
@@ -76,6 +91,27 @@ const ENGINE_COLORS: Record<string, string> = {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+function TopicIcon({ kind, active }: { kind: string; active: boolean }) {
+  const color = active ? 'var(--scarlet)' : 'currentColor'
+  const common = { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none',
+    stroke: color, strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  if (kind === 'globe') {
+    return (<svg {...common}><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>)
+  }
+  if (kind === 'news') {
+    return (<svg {...common}><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/>
+      <path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6z"/></svg>)
+  }
+  if (kind === 'book') {
+    return (<svg {...common}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>)
+  }
+  if (kind === 'code') {
+    return (<svg {...common}><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>)
+  }
+  return null
+}
 
 function formatTimeAgo(ts: number): string {
   const diff = Math.floor((Date.now() / 1000) - ts)
@@ -140,8 +176,10 @@ function exportAsPdf(query: string, result: SearchResult) {
     const host = (() => { try { return new URL(c.url).hostname.replace('www.', '') } catch { return c.url } })()
     return `<li><span class="idx">[${c.index}]</span> <a href="${escapeHtml(c.url)}">${escapeHtml(c.title || host)}</a><div class="host">${escapeHtml(host)}</div></li>`
   }).join('')
+  const topicLbl = TOPIC_LABELS[(result.topic || 'web') as Topic] || 'Web'
   const meta = [
     result.pro_search ? 'Mode Pro' : 'Mode Classique',
+    topicLbl,
     ...(result.engines || []),
     result.model || '',
     `${result.search_count} sources`,
@@ -203,6 +241,7 @@ export default function HuntRPlugin() {
 
   const [query, setQuery] = useState('')
   const [proSearch, setProSearch] = useState(false)
+  const [topic, setTopic] = useState<Topic>('web')
   const [searching, setSearching] = useState(false)
   const [status, setStatus] = useState('')
   const [currentStep, setCurrentStep] = useState(0)
@@ -287,6 +326,7 @@ export default function HuntRPlugin() {
         body: JSON.stringify({
           query: q,
           pro_search: proSearch,
+          topic: topic,
           max_results: 10,
         }),
         signal: controller.signal,
@@ -304,7 +344,7 @@ export default function HuntRPlugin() {
       let streamDone = false
       const final: Partial<SearchResult> = {
         answer: '', citations: [], related_questions: [],
-        search_count: 0, pro_search: proSearch,
+        search_count: 0, pro_search: proSearch, topic,
         engines: [], time_ms: 0,
       }
 
@@ -356,6 +396,7 @@ export default function HuntRPlugin() {
                   final.time_ms = d.time_ms || 0
                   final.search_count = d.search_count || final.search_count
                   final.pro_search = d.pro_search ?? proSearch
+                  final.topic = (d.topic as Topic) || topic
                   final.engines = d.engines || final.engines
                   final.model = d.model
                   final.error = d.error
@@ -383,7 +424,7 @@ export default function HuntRPlugin() {
       setSearching(false)
       setStatus('')
     }
-  }, [query, proSearch, selectedProvider, selectedModel, refreshHistory])
+  }, [query, proSearch, topic, selectedProvider, selectedModel, refreshHistory])
 
   const handleClear = () => {
     setResult(null)
@@ -412,6 +453,7 @@ export default function HuntRPlugin() {
         related_questions: h.related_questions || [],
         search_count: h.sources_count,
         pro_search: h.mode === 'pro',
+        topic: (h.topic || 'web') as Topic,
         engines: h.engines || [],
         time_ms: h.time_ms,
         model: h.model,
@@ -611,6 +653,37 @@ export default function HuntRPlugin() {
                 </button>
               </div>
 
+              {/* Topic segmented control */}
+              <div style={{
+                display: 'flex', gap: 6, marginTop: 10, width: '100%',
+                maxWidth: !hasResults ? 640 : undefined, flexWrap: 'wrap',
+              }}>
+                {TOPICS.map(t => {
+                  const active = topic === t.id
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => setTopic(t.id)}
+                      title={t.desc}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '7px 12px', borderRadius: 999, fontSize: 12,
+                        fontWeight: active ? 600 : 500,
+                        background: active
+                          ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
+                          : 'var(--bg-secondary)',
+                        border: active ? '1px solid var(--scarlet)' : '1px solid var(--border)',
+                        color: active ? 'var(--scarlet)' : 'var(--text-muted)',
+                        cursor: 'pointer', transition: 'all 0.15s',
+                      }}
+                    >
+                      <TopicIcon kind={t.icon} active={active} />
+                      {t.label}
+                    </button>
+                  )
+                })}
+              </div>
+
               {/* Suggestions (idle) */}
               {!hasResults && (
                 <div style={{
@@ -750,6 +823,17 @@ export default function HuntRPlugin() {
                       }}>
                         <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
                         Pro
+                      </span>
+                    )}
+                    {result.topic && (
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                        background: 'rgba(220,38,38,0.1)', color: 'var(--scarlet)',
+                        border: '1px solid var(--scarlet)',
+                      }}>
+                        <TopicIcon kind={TOPICS.find(t => t.id === result.topic)?.icon || 'globe'} active />
+                        {TOPIC_LABELS[result.topic]}
                       </span>
                     )}
                     {result.engines.map(e => (
@@ -1042,6 +1126,9 @@ export default function HuntRPlugin() {
                         <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
                           <span>{h.sources_count} sources</span>
                           {h.mode === 'pro' && <span style={{ color: 'var(--amber, #f59e0b)' }}>Pro</span>}
+                          {h.topic && h.topic !== 'web' && (
+                            <span style={{ color: 'var(--scarlet)' }}>{TOPIC_LABELS[h.topic]}</span>
+                          )}
                           {h.answer ? <span style={{ color: 'var(--scarlet)' }}>cache</span> : null}
                           <span>{formatTimeAgo(h.timestamp)}</span>
                         </div>

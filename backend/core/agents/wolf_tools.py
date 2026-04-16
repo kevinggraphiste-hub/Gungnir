@@ -506,17 +506,20 @@ WOLF_TOOL_SCHEMAS = [
             "name": "huntr_search",
             "description": (
                 "Recherche web Perplexity-like via HuntR : retourne une réponse structurée, "
-                "reformulée et sourcée (citations numérotées [1][2][3]). Deux modes : "
-                "'classique' (DuckDuckGo, gratuit, liste de résultats) ou 'pro' (Tavily + "
-                "synthèse LLM de l'utilisateur, nécessite une clé Tavily configurée). "
-                "Préfère huntr_search à web_search quand tu veux une réponse rédigée et "
-                "sourcée plutôt qu'une simple liste de liens."
+                "reformulée et sourcée (citations numérotées [1][2][3]). Deux axes orthogonaux :\n"
+                "- mode (pro_search) : 'classique' (DDG, gratuit, liste) ou 'pro' (Tavily + synthèse LLM, nécessite clé Tavily).\n"
+                "- topic : 'web' (général), 'news' (actualités récentes, dernier 7j), 'academic' "
+                "(arXiv, PubMed, HAL, Nature…), 'code' (GitHub, StackOverflow, docs officielles).\n"
+                "Choisis le topic selon la requête : actu chaude → 'news', papier/recherche → 'academic', "
+                "question dev/bug/API → 'code', sinon 'web'. Préfère huntr_search à web_search quand tu veux "
+                "une réponse rédigée et sourcée plutôt qu'une simple liste de liens."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query":       {"type": "string", "description": "Question ou requête à rechercher"},
                     "pro_search":  {"type": "boolean", "description": "true = Tavily + synthèse LLM, false = DDG + liste (défaut: false)", "default": False},
+                    "topic":       {"type": "string", "enum": ["web", "news", "academic", "code"], "description": "Type de recherche (défaut: web)", "default": "web"},
                     "max_results": {"type": "integer", "description": "Nombre max de sources (1-20, défaut: 10)", "default": 10},
                 },
                 "required": ["query"]
@@ -1609,12 +1612,14 @@ async def _web_search(query: str, num_results: int = 10) -> dict:
     return result  # Retourner l'erreur originale
 
 
-async def _huntr_search(query: str, pro_search: bool = False, max_results: int = 10) -> dict:
+async def _huntr_search(query: str, pro_search: bool = False, topic: str = "web",
+                        max_results: int = 10) -> dict:
     """HuntR search (per-user) : réponse structurée + citations. Non-streaming pour l'agent.
 
     En mode Pro, réutilise la clé Tavily + le provider LLM actif de l'utilisateur
     courant (get_user_context). Ecrit le résultat dans HuntRSearch (historique DB)
-    et alimente le cache Tavily.
+    et alimente le cache Tavily. Topic ∈ {web, news, academic, code} pilote le filtrage
+    des sources ET le system prompt de synthèse.
     """
     uid = get_user_context()
     if not uid or uid <= 0:
@@ -1622,11 +1627,11 @@ async def _huntr_search(query: str, pro_search: bool = False, max_results: int =
 
     from backend.core.db.engine import async_session
     from backend.core.db.models import HuntRSearch
-    from backend.plugins.browser.search_providers import DDGProvider
+    from backend.plugins.browser.search_providers import DDGProvider, VALID_TOPICS
     from backend.plugins.browser.cache import tavily_cache
     from backend.plugins.browser.routes import (
         _resolve_tavily, _resolve_llm, _build_citations, _build_llm_context,
-        _format_classic_answer, _related_fallback, SYSTEM_PROMPT,
+        _format_classic_answer, _related_fallback, get_system_prompt, TOPIC_LABELS,
     )
     from backend.core.providers import ChatMessage
     import time as _time
@@ -1635,18 +1640,23 @@ async def _huntr_search(query: str, pro_search: bool = False, max_results: int =
     if not query:
         return {"ok": False, "error": "query is empty"}
     max_results = max(1, min(int(max_results or 10), 20))
+    topic = topic if topic in VALID_TOPICS else "web"
     mode = "pro" if pro_search else "classique"
+    topic_label = TOPIC_LABELS.get(topic, "Web")
 
     t0 = _time.time()
 
     async with async_session() as session:
-        # Cache (Pro only)
-        cache_key = tavily_cache.make_key(uid, query, "pro", max_results) if pro_search else None
+        # Cache (Pro only, jamais pour news)
+        cache_key = (
+            tavily_cache.make_key(uid, query, "pro", max_results, topic)
+            if pro_search and topic != "news" else None
+        )
         if cache_key:
             cached = tavily_cache.get(cache_key)
             if cached:
                 row = HuntRSearch(
-                    user_id=uid, query=query, mode="pro",
+                    user_id=uid, query=query, mode="pro", topic=topic,
                     answer=cached["answer"], citations=cached["citations"],
                     related_questions=cached["related"], engines=cached["engines"],
                     sources_count=cached["sources_count"],
@@ -1656,7 +1666,7 @@ async def _huntr_search(query: str, pro_search: bool = False, max_results: int =
                 session.add(row)
                 await session.commit()
                 return {
-                    "ok": True, "mode": "pro", "cached": True,
+                    "ok": True, "mode": "pro", "topic": topic, "cached": True,
                     "answer": cached["answer"],
                     "citations": cached["citations"],
                     "sources_count": cached["sources_count"],
@@ -1667,7 +1677,7 @@ async def _huntr_search(query: str, pro_search: bool = False, max_results: int =
         if not pro_search:
             # ── Classique : DDG only ────────────────────────────────
             ddg = DDGProvider()
-            results = await ddg.search(query, max_results=max_results)
+            results = await ddg.search(query, max_results=max_results, topic=topic)
             engines = ["duckduckgo"]
             citations = _build_citations(results)
             answer = _format_classic_answer(query, results)
@@ -1675,7 +1685,7 @@ async def _huntr_search(query: str, pro_search: bool = False, max_results: int =
             time_ms = int((_time.time() - t0) * 1000)
 
             row = HuntRSearch(
-                user_id=uid, query=query, mode="classique",
+                user_id=uid, query=query, mode="classique", topic=topic,
                 answer=answer, citations=citations, related_questions=related,
                 engines=engines, sources_count=len(results), time_ms=time_ms,
             )
@@ -1683,7 +1693,7 @@ async def _huntr_search(query: str, pro_search: bool = False, max_results: int =
             await session.commit()
 
             return {
-                "ok": True, "mode": "classique",
+                "ok": True, "mode": "classique", "topic": topic,
                 "answer": answer,
                 "citations": citations,
                 "sources_count": len(results),
@@ -1701,22 +1711,22 @@ async def _huntr_search(query: str, pro_search: bool = False, max_results: int =
         except Exception as e:
             return {"ok": False, "error": f"LLM unavailable: {e}"}
 
-        results = await tavily.search(query, max_results=max_results)
+        results = await tavily.search(query, max_results=max_results, topic=topic)
         if not results:
             ddg = DDGProvider()
-            results = await ddg.search(query, max_results=max_results)
+            results = await ddg.search(query, max_results=max_results, topic=topic)
 
         engines = list(set(r.source for r in results)) if results else ["tavily"]
         citations = _build_citations(results)
         context = _build_llm_context(results)
 
         messages = [
-            ChatMessage(role="system", content=SYSTEM_PROMPT),
+            ChatMessage(role="system", content=get_system_prompt(topic)),
             ChatMessage(
                 role="user",
                 content=(
-                    f"QUESTION : {query}\n\nPASSAGES WEB :\n\n{context}\n\n"
-                    f"Rédige une réponse structurée (# / ## / ## / ## / ## Conclusion), "
+                    f"QUESTION ({topic_label}) : {query}\n\nPASSAGES WEB :\n\n{context}\n\n"
+                    f"Rédige une réponse structurée selon le format demandé pour le mode {topic_label}, "
                     f"cite [1], [2]... DANS les phrases."
                 ),
             ),
@@ -1736,7 +1746,7 @@ async def _huntr_search(query: str, pro_search: bool = False, max_results: int =
         time_ms = int((_time.time() - t0) * 1000)
 
         row = HuntRSearch(
-            user_id=uid, query=query, mode="pro",
+            user_id=uid, query=query, mode="pro", topic=topic,
             answer=answer, citations=citations, related_questions=related,
             engines=engines, sources_count=len(results), time_ms=time_ms,
             model=llm_model,
@@ -1756,7 +1766,7 @@ async def _huntr_search(query: str, pro_search: bool = False, max_results: int =
             })
 
         return {
-            "ok": True, "mode": "pro", "cached": False,
+            "ok": True, "mode": "pro", "topic": topic, "cached": False,
             "answer": answer,
             "citations": citations,
             "sources_count": len(results),

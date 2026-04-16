@@ -270,6 +270,7 @@ class HuntRSearch(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     query = Column(Text, nullable=False)
     mode = Column(String(20), default="classique")       # "classique" | "pro"
+    topic = Column(String(20), default="web", index=True)  # "web" | "news" | "academic" | "code"
     answer = Column(Text, default="")
     citations = Column(JSON, default=list)               # [{index, url, title, snippet}]
     related_questions = Column(JSON, default=list)       # [str]
@@ -312,6 +313,7 @@ async def init_db(engine):
         ("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE", "is_admin -> users"),
         ("ALTER TABLE conversations ADD COLUMN folder_id INTEGER REFERENCES conversation_folders(id)", "folder_id -> conversations"),
         ("ALTER TABLE user_settings ADD COLUMN language VARCHAR(10) DEFAULT 'fr'", "language -> user_settings"),
+        ("ALTER TABLE huntr_searches ADD COLUMN topic VARCHAR(20) DEFAULT 'web'", "topic -> huntr_searches"),
     ]
     for sql, label in migrations:
         try:

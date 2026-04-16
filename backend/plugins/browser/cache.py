@@ -20,9 +20,10 @@ class TavilyCache:
         self._lock = threading.Lock()
 
     @staticmethod
-    def make_key(user_id: int, query: str, mode: str, max_results: int) -> str:
+    def make_key(user_id: int, query: str, mode: str, max_results: int,
+                 topic: str = "web") -> str:
         q = (query or "").strip().lower()
-        return f"{user_id}|{mode}|{max_results}|{q}"
+        return f"{user_id}|{mode}|{topic}|{max_results}|{q}"
 
     def get(self, key: str) -> dict | None:
         with self._lock:

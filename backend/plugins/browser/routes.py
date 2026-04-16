@@ -26,7 +26,7 @@ from backend.core.api.auth_helpers import (
     get_user_settings, get_user_provider_key, get_user_service_key,
 )
 
-from .search_providers import DDGProvider, TavilyProvider, SearchResult
+from .search_providers import DDGProvider, TavilyProvider, SearchResult, VALID_TOPICS
 from .cache import tavily_cache
 
 logger = logging.getLogger("gungnir.plugins.huntr")
@@ -40,6 +40,10 @@ class SearchRequest(BaseModel):
     query: str
     pro_search: bool = False
     max_results: int = Field(default=10, ge=1, le=20)
+    topic: str = Field(default="web")  # web | news | academic | code
+
+    def safe_topic(self) -> str:
+        return self.topic if self.topic in VALID_TOPICS else "web"
 
 
 # ── Per-user helpers ─────────────────────────────────────────────────────
@@ -83,34 +87,120 @@ async def _resolve_llm(user_id: int, session: AsyncSession):
     return get_provider(pname, api_key, base_url), model
 
 
-# ── LLM Prompts ──────────────────────────────────────────────────────────
+# ── LLM Prompts (per topic) ──────────────────────────────────────────────
 
-SYSTEM_PROMPT = """\
-Tu es HuntR, un assistant de recherche web. Tu transformes des passages web bruts en une réponse reformulée, structurée et sourcée.
-
-STRUCTURE OBLIGATOIRE :
-
-# [Titre principal — une phrase qui résume la réponse]
-
-## [Aspect 1 — sous-titre descriptif]
-Un paragraphe développé (5-8 phrases min.) qui explore ce premier aspect. Contexte, explications, nuances, exemples concrets. Chaque affirmation cite sa source [1], [2] directement dans la phrase.
-
-## [Aspect 2 — sous-titre descriptif]
-Un paragraphe développé explorant un deuxième angle. Croise les sources, compare les points de vue [3], ajoute du contexte [1].
-
-## [Aspect 3 — sous-titre descriptif]
-Un paragraphe développé sur un troisième aspect. Détails supplémentaires, implications, exemples [2][4].
-
-## Conclusion
-3 à 5 phrases de synthèse reprenant les points clés. Pas de nouvelles informations, juste un résumé clair.
-
-REGLES :
+_BASE_RULES = """\
+REGLES GLOBALES :
 - REFORMULE intégralement — ne recopie JAMAIS un passage tel quel
 - Cite DANS la phrase : « Python domine [1], devant Rust [3]. » (PAS de citation détachée)
 - Utilise TOUS les passages fournis, chaque source doit être citée au moins une fois
 - Réponds dans la MÊME LANGUE que la question
 - Si l'info manque ou est contradictoire, dis-le clairement
 - N'utilise JAMAIS tes propres connaissances — UNIQUEMENT les passages fournis"""
+
+_BASE_STRUCTURE = """\
+STRUCTURE OBLIGATOIRE :
+
+# [Titre principal — une phrase qui résume la réponse]
+
+## [Aspect 1 — sous-titre descriptif]
+Un paragraphe développé (5-8 phrases min.) qui explore ce premier aspect. Chaque affirmation cite sa source [1], [2] directement dans la phrase.
+
+## [Aspect 2 — sous-titre descriptif]
+Un paragraphe développé explorant un deuxième angle. Croise les sources [3], ajoute du contexte [1].
+
+## [Aspect 3 — sous-titre descriptif]
+Un paragraphe développé sur un troisième aspect. Détails, implications, exemples [2][4].
+
+## Conclusion
+3 à 5 phrases de synthèse. Pas de nouvelles informations."""
+
+SYSTEM_PROMPT_WEB = f"""\
+Tu es HuntR (mode Web), un assistant de recherche web généraliste. Tu transformes des passages web bruts en une réponse reformulée, structurée et sourcée.
+
+{_BASE_STRUCTURE}
+
+{_BASE_RULES}"""
+
+SYSTEM_PROMPT_NEWS = f"""\
+Tu es HuntR (mode Actualités). Tu synthétises des articles de presse récents en une réponse chronologique, factuelle et sourcée.
+
+{_BASE_STRUCTURE}
+
+SPÉCIFICITÉS ACTUALITÉS :
+- Mentionne les DATES dans le texte (ex : « Le 12 mars, selon [2]... »)
+- Identifie clairement les ACTEURS (personnes, entreprises, États) et leur position
+- Distingue les FAITS RAPPORTÉS des ANALYSES/OPINIONS
+- Si l'info est en développement, signale-le (« situation évolutive »)
+- Mets en avant l'IMPACT : qui est concerné, conséquences immédiates et possibles
+- Quand les sources se contredisent, expose les versions au lieu de trancher
+
+{_BASE_RULES}"""
+
+SYSTEM_PROMPT_ACADEMIC = f"""\
+Tu es HuntR (mode Académique). Tu synthétises des publications scientifiques et documents de recherche avec rigueur et neutralité.
+
+{_BASE_STRUCTURE}
+
+SPÉCIFICITÉS ACADÉMIQUES :
+- Ton formel, précis, sans sensationnalisme
+- Mentionne MÉTHODOLOGIE (type d'étude, échantillon, design) quand les passages le décrivent
+- Distingue CONSENSUS scientifique vs HYPOTHÈSES vs RÉSULTATS PRÉLIMINAIRES
+- Signale les LIMITES déclarées par les auteurs
+- Utilise le vocabulaire technique quand les sources l'emploient, en l'expliquant brièvement
+- Pas de conclusion « militante » : reste descriptif et exposé
+
+{_BASE_RULES}"""
+
+SYSTEM_PROMPT_CODE = f"""\
+Tu es HuntR (mode Code/Dev). Tu synthétises des ressources techniques (docs, GitHub, StackOverflow) pour répondre à une question de développement.
+
+STRUCTURE ADAPTÉE :
+
+# [Titre de la réponse technique]
+
+## Approche recommandée
+Explication de la meilleure approche selon les sources [1][2]. Inclue un exemple de code concret dans un bloc ``` avec le bon langage.
+
+## Variantes & alternatives
+Présente 1-2 autres approches [3] avec leurs trade-offs (performance, lisibilité, idiomatique, maintenance).
+
+## Pièges courants
+Erreurs fréquentes signalées dans les sources [4][5], cas limites, incompatibilités.
+
+## Références & docs
+Pointeurs vers les passages les plus utiles — doc officielle d'abord, ressources communautaires ensuite.
+
+SPÉCIFICITÉS CODE :
+- TOUJOURS inclure au moins un bloc de code ``` dans la réponse
+- Précise le langage après les backticks (```python, ```javascript, ```rust, etc.)
+- Priorise les sources OFFICIELLES (MDN, docs.python.org, docs.rs, pkg.go.dev) sur les blogs
+- Signale les versions/compatibilités quand pertinent
+- Reste pragmatique : préfère le code idiomatique à l'élégance théorique
+
+{_BASE_RULES}"""
+
+TOPIC_PROMPTS = {
+    "web": SYSTEM_PROMPT_WEB,
+    "news": SYSTEM_PROMPT_NEWS,
+    "academic": SYSTEM_PROMPT_ACADEMIC,
+    "code": SYSTEM_PROMPT_CODE,
+}
+
+# Backward-compat alias (imported by wolf_tools)
+SYSTEM_PROMPT = SYSTEM_PROMPT_WEB
+
+
+def get_system_prompt(topic: str) -> str:
+    return TOPIC_PROMPTS.get(topic, SYSTEM_PROMPT_WEB)
+
+
+TOPIC_LABELS = {
+    "web": "Web",
+    "news": "Actualités",
+    "academic": "Académique",
+    "code": "Code",
+}
 
 
 # ── SSE helpers ──────────────────────────────────────────────────────────
@@ -180,6 +270,7 @@ def _row_to_dict(row: HuntRSearch) -> dict:
         "id": row.id,
         "query": row.query,
         "mode": row.mode,
+        "topic": row.topic or "web",
         "sources_count": row.sources_count,
         "time_ms": row.time_ms,
         "timestamp": row.created_at.timestamp() if row.created_at else 0,
@@ -195,6 +286,7 @@ def _row_to_dict(row: HuntRSearch) -> dict:
 async def _save_to_history(
     session: AsyncSession, user_id: int,
     query: str, mode: str, sources: int, time_ms: int,
+    topic: str = "web",
     answer: str = "", citations: list[dict] | None = None,
     related: list[str] | None = None, engines: list[str] | None = None,
     model: str = "",
@@ -204,6 +296,7 @@ async def _save_to_history(
         user_id=user_id,
         query=query,
         mode=mode,
+        topic=topic,
         answer=answer,
         citations=citations or [],
         related_questions=related or [],
@@ -227,6 +320,7 @@ async def _save_to_history(
 async def search_stream(req: SearchRequest, request: Request,
                         session: AsyncSession = Depends(get_session)):
     uid = _uid(request)
+    topic = req.safe_topic()
 
     # ── Resolve per-user resources BEFORE the stream ─────────────────
     tavily = await _resolve_tavily(uid, session)
@@ -247,10 +341,11 @@ async def search_stream(req: SearchRequest, request: Request,
             llm_error = str(e)
 
     # Cache check (Pro only — Classique reste 100% gratuit/frais)
+    # News topic is NOT cached (fresh results matter more than speed)
     cache_key = None
     cached_payload = None
-    if req.pro_search:
-        cache_key = tavily_cache.make_key(uid, req.query, "pro", req.max_results)
+    if req.pro_search and topic != "news":
+        cache_key = tavily_cache.make_key(uid, req.query, "pro", req.max_results, topic)
         cached_payload = tavily_cache.get(cache_key)
 
     async def _stream():
@@ -260,10 +355,10 @@ async def search_stream(req: SearchRequest, request: Request,
             query = req.query.strip()
 
             # ══════════════════════════════════════════════════════════
-            # CACHE HIT (Pro) — replay the cached answer as SSE events
+            # CACHE HIT (Pro, non-news) — replay the cached answer as SSE
             # ══════════════════════════════════════════════════════════
             if cached_payload is not None:
-                yield _sse("status", {"message": "Résultat mis en cache (récent)", "step": 4, "total_steps": 4})
+                yield _sse("status", {"message": "Résultat mis en cache (récent)", "step": 4, "total_steps": 4, "topic": topic})
                 yield _sse("search", {
                     "count": cached_payload["sources_count"],
                     "engines": cached_payload["engines"],
@@ -277,6 +372,7 @@ async def search_stream(req: SearchRequest, request: Request,
                 await _save_to_history(
                     session, uid, query, "pro",
                     cached_payload["sources_count"], _elapsed(t0),
+                    topic=topic,
                     answer=cached_payload["answer"],
                     citations=cached_payload["citations"],
                     related=cached_payload["related"],
@@ -289,6 +385,7 @@ async def search_stream(req: SearchRequest, request: Request,
                     "pro_search": True,
                     "engines": cached_payload["engines"],
                     "model": cached_payload["model"],
+                    "topic": topic,
                     "cached": True,
                 })
                 return
@@ -297,10 +394,11 @@ async def search_stream(req: SearchRequest, request: Request,
                 # ══════════════════════════════════════════════════════
                 # MODE CLASSIQUE — DDG only, 100% gratuit, 0 API key
                 # ══════════════════════════════════════════════════════
-                yield _sse("status", {"message": "Recherche (DuckDuckGo)...", "step": 1})
+                topic_label = TOPIC_LABELS.get(topic, "Web")
+                yield _sse("status", {"message": f"Recherche {topic_label} (DuckDuckGo)...", "step": 1, "topic": topic})
 
                 ddg = DDGProvider()
-                results = await ddg.search(query, max_results=req.max_results)
+                results = await ddg.search(query, max_results=req.max_results, topic=topic)
                 engines = ["duckduckgo"]
 
                 yield _sse("search", {
@@ -323,6 +421,7 @@ async def search_stream(req: SearchRequest, request: Request,
 
                 await _save_to_history(session, uid, query, "classique",
                                        len(results), _elapsed(t0),
+                                       topic=topic,
                                        answer=answer, citations=citations,
                                        related=related, engines=engines)
 
@@ -331,21 +430,26 @@ async def search_stream(req: SearchRequest, request: Request,
                     "search_count": len(results),
                     "pro_search": False,
                     "engines": engines,
+                    "topic": topic,
                 })
                 return
 
             # ══════════════════════════════════════════════════════════
             # MODE PRO — Tavily + LLM (4 steps)
             # ══════════════════════════════════════════════════════════
+            topic_label = TOPIC_LABELS.get(topic, "Web")
 
             # Step 1: Tavily search
-            yield _sse("status", {"message": "Recherche approfondie (Tavily)...", "step": 1, "total_steps": 4})
-            results = await tavily.search(query, max_results=req.max_results)
+            yield _sse("status", {
+                "message": f"Recherche {topic_label} (Tavily)...",
+                "step": 1, "total_steps": 4, "topic": topic,
+            })
+            results = await tavily.search(query, max_results=req.max_results, topic=topic)
 
             if not results:
                 yield _sse("status", {"message": "Fallback DuckDuckGo...", "step": 1, "total_steps": 4})
                 ddg = DDGProvider()
-                results = await ddg.search(query, max_results=req.max_results)
+                results = await ddg.search(query, max_results=req.max_results, topic=topic)
 
             engines = list(set(r.source for r in results)) if results else ["tavily"]
 
@@ -371,16 +475,19 @@ async def search_stream(req: SearchRequest, request: Request,
                 yield _sse("related", {"questions": _related_fallback(query)})
                 yield _sse("done", {
                     "time_ms": _elapsed(t0), "search_count": len(results),
-                    "pro_search": True, "engines": engines, "error": True,
+                    "pro_search": True, "engines": engines, "topic": topic, "error": True,
                 })
                 return
 
             # Step 4: LLM synthesis (streamed)
-            yield _sse("status", {"message": "Synthèse par l'IA en cours...", "step": 4, "total_steps": 4})
+            yield _sse("status", {
+                "message": f"Synthèse {topic_label} par l'IA en cours...",
+                "step": 4, "total_steps": 4, "topic": topic,
+            })
 
             context = _build_llm_context(results)
             messages = [
-                ChatMessage(role="system", content=SYSTEM_PROMPT),
+                ChatMessage(role="system", content=get_system_prompt(topic)),
                 ChatMessage(
                     role="user",
                     content=(
@@ -389,7 +496,7 @@ async def search_stream(req: SearchRequest, request: Request,
                         f"{context}\n\n"
                         f"---\n"
                         f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots).\n"
-                        f"Suis EXACTEMENT la structure : # Titre → ## Aspect 1 → ## Aspect 2 → ## Aspect 3 → ## Conclusion\n"
+                        f"Suis EXACTEMENT la structure imposée par le mode {topic_label}.\n"
                         f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
                         f"Exploite TOUS les passages — chaque source citée au moins une fois."
                     ),
@@ -420,6 +527,7 @@ async def search_stream(req: SearchRequest, request: Request,
 
             await _save_to_history(session, uid, query, "pro",
                                    len(results), _elapsed(t0),
+                                   topic=topic,
                                    answer=answer, citations=citations,
                                    related=related, engines=engines,
                                    model=llm_model)
@@ -442,6 +550,7 @@ async def search_stream(req: SearchRequest, request: Request,
                 "pro_search": True,
                 "engines": engines,
                 "model": llm_model,
+                "topic": topic,
             })
 
         except Exception as e:
