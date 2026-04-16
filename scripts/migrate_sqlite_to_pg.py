@@ -103,6 +103,10 @@ async def _copy_table(src_engine: AsyncEngine, dst_engine: AsyncEngine, table) -
                 continue
 
             async with dst_engine.begin() as dst_conn:
+                # Desactive les FK checks pour cette transaction — un
+                # SQLite legacy pre-multi-user peut avoir des user_id
+                # orphelins (ex: conversations.user_id=1 mais users vide).
+                await dst_conn.execute(text("SET LOCAL session_replication_role = replica"))
                 stmt = pg_insert(table).values(rows)
                 if pk_cols:
                     stmt = stmt.on_conflict_do_nothing(index_elements=pk_cols)
@@ -175,9 +179,25 @@ async def main(sqlite_path: str, pg_url: str) -> None:
         log.info("Resynchronisation des sequences Postgres…")
         await _resync_sequences(dst_engine)
 
+        # 4. Detection d'orphelins : users vide mais conversations pointent vers user_id
+        async with dst_engine.connect() as conn:
+            u_count = (await conn.execute(text("SELECT COUNT(*) FROM users"))).scalar()
+            c_with_user = (await conn.execute(text(
+                "SELECT COUNT(*) FROM conversations WHERE user_id IS NOT NULL"
+            ))).scalar()
+
         log.info("=" * 50)
         log.info(f"Migration terminee : {total_inserted}/{total_read} lignes inserees")
         log.info("=" * 50)
+
+        if u_count == 0 and c_with_user > 0:
+            log.warning("")
+            log.warning("!! ATTENTION — Aucun user n'a ete migre, mais des conversations")
+            log.warning(f"   referencent un user_id ({c_with_user} lignes).")
+            log.warning("   → L'ancien SQLite etait en mode single-user.")
+            log.warning("   → Connecte-toi pour la premiere fois : le premier user cree")
+            log.warning("     prendra l'id=1 et heritera automatiquement de ces donnees.")
+            log.warning("")
 
     finally:
         await src_engine.dispose()
