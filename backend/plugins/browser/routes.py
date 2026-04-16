@@ -176,10 +176,18 @@ def _related_fallback(query: str) -> list[str]:
     ]
 
 
-def _save_to_history(query: str, mode: str, sources: int, time_ms: int):
+def _save_to_history(query: str, mode: str, sources: int, time_ms: int,
+                     answer: str = "", citations: list[dict] | None = None,
+                     related: list[str] | None = None, engines: list[str] | None = None,
+                     model: str = ""):
     _search_history.insert(0, {
         "query": query, "mode": mode, "sources_count": sources,
         "time_ms": time_ms, "timestamp": time.time(),
+        "answer": answer,
+        "citations": citations or [],
+        "related_questions": related or [],
+        "engines": engines or [],
+        "model": model,
     })
     while len(_search_history) > MAX_HISTORY:
         _search_history.pop()
@@ -251,11 +259,14 @@ async def search_stream(req: SearchRequest, request: Request,
                 citations = _build_citations(results)
                 answer = _format_classic_answer(query, results)
 
+                related = _related_fallback(query)
                 yield _sse("citation", {"citations": citations})
                 yield _sse("content", {"answer": answer})
-                yield _sse("related", {"questions": _related_fallback(query)})
+                yield _sse("related", {"questions": related})
 
-                _save_to_history(query, "classique", len(results), _elapsed(t0))
+                _save_to_history(query, "classique", len(results), _elapsed(t0),
+                                 answer=answer, citations=citations,
+                                 related=related, engines=engines)
 
                 yield _sse("done", {
                     "time_ms": _elapsed(t0),
@@ -339,10 +350,14 @@ async def search_stream(req: SearchRequest, request: Request,
                 logger.warning("[HuntR] Using classic fallback (LLM empty or failed)")
                 answer = _format_classic_answer(query, results)
 
+            related = _related_fallback(query)
             yield _sse("content", {"answer": answer})
-            yield _sse("related", {"questions": _related_fallback(query)})
+            yield _sse("related", {"questions": related})
 
-            _save_to_history(query, "pro", len(results), _elapsed(t0))
+            _save_to_history(query, "pro", len(results), _elapsed(t0),
+                             answer=answer, citations=citations,
+                             related=related, engines=engines,
+                             model=llm_model)
 
             yield _sse("done", {
                 "time_ms": _elapsed(t0),

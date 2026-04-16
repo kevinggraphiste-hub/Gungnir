@@ -43,6 +43,11 @@ interface HistoryEntry {
   sources_count: number
   time_ms: number
   timestamp: number
+  answer?: string
+  citations?: Citation[]
+  related_questions?: string[]
+  engines?: string[]
+  model?: string
 }
 
 interface UserCapabilities {
@@ -242,7 +247,36 @@ export default function HuntRPlugin() {
     setQuery('')
     setError('')
     setLiveSources([])
+    setCurrentStep(0)
+    setTotalSteps(0)
     inputRef.current?.focus()
+  }
+
+  const loadFromHistory = (h: HistoryEntry) => {
+    if (h.answer) {
+      // Cached result — display directly
+      setQuery(h.query)
+      setError('')
+      setLiveSources([])
+      setSearching(false)
+      setStatus('')
+      setCurrentStep(0)
+      setTotalSteps(0)
+      setResult({
+        answer: h.answer,
+        citations: h.citations || [],
+        related_questions: h.related_questions || [],
+        search_count: h.sources_count,
+        pro_search: h.mode === 'pro',
+        engines: h.engines || [],
+        time_ms: h.time_ms,
+        model: h.model,
+      })
+    } else {
+      // No cached answer — re-run search
+      setQuery(h.query)
+      doSearch(h.query)
+    }
   }
 
   const hasResults = result || searching
@@ -783,7 +817,7 @@ export default function HuntRPlugin() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {history.map((h, i) => (
                   <button key={i}
-                    onClick={() => { setQuery(h.query); doSearch(h.query) }}
+                    onClick={() => loadFromHistory(h)}
                     style={{
                       padding: '7px 8px', borderRadius: 6, fontSize: 11,
                       background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
@@ -798,6 +832,7 @@ export default function HuntRPlugin() {
                     <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, display: 'flex', gap: 5, alignItems: 'center' }}>
                       <span>{h.sources_count} sources</span>
                       {h.mode === 'pro' && <span style={{ color: 'var(--amber, #f59e0b)' }}>Pro</span>}
+                      {h.answer ? <span style={{ color: 'var(--scarlet)' }}>cache</span> : null}
                       <span>{formatTimeAgo(h.timestamp)}</span>
                     </div>
                   </button>
