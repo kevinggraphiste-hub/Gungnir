@@ -114,6 +114,10 @@ async def _get_user_llm(user_id: int, provider_name: Optional[str] = None,
             raise ValueError(f"Aucun modèle pour '{provider_name}'")
 
         return get_provider(provider_name, api_key, base_url), model_name, provider_name
+
+    raise ValueError(f"Impossible de résoudre le provider LLM pour user {user_id}")
+
+
 router = APIRouter()
 
 # ── In-memory state (plugin-scoped, not core) ─────────────────────────────
