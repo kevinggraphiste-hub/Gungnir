@@ -81,21 +81,30 @@ export const useStore = create<AppState>((set) => ({
   setConfig: (config) => set({ config }),
 
   agentName: localStorage.getItem('gungnir_agent_name') || 'Gungnir',
-  setAgentName: (name) => {
-    localStorage.setItem('gungnir_agent_name', name)
-    set({ agentName: name })
-    // Persist per-user to UserSettings.agent_name so chat.py picks it up.
-    // Before this sync, the Settings input was purely cosmetic: the backend
-    // kept reading the legacy Settings.app.agent_name global.
-    const token = localStorage.getItem('gungnir_auth_token')
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (token) headers['Authorization'] = `Bearer ${token}`
-    apiFetch('/api/config/user/app', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ agent_name: name }),
-    }).catch(() => {})
-  },
+  setAgentName: (() => {
+    // Debounce the backend POST so the soul-file find-replace only runs once
+    // with the FINAL name, not on every intermediate keystroke. Without this,
+    // typing "Tori" letter by letter fires 4 POSTs ("T","To","Tor","Tori")
+    // and each one does a find-replace that corrupts the soul ("T" matches
+    // everywhere → garbage). The Zustand state + localStorage update is
+    // still instant for UI responsiveness.
+    let timer: ReturnType<typeof setTimeout> | null = null
+    return (name: string) => {
+      localStorage.setItem('gungnir_agent_name', name)
+      set({ agentName: name })
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        const token = localStorage.getItem('gungnir_auth_token')
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (token) headers['Authorization'] = `Bearer ${token}`
+        apiFetch('/api/config/user/app', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ agent_name: name }),
+        }).catch(() => {})
+      }, 800)
+    }
+  })(),
 
   conversations: [],
   setConversations: (conversations) => set({ conversations }),
