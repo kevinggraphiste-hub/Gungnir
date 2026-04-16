@@ -599,22 +599,53 @@ async def delete_user_service(service_name: str, request: Request, session: Asyn
     return {"ok": True, "deleted": service_name}
 
 
-@router.post("/config/user/app")
-async def save_user_app_settings(request: Request, session: AsyncSession = Depends(get_session)):
-    """Save per-user app preferences (active provider/model)."""
+@router.get("/config/user/app")
+async def get_user_app_settings(request: Request, session: AsyncSession = Depends(get_session)):
+    """Return the current user's app-level preferences: agent_name,
+    active_provider, active_model, language. Used by the Settings UI to
+    render the right values on mount and by appStore to sync state on
+    login/reload."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
-        # Fallback to global config for non-auth mode
-        body = await request.json()
-        settings = Settings.load()
-        for key, value in body.items():
-            if hasattr(settings.app, key):
-                setattr(settings.app, key, value)
-        settings.save()
-        return {"status": "saved"}
+        return {
+            "agent_name": "",
+            "active_provider": "openrouter",
+            "active_model": "",
+            "language": "fr",
+        }
+    user_settings = await get_user_settings(user_id, session)
+    return {
+        "agent_name": user_settings.agent_name or "",
+        "active_provider": user_settings.active_provider or "openrouter",
+        "active_model": user_settings.active_model or "",
+        "language": user_settings.language or "fr",
+    }
+
+
+@router.post("/config/user/app")
+async def save_user_app_settings(request: Request, session: AsyncSession = Depends(get_session)):
+    """Save per-user app preferences: agent_name + active_provider/model/language.
+    All fields are strictly per-user — nothing is written to Settings.app.*
+    (the legacy global). The agent_name field in particular was the
+    cross-user pollution vector before; it now lives only in
+    UserSettings.agent_name."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        # Open/setup mode: persist to user #1 (admin) if they exist, else refuse.
+        first_user = await session.execute(select(User).order_by(User.id).limit(1))
+        fallback_user = first_user.scalar()
+        if fallback_user is None:
+            return JSONResponse(
+                {"error": "Créez un utilisateur avant de configurer les préférences (POST /api/users)."},
+                status_code=400,
+            )
+        user_id = fallback_user.id
 
     body = await request.json()
     user_settings = await get_user_settings(user_id, session)
+    if "agent_name" in body:
+        clean_name = (body.get("agent_name") or "").strip()
+        user_settings.agent_name = clean_name
     if "active_provider" in body:
         user_settings.active_provider = body["active_provider"]
     if "active_model" in body:

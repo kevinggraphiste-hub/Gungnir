@@ -541,23 +541,35 @@ async def scan_skill(data: dict):
 
 
 @router.get("/soul")
-async def get_soul(request: Request):
+async def get_soul(request: Request, session: AsyncSession = Depends(get_session)):
+    """Return the CURRENT user's soul.md. Per-user, no cross-user fallback.
+    If the user has never written their own soul yet, a clean default is
+    generated on the fly from their own agent_name — no auto-copy of some
+    other user's file."""
     uid = _uid(request)
     soul_file = _get_soul_file(uid)
     if soul_file.exists():
         content = soul_file.read_text(encoding="utf-8")
-    elif SOUL_FILE.exists():
-        # First time for this user: copy global soul
-        content = SOUL_FILE.read_text(encoding="utf-8")
-        soul_file.parent.mkdir(parents=True, exist_ok=True)
-        soul_file.write_text(content, encoding="utf-8")
     else:
-        content = _get_default_soul()
+        # Use this user's own agent_name for the generated default
+        name = "Gungnir"
+        try:
+            from backend.core.api.auth_helpers import get_user_settings as _gus
+            us = await _gus(uid, session)
+            if us.agent_name:
+                name = us.agent_name
+        except Exception:
+            pass
+        content = _get_default_soul(name)
     return {"content": content}
 
 
 @router.post("/soul")
-async def save_soul(request: Request, data: dict):
+async def save_soul(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
+    """Persist the CURRENT user's soul.md and, if a name can be extracted
+    from the content, update THIS user's agent_name in UserSettings.
+    Strictly per-user — the legacy Settings.app.agent_name global is never
+    touched (that was the cross-user pollution vector)."""
     content = data.get("content", "").strip()
     if not content:
         return {"success": False, "error": "Contenu vide"}
@@ -566,21 +578,23 @@ async def save_soul(request: Request, data: dict):
     soul_file.parent.mkdir(parents=True, exist_ok=True)
     soul_file.write_text(content, encoding="utf-8")
 
-    # Try to extract and update agent name from soul content
+    # Try to extract and persist per-user agent name
     import re
     m = re.search(r'#\s*(?:Ame|Âme|Soul)\s+de\s+(\w+)', content)
     if not m:
         m = re.search(r'Tu es \*\*(\w+)\*\*', content)
     if m:
-        new_name = m.group(1)
+        new_name = m.group(1).strip()
         try:
-            from backend.core.config.settings import Settings
-            settings = Settings.load()
-            if settings.app.agent_name != new_name:
-                settings.app.agent_name = new_name
-                settings.save()
-        except Exception:
-            pass
+            from backend.core.api.auth_helpers import get_user_settings as _gus
+            us = await _gus(uid, session)
+            us.agent_name = new_name
+            await session.commit()
+            print(f"[Agent] soul saved for uid={uid} + agent_name set to '{new_name}' (per-user)")
+        except Exception as e:
+            print(f"[Agent] soul saved for uid={uid} but agent_name update failed: {e}")
+    else:
+        print(f"[Agent] soul saved for uid={uid} (no name extracted from content)")
 
     return {"success": True}
 

@@ -120,6 +120,23 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
           }
         }
 
+        // Load per-user app preferences (agent_name, active provider/model)
+        // so the Settings page and chat.py agree on the current user's
+        // identity. Without this, the input in Settings would only reflect
+        // localStorage which may be stale or empty after a login.
+        // We hydrate the store directly (not via setAgentName) to avoid a
+        // POST-back loop that would overwrite the value we just fetched.
+        try {
+          const appRes = await apiFetch('/api/config/user/app')
+          if (appRes.ok) {
+            const appData = await appRes.json()
+            if (appData?.agent_name) {
+              localStorage.setItem('gungnir_agent_name', appData.agent_name)
+              useStore.setState({ agentName: appData.agent_name })
+            }
+          }
+        } catch { /* backend may not be ready yet */ }
+
         // Load conversations (filtered by current user if logged in)
         try {
           const savedUser = localStorage.getItem('gungnir_current_user')

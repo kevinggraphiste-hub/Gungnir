@@ -84,6 +84,17 @@ export const useStore = create<AppState>((set) => ({
   setAgentName: (name) => {
     localStorage.setItem('gungnir_agent_name', name)
     set({ agentName: name })
+    // Persist per-user to UserSettings.agent_name so chat.py picks it up.
+    // Before this sync, the Settings input was purely cosmetic: the backend
+    // kept reading the legacy Settings.app.agent_name global.
+    const token = localStorage.getItem('gungnir_auth_token')
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    apiFetch('/api/config/user/app', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ agent_name: name }),
+    }).catch(() => {})
   },
 
   conversations: [],

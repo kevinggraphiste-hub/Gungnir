@@ -151,59 +151,68 @@ async def lifespan(app: FastAPI):
             import logging
             logging.getLogger("gungnir").error(f"Plugin {getattr(manifest, 'name', '?')} startup failed: {_plugin_err}")
 
-    # 4x. Cleanup of the per-user soul clones that should never have existed.
-    # The correct architecture is: `data/soul.md` is a single instance-wide
-    # file, edited from Agent → Personnalité and overwritten by the onboarding
-    # welcome chat. An earlier refactor pass mistakenly created per-user
-    # clones under `data/soul/<uid>/soul.md` with an auto-copy from the global
-    # on first chat, which then diverged silently whenever a tool call under
-    # one user rewrote that user's clone. We now read/write only the global
-    # file from chat.py, soul_write and finalize_onboarding — so the per-user
-    # clones are dead data. Wipe them on boot so stale content can't resurface.
+    # 4x. One-shot cleanup of the "Loki" pollution from the onboarding test.
+    # The old soul_write tool path incorrectly wrote to Settings.app.agent_name
+    # (global) AND to the per-user soul file, so every user who ran a chat
+    # turn afterwards inherited "Loki" through one of those vectors. We now
+    # route name + soul strictly per-user (UserSettings.agent_name +
+    # data/soul/<uid>/soul.md), so we just need to nuke the specific stale
+    # values left behind.
     try:
+        # a) Reset the legacy global agent_name if it's still polluted. The
+        #    field is no longer read by chat.py but the Settings UI may still
+        #    surface it as a fallback default, and we don't want testers to
+        #    see "Loki" there either.
+        settings_an = Settings.load()
+        if settings_an.app.agent_name and settings_an.app.agent_name not in ("Gungnir", ""):
+            logger.info(
+                f"Legacy global agent_name cleanup: was '{settings_an.app.agent_name}', resetting to 'Gungnir'"
+            )
+            settings_an.app.agent_name = "Gungnir"
+            settings_an.save()
+
+        # b) Delete any per-user soul.md whose content contains the literal
+        #    "Loki" pollution. This preserves soul files that users legitimately
+        #    wrote themselves while removing the specific tool-call leftover.
         from pathlib import Path as _P_soul
         soul_root = _P_soul("data/soul")
-        removed = 0
+        wiped_files = 0
         if soul_root.exists() and soul_root.is_dir():
             for sub in soul_root.iterdir():
                 if sub.is_dir() and sub.name.isdigit():
-                    for f in sub.rglob("*"):
-                        if f.is_file():
-                            try:
+                    f = sub / "soul.md"
+                    if f.exists():
+                        try:
+                            body = f.read_text(encoding="utf-8", errors="ignore")
+                            if "Loki" in body:
                                 f.unlink()
-                                removed += 1
-                            except Exception:
-                                pass
-                    try:
-                        sub.rmdir()
-                    except Exception:
-                        pass
-        if removed:
-            logger.info(f"Per-user soul cleanup: removed {removed} stale file(s) under data/soul/<uid>/")
-    except Exception as e:
-        logger.warning(f"Per-user soul cleanup failed: {e}")
+                                wiped_files += 1
+                        except Exception:
+                            pass
+        if wiped_files:
+            logger.info(
+                f"Per-user soul cleanup: removed {wiped_files} polluted soul.md file(s) "
+                f"(contained 'Loki' from the old onboarding test)"
+            )
 
-    # 4x-bis. Also clear UserSettings.agent_name everywhere — it was the other
-    # pollution vector (soul_write used to write into it per-user, which fed
-    # chat.py's per-user override). Now chat.py reads only the global
-    # Settings.app.agent_name, so this column is dead and any stale value
-    # (e.g. "Loki" from Kevin's onboarding test) must be flushed.
-    try:
+        # c) Clear UserSettings.agent_name for rows holding the "Loki"
+        #    pollution. Users who went through the proper flow keep their
+        #    legitimate name untouched.
         from sqlalchemy import update as _sa_update
         from backend.core.db.models import UserSettings as _UserSettings_cleanup
         async with engine.begin() as _cleanup_conn:
             result_cleanup = await _cleanup_conn.execute(
                 _sa_update(_UserSettings_cleanup)
-                .where(_UserSettings_cleanup.agent_name != "")
+                .where(_UserSettings_cleanup.agent_name == "Loki")
                 .values(agent_name="")
             )
             if (result_cleanup.rowcount or 0) > 0:
                 logger.info(
-                    f"Per-user agent_name cleanup: cleared {result_cleanup.rowcount} row(s) "
-                    f"(this column is no longer used by chat.py — agent name is a single global)"
+                    f"Per-user agent_name cleanup: cleared 'Loki' pollution on "
+                    f"{result_cleanup.rowcount} row(s)"
                 )
     except Exception as e:
-        logger.warning(f"Per-user agent_name cleanup failed: {e}")
+        logger.warning(f"Legacy agent_name/soul cleanup failed: {e}")
 
     # 4y. Legacy backup zips one-shot migration: move any pre-refactor zip
     # stored directly under data/backups/ into data/backups/_admin/ so it

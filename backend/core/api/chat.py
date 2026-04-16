@@ -616,9 +616,11 @@ def _get_soul_file(user_id: int = 0) -> Path:
     return _soul_path(user_id)
 
 def _get_default_soul(agent_name: str = None) -> str:
-    """Generate a default soul template. Used only when data/soul.md is
-    absent — normal operation reads the real global soul from disk."""
-    name = (agent_name or Settings.load().app.agent_name or "Gungnir").strip() or "Gungnir"
+    """Generate a default soul template for a user who hasn't written their
+    own yet. Uses the explicit agent_name passed in (per-user), falling back
+    to the literal 'Gungnir' — NEVER reads Settings.app.agent_name which is
+    a legacy global that a tool call could have polluted."""
+    name = (agent_name or "").strip() or "Gungnir"
     return f"""# Ame de {name} -- Identite permanente
 
 Tu es **{name}**, un super-assistant IA.
@@ -780,16 +782,26 @@ async def chat(
     }
     _lang_code = settings.app.language or "fr"
     _lang_label = _lang_names.get(_lang_code, _lang_code)
-    # Agent identity is a single instance-wide value by design (Kevin's
-    # architecture): the name comes from Settings.app.agent_name and the
-    # soul comes from data/soul.md. Both are editable from the UI (Settings
-    # → General for the name, Agent → Personnalité for the soul) and the
-    # onboarding welcome chat writes them via the same globals. No per-user
-    # clone, no auto-copy.
-    _agent_name = settings.app.agent_name or "Gungnir"
-    print(f"[Wolf] agent_name resolved to '{_agent_name}' from Settings.app.agent_name (global)")
-    if SOUL_FILE.exists():
-        soul_content = SOUL_FILE.read_text(encoding="utf-8")
+    # STRICT per-user agent identity: name comes from UserSettings.agent_name,
+    # soul comes from data/soul/<uid>/soul.md. Both are edited from the UI
+    # (Settings → General for the name via /api/config/user/app, Agent →
+    # Personnalité for the soul via /api/agent/soul) and both are written by
+    # the onboarding welcome chat. The legacy Settings.app.agent_name global
+    # and data/soul.md global are NEVER read here — they exist only as a
+    # last-resort default template.
+    _agent_name = "Gungnir"
+    _agent_name_source = "default"
+    try:
+        _user_settings_row = await get_user_settings(_current_uid, session)
+        if _user_settings_row.agent_name:
+            _agent_name = _user_settings_row.agent_name
+            _agent_name_source = f"UserSettings.agent_name (uid={_current_uid})"
+    except Exception:
+        pass
+    print(f"[Wolf] agent_name resolved to '{_agent_name}' from {_agent_name_source}")
+    _user_soul_file = _get_soul_file(_current_uid)
+    if _user_soul_file.exists():
+        soul_content = _user_soul_file.read_text(encoding="utf-8")
     else:
         soul_content = _get_default_soul(_agent_name)
     chosen_model = model or provider_config.default_model

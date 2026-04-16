@@ -1667,24 +1667,33 @@ async def _browser_list_pages() -> dict:
 
 
 async def _soul_read() -> dict:
-    """Read the global agent soul from data/soul.md. Soul is a single
-    instance-wide identity shared across all users — the UI reads this
-    exact file in Agent → Personnalité."""
-    soul = DATA_DIR / "soul.md"
+    """Read the CURRENT user's soul at data/soul/<uid>/soul.md. Strictly
+    per-user — no cross-user fallback. Returns empty content with a hint
+    if the user hasn't written their own soul yet."""
+    uid = get_user_context() or 0
+    soul = _soul_path(uid)
     if soul.exists():
         return {"ok": True, "content": soul.read_text(encoding="utf-8")}
-    return {"ok": False, "error": "data/soul.md introuvable."}
+    return {
+        "ok": True,
+        "content": "",
+        "empty": True,
+        "note": "Aucune soul per-user définie pour cet utilisateur. Utilise soul_write pour créer la tienne.",
+    }
 
 
 async def _soul_write(content: str, agent_name: str = None) -> dict:
-    """Write the global agent soul at data/soul.md and optionally update the
-    global Settings.app.agent_name. This is the single source of truth that
-    the UI and chat.py both read — there is no per-user clone."""
-    soul = DATA_DIR / "soul.md"
+    """Write the CURRENT user's soul at data/soul/<uid>/soul.md and, if a name
+    is provided or extractable, persist it to UserSettings.agent_name for
+    this user. Strictly per-user — the legacy global
+    Settings.app.agent_name and data/soul.md are NEVER touched (that was
+    the cross-user pollution vector that made every admin-triggered tool
+    call silently rewrite the default name for every other user)."""
+    uid = get_user_context() or 0
+    soul = _soul_path(uid)
     soul.parent.mkdir(parents=True, exist_ok=True)
     soul.write_text(content, encoding="utf-8")
 
-    # If agent_name is provided (or extractable), update the global name.
     _name = agent_name
     if not _name:
         import re
@@ -1694,18 +1703,25 @@ async def _soul_write(content: str, agent_name: str = None) -> dict:
         if m:
             _name = m.group(1)
 
-    if _name:
+    if _name and uid > 0:
         try:
-            from backend.core.config.settings import Settings
-            settings = Settings.load()
-            if settings.app.agent_name != _name:
-                settings.app.agent_name = _name
-                settings.save()
-                return {"ok": True, "message": f"soul.md mis à jour et nom changé en '{_name}'. Prendra effet immédiatement."}
+            from backend.core.db.engine import async_session as _sw_sm
+            from backend.core.db.models import UserSettings as _sw_US
+            from sqlalchemy import select as _sw_sel
+            async with _sw_sm() as _s:
+                res = await _s.execute(_sw_sel(_sw_US).where(_sw_US.user_id == uid))
+                us = res.scalar_one_or_none()
+                if us is None:
+                    us = _sw_US(user_id=uid, provider_keys={}, service_keys={})
+                    _s.add(us)
+                    await _s.flush()
+                us.agent_name = _name
+                await _s.commit()
+            return {"ok": True, "message": f"soul.md et agent_name mis à jour ('{_name}') pour cet utilisateur."}
         except Exception as e:
-            print(f"[Wolf] soul_write: global name update failed: {e}")
+            print(f"[Wolf] soul_write: per-user agent_name update failed uid={uid}: {e}")
 
-    return {"ok": True, "message": "soul.md mis à jour. Prendra effet à la prochaine conversation."}
+    return {"ok": True, "message": "soul.md mis à jour pour cet utilisateur. Prendra effet à la prochaine conversation."}
 
 
 # ── Automata executors ────────────────────────────────────────────────────────
@@ -2756,9 +2772,10 @@ async def _finalize_onboarding(
                 us = _oa_US(user_id=uid, provider_keys={}, service_keys={}, deleted_defaults={})
                 _s.add(us)
                 await _s.flush()
-            # Onboarding state tracks the fact that this user finished the
-            # welcome chat, but the agent identity itself (name + soul) is
-            # a single instance-wide value written below, not a per-user clone.
+            # Per-user agent identity: name goes into UserSettings.agent_name
+            # and the soul into data/soul/<uid>/soul.md. The legacy global
+            # Settings.app.agent_name and data/soul.md are NEVER touched.
+            us.agent_name = clean_name
             state = dict(us.onboarding_state or {})
             state["step"] = "done"
             state["answers"] = {
@@ -2772,20 +2789,10 @@ async def _finalize_onboarding(
     except Exception as e:
         return {"ok": False, "error": f"Persistance échouée: {e}"}
 
-    # 2. Write the agent's name + soul globally. This matches what the UI
-    #    reads from Agent → Personnalité and Settings → General, and is
-    #    consistent with soul_write which also writes the globals.
-    try:
-        from backend.core.config.settings import Settings
-        _settings = Settings.load()
-        _settings.app.agent_name = clean_name
-        _settings.save()
-    except Exception as e:
-        print(f"[Wolf] onboarding: global agent_name update failed: {e}")
-
+    # 2. Write the per-user soul.md file (data/soul/<uid>/soul.md).
     if clean_soul:
         try:
-            soul_file = DATA_DIR / "soul.md"
+            soul_file = _soul_path(uid)
             soul_file.parent.mkdir(parents=True, exist_ok=True)
             header = f"# Âme de {clean_name}\n\n"
             formality_line = (
@@ -2796,7 +2803,7 @@ async def _finalize_onboarding(
             soul_file.write_text(header + formality_line + clean_soul + "\n", encoding="utf-8")
         except Exception as e:
             # Non-fatal: the main onboarding state is already persisted
-            print(f"[Wolf] onboarding: soul write failed: {e}")
+            print(f"[Wolf] onboarding: per-user soul write failed uid={uid}: {e}")
 
     # 3. Flip the user's ModeManager to the requested mode
     try:
