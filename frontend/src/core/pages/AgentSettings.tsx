@@ -161,7 +161,7 @@ export default function AgentSettings() {
   useEffect(() => {
     const oldName = prevAgentName.current
     if (oldName && agentName && oldName !== agentName && soulLoaded && soulContent.includes(oldName)) {
-      setSoulContent(prev => prev.replaceAll(oldName, agentName))
+      setSoulContent(prev => prev.replace(new RegExp(oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), agentName))
     }
     prevAgentName.current = agentName
   }, [agentName])
