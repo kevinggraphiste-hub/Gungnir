@@ -115,21 +115,52 @@ REGLES GLOBALES :
 - N'utilise JAMAIS tes propres connaissances — UNIQUEMENT les passages fournis"""
 
 _BASE_STRUCTURE = """\
-STRUCTURE OBLIGATOIRE :
+STRUCTURE OBLIGATOIRE — RESPECTE-LA A LA LETTRE :
 
-# [Titre principal — une phrase qui résume la réponse]
+La reponse doit suivre EXACTEMENT ce squelette Markdown, dans cet ordre,
+sans rien ajouter ni retirer entre les sections :
 
-## [Aspect 1 — sous-titre descriptif]
-Un paragraphe développé (5-8 phrases min.) qui explore ce premier aspect. Chaque affirmation cite sa source [1], [2] directement dans la phrase.
+# [Titre principal en une phrase — reformule la question en affirmation]
 
-## [Aspect 2 — sous-titre descriptif]
-Un paragraphe développé explorant un deuxième angle. Croise les sources [3], ajoute du contexte [1].
+## [Sous-titre aspect 1]
+Paragraphe de 5 a 8 phrases pleines, redige en prose continue. Chaque
+affirmation cite sa source [1], [2] directement dans la phrase.
 
-## [Aspect 3 — sous-titre descriptif]
-Un paragraphe développé sur un troisième aspect. Détails, implications, exemples [2][4].
+## [Sous-titre aspect 2]
+Paragraphe de 5 a 8 phrases pleines sur un deuxieme angle. Croise les
+sources [3], ajoute du contexte [1].
+
+## [Sous-titre aspect 3]
+Paragraphe de 5 a 8 phrases pleines sur un troisieme aspect. Details,
+implications, exemples [2][4].
 
 ## Conclusion
-3 à 5 phrases de synthèse. Pas de nouvelles informations."""
+Paragraphe final de 3 a 5 phrases qui synthetise sans apporter de nouvelle
+information.
+
+INTERDICTIONS STRICTES :
+- INTERDIT d'utiliser des listes a puces (`-`, `*`) ou numerotees (`1.`, `2.`) dans le corps — seulement de la prose en paragraphes
+- INTERDIT de sauter un `##` ou de reordonner les sections
+- INTERDIT d'ajouter du texte avant le `#` ou apres la conclusion
+- INTERDIT de laisser un `##` sans paragraphe derriere
+- INTERDIT de mettre les citations en fin de paragraphe (« Source: [1][2] ») — elles vont DANS les phrases
+
+EXEMPLE DE FORMAT ATTENDU (structure, pas le contenu) :
+
+# Odin est la figure centrale du pantheon nordique, maitre de la sagesse et de la guerre
+
+## Origine et attributs divins
+Odin regne sur Asgard et incarne la sagesse supreme chez les peuples nordiques [1]. Il est decrit comme le pere de Thor et de plusieurs autres dieux [2], ce qui en fait l'Allfather — le pere de tous [6]. ...
+
+## Role dans les mythes et le Ragnarok
+Plusieurs recits le presentent comme strategy du Ragnarok [5], notamment via sa confrontation avec Fenrir, fils de Loki [3]. ...
+
+## Representations modernes et transmission
+Les reseaux comme TikTok ou YouTube vulgarisent aujourd'hui son mythe [1][4]. Ces formats courts permettent ...
+
+## Conclusion
+Odin reste l'archetype du dieu-roi nordique, a la fois souverain, guerrier et sage [2][6]. ...
+"""
 
 SYSTEM_PROMPT_WEB = f"""\
 Tu es HuntR (mode Web), un assistant de recherche web généraliste. Tu transformes des passages web bruts en une réponse reformulée, structurée et sourcée.
@@ -515,8 +546,14 @@ async def search_stream(req: SearchRequest, request: Request,
                         f"PASSAGES WEB (numérotés [1] à [{min(len(results), 10)}]) :\n\n"
                         f"{context}\n\n"
                         f"---\n"
-                        f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots).\n"
-                        f"Suis EXACTEMENT la structure imposée par le mode {topic_label}.\n"
+                        f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots).\n\n"
+                        f"FORMAT OBLIGATOIRE — suis ce squelette exact :\n"
+                        f"  1. Un `# Titre principal` (en une phrase)\n"
+                        f"  2. `## Aspect 1` + paragraphe de 5-8 phrases\n"
+                        f"  3. `## Aspect 2` + paragraphe de 5-8 phrases\n"
+                        f"  4. `## Aspect 3` + paragraphe de 5-8 phrases\n"
+                        f"  5. `## Conclusion` + paragraphe de 3-5 phrases\n\n"
+                        f"AUCUNE liste à puces. AUCUNE liste numérotée. Uniquement de la prose.\n"
                         f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
                         f"Exploite TOUS les passages — chaque source citée au moins une fois."
                     ),

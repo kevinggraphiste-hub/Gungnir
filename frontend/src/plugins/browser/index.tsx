@@ -1287,11 +1287,11 @@ function MarkdownRenderer({ text, citations, onCiteClick }: {
     const line = lines[i]
 
     if (line.startsWith('### ')) {
-      elements.push(<h4 key={key++} style={{ fontSize: 14, fontWeight: 700, margin: '12px 0 4px', color: 'var(--text-primary)' }}>{parse(line.slice(4))}</h4>)
+      elements.push(<h4 key={key++} style={{ fontSize: 14, fontWeight: 700, margin: '14px 0 6px', color: 'var(--text-primary)' }}>{parse(line.slice(4))}</h4>)
     } else if (line.startsWith('## ')) {
-      elements.push(<h3 key={key++} style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 4px', color: 'var(--text-primary)' }}>{parse(line.slice(3))}</h3>)
+      elements.push(<h3 key={key++} style={{ fontSize: 17, fontWeight: 700, margin: '22px 0 8px', color: 'var(--text-primary)', borderBottom: '1px solid color-mix(in srgb, var(--scarlet) 15%, transparent)', paddingBottom: 4 }}>{parse(line.slice(3))}</h3>)
     } else if (line.startsWith('# ')) {
-      elements.push(<h2 key={key++} style={{ fontSize: 16, fontWeight: 700, margin: '16px 0 6px', color: 'var(--text-primary)' }}>{parse(line.slice(2))}</h2>)
+      elements.push(<h2 key={key++} style={{ fontSize: 22, fontWeight: 800, margin: '4px 0 18px', color: 'var(--text-primary)', lineHeight: 1.3 }}>{parse(line.slice(2))}</h2>)
     } else if (/^[-*]\s/.test(line)) {
       elements.push(
         <div key={key++} style={{ display: 'flex', gap: 8, margin: '2px 0', paddingLeft: 8 }}>
@@ -1329,7 +1329,7 @@ function MarkdownRenderer({ text, citations, onCiteClick }: {
     } else if (!line.trim()) {
       elements.push(<div key={key++} style={{ height: 6 }} />)
     } else {
-      elements.push(<p key={key++} style={{ margin: '2px 0', color: 'var(--text-secondary)' }}>{parse(line)}</p>)
+      elements.push(<p key={key++} style={{ margin: '6px 0', color: 'var(--text-secondary)', lineHeight: 1.7 }}>{parse(line)}</p>)
     }
   }
 
