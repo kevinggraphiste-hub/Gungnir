@@ -87,7 +87,7 @@ const DEFAULT_HB_CONFIG = {
 
 export default function Settings() {
   const { t, i18n } = useTranslation()
-  const { config, setConfig, agentName, setAgentName } = useStore()
+  const { config, setConfig, agentName, setAgentName, selectedProvider, selectedModel } = useStore()
   const [activeTab, setActiveTab] = useState(() => {
     // Support ?tab=providers deep-linking (used by the onboarding welcome card)
     try {
@@ -217,11 +217,13 @@ export default function Settings() {
     if (config?.providers) {
       const configs: Record<string, { api_key?: string; enabled: boolean; default_model?: string }> = {}
       Object.entries(config.providers).forEach(([name, p]: [string, any]) => {
-        configs[name] = { enabled: p?.enabled || false, api_key: '', default_model: p?.default_model || '' }
+        // For the user's active provider, show their selected model as default
+        const userModel = (name === selectedProvider && selectedModel) ? selectedModel : ''
+        configs[name] = { enabled: p?.enabled || false, api_key: '', default_model: userModel || p?.default_model || '' }
       })
       setProviderConfigs(configs)
     }
-  }, [config])
+  }, [config, selectedProvider, selectedModel])
 
   // Fetch live model lists for every provider that is enabled or has a key.
   // Runs when the user opens the providers tab. Each provider's list comes
@@ -965,6 +967,16 @@ export default function Settings() {
                     <input type="password" placeholder="API Key" value={providerConfigs[name]?.api_key || ''}
                       onChange={e => setProviderConfigs(prev => ({ ...prev, [name]: { ...prev[name], api_key: e.target.value } }))}
                       className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
+                    {name === selectedProvider && selectedModel && (
+                      <p className="text-[10px] mt-1" style={{ color: 'var(--accent-primary)' }}>
+                        ● Provider actif — modèle par défaut : {selectedModel}
+                      </p>
+                    )}
+                    {p?.has_api_key && (
+                      <p className="text-[10px] mt-0.5" style={{ color: 'var(--accent-success, #22c55e)' }}>
+                        ✓ Clé API configurée
+                      </p>
+                    )}
                     {models.length > 0 ? (
                       <div>
                         <div className="flex items-center justify-between text-[10px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
