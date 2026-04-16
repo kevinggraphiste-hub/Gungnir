@@ -47,12 +47,14 @@ FOCUS_MODES = {
         "label": "Academic",
         "description": "Sources fiables uniquement : Wikipedia, arXiv, publications scientifiques",
         "site_filter": "",
-        "boost_domains": ["arxiv.org", "scholar.google.com", "wikipedia.org",
+        "boost_domains": ["arxiv.org", "wikipedia.org",
                           "nature.com", "sciencedirect.com", "pubmed.ncbi.nlm.nih.gov",
                           "hal.science", "jstor.org", "springer.com", "wiley.com",
                           "ieee.org", "acm.org", "researchgate.net", "semanticscholar.org",
                           "ncbi.nlm.nih.gov", "who.int", "europa.eu", "cairn.info",
-                          "persee.fr", "openedition.org", "theses.fr"],
+                          "persee.fr", "openedition.org", "theses.fr",
+                          "frontiersin.org", "plos.org", "bmj.com", "thelancet.com",
+                          "academic.oup.com", "tandfonline.com", "mdpi.com"],
         "time_filter": "",
         "strict_filter": True,  # Only allow results from boost_domains
     },
@@ -232,7 +234,7 @@ async def multi_search(
     elif focus == "news":
         search_query = f"{query} news latest"
     elif focus == "academic":
-        search_query = f"{query} research paper"
+        search_query = f"{query} site:wikipedia.org OR site:arxiv.org OR site:pubmed.ncbi.nlm.nih.gov OR site:nature.com OR site:hal.science"
 
     # Launch all engines in parallel
     tasks = [search_ddg(search_query, max_results, time_filter)]

@@ -225,6 +225,9 @@ SERVICE_LABELS = {
     "stability": "Stability AI",
     "serper": "Serper (Google Search)",
     "tavily": "Tavily (Web Search)",
+    # Recherche web (HuntR)
+    "brave": "Brave Search",
+    "searxng": "SearXNG (self-hosted)",
 }
 
 SERVICE_CATEGORIES = {
@@ -236,6 +239,7 @@ SERVICE_CATEGORIES = {
     "automation": ["n8n", "make", "zapier", "activepieces"],
     "monitoring": ["sentry", "grafana", "posthog"],
     "ai": ["huggingface", "replicate", "stability", "serper", "tavily"],
+    "search": ["brave", "searxng"],
 }
 
 

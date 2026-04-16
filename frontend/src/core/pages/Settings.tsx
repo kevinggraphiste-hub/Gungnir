@@ -1395,6 +1395,9 @@ export default function Settings() {
                   stability: ['base_url', 'api_key'],
                   serper: ['api_key'],
                   tavily: ['api_key'],
+                  // Recherche web (HuntR)
+                  brave: ['api_key'],
+                  searxng: ['base_url'],
                 }
                 const fieldDefs: Record<string, { label: string; placeholder: string; type?: string }> = {
                   base_url: { label: 'URL de base', placeholder: 'https://...' },
@@ -1465,6 +1468,7 @@ export default function Settings() {
                   automation: 'Automatisation',
                   monitoring: 'Monitoring / Analytics',
                   ai: 'IA / APIs externes',
+                  search: 'Recherche web (HuntR)',
                 }
                 const catIcons: Record<string, any> = {
                   database: Database,
@@ -1475,6 +1479,7 @@ export default function Settings() {
                   automation: Zap,
                   monitoring: Stethoscope,
                   ai: Zap,
+                  search: SearchIcon,
                 }
                 const CatIcon = catIcons[cat] || Server
                 return (
