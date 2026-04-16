@@ -540,7 +540,7 @@ async def scan_skill(data: dict):
     return result
 
 
-@router.get("/soul")
+@router.get("/agent/soul")
 async def get_soul(request: Request, session: AsyncSession = Depends(get_session)):
     """Return the CURRENT user's soul.md. Per-user, no cross-user fallback.
     If the user has never written their own soul yet, a clean default is
@@ -564,7 +564,7 @@ async def get_soul(request: Request, session: AsyncSession = Depends(get_session
     return {"content": content}
 
 
-@router.post("/soul")
+@router.post("/agent/soul")
 async def save_soul(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
     """Persist the CURRENT user's soul.md and, if a name can be extracted
     from the content, update THIS user's agent_name in UserSettings.

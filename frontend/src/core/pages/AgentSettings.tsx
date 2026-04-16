@@ -1558,7 +1558,7 @@ export default function AgentSettings() {
 
               <div className="flex items-center justify-between">
                 <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  Fichier : <code style={{ color: 'var(--text-muted)' }}>data/soul.md</code>
+                  Fichier : <code style={{ color: 'var(--text-muted)' }}>data/soul/&lt;ton_id&gt;/soul.md</code> <span className="opacity-60">(per-user)</span>
                 </div>
                 <button
                   onClick={saveSoul}
