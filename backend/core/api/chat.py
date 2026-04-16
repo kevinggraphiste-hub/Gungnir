@@ -616,8 +616,10 @@ def _get_soul_file(user_id: int = 0) -> Path:
     return _soul_path(user_id)
 
 def _get_default_soul(agent_name: str = None) -> str:
-    """Generate default soul using the configured agent name."""
-    name = agent_name or Settings.load().app.agent_name or "Gungnir"
+    """Generate a default soul. Falls back to the literal name "Gungnir" —
+    never reads Settings.app.agent_name which is a legacy global that a tool
+    running under another user could have polluted."""
+    name = (agent_name or "").strip() or "Gungnir"
     return f"""# Ame de {name} -- Identite permanente
 
 Tu es **{name}**, un super-assistant IA.
@@ -779,9 +781,11 @@ async def chat(
     }
     _lang_code = settings.app.language or "fr"
     _lang_label = _lang_names.get(_lang_code, _lang_code)
-    # Per-user override on agent name (set at onboarding); fall back to the
-    # global default when the user hasn't finished the welcome chat yet.
-    _agent_name = settings.app.agent_name or "Gungnir"
+    # STRICT per-user agent name. The legacy Settings.app.agent_name global is
+    # intentionally ignored — a tool running under user A could otherwise
+    # silently rename the agent for every user on the instance (happened with
+    # soul_write during an early onboarding test).
+    _agent_name = "Gungnir"
     try:
         _user_settings_row = await get_user_settings(_current_uid, session)
         if _user_settings_row.agent_name:
@@ -789,14 +793,13 @@ async def chat(
     except Exception:
         pass
     _user_soul_file = _get_soul_file(_current_uid)
-    # Per-user soul: read user's own soul.md, fallback to global, then default
+    # Per-user soul resolution: own soul.md, or a fresh default generated
+    # from the user's agent name. The legacy data/soul.md global fallback is
+    # intentionally NOT read anymore — any write from a previous user's tool
+    # call would otherwise leak into every new user's first conversation and
+    # permanently pollute them via the auto-copy that used to live here.
     if _user_soul_file.exists():
         soul_content = _user_soul_file.read_text(encoding="utf-8")
-    elif SOUL_FILE.exists():
-        # First time for this user: copy global soul to per-user
-        soul_content = SOUL_FILE.read_text(encoding="utf-8")
-        _user_soul_file.parent.mkdir(parents=True, exist_ok=True)
-        _user_soul_file.write_text(soul_content, encoding="utf-8")
     else:
         soul_content = _get_default_soul(_agent_name)
     chosen_model = model or provider_config.default_model

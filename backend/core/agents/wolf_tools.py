@@ -1667,28 +1667,34 @@ async def _browser_list_pages() -> dict:
 
 
 async def _soul_read() -> dict:
+    """Read the CURRENT user's soul.md. No cross-user fallback: if the caller
+    doesn't have their own soul yet, return a clear empty state instead of
+    silently copying the global/admin file into their slot."""
     soul = _soul_path()
     if soul.exists():
         return {"ok": True, "content": soul.read_text(encoding="utf-8")}
-    # Fallback: copy from global soul.md if it exists (first-time per-user)
-    global_soul = DATA_DIR / "soul.md"
-    if global_soul.exists():
-        content = global_soul.read_text(encoding="utf-8")
-        soul.parent.mkdir(parents=True, exist_ok=True)
-        soul.write_text(content, encoding="utf-8")
-        return {"ok": True, "content": content}
-    return {"ok": False, "error": "soul.md introuvable."}
+    return {
+        "ok": True,
+        "content": "",
+        "empty": True,
+        "note": "Aucune soul per-user définie. Utilise soul_write pour créer la tienne.",
+    }
 
 
 async def _soul_write(content: str, agent_name: str = None) -> dict:
-    soul = _soul_path()
+    """Write the CURRENT user's soul.md. Any agent_name extracted from the
+    content is persisted to UserSettings.agent_name for this user only — the
+    legacy global settings.app.agent_name is intentionally NOT touched to
+    prevent cross-user contamination (a LLM running under user A could
+    otherwise silently rename the agent for every other user on the instance)."""
+    uid = get_user_context() or 0
+    soul = _soul_path(uid)
     soul.parent.mkdir(parents=True, exist_ok=True)
     soul.write_text(content, encoding="utf-8")
 
-    # If agent_name is provided (or extractable), update the app settings
+    # If agent_name is provided (or extractable), update per-user UserSettings.
     _name = agent_name
     if not _name:
-        # Try to extract name from first line pattern: "# Ame de XXX" or "Tu es **XXX**"
         import re
         m = re.search(r'#\s*(?:Ame|Âme|Soul)\s+de\s+(\w+)', content)
         if not m:
@@ -1696,16 +1702,23 @@ async def _soul_write(content: str, agent_name: str = None) -> dict:
         if m:
             _name = m.group(1)
 
-    if _name:
+    if _name and uid > 0:
         try:
-            from backend.core.config.settings import Settings
-            settings = Settings.load()
-            if settings.app.agent_name != _name:
-                settings.app.agent_name = _name
-                settings.save()
-                return {"ok": True, "message": f"soul.md mis à jour et nom changé en '{_name}'. Prendra effet immédiatement."}
-        except Exception:
-            pass
+            from backend.core.db.engine import async_session as _sw_sm
+            from backend.core.db.models import UserSettings as _sw_US
+            from sqlalchemy import select as _sw_sel
+            async with _sw_sm() as _s:
+                res = await _s.execute(_sw_sel(_sw_US).where(_sw_US.user_id == uid))
+                us = res.scalar_one_or_none()
+                if us is None:
+                    us = _sw_US(user_id=uid, provider_keys={}, service_keys={})
+                    _s.add(us)
+                    await _s.flush()
+                us.agent_name = _name
+                await _s.commit()
+            return {"ok": True, "message": f"soul.md mis à jour et nom changé en '{_name}' pour cet utilisateur."}
+        except Exception as e:
+            print(f"[Wolf] soul_write: per-user name update failed uid={uid}: {e}")
 
     return {"ok": True, "message": "soul.md mis à jour. Prendra effet à la prochaine conversation."}
 
@@ -2712,8 +2725,8 @@ async def _finalize_onboarding(
     UserSettings, saves the soul to data/soul/<uid>/soul.md, and flips the
     active ModeManager to the requested mode."""
     uid = get_user_context() or 0
-    logger.info(
-        f"[onboarding] finalize_onboarding called uid={uid} "
+    print(
+        f"[Wolf] onboarding finalize_onboarding called uid={uid} "
         f"name={agent_name!r} formality={formality!r} mode={mode!r} "
         f"soul_len={len(soul or '')}"
     )
@@ -2731,13 +2744,13 @@ async def _finalize_onboarding(
             _gr = await _gs.execute(_oa_guard_sel(_oa_guard_US).where(_oa_guard_US.user_id == uid))
             _grow = _gr.scalar_one_or_none()
             if _grow and _grow.onboarding_state and _grow.onboarding_state.get("step") == "done":
-                logger.warning(f"[onboarding] finalize_onboarding refused: user {uid} already onboarded")
+                print(f"[Wolf] onboarding finalize_onboarding refused: user {uid} already onboarded")
                 return {
                     "ok": False,
                     "error": "L'onboarding est déjà terminé pour cet utilisateur. Utilise soul_write si tu veux mettre à jour l'identité.",
                 }
     except Exception as _ge:
-        logger.warning(f"[onboarding] guard check failed uid={uid}: {_ge}")
+        print(f"[Wolf] onboarding guard check failed uid={uid}: {_ge}")
 
     clean_name = (agent_name or "").strip() or "Gungnir"
     clean_formality = formality if formality in ("tu", "vous") else "tu"

@@ -151,6 +151,23 @@ async def lifespan(app: FastAPI):
             import logging
             logging.getLogger("gungnir").error(f"Plugin {getattr(manifest, 'name', '?')} startup failed: {_plugin_err}")
 
+    # 4x. Reset the legacy global agent_name to neutralize any pollution left
+    # over by a soul_write tool call that ran before the per-user fix. The
+    # field is no longer read by chat.py (which strictly uses
+    # UserSettings.agent_name or the literal default "Gungnir"), but resetting
+    # it prevents confusion when inspecting config.json or if some legacy
+    # read path pops up.
+    try:
+        settings_an = Settings.load()
+        if settings_an.app.agent_name and settings_an.app.agent_name != "Gungnir":
+            logger.info(
+                f"Global agent_name cleanup: was '{settings_an.app.agent_name}', resetting to 'Gungnir'"
+            )
+            settings_an.app.agent_name = "Gungnir"
+            settings_an.save()
+    except Exception as e:
+        logger.warning(f"Global agent_name cleanup failed: {e}")
+
     # 4y. Legacy backup zips one-shot migration: move any pre-refactor zip
     # stored directly under data/backups/ into data/backups/_admin/ so it
     # still shows up in the admin history after the per-user refactor.
