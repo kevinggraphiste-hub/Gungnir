@@ -92,16 +92,18 @@ Tu es HuntR, un assistant de recherche web. Tu reçois des passages extraits de 
 INSTRUCTIONS (à suivre À LA LETTRE) :
 
 1. REFORMULE intégralement — ne recopie JAMAIS un passage tel quel
-2. STRUCTURE ta réponse :
+2. STRUCTURE ta réponse EN PROFONDEUR :
    - Un titre ## qui résume la réponse
-   - 2 à 5 paragraphes clairs, chacun développant un aspect
+   - 4 à 8 paragraphes développés, chacun explorant un aspect différent du sujet
+   - Développe chaque point : contexte, explications, nuances, exemples concrets
    - Si pertinent : listes à puces, tableaux comparatifs, étapes numérotées
-   - Termine par « ### En résumé » (2-3 phrases de synthèse)
-3. CITE tes sources inline — chaque affirmation doit avoir [1], [2] etc. DANS la phrase :
+   - Termine par « ### En résumé » (3-5 phrases de synthèse)
+3. SOIS EXHAUSTIF : utilise TOUS les passages fournis, ne laisse aucune information pertinente de côté. Plus ta réponse est complète et détaillée, mieux c'est.
+4. CITE tes sources inline — chaque affirmation doit avoir [1], [2] etc. DANS la phrase :
    BON : « Le Python domine la data science [1], tandis que Rust gagne du terrain pour les performances [3]. »
    MAUVAIS : « Python est populaire. [1] » (citation détachée = interdit)
-4. LANGUE : réponds dans la même langue que la question
-5. LIMITES : si l'info manque, dis-le. N'invente rien.
+5. LANGUE : réponds dans la même langue que la question
+6. LIMITES : si l'info manque, dis-le. N'invente rien.
 
 Tu n'as PAS le droit d'utiliser tes propres connaissances. UNIQUEMENT les passages fournis."""
 
@@ -299,10 +301,11 @@ async def search_stream(req: SearchRequest, request: Request,
                         f"PASSAGES WEB (numérotés [1] à [{min(len(results), 10)}]) :\n\n"
                         f"{context}\n\n"
                         f"---\n"
-                        f"Maintenant, rédige ta réponse en suivant EXACTEMENT le format demandé :\n"
-                        f"- Titre ## → paragraphes reformulés avec citations [N] inline → ### En résumé\n"
-                        f"- NE COPIE PAS les passages, REFORMULE avec tes propres mots\n"
-                        f"- Chaque fait doit citer [1], [2], etc. DANS la phrase, pas à la fin"
+                        f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots) en suivant le format demandé :\n"
+                        f"- Titre ## → 4 à 8 paragraphes développés avec citations [N] inline → ### En résumé\n"
+                        f"- REFORMULE avec tes propres mots, ne copie pas les passages\n"
+                        f"- Exploite TOUS les passages : chaque source doit être citée au moins une fois\n"
+                        f"- Développe, explique, contextualise — pas de réponse superficielle"
                     ),
                 ),
             ]
@@ -311,7 +314,7 @@ async def search_stream(req: SearchRequest, request: Request,
             answer = ""
             try:
                 logger.info(f"[HuntR] Calling LLM: provider={type(llm_provider).__name__}, model={llm_model}, msgs={len(messages)}")
-                resp = await llm_provider.chat(messages, llm_model)
+                resp = await llm_provider.chat(messages, llm_model, max_tokens=4096)
                 answer = resp.content or ""
                 logger.info(f"[HuntR] LLM OK: {len(answer)} chars")
                 if answer.strip():
