@@ -233,20 +233,29 @@ async def multi_search(
         search_query = f"{query} programming code"
     elif focus == "news":
         search_query = f"{query} news latest"
-    elif focus == "academic":
-        search_query = f"{query} site:wikipedia.org OR site:arxiv.org OR site:pubmed.ncbi.nlm.nih.gov OR site:nature.com OR site:hal.science"
 
     # Launch all engines in parallel
-    tasks = [search_ddg(search_query, max_results, time_filter)]
+    tasks = []
 
-    if brave_api_key:
-        tasks.append(search_brave(search_query, brave_api_key, max_results, time_filter))
-
-    if searxng_url:
-        tasks.append(search_searxng(search_query, searxng_url, max_results, time_filter))
-
-    if pro or focus == "academic":
-        tasks.append(search_wikipedia(query, 5, language))
+    if focus == "academic":
+        # Multiple targeted searches to maximize academic coverage
+        tasks.append(search_wikipedia(query, 8, language))
+        tasks.append(search_ddg(f"{query} site:wikipedia.org", max_results, time_filter))
+        tasks.append(search_ddg(f"{query} site:arxiv.org", max_results // 2, time_filter))
+        tasks.append(search_ddg(f"{query} site:pubmed.ncbi.nlm.nih.gov", max_results // 2, time_filter))
+        tasks.append(search_ddg(f"{query} scientific study research", max_results, time_filter))
+        if brave_api_key:
+            tasks.append(search_brave(f"{query} research paper", brave_api_key, max_results, time_filter))
+        if searxng_url:
+            tasks.append(search_searxng(f"{query} research", searxng_url, max_results, time_filter))
+    else:
+        tasks.append(search_ddg(search_query, max_results, time_filter))
+        if brave_api_key:
+            tasks.append(search_brave(search_query, brave_api_key, max_results, time_filter))
+        if searxng_url:
+            tasks.append(search_searxng(search_query, searxng_url, max_results, time_filter))
+        if pro:
+            tasks.append(search_wikipedia(query, 5, language))
 
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
