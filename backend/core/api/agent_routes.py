@@ -566,10 +566,15 @@ async def get_soul(request: Request, session: AsyncSession = Depends(get_session
 
 @router.post("/agent/soul")
 async def save_soul(request: Request, session: AsyncSession = Depends(get_session)):
-    """Persist the CURRENT user's soul.md and, if a name can be extracted
-    from the content, update THIS user's agent_name in UserSettings.
-    Strictly per-user — the legacy Settings.app.agent_name global is never
-    touched (that was the cross-user pollution vector)."""
+    """Persist the CURRENT user's soul.md.
+
+    STRICTLY writes the file — it does NOT touch UserSettings.agent_name. The
+    name is owned by Settings → General (POST /api/config/user/app) and the
+    onboarding welcome chat (finalize_onboarding). An earlier version of this
+    handler extracted a name from the soul content via regex and rewrote
+    agent_name, which silently clobbered any rename the user had just made
+    through Settings if the soul body still referenced an older name.
+    """
     uid = _uid(request)
     try:
         body = await request.json()
@@ -591,23 +596,7 @@ async def save_soul(request: Request, session: AsyncSession = Depends(get_sessio
         print(f"[Agent] soul write FAILED for uid={uid} → {soul_file}: {e}")
         return {"success": False, "error": f"Écriture fichier échouée: {str(e)[:200]}"}
 
-    # Try to extract and persist per-user agent name
-    import re
-    m = re.search(r'#\s*(?:Ame|Âme|Soul)\s+de\s+(\w+)', content)
-    if not m:
-        m = re.search(r'Tu es \*\*(\w+)\*\*', content)
-    if m:
-        new_name = m.group(1).strip()
-        try:
-            from backend.core.api.auth_helpers import get_user_settings as _gus
-            us = await _gus(uid, session)
-            us.agent_name = new_name
-            await session.commit()
-            print(f"[Agent] per-user agent_name updated to '{new_name}' for uid={uid}")
-        except Exception as e:
-            print(f"[Agent] agent_name update failed for uid={uid}: {e}")
-
-    return {"success": True, "path": str(soul_file.relative_to(soul_file.parent.parent.parent)) if soul_file.parent.parent.parent.exists() else str(soul_file)}
+    return {"success": True}
 
 
 @router.get("/personality")

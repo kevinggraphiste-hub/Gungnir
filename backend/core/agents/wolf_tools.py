@@ -663,12 +663,17 @@ WOLF_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "soul_write",
-            "description": "Met à jour l'identité permanente (soul.md) de l'agent. Change la personnalité de base pour TOUTES les conversations. Met aussi à jour le nom de l'agent dans la config si un nouveau nom est fourni.",
+            "description": (
+                "Met à jour l'identité permanente (soul.md) de l'utilisateur courant. "
+                "Écrit UNIQUEMENT le fichier soul.md per-user — le nom de l'agent n'est PAS "
+                "touché par ce tool (le nom est géré via Settings → Nom de l'agent, côté UI). "
+                "Si tu veux que l'utilisateur change le nom de l'agent, demande-lui de le faire "
+                "lui-même dans les paramètres."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "Nouveau contenu complet de soul.md"},
-                    "agent_name": {"type": "string", "description": "Nouveau nom de l'agent (optionnel — sera aussi extrait du contenu automatiquement)"}
+                    "content": {"type": "string", "description": "Nouveau contenu complet de soul.md"}
                 },
                 "required": ["content"]
             }
@@ -1683,44 +1688,19 @@ async def _soul_read() -> dict:
 
 
 async def _soul_write(content: str, agent_name: str = None) -> dict:
-    """Write the CURRENT user's soul at data/soul/<uid>/soul.md and, if a name
-    is provided or extractable, persist it to UserSettings.agent_name for
-    this user. Strictly per-user — the legacy global
-    Settings.app.agent_name and data/soul.md are NEVER touched (that was
-    the cross-user pollution vector that made every admin-triggered tool
-    call silently rewrite the default name for every other user)."""
+    """Write the CURRENT user's soul at data/soul/<uid>/soul.md.
+
+    STRICTLY writes the soul file. The `agent_name` parameter is accepted
+    for schema backward-compat but intentionally IGNORED — the name lives
+    in UserSettings.agent_name and is owned by Settings → General or by
+    the onboarding welcome chat. Letting this tool rewrite the name would
+    silently clobber any rename the user just made through Settings when
+    the LLM re-saves the soul (which the soul body still refers to the
+    previous name)."""
     uid = get_user_context() or 0
     soul = _soul_path(uid)
     soul.parent.mkdir(parents=True, exist_ok=True)
     soul.write_text(content, encoding="utf-8")
-
-    _name = agent_name
-    if not _name:
-        import re
-        m = re.search(r'#\s*(?:Ame|Âme|Soul)\s+de\s+(\w+)', content)
-        if not m:
-            m = re.search(r'Tu es \*\*(\w+)\*\*', content)
-        if m:
-            _name = m.group(1)
-
-    if _name and uid > 0:
-        try:
-            from backend.core.db.engine import async_session as _sw_sm
-            from backend.core.db.models import UserSettings as _sw_US
-            from sqlalchemy import select as _sw_sel
-            async with _sw_sm() as _s:
-                res = await _s.execute(_sw_sel(_sw_US).where(_sw_US.user_id == uid))
-                us = res.scalar_one_or_none()
-                if us is None:
-                    us = _sw_US(user_id=uid, provider_keys={}, service_keys={})
-                    _s.add(us)
-                    await _s.flush()
-                us.agent_name = _name
-                await _s.commit()
-            return {"ok": True, "message": f"soul.md et agent_name mis à jour ('{_name}') pour cet utilisateur."}
-        except Exception as e:
-            print(f"[Wolf] soul_write: per-user agent_name update failed uid={uid}: {e}")
-
     return {"ok": True, "message": "soul.md mis à jour pour cet utilisateur. Prendra effet à la prochaine conversation."}
 
 
