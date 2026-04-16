@@ -39,19 +39,17 @@ from .engine import (
 logger = logging.getLogger("gungnir.plugins.huntr")
 
 
-# ── Per-user key resolution ──────────────────────────────────────────────
+# ── Per-user resolution helpers ──────────────────────────────────────────
 
 def _uid(request: Request) -> int:
     """Extract user_id from auth middleware, fallback to 1."""
     return getattr(request.state, "user_id", None) or 1
 
 
-async def _get_user_search_keys(user_id: int) -> dict:
-    """Resolve per-user Brave API key and SearXNG URL.
-    Falls back to global HuntR config if user has no keys."""
+async def _get_user_brave_key(user_id: int) -> str:
+    """Resolve per-user Brave API key. Falls back to global HuntR config."""
     config = HuntRConfig.load()
-    brave_key = config.brave_api_key
-    searxng_url = config.searxng_url
+    brave_key = config.brave_api_key or ""
     try:
         from backend.core.db.engine import get_session
         from backend.core.api.auth_helpers import get_user_settings
@@ -62,19 +60,16 @@ async def _get_user_search_keys(user_id: int) -> dict:
                 user_brave = us.service_keys.get("brave")
                 if user_brave and user_brave.get("api_key"):
                     brave_key = decrypt_value(user_brave["api_key"])
-                user_searxng = us.service_keys.get("searxng")
-                if user_searxng and user_searxng.get("base_url"):
-                    searxng_url = user_searxng["base_url"]
             break
     except Exception:
         pass
-    return {"brave_api_key": brave_key, "searxng_url": searxng_url}
+    return brave_key
 
 
 async def _get_user_llm(user_id: int, provider_name: Optional[str] = None,
                         model_name: Optional[str] = None):
-    """Get LLM provider — same resolution logic as chat.py (which works).
-    get_user_provider_key already decrypts the key."""
+    """Get user's LLM provider — exact same logic as chat.py.
+    Reads the user's active provider/model and their per-user API key."""
     from backend.core.db.engine import get_session
     from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
 
@@ -82,31 +77,30 @@ async def _get_user_llm(user_id: int, provider_name: Optional[str] = None,
         us = await get_user_settings(user_id, session)
         settings = Settings.load()
 
-        # Provider: explicit > user's active > openrouter
         pname = provider_name or us.active_provider or "openrouter"
 
-        # Key: strictly per-user (same as chat.py line 681)
+        # get_user_provider_key already decrypts
         user_prov = get_user_provider_key(us, pname)
         api_key = user_prov.get("api_key") if user_prov else None
         if not api_key:
-            raise ValueError(f"Aucune clé API pour '{pname}' (user {user_id})")
+            raise ValueError(
+                f"Aucune clé API pour '{pname}'. "
+                f"Configure-la dans Paramètres → Providers."
+            )
 
-        # Base URL from user override or global metadata
-        base_url = (user_prov.get("base_url") if user_prov else None)
         cfg = settings.providers.get(pname)
-        if not base_url and cfg:
-            base_url = cfg.base_url
+        base_url = (user_prov.get("base_url") if user_prov else None) or \
+                   (cfg.base_url if cfg else None)
 
-        # Model: explicit > user's active > provider default
-        mname = model_name or us.active_model or (cfg.default_model if cfg else None)
-        if not mname and cfg and cfg.models:
-            mname = cfg.models[0]
+        mname = model_name or us.active_model or \
+                (cfg.default_model if cfg else None) or \
+                (cfg.models[0] if cfg and cfg.models else None)
         if not mname:
             raise ValueError(f"Aucun modèle pour '{pname}'")
 
         return get_provider(pname, api_key, base_url), mname, pname
 
-    raise ValueError(f"Pas de session DB disponible pour user {user_id}")
+    raise ValueError("Session DB indisponible")
 
 
 router = APIRouter()
@@ -212,29 +206,6 @@ QUERY_EXPANSION_PROMPT = (
 # LLM Helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _get_llm(provider_name: Optional[str] = None, model_name: Optional[str] = None):
-    """Fallback: get LLM from global config. Only used if _get_user_llm isn't called."""
-    from backend.core.config.settings import decrypt_value
-    settings = Settings.load()
-    if not provider_name:
-        for name, cfg in settings.providers.items():
-            if cfg.enabled and cfg.api_key:
-                provider_name = name
-                break
-    if not provider_name:
-        raise ValueError("Aucun provider LLM configuré")
-    cfg = settings.providers.get(provider_name)
-    if not cfg or not cfg.api_key:
-        raise ValueError(f"Provider '{provider_name}' non configuré")
-    try:
-        api_key = decrypt_value(cfg.api_key)
-    except Exception:
-        api_key = cfg.api_key  # might already be plain text
-    if not model_name:
-        model_name = cfg.default_model or (cfg.models[0] if cfg.models else None)
-    if not model_name:
-        raise ValueError(f"Aucun modèle pour '{provider_name}'")
-    return get_provider(provider_name, api_key, cfg.base_url), model_name, provider_name
 
 
 async def _expand_query(query: str, provider, model: str,
@@ -432,23 +403,12 @@ def _save_to_history(query: str, sources_count: int, mode: str, intent: str = ""
 
 @router.get("/health")
 async def huntr_health():
-    try:
-        provider, model, name = _get_llm()
-        config = HuntRConfig.load()
-        return {
-            "plugin": "huntr", "status": "ok", "version": "2.0.0",
-            "llm_available": True, "provider": name,
-            "engines": _available_engines(config),
-            "focus_modes": list(FOCUS_MODES.keys()),
-        }
-    except Exception:
-        config = HuntRConfig.load()
-        return {
-            "plugin": "huntr", "status": "ok", "version": "2.0.0",
-            "llm_available": False,
-            "engines": _available_engines(config),
-            "focus_modes": list(FOCUS_MODES.keys()),
-        }
+    config = HuntRConfig.load()
+    return {
+        "plugin": "huntr", "status": "ok", "version": "2.0.0",
+        "engines": _available_engines(config),
+        "focus_modes": list(FOCUS_MODES.keys()),
+    }
 
 
 def _available_engines(config: HuntRConfig) -> list[str]:
@@ -500,7 +460,7 @@ async def search_stream(req: SearchRequest, request: Request):
             content, citation, related, done, error
     """
     uid = _uid(request)
-    user_keys = await _get_user_search_keys(uid)
+    brave_key = await _get_user_brave_key(uid)
 
     async def _stream():
         t0 = time.time()
@@ -511,14 +471,12 @@ async def search_stream(req: SearchRequest, request: Request):
             yield _sse("status", {"message": "Analyse de la requête...", "step": 1})
 
             provider, model, provider_name = None, "", ""
-            llm_error = None
             if req.pro_search:
                 try:
                     provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
                 except Exception as e:
-                    llm_error = str(e)
-                    logger.warning(f"HuntR Pro LLM resolution failed for user {uid}: {e}")
-                    yield _sse("status", {"message": f"⚠ Mode Pro indisponible : {e}", "step": 1})
+                    logger.warning(f"HuntR Pro LLM failed for user {uid}: {e}")
+                    yield _sse("status", {"message": f"⚠ LLM indisponible : {e}", "step": 1})
 
             # Get session context for follow-up
             session_ctx = _get_session_context(req.session_id, config.max_follow_ups)
@@ -553,8 +511,8 @@ async def search_stream(req: SearchRequest, request: Request):
             results = await multi_search(
                 search_query,
                 max_results=req.max_results,
-                brave_api_key=user_keys["brave_api_key"],
-                searxng_url=user_keys["searxng_url"],
+                brave_api_key=brave_key,
+                searxng_url=config.searxng_url,
                 focus=focus,
                 pro=req.pro_search,
                 language=language,
@@ -565,8 +523,8 @@ async def search_stream(req: SearchRequest, request: Request):
                 for sq in understanding["sub_queries"][:2]:
                     extra = await multi_search(
                         sq, max_results=5,
-                        brave_api_key=user_keys["brave_api_key"],
-                        searxng_url=user_keys["searxng_url"],
+                        brave_api_key=brave_key,
+                        searxng_url=config.searxng_url,
                         focus=focus, pro=False, language=language,
                     )
                     seen = {r["url"] for r in results}
@@ -663,7 +621,7 @@ async def search_stream(req: SearchRequest, request: Request):
             # ── 5. Pro : LLM Answer Generation ────────────────────────
             if not provider:
                 try:
-                    provider, model, provider_name = _get_llm(req.provider, req.model)
+                    provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
                 except Exception as e:
                     yield _sse("error", {"message": f"LLM non disponible: {e}"})
                     return
@@ -726,7 +684,7 @@ async def search_sync(req: SearchRequest, request: Request):
     t0 = time.time()
     config = HuntRConfig.load()
     uid = _uid(request)
-    user_keys = await _get_user_search_keys(uid)
+    brave_key = await _get_user_brave_key(uid)
 
     try:
         provider, model, provider_name = None, "", ""
@@ -745,13 +703,13 @@ async def search_sync(req: SearchRequest, request: Request):
 
         results = await multi_search(
             search_query, req.max_results,
-            user_keys["brave_api_key"], user_keys["searxng_url"],
+            brave_key, config.searxng_url,
             focus, req.pro_search, understanding["language"],
         )
         if understanding.get("sub_queries"):
             for sq in understanding["sub_queries"][:2]:
-                extra = await multi_search(sq, 5, user_keys["brave_api_key"],
-                                           user_keys["searxng_url"], focus, False)
+                extra = await multi_search(sq, 5, brave_key,
+                                           config.searxng_url, focus, False)
                 seen = {r["url"] for r in results}
                 for r in extra:
                     if r["url"] not in seen:
@@ -799,7 +757,7 @@ async def search_sync(req: SearchRequest, request: Request):
             }
 
         if not provider:
-            provider, model, provider_name = _get_llm(req.provider, req.model)
+            provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
 
         context = _build_context(passages, max_total=16000, max_words=400)
         sys_prompt = SYSTEM_PROMPT_ACADEMIC if focus == "academic" else SYSTEM_PROMPT_PRO

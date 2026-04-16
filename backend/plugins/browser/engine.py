@@ -235,6 +235,7 @@ async def multi_search(
         search_query = f"{query} news latest"
 
     # Launch all engines in parallel
+    # DDG is ALWAYS the primary engine (free, no API key needed)
     tasks = []
 
     if focus == "academic":
@@ -246,16 +247,16 @@ async def multi_search(
         tasks.append(search_ddg(f"{query} scientific study research", max_results, time_filter))
         if brave_api_key:
             tasks.append(search_brave(f"{query} research paper", brave_api_key, max_results, time_filter))
-        if searxng_url:
-            tasks.append(search_searxng(f"{query} research", searxng_url, max_results, time_filter))
     else:
+        # Normal + Pro: DDG always, Brave + Wikipedia in Pro
         tasks.append(search_ddg(search_query, max_results, time_filter))
-        if brave_api_key:
-            tasks.append(search_brave(search_query, brave_api_key, max_results, time_filter))
-        if searxng_url:
-            tasks.append(search_searxng(search_query, searxng_url, max_results, time_filter))
         if pro:
             tasks.append(search_wikipedia(query, 5, language))
+            if brave_api_key:
+                tasks.append(search_brave(search_query, brave_api_key, max_results, time_filter))
+
+    if searxng_url:
+        tasks.append(search_searxng(search_query, searxng_url, max_results, time_filter))
 
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
