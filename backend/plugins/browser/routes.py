@@ -82,23 +82,24 @@ async def _resolve_llm(user_id: int, session: AsyncSession):
 
 # ── LLM Prompts ──────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = (
-    "Tu es HuntR, un assistant de recherche. Ta mission : transformer des passages web bruts "
-    "en une réponse claire, bien structurée et entièrement reformulée.\n\n"
-    "FORMAT OBLIGATOIRE :\n"
-    "- Commence par un titre ## qui résume la réponse en une phrase\n"
-    "- Rédige 2 à 5 paragraphes fluides et reformulés (NE COPIE PAS les passages tels quels)\n"
-    "- Chaque affirmation DOIT citer sa source avec [1], [2], etc. directement dans la phrase\n"
-    "  Exemple : « Python est le langage le plus utilisé en data science [1], "
-    "devant R qui reste populaire en statistiques [3]. »\n"
-    "- Si pertinent, utilise des listes à puces, des tableaux comparatifs, des étapes numérotées\n"
-    "- Termine par une section « ### En résumé » de 2-3 phrases\n\n"
-    "RÈGLES STRICTES :\n"
-    "- UNIQUEMENT les informations des passages fournis — jamais tes propres connaissances\n"
-    "- TOUJOURS répondre dans la MÊME LANGUE que la question\n"
-    "- Si l'information est insuffisante ou contradictoire, dis-le clairement\n"
-    "- Sois concis mais complet — pas de remplissage, pas de phrases vides"
-)
+SYSTEM_PROMPT = """\
+Tu es HuntR, un assistant de recherche web. Tu reçois des passages extraits de pages web et tu dois produire une réponse reformulée, structurée et sourcée.
+
+INSTRUCTIONS (à suivre À LA LETTRE) :
+
+1. REFORMULE intégralement — ne recopie JAMAIS un passage tel quel
+2. STRUCTURE ta réponse :
+   - Un titre ## qui résume la réponse
+   - 2 à 5 paragraphes clairs, chacun développant un aspect
+   - Si pertinent : listes à puces, tableaux comparatifs, étapes numérotées
+   - Termine par « ### En résumé » (2-3 phrases de synthèse)
+3. CITE tes sources inline — chaque affirmation doit avoir [1], [2] etc. DANS la phrase :
+   ✅ « Le Python domine la data science [1], tandis que Rust gagne du terrain pour les performances [3]. »
+   ❌ « Python est populaire. [1] » (citation détachée = interdit)
+4. LANGUE : réponds dans la même langue que la question
+5. LIMITES : si l'info manque, dis-le. N'invente rien.
+
+Tu n'as PAS le droit d'utiliser tes propres connaissances. UNIQUEMENT les passages fournis."""
 
 
 # ── SSE helpers ──────────────────────────────────────────────────────────
@@ -182,21 +183,18 @@ async def search_stream(req: SearchRequest, request: Request,
     uid = _uid(request)
 
     # ── Resolve per-user resources BEFORE the stream ─────────────────
-    tavily = None
+    tavily = await _resolve_tavily(uid, session)  # always try (used in both modes)
     llm_provider = None
     llm_model = ""
     llm_error = None
 
     if req.pro_search:
-        # Tavily key
-        tavily = await _resolve_tavily(uid, session)
         if not tavily:
             return JSONResponse(
                 {"error": "Mode Pro nécessite une clé Tavily. "
                           "Ajoutez-la dans Paramètres → Services → Tavily."},
                 status_code=400,
             )
-        # LLM
         try:
             llm_provider, llm_model = await _resolve_llm(uid, session)
         except Exception as e:
@@ -208,25 +206,34 @@ async def search_stream(req: SearchRequest, request: Request,
         try:
             query = req.query.strip()
 
-            if not req.pro_search:
-                # ══════════════════════════════════════════════════════
-                # MODE CLASSIQUE — DDG only, no LLM
-                # ══════════════════════════════════════════════════════
-                yield _sse("status", {"message": "Recherche en cours...", "step": 1})
+            # ── Search phase (shared: try Tavily first, DDG fallback) ──
+            results: list[SearchResult] = []
 
+            if tavily:
+                yield _sse("status", {"message": "Recherche (Tavily)...", "step": 1})
+                results = await tavily.search(query, max_results=req.max_results)
+
+            if not results:
+                yield _sse("status", {"message": "Recherche (DuckDuckGo)...", "step": 1})
                 ddg = DDGProvider()
                 results = await ddg.search(query, max_results=req.max_results)
 
-                yield _sse("search", {
-                    "count": len(results),
-                    "engines": ["duckduckgo"],
-                    "results": [
-                        {"title": r.title, "url": r.url, "snippet": r.snippet,
-                         "source": r.source}
-                        for r in results[:10]
-                    ],
-                })
+            engines = list(set(r.source for r in results)) if results else ["duckduckgo"]
 
+            yield _sse("search", {
+                "count": len(results),
+                "engines": engines,
+                "results": [
+                    {"title": r.title, "url": r.url, "snippet": r.snippet,
+                     "source": r.source}
+                    for r in results[:10]
+                ],
+            })
+
+            if not req.pro_search:
+                # ══════════════════════════════════════════════════════
+                # MODE CLASSIQUE — formatted results, no LLM
+                # ══════════════════════════════════════════════════════
                 citations = _build_citations(results)
                 answer = _format_classic_answer(query, results)
 
@@ -240,22 +247,13 @@ async def search_stream(req: SearchRequest, request: Request,
                     "time_ms": _elapsed(t0),
                     "search_count": len(results),
                     "pro_search": False,
-                    "engines": ["duckduckgo"],
+                    "engines": engines,
                 })
                 return
 
             # ══════════════════════════════════════════════════════════
-            # MODE PRO — Tavily + LLM
+            # MODE PRO — LLM synthesis
             # ══════════════════════════════════════════════════════════
-            yield _sse("status", {"message": "Recherche approfondie (Tavily)...", "step": 1})
-
-            results = await tavily.search(query, max_results=req.max_results)
-
-            if not results:
-                # Fallback DDG si Tavily retourne rien
-                yield _sse("status", {"message": "Fallback DuckDuckGo...", "step": 1})
-                ddg = DDGProvider()
-                results = await ddg.search(query, max_results=req.max_results)
 
             engines = list(set(r.source for r in results))
 
@@ -293,12 +291,14 @@ async def search_stream(req: SearchRequest, request: Request,
                 ChatMessage(
                     role="user",
                     content=(
-                        f"Question de l'utilisateur : {query}\n\n"
-                        f"Voici les passages extraits du web (numérotés [1] à [{len(results)}]) :\n\n"
+                        f"QUESTION : {query}\n\n"
+                        f"PASSAGES WEB (numérotés [1] à [{min(len(results), 10)}]) :\n\n"
                         f"{context}\n\n"
-                        f"Rédige une réponse complète et bien structurée. "
-                        f"Reformule les informations (ne copie pas les passages). "
-                        f"Cite chaque source inline : [1], [2], etc. directement après chaque affirmation."
+                        f"---\n"
+                        f"Maintenant, rédige ta réponse en suivant EXACTEMENT le format demandé :\n"
+                        f"- Titre ## → paragraphes reformulés avec citations [N] inline → ### En résumé\n"
+                        f"- NE COPIE PAS les passages, REFORMULE avec tes propres mots\n"
+                        f"- Chaque fait doit citer [1], [2], etc. DANS la phrase, pas à la fin"
                     ),
                 ),
             ]
