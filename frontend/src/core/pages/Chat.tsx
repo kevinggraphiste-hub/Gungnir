@@ -735,11 +735,29 @@ export default function Chat() {
       ? userMessage + currentImages.map(() => '\n[Image jointe]').join('')
       : fullMessage
     addMessage({ id: Date.now(), role: 'user', content: displayContent, created_at: new Date().toISOString(), images: currentImages })
+    const streamingId = Date.now() + 1
+    const setMessages = useStore.getState().setMessages
+    addMessage({ id: streamingId, role: 'assistant', content: '', created_at: new Date().toISOString() })
+    let streamedSoFar = ''
     try {
-      const response = await api.chat(convoId!, {
-        message: fullMessage, provider: selectedProvider, model: selectedModel,
-        ...(currentImages.length > 0 ? { images: currentImages } : {}),
-      })
+      const response = await api.chat(
+        convoId!,
+        {
+          message: fullMessage, provider: selectedProvider, model: selectedModel,
+          ...(currentImages.length > 0 ? { images: currentImages } : {}),
+        },
+        {
+          onToken: (chunk: string) => {
+            if (useStore.getState().currentConversation !== convoId) return
+            if (streamedSoFar.length === 0) {
+              useStore.getState().setLoadingConvoId(null)
+            }
+            streamedSoFar += chunk
+            const current = useStore.getState().messages
+            setMessages(current.map(m => m.id === streamingId ? { ...m, content: streamedSoFar } : m))
+          },
+        },
+      )
       // Read the live current conversation — the user may have switched
       // chats while we were awaiting. If so, the response is already saved
       // server-side and we must NOT append it to the local messages array
@@ -747,16 +765,22 @@ export default function Chat() {
       const stillOnSameConvo = useStore.getState().currentConversation === convoId
       if (response.error) {
         if (stillOnSameConvo) {
-          addMessage({ id: Date.now() + 1, role: 'assistant', content: `[Erreur: ${response.error}]`, created_at: new Date().toISOString() })
+          const current = useStore.getState().messages
+          setMessages(current.map(m => m.id === streamingId
+            ? { ...m, content: `[Erreur: ${response.error}]` }
+            : m))
         }
       } else {
         if (stillOnSameConvo) {
-          addMessage({
-            id: Date.now() + 1, role: 'assistant', content: response.content,
-            created_at: new Date().toISOString(),
-            model: response.model, provider: response.provider,
-            tokens_input: response.tokens_input, tokens_output: response.tokens_output,
-          })
+          const current = useStore.getState().messages
+          setMessages(current.map(m => m.id === streamingId
+            ? {
+                ...m,
+                content: response.content ?? streamedSoFar,
+                model: response.model, provider: response.provider,
+                tokens_input: response.tokens_input, tokens_output: response.tokens_output,
+              }
+            : m))
         }
         // If agent switched provider/model, update the frontend selection
         if (response.switch_provider) {

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pathlib import Path
@@ -637,6 +638,11 @@ Tu n'es pas Claude, GPT ou un autre assistant generique -- tu es {name}.
 # backend/core/api/onboarding.py for the full flow.
 
 
+def _sse(event: str, payload) -> str:
+    body = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {body}\n\n"
+
+
 @router.post("/conversations/{convo_id}/chat")
 @limiter.limit("60/minute")
 async def chat(
@@ -644,6 +650,55 @@ async def chat(
     request: Request,
     data: dict,
     session: AsyncSession = Depends(get_session)
+):
+    async def _sse_gen():
+        try:
+            result = await _chat_impl(convo_id, request, data, session)
+        except Exception as _e:
+            import logging
+            logging.getLogger("gungnir").error(f"Chat error: {_e}", exc_info=True)
+            yield _sse("error", {"error": _classify_llm_error(_e)})
+            return
+
+        if not isinstance(result, dict):
+            yield _sse("error", {"error": "Réponse interne invalide."})
+            return
+
+        if result.get("error"):
+            yield _sse("error", {"error": result["error"]})
+            return
+
+        for _evt in (result.get("tool_events") or []):
+            yield _sse("tool", _evt)
+
+        content = result.get("content") or ""
+        # Artificial progressive streaming of the final content for UX feedback
+        # (true token-level streaming would require restructuring the tool-call
+        # loop — here we chunk the already-generated content quickly).
+        _step = 4
+        for _i in range(0, len(content), _step):
+            yield _sse("token", content[_i:_i + _step])
+            await asyncio.sleep(0.006)
+
+        done_payload = {k: v for k, v in result.items() if k not in ("tool_events",)}
+        yield _sse("done", done_payload)
+
+    return StreamingResponse(
+        _sse_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+async def _chat_impl(
+    convo_id: int,
+    request: Request,
+    data: dict,
+    session: AsyncSession,
 ):
     # -- Ownership check
     from backend.core.api.auth_helpers import enforce_conversation_owner, get_user_settings, get_user_provider_key

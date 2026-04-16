@@ -153,13 +153,69 @@ export const api = {
     return handleResponse(response)
   },
 
-  chat: async (conversationId: number, data: { message: string; provider: string; model: string; images?: string[] }) => {
+  chat: async (
+    conversationId: number,
+    data: { message: string; provider: string; model: string; images?: string[] },
+    handlers?: {
+      onToken?: (chunk: string) => void
+      onTool?: (evt: any) => void
+    },
+  ): Promise<any> => {
     const response = await apiFetch(`${API_BASE}/conversations/${conversationId}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify(data),
     })
-    return handleResponse(response)
+    if (!response.ok) {
+      return handleResponse(response)
+    }
+    const contentType = response.headers.get('content-type') || ''
+    if (!contentType.includes('text/event-stream') || !response.body) {
+      return handleResponse(response)
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let streamedContent = ''
+    let finalPayload: any = {}
+    let errorPayload: string | null = null
+
+    const dispatch = (event: string, dataStr: string) => {
+      if (event === 'token') {
+        let chunk: string
+        try { chunk = JSON.parse(dataStr) } catch { chunk = dataStr }
+        streamedContent += chunk
+        handlers?.onToken?.(chunk)
+      } else if (event === 'tool') {
+        try { handlers?.onTool?.(JSON.parse(dataStr)) } catch { /* ignore */ }
+      } else if (event === 'done') {
+        try { finalPayload = JSON.parse(dataStr) } catch { finalPayload = {} }
+      } else if (event === 'error') {
+        try { errorPayload = (JSON.parse(dataStr).error) || 'Erreur inconnue' }
+        catch { errorPayload = dataStr }
+      }
+    }
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let idx: number
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const rawEvent = buffer.slice(0, idx)
+        buffer = buffer.slice(idx + 2)
+        let eventName = 'message'
+        const dataLines: string[] = []
+        for (const line of rawEvent.split('\n')) {
+          if (line.startsWith('event: ')) eventName = line.slice(7)
+          else if (line.startsWith('data: ')) dataLines.push(line.slice(6))
+        }
+        if (dataLines.length > 0) dispatch(eventName, dataLines.join('\n'))
+      }
+    }
+
+    if (errorPayload) return { error: errorPayload }
+    return { ...finalPayload, content: finalPayload.content ?? streamedContent }
   },
 
   // ── Export conversations ──────────────────────────────────────────
