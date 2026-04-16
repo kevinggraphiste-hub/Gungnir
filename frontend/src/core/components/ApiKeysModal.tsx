@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { X, Key, Plus, Trash2, Eye, EyeOff, Check, Save, RefreshCw } from 'lucide-react'
 import { api, apiFetch } from '../services/api'
+import { useStore } from '../stores/appStore'
 
 interface Provider {
   name: string
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }: Props) {
+  const { selectedProvider, selectedModel } = useStore()
   const [providers, setProviders] = useState<Provider[]>([])
   const [saving, setSaving] = useState<string | null>(null)
   const [showKey, setShowKey] = useState<Record<string, boolean>>({})
@@ -32,15 +34,19 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
 
   useEffect(() => {
     if (!isOpen || !config?.providers) return
-    const list: Provider[] = Object.entries(config.providers).map(([name, p]: [string, any]) => ({
-      name,
-      enabled: p?.enabled || false,
-      api_key: '',
-      default_model: p?.default_model || '',
-      models: p?.models || [],
-    }))
+    const list: Provider[] = Object.entries(config.providers).map(([name, p]: [string, any]) => {
+      // For the user's active provider, show their selected model
+      const userModel = (name === selectedProvider && selectedModel) ? selectedModel : ''
+      return {
+        name,
+        enabled: p?.enabled || false,
+        api_key: '',
+        default_model: userModel || p?.default_model || '',
+        models: p?.models || [],
+      }
+    })
     setProviders(list)
-  }, [isOpen, config])
+  }, [isOpen, config, selectedProvider, selectedModel])
 
   // Fetch live model lists every time the modal opens, for every provider
   // that is enabled or has a key — same flow as Settings → Providers.
@@ -208,6 +214,16 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
                   {showKey[prov.name] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               </div>
+              {prov.name === selectedProvider && selectedModel && (
+                <p className="text-[10px]" style={{ color: 'var(--accent-primary)' }}>
+                  ● Provider actif — modèle : {selectedModel}
+                </p>
+              )}
+              {config?.providers?.[prov.name]?.has_api_key && (
+                <p className="text-[10px]" style={{ color: 'var(--accent-success, #22c55e)' }}>
+                  ✓ Clé API configurée
+                </p>
+              )}
 
               {(() => {
                 const live = liveModels[prov.name]
