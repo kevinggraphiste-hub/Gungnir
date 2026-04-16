@@ -107,6 +107,7 @@ export default function HuntRPlugin() {
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null)
   const [liveSources, setLiveSources] = useState<LiveSource[]>([])
   const [searchError, setSearchError] = useState('')
+  const [hasTavilyKey, setHasTavilyKey] = useState(true) // assume yes until checked
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const [sessionId] = useState(() => generateSessionId())
@@ -119,6 +120,14 @@ export default function HuntRPlugin() {
     fetch(`${API}/history?limit=30`)
       .then(r => r.json())
       .then(d => setHistory(d.history || []))
+      .catch(() => {})
+    // Check if user has Tavily key configured
+    fetch('/api/config/services')
+      .then(r => r.json())
+      .then(d => {
+        const tavily = d.services?.tavily
+        setHasTavilyKey(tavily?.has_api_key || false)
+      })
       .catch(() => {})
   }, [])
 
@@ -362,6 +371,28 @@ export default function HuntRPlugin() {
                   <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>
                     Posez une question. Obtenez une reponse sourcee.
                   </p>
+                  {!hasTavilyKey && (
+                    <div style={{
+                      marginTop: 16, padding: '12px 16px', borderRadius: 10,
+                      background: 'color-mix(in srgb, var(--accent-primary) 8%, transparent)',
+                      border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent)',
+                      fontSize: 12, color: 'var(--text-secondary)', textAlign: 'left',
+                      maxWidth: 480, margin: '16px auto 0',
+                    }}>
+                      <strong style={{ color: 'var(--accent-primary)' }}>Boostez vos recherches Pro !</strong>
+                      <p style={{ margin: '6px 0 0', lineHeight: 1.5 }}>
+                        Créez un compte gratuit sur{' '}
+                        <a href="https://app.tavily.com/sign-in" target="_blank" rel="noopener noreferrer"
+                          style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>
+                          Tavily (1000 req/mois gratuites)
+                        </a>
+                        {' '}puis ajoutez votre clé API dans{' '}
+                        <a href="/settings?tab=services" style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>
+                          Paramètres → Services → Tavily
+                        </a>.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 

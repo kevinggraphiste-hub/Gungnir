@@ -127,6 +127,46 @@ async def search_brave(query: str, api_key: str, max_results: int = 10,
         return []
 
 
+async def search_tavily(query: str, api_key: str, max_results: int = 10,
+                        search_depth: str = "basic") -> list[dict]:
+    """Tavily Search API — structured web search optimized for LLMs.
+    Free tier: 1000 req/month. search_depth: 'basic' (free) or 'advanced'."""
+    if not api_key:
+        return []
+    try:
+        import aiohttp
+        payload = {
+            "api_key": api_key,
+            "query": query,
+            "max_results": min(max_results, 20),
+            "search_depth": search_depth,
+            "include_answer": False,
+        }
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=15)
+        ) as session:
+            async with session.post("https://api.tavily.com/search",
+                                    json=payload) as resp:
+                if resp.status != 200:
+                    logger.debug(f"Tavily API {resp.status}")
+                    return []
+                data = await resp.json()
+
+        results = []
+        for r in data.get("results", []):
+            results.append({
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("content", "")[:500],
+                "source": "tavily",
+                "text": r.get("content", ""),  # Tavily returns full content!
+            })
+        return results
+    except Exception as e:
+        logger.debug(f"Tavily search error: {e}")
+        return []
+
+
 async def search_searxng(query: str, base_url: str, max_results: int = 10,
                          time_filter: str = "") -> list[dict]:
     """SearXNG instance search (self-hosted, free)."""
@@ -215,6 +255,7 @@ async def multi_search(
     query: str,
     max_results: int = 15,
     brave_api_key: str = "",
+    tavily_api_key: str = "",
     searxng_url: str = "",
     focus: str = "web",
     pro: bool = False,
@@ -245,13 +286,17 @@ async def multi_search(
         tasks.append(search_ddg(f"{query} site:arxiv.org", max_results // 2, time_filter))
         tasks.append(search_ddg(f"{query} site:pubmed.ncbi.nlm.nih.gov", max_results // 2, time_filter))
         tasks.append(search_ddg(f"{query} scientific study research", max_results, time_filter))
+        if tavily_api_key:
+            tasks.append(search_tavily(f"{query} research paper", tavily_api_key, max_results))
         if brave_api_key:
             tasks.append(search_brave(f"{query} research paper", brave_api_key, max_results, time_filter))
     else:
-        # Normal + Pro: DDG always, Brave + Wikipedia in Pro
+        # Normal: DDG always. Pro: DDG + Tavily + Wikipedia + Brave (if keys)
         tasks.append(search_ddg(search_query, max_results, time_filter))
         if pro:
             tasks.append(search_wikipedia(query, 5, language))
+            if tavily_api_key:
+                tasks.append(search_tavily(search_query, tavily_api_key, max_results))
             if brave_api_key:
                 tasks.append(search_brave(search_query, brave_api_key, max_results, time_filter))
 

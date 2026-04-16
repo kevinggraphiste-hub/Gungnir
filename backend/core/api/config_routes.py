@@ -238,8 +238,8 @@ SERVICE_CATEGORIES = {
     "communication": ["slack", "discord", "telegram", "email_smtp", "teams", "whatsapp"],
     "automation": ["n8n", "make", "zapier", "activepieces"],
     "monitoring": ["sentry", "grafana", "posthog"],
-    "ai": ["huggingface", "replicate", "stability", "serper", "tavily"],
-    "search": ["brave", "searxng"],
+    "ai": ["huggingface", "replicate", "stability", "serper"],
+    "search": ["tavily", "brave", "searxng"],
 }
 
 

@@ -46,10 +46,14 @@ def _uid(request: Request) -> int:
     return getattr(request.state, "user_id", None) or 1
 
 
-async def _get_user_brave_key(user_id: int) -> str:
-    """Resolve per-user Brave API key. Falls back to global HuntR config."""
+async def _get_user_search_keys(user_id: int) -> dict:
+    """Resolve per-user Tavily + Brave API keys.
+    Falls back to global HuntR config if user has no keys."""
     config = HuntRConfig.load()
-    brave_key = config.brave_api_key or ""
+    keys = {
+        "tavily": "",
+        "brave": config.brave_api_key or "",
+    }
     try:
         from backend.core.db.engine import async_session
         from backend.core.api.auth_helpers import get_user_settings
@@ -57,12 +61,13 @@ async def _get_user_brave_key(user_id: int) -> str:
         async with async_session() as session:
             us = await get_user_settings(user_id, session)
             if us.service_keys:
-                user_brave = us.service_keys.get("brave")
-                if user_brave and user_brave.get("api_key"):
-                    brave_key = decrypt_value(user_brave["api_key"])
+                for svc_name in ("tavily", "brave"):
+                    svc = us.service_keys.get(svc_name)
+                    if svc and svc.get("api_key"):
+                        keys[svc_name] = decrypt_value(svc["api_key"])
     except Exception:
         pass
-    return brave_key
+    return keys
 
 
 async def _get_user_llm(user_id: int, provider_name: Optional[str] = None,
@@ -457,7 +462,7 @@ async def search_stream(req: SearchRequest, request: Request):
             content, citation, related, done, error
     """
     uid = _uid(request)
-    brave_key = await _get_user_brave_key(uid)
+    search_keys = await _get_user_search_keys(uid)
 
     async def _stream():
         t0 = time.time()
@@ -508,7 +513,8 @@ async def search_stream(req: SearchRequest, request: Request):
             results = await multi_search(
                 search_query,
                 max_results=req.max_results,
-                brave_api_key=brave_key,
+                brave_api_key=search_keys["brave"],
+                tavily_api_key=search_keys["tavily"],
                 searxng_url=config.searxng_url,
                 focus=focus,
                 pro=req.pro_search,
@@ -520,7 +526,8 @@ async def search_stream(req: SearchRequest, request: Request):
                 for sq in understanding["sub_queries"][:2]:
                     extra = await multi_search(
                         sq, max_results=5,
-                        brave_api_key=brave_key,
+                        brave_api_key=search_keys["brave"],
+                tavily_api_key=search_keys["tavily"],
                         searxng_url=config.searxng_url,
                         focus=focus, pro=False, language=language,
                     )
@@ -688,7 +695,7 @@ async def search_sync(req: SearchRequest, request: Request):
     t0 = time.time()
     config = HuntRConfig.load()
     uid = _uid(request)
-    brave_key = await _get_user_brave_key(uid)
+    search_keys = await _get_user_search_keys(uid)
 
     try:
         provider, model, provider_name = None, "", ""
@@ -707,13 +714,18 @@ async def search_sync(req: SearchRequest, request: Request):
 
         results = await multi_search(
             search_query, req.max_results,
-            brave_key, config.searxng_url,
-            focus, req.pro_search, understanding["language"],
+            brave_api_key=search_keys["brave"],
+            tavily_api_key=search_keys["tavily"],
+            searxng_url=config.searxng_url,
+            focus=focus, pro=req.pro_search,
+            language=understanding["language"],
         )
         if understanding.get("sub_queries"):
             for sq in understanding["sub_queries"][:2]:
-                extra = await multi_search(sq, 5, brave_key,
-                                           config.searxng_url, focus, False)
+                extra = await multi_search(
+                    sq, 5, brave_api_key=search_keys["brave"],
+                    tavily_api_key=search_keys["tavily"],
+                    searxng_url=config.searxng_url, focus=focus, pro=False)
                 seen = {r["url"] for r in results}
                 for r in extra:
                     if r["url"] not in seen:
