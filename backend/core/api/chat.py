@@ -802,6 +802,16 @@ async def chat(
     _user_soul_file = _get_soul_file(_current_uid)
     if _user_soul_file.exists():
         soul_content = _user_soul_file.read_text(encoding="utf-8")
+        # Self-healing: if soul still references an old agent name, fix it
+        if _agent_name and _agent_name not in soul_content:
+            import re
+            m = re.search(r'Tu es \*\*(.+?)\*\*', soul_content)
+            if m and m.group(1) != _agent_name:
+                soul_content = soul_content.replace(m.group(1), _agent_name)
+                try:
+                    _user_soul_file.write_text(soul_content, encoding="utf-8")
+                except Exception:
+                    pass
     else:
         soul_content = _get_default_soul(_agent_name)
     chosen_model = model or provider_config.default_model

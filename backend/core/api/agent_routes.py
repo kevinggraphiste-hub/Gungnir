@@ -545,21 +545,39 @@ async def get_soul(request: Request, session: AsyncSession = Depends(get_session
     """Return the CURRENT user's soul.md. Per-user, no cross-user fallback.
     If the user has never written their own soul yet, a clean default is
     generated on the fly from their own agent_name — no auto-copy of some
-    other user's file."""
+    other user's file.
+    Self-healing: if UserSettings.agent_name doesn't match the soul content
+    (e.g. name was changed but the debounced POST hadn't updated the file
+    yet), fix the content on the fly and persist the correction."""
     uid = _uid(request)
     soul_file = _get_soul_file(uid)
+
+    # Resolve the user's current agent_name from DB
+    current_name = ""
+    try:
+        from backend.core.api.auth_helpers import get_user_settings as _gus
+        us = await _gus(uid, session)
+        if us.agent_name:
+            current_name = us.agent_name
+    except Exception:
+        pass
+
     if soul_file.exists():
         content = soul_file.read_text(encoding="utf-8")
+        # Self-healing: detect stale name in soul and replace with current
+        if current_name and current_name not in content:
+            import re
+            m = re.search(r'Tu es \*\*(.+?)\*\*', content)
+            if m:
+                old_name = m.group(1)
+                if old_name != current_name:
+                    content = content.replace(old_name, current_name)
+                    try:
+                        soul_file.write_text(content, encoding="utf-8")
+                    except Exception:
+                        pass
     else:
-        # Use this user's own agent_name for the generated default
-        name = "Gungnir"
-        try:
-            from backend.core.api.auth_helpers import get_user_settings as _gus
-            us = await _gus(uid, session)
-            if us.agent_name:
-                name = us.agent_name
-        except Exception:
-            pass
+        name = current_name or "Gungnir"
         content = _get_default_soul(name)
     return {"content": content}
 
