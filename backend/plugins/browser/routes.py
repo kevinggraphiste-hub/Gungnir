@@ -1,28 +1,17 @@
 """
-HuntR — Perplexity-like Search Engine Plugin for Gungnir
+HuntR v3 — Perplexity-like Search Plugin for Gungnir
 
-Pipeline amélioré :
-  1. Query Understanding (intent + expansion + focus auto-detect)
-  2. Multi-Engine Search (DDG + Brave + SearXNG + Wikipedia)
-  3. Content Scraping (web_fetch en parallèle)
-  4. TF-IDF Reranking (avec fallback keyword)
-  5. Answer Generation (LLM streaming avec citations)
+Two modes:
+  - Classique (free) : DuckDuckGo → formatted results, no LLM
+  - Pro              : Tavily (per-user key) → LLM synthesis with inline citations
 
-Features :
-  - Mode Normal (gratuit) : étapes 1-4, pas de LLM
-  - Mode Pro : étapes 1-5, synthèse LLM + related questions
-  - Focus modes : Web, Code, Actu, Academic
-  - Follow-up conversationnel (contexte entre recherches)
-  - Smart query expansion (sub-queries)
-
-100% self-contained — crash-proof, no core state mutations.
+Everything is per-user: search API keys, LLM provider/model.
 """
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-import asyncio
 import json
 import time
 import logging
@@ -30,806 +19,325 @@ import logging
 from backend.core.config.settings import Settings
 from backend.core.providers import get_provider, ChatMessage
 from backend.core.db.engine import get_session
-from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
-
-from .config import HuntRConfig
-from .engine import (
-    multi_search, scrape_sources, rerank,
-    detect_language, detect_intent, suggest_focus,
-    FOCUS_MODES,
+from backend.core.api.auth_helpers import (
+    get_user_settings, get_user_provider_key, get_user_service_key,
 )
+
+from .search_providers import DDGProvider, TavilyProvider, SearchResult
 
 logger = logging.getLogger("gungnir.plugins.huntr")
 
+router = APIRouter()
 
-# ── Per-user resolution helpers ──────────────────────────────────────────
+# ── In-memory history (plugin-scoped) ────────────────────────────────────
+_search_history: list[dict] = []
+MAX_HISTORY = 50
+
+
+# ── Request model ────────────────────────────────────────────────────────
+
+class SearchRequest(BaseModel):
+    query: str
+    pro_search: bool = False
+    max_results: int = Field(default=10, ge=1, le=20)
+
+
+# ── Per-user helpers ─────────────────────────────────────────────────────
 
 def _uid(request: Request) -> int:
-    """Extract user_id from auth middleware, fallback to 1."""
     return getattr(request.state, "user_id", None) or 1
 
 
-async def _get_user_search_keys(user_id: int) -> dict:
-    """Resolve per-user Tavily + Brave API keys.
-    Falls back to global HuntR config if user has no keys."""
-    config = HuntRConfig.load()
-    keys = {
-        "tavily": "",
-        "brave": config.brave_api_key or "",
-    }
-    try:
-        from backend.core.db.engine import async_session
-        from backend.core.api.auth_helpers import get_user_settings
-        from backend.core.config.settings import decrypt_value
-        async with async_session() as session:
-            us = await get_user_settings(user_id, session)
-            if us.service_keys:
-                for svc_name in ("tavily", "brave"):
-                    svc = us.service_keys.get(svc_name)
-                    if svc and svc.get("api_key"):
-                        keys[svc_name] = decrypt_value(svc["api_key"])
-    except Exception:
-        pass
-    return keys
+async def _resolve_tavily(user_id: int, session: AsyncSession) -> TavilyProvider | None:
+    """Get the user's Tavily provider (or None if no key configured)."""
+    us = await get_user_settings(user_id, session)
+    svc = get_user_service_key(us, "tavily")
+    if not svc or not svc.get("api_key"):
+        return None
+    return TavilyProvider(api_key=svc["api_key"])
 
 
-async def _get_user_llm(user_id: int, session: AsyncSession,
-                        provider_name: Optional[str] = None,
-                        model_name: Optional[str] = None):
-    """Get user's LLM provider — exact same logic as chat.py.
-    Uses the request-scoped session from Depends(get_session)."""
+async def _resolve_llm(user_id: int, session: AsyncSession):
+    """Get the user's active LLM provider + model. Raises on failure."""
     us = await get_user_settings(user_id, session)
     settings = Settings.load()
 
-    pname = provider_name or us.active_provider or "openrouter"
-
-    # get_user_provider_key already decrypts the key (same as chat.py line 681)
+    pname = us.active_provider or "openrouter"
     user_prov = get_user_provider_key(us, pname)
     api_key = user_prov.get("api_key") if user_prov else None
-    logger.info(f"[HuntR] LLM resolve: user={user_id}, provider={pname}, has_key={bool(api_key)}")
     if not api_key:
-        raise ValueError(
-            f"Aucune clé API pour '{pname}'. "
-            f"Configure-la dans Paramètres → Providers."
-        )
+        raise ValueError(f"Aucune clé API pour le provider '{pname}'")
 
     cfg = settings.providers.get(pname)
     base_url = (user_prov.get("base_url") if user_prov else None) or \
                (cfg.base_url if cfg else None)
-
-    mname = model_name or us.active_model or \
+    model = us.active_model or \
             (cfg.default_model if cfg else None) or \
             (cfg.models[0] if cfg and cfg.models else None)
-    if not mname:
-        raise ValueError(f"Aucun modèle pour '{pname}'")
+    if not model:
+        raise ValueError(f"Aucun modèle configuré pour '{pname}'")
 
-    return get_provider(pname, api_key, base_url), mname, pname
-
-
-router = APIRouter()
-
-# ── In-memory state (plugin-scoped, not core) ─────────────────────────────
-_search_history: list[dict] = []
-_sessions: dict[str, list[dict]] = {}  # session_id -> conversation history
-MAX_HISTORY = 100
+    return get_provider(pname, api_key, base_url), model
 
 
-# ── Request / Response Models ──────────────────────────────────────────────
-
-class SearchRequest(BaseModel):
-    query: str
-    max_results: int = Field(default=15, ge=1, le=30)
-    pro_search: bool = False
-    focus: str = Field(default="web", pattern="^(web|code|news|academic)$")
-    session_id: Optional[str] = None  # For follow-up context
-    provider: Optional[str] = None
-    model: Optional[str] = None
-
-
-class FetchRequest(BaseModel):
-    url: str
-    extract: str = Field(default="text", pattern="^(text|html|all)$")
-
-
-class ConfigUpdateRequest(BaseModel):
-    brave_api_key: Optional[str] = None
-    searxng_url: Optional[str] = None
-    rerank_method: Optional[str] = None
-    default_focus: Optional[str] = None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# LLM Prompts
-# ═══════════════════════════════════════════════════════════════════════════
+# ── LLM Prompts ──────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = (
     "Tu es HuntR, un moteur de recherche IA. "
-    "Réponds en utilisant UNIQUEMENT les passages fournis.\n\n"
+    "Synthétise les passages fournis en une réponse complète et structurée.\n\n"
     "RÈGLES :\n"
-    "1. Base chaque affirmation sur les passages — n'utilise PAS tes connaissances\n"
-    "2. Cite les sources inline avec [1], [2], etc.\n"
-    "3. Si l'info manque, dis-le explicitement\n"
-    "4. Markdown : titres, listes, tableaux\n"
-    "5. Chaque fait = une citation\n"
-    "6. TOUJOURS répondre dans la même langue que la question"
-)
-
-SYSTEM_PROMPT_PRO = (
-    "Tu es HuntR Pro, un moteur de recherche IA expert. "
-    "Synthétise les passages fournis en une réponse complète.\n\n"
-    "RÈGLES :\n"
-    "1. Synthétise TOUS les passages — connecte les idées, compare les points de vue\n"
-    "2. Cite inline [1], [2], etc.\n"
-    "3. Si l'info est incomplète, dis explicitement ce qui manque\n"
-    "4. Sois exhaustif — contexte, nuances, détails\n"
-    "5. Markdown : titres, tableaux, listes\n"
-    "6. Chaque fait = une citation\n"
-    "7. TOUJOURS répondre dans la même langue que la question\n"
-    "8. Comparaisons → tableaux. Tutoriels → étapes numérotées.\n"
-    "9. Brève synthèse à la fin"
-)
-
-SYSTEM_PROMPT_ACADEMIC = (
-    "Tu es HuntR Academic, un assistant de recherche scientifique rigoureux. "
-    "Tu synthétises UNIQUEMENT à partir de sources académiques vérifiées.\n\n"
-    "RÈGLES STRICTES :\n"
-    "1. Base CHAQUE affirmation sur les passages fournis — JAMAIS tes propres connaissances\n"
-    "2. Cite les sources inline [1], [2] — chaque fait doit avoir sa citation\n"
-    "3. Utilise un ton neutre, factuel et objectif — pas d'opinions ni de jugements\n"
-    "4. Distingue clairement : fait établi vs hypothèse vs résultat préliminaire\n"
-    "5. Mentionne les limites méthodologiques si elles sont visibles dans les sources\n"
-    "6. Si l'information est insuffisante ou contradictoire, dis-le explicitement\n"
-    "7. Markdown : titres, tableaux comparatifs, listes structurées\n"
-    "8. TOUJOURS répondre dans la même langue que la question\n"
-    "9. Privilégie les méta-analyses et revues systématiques quand disponibles\n"
-    "10. Termine par une synthèse des points clés et les lacunes identifiées"
-)
-
-RELATED_PROMPT = (
-    "Génère 3-4 questions de suivi pertinentes basées sur cette Q&R.\n"
-    "Retourne UNIQUEMENT un tableau JSON de strings, sans markdown.\n"
-    "Les questions DOIVENT être dans la même langue que la question originale.\n\n"
-    "Question: {query}\nRéponse: {answer}"
-)
-
-QUERY_EXPANSION_PROMPT = (
-    "Tu es un expert en recherche d'information. Analyse cette requête et retourne UNIQUEMENT un objet JSON.\n\n"
-    "Requête: {query}\n"
-    "{context}\n\n"
-    "Retourne un JSON avec :\n"
-    '- "rewritten": requête optimisée pour les moteurs de recherche\n'
-    '- "intent": "factual"|"comparison"|"tutorial"|"opinion"|"news"|"code"|"definition"\n'
-    '- "sub_queries": 2-3 reformulations différentes pour élargir la couverture\n'
-    '- "language": code ISO 639-1\n'
-    "UNIQUEMENT le JSON, pas de markdown fences."
+    "1. Base CHAQUE affirmation sur les passages — n'utilise JAMAIS tes propres connaissances\n"
+    "2. Cite les sources inline : chaque fait doit avoir [1], [2], etc. dans le paragraphe\n"
+    "3. Si l'information manque ou est contradictoire, dis-le explicitement\n"
+    "4. Utilise le Markdown : titres, listes, tableaux quand pertinent\n"
+    "5. TOUJOURS répondre dans la même langue que la question\n"
+    "6. Sois exhaustif : contexte, nuances, détails importants\n"
+    "7. Termine par une courte synthèse des points clés"
 )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# LLM Helpers
-# ═══════════════════════════════════════════════════════════════════════════
+# ── SSE helpers ──────────────────────────────────────────────────────────
+
+def _sse(event: str, data: dict) -> str:
+    return f"data: {json.dumps({'type': event, 'data': data}, ensure_ascii=False)}\n\n"
+
+def _elapsed(t0: float) -> int:
+    return int((time.time() - t0) * 1000)
 
 
+# ── Format helpers ───────────────────────────────────────────────────────
 
-async def _expand_query(query: str, provider, model: str,
-                        session_context: str = "") -> dict:
-    """Smart query expansion via LLM with conversation context."""
-    fallback = {
-        "rewritten": query,
-        "intent": detect_intent(query),
-        "sub_queries": [],
-        "language": detect_language(query),
-    }
-    if not provider:
-        return fallback
-    try:
-        ctx = ""
-        if session_context:
-            ctx = f"Contexte de la conversation précédente:\n{session_context}\n"
-        prompt = QUERY_EXPANSION_PROMPT.format(query=query, context=ctx)
-        resp = await provider.chat(
-            [ChatMessage(role="system", content="Tu analyses des requêtes de recherche."),
-             ChatMessage(role="user", content=prompt)],
-            model=model, temperature=0.1, max_tokens=400,
-        )
-        text = resp.content.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        data = json.loads(text)
-        return {
-            "rewritten": data.get("rewritten", query),
-            "intent": data.get("intent", fallback["intent"]),
-            "sub_queries": data.get("sub_queries", [])[:3],
-            "language": data.get("language", fallback["language"]),
+def _format_classic_answer(query: str, results: list[SearchResult]) -> str:
+    """Format DDG results as a readable list with links."""
+    if not results:
+        return "Aucun résultat trouvé pour cette recherche."
+    parts = ["## Résultats\n"]
+    for i, r in enumerate(results[:8], 1):
+        snippet = r.snippet[:300] + "..." if len(r.snippet) > 300 else r.snippet
+        parts.append(f"**[{i}] [{r.title}]({r.url})**\n{snippet}\n")
+    return "\n".join(parts)
+
+
+def _build_citations(results: list[SearchResult]) -> list[dict]:
+    return [
+        {
+            "index": i,
+            "url": r.url,
+            "title": r.title,
+            "snippet": r.snippet[:200],
         }
-    except Exception:
-        return fallback
+        for i, r in enumerate(results[:10], 1)
+    ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Answer Building
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _build_context(passages: list[dict], max_total: int = 12000,
-                   max_words: int = 300) -> str:
+def _build_llm_context(results: list[SearchResult], max_chars: int = 15000) -> str:
+    """Build numbered passages for the LLM prompt."""
     parts = []
     total = 0
-    for i, p in enumerate(passages, 1):
-        words = p["text"].split()[:max_words]
-        text = " ".join(words)
-        entry = f"[{i}] {p['title']}\n{text}\n"
-        if total + len(entry) > max_total:
+    for i, r in enumerate(results[:10], 1):
+        text = r.content or r.snippet
+        if not text:
+            continue
+        # Limit each passage
+        if len(text) > 2000:
+            text = text[:2000] + "..."
+        entry = f"[{i}] {r.title}\nSource: {r.url}\n{text}\n"
+        if total + len(entry) > max_chars:
             break
         parts.append(entry)
         total += len(entry)
     return "\n---\n".join(parts)
 
 
-def _build_citations(passages: list[dict]) -> list[dict]:
+def _related_fallback(query: str) -> list[str]:
+    """Static related questions (no LLM needed)."""
     return [
-        {
-            "index": i,
-            "url": p["url"],
-            "title": p["title"],
-            "snippet": p["text"][:200] + "..." if len(p["text"]) > 200 else p["text"],
-        }
-        for i, p in enumerate(passages, 1)
+        f"En savoir plus sur {query}",
+        f"Dernières actualités sur {query}",
+        f"{query} : comparaison et alternatives",
     ]
 
 
-def _fallback_answer(query: str, passages: list[dict], language: str = "en") -> str:
-    """Non-LLM answer: formatted passages with links, adapted to query language."""
-    headers = {
-        "fr": "## Résultats trouvés\n",
-        "en": "## Results found\n",
-    }
-    # Summarize each passage in a user-friendly way
-    header = headers.get(language, headers["en"])
-    parts = [header]
-    for i, p in enumerate(passages[:6], 1):
-        snip = p["text"][:300] + "..." if len(p["text"]) > 300 else p["text"]
-        parts.append(f"**[{i}] [{p['title']}]({p['url']})**\n{snip}\n")
-
-    # If query language differs from content language, add a note
-    if language == "fr":
-        has_english = any(
-            not any(c in p["text"][:100] for c in "àâéèêëîïôùûüçœæ")
-            for p in passages[:3]
-        )
-        if has_english:
-            parts.insert(1, "> *Les résultats ci-dessous sont en anglais car les sources les plus pertinentes sont anglophones.*\n")
-
-    return "\n".join(parts)
-
-
-def _related_fallback(query: str, language: str = "en") -> list[str]:
-    templates = {
-        "fr": [
-            f"Peux-tu m'en dire plus sur {query} ?",
-            f"Quelles sont les dernières avancées concernant {query} ?",
-            f"Comment {query} se compare-t-il aux alternatives ?",
-        ],
-        "es": [
-            f"Cuéntame más sobre {query}",
-            f"Últimos avances sobre {query}",
-            f"{query} vs alternativas",
-        ],
-        "de": [
-            f"Erzähl mir mehr über {query}",
-            f"Neueste Entwicklungen zu {query}",
-            f"{query} im Vergleich zu Alternativen",
-        ],
-        "it": [
-            f"Dimmi di più su {query}",
-            f"Ultimi sviluppi su {query}",
-            f"{query} vs alternative",
-        ],
-        "pt": [
-            f"Conte-me mais sobre {query}",
-            f"Últimos avanços sobre {query}",
-            f"{query} vs alternativas",
-        ],
-    }
-    return templates.get(language, [
-        f"Tell me more about {query}",
-        f"Latest developments on {query}",
-        f"{query} vs alternatives",
-    ])
-
-
-async def _generate_related(provider, model: str, query: str,
-                            summary: str) -> list[str]:
-    if not provider:
-        return _related_fallback(query)
-    try:
-        prompt = RELATED_PROMPT.format(query=query, answer=summary[:500])
-        resp = await provider.chat(
-            [ChatMessage(role="system", content="Tu génères des tableaux JSON de questions."),
-             ChatMessage(role="user", content=prompt)],
-            model=model, temperature=0.7, max_tokens=300,
-        )
-        text = resp.content.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        return json.loads(text)
-    except Exception:
-        return _related_fallback(query)
-
-
-# ── Session / Follow-up ───────────────────────────────────────────────────
-
-def _get_session_context(session_id: Optional[str], max_turns: int = 5) -> str:
-    """Build conversation context from session history."""
-    if not session_id or session_id not in _sessions:
-        return ""
-    turns = _sessions[session_id][-max_turns:]
-    parts = []
-    for t in turns:
-        parts.append(f"Q: {t['query']}")
-        if t.get("answer_summary"):
-            parts.append(f"A: {t['answer_summary']}")
-    return "\n".join(parts)
-
-
-def _save_session_turn(session_id: Optional[str], query: str,
-                       answer_summary: str = "", config: HuntRConfig = None):
-    if not session_id:
-        return
-    if session_id not in _sessions:
-        _sessions[session_id] = []
-    _sessions[session_id].append({
-        "query": query,
-        "answer_summary": answer_summary[:300],
-        "timestamp": time.time(),
-    })
-    max_turns = config.max_follow_ups if config else 5
-    if len(_sessions[session_id]) > max_turns:
-        _sessions[session_id] = _sessions[session_id][-max_turns:]
-
-
-def _save_to_history(query: str, sources_count: int, mode: str, intent: str = "",
-                     focus: str = "web", provider: str = "", model: str = "",
-                     time_ms: int = 0, engines: list[str] = None):
+def _save_to_history(query: str, mode: str, sources: int, time_ms: int):
     _search_history.insert(0, {
-        "query": query, "sources_count": sources_count, "mode": mode,
-        "intent": intent, "focus": focus, "provider": provider, "model": model,
-        "engines": engines or [], "time_ms": time_ms, "timestamp": time.time(),
+        "query": query, "mode": mode, "sources_count": sources,
+        "time_ms": time_ms, "timestamp": time.time(),
     })
-    config = HuntRConfig.load()
-    while len(_search_history) > config.max_history:
+    while len(_search_history) > MAX_HISTORY:
         _search_history.pop()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Routes
+# Main search endpoint — SSE stream
 # ═══════════════════════════════════════════════════════════════════════════
 
-@router.get("/health")
-async def huntr_health():
-    config = HuntRConfig.load()
-    return {
-        "plugin": "huntr", "status": "ok", "version": "2.0.0",
-        "engines": _available_engines(config),
-        "focus_modes": list(FOCUS_MODES.keys()),
-    }
-
-
-def _available_engines(config: HuntRConfig) -> list[str]:
-    engines = ["duckduckgo"]
-    if config.brave_api_key:
-        engines.append("brave")
-    if config.searxng_url:
-        engines.append("searxng")
-    engines.append("wikipedia")
-    return engines
-
-
-@router.get("/focus-modes")
-async def get_focus_modes():
-    return {"modes": FOCUS_MODES}
-
-
-@router.get("/config")
-async def get_config():
-    config = HuntRConfig.load()
-    safe = config.to_dict()
-    # Mask API key
-    if safe.get("brave_api_key"):
-        safe["brave_api_key"] = safe["brave_api_key"][:8] + "..." if len(safe["brave_api_key"]) > 8 else "***"
-    return {"config": safe}
-
-
-@router.post("/config")
-async def update_config(req: ConfigUpdateRequest):
-    config = HuntRConfig.load()
-    if req.brave_api_key is not None:
-        config.brave_api_key = req.brave_api_key
-    if req.searxng_url is not None:
-        config.searxng_url = req.searxng_url
-    if req.rerank_method is not None:
-        config.rerank_method = req.rerank_method
-    if req.default_focus is not None:
-        config.default_focus = req.default_focus
-    config.save()
-    return {"status": "ok", "config": config.to_dict()}
-
-
 @router.post("/search/stream")
-async def search_stream(req: SearchRequest, request: Request, session: AsyncSession = Depends(get_session)):
-    """
-    Full HuntR pipeline via SSE.
-
-    Normal : search → scrape → rerank → raw answer (pas de LLM)
-    Pro    : search → scrape → rerank → LLM formatting avec citations inline
-
-    Events: status, search, sources, content, citation, related, done, error
-    """
+async def search_stream(req: SearchRequest, request: Request,
+                        session: AsyncSession = Depends(get_session)):
     uid = _uid(request)
-    search_keys = await _get_user_search_keys(uid)
 
-    # ── Resolve LLM before stream (Pro only) ───────────────────────────
-    pre_provider = None
-    pre_model = ""
-    pre_pname = ""
-    pre_llm_error = None
+    # ── Resolve per-user resources BEFORE the stream ─────────────────
+    tavily = None
+    llm_provider = None
+    llm_model = ""
+    llm_error = None
+
     if req.pro_search:
-        try:
-            pre_provider, pre_model, pre_pname = await _get_user_llm(
-                uid, session, req.provider, req.model
+        # Tavily key
+        tavily = await _resolve_tavily(uid, session)
+        if not tavily:
+            return JSONResponse(
+                {"error": "Mode Pro nécessite une clé Tavily. "
+                          "Ajoutez-la dans Paramètres → Services → Tavily."},
+                status_code=400,
             )
-            logger.info(f"[HuntR] LLM resolved: provider={pre_pname}, model={pre_model}, user={uid}")
+        # LLM
+        try:
+            llm_provider, llm_model = await _resolve_llm(uid, session)
         except Exception as e:
-            pre_llm_error = str(e)
-            logger.warning(f"[HuntR] LLM resolution failed for user {uid}: {e}")
+            llm_error = str(e)
 
     async def _stream():
         t0 = time.time()
-        config = HuntRConfig.load()
 
         try:
-            # ── 1. Query Understanding ─────────────────────────────────
-            yield _sse("status", {"message": "Analyse de la requête...", "step": 1})
+            query = req.query.strip()
 
-            session_ctx = _get_session_context(req.session_id, config.max_follow_ups)
+            if not req.pro_search:
+                # ══════════════════════════════════════════════════════
+                # MODE CLASSIQUE — DDG only, no LLM
+                # ══════════════════════════════════════════════════════
+                yield _sse("status", {"message": "Recherche en cours...", "step": 1})
 
-            # Heuristic expansion (no LLM call — fast and reliable)
-            understanding = await _expand_query(req.query, None, "", session_ctx)
-            search_query = understanding["rewritten"] or req.query
-            language = understanding["language"]
+                ddg = DDGProvider()
+                results = await ddg.search(query, max_results=req.max_results)
 
-            focus = req.focus
-            if focus == "web" and understanding["intent"] in ("code", "news"):
-                suggested = suggest_focus(understanding["intent"])
-                if suggested != "web":
-                    focus = suggested
+                yield _sse("search", {
+                    "count": len(results),
+                    "engines": ["duckduckgo"],
+                    "results": [
+                        {"title": r.title, "url": r.url, "snippet": r.snippet,
+                         "source": r.source}
+                        for r in results[:10]
+                    ],
+                })
 
-            yield _sse("status", {
-                "message": f"Intent: {understanding['intent']} | Focus: {focus}",
-                "intent": understanding["intent"],
-                "focus": focus,
-                "step": 1,
-            })
+                citations = _build_citations(results)
+                answer = _format_classic_answer(query, results)
 
-            # ── 2. Multi-Engine Search ─────────────────────────────────
-            yield _sse("status", {"message": "Recherche multi-sources...", "step": 2})
-            logger.info(f"[HuntR] Search: query={req.query[:50]}, focus={focus}, pro={req.pro_search}")
+                yield _sse("citation", {"citations": citations})
+                yield _sse("content", {"answer": answer})
+                yield _sse("related", {"questions": _related_fallback(query)})
 
-            results = await multi_search(
-                search_query,
-                max_results=req.max_results,
-                brave_api_key=search_keys["brave"],
-                tavily_api_key=search_keys["tavily"],
-                searxng_url=config.searxng_url,
-                focus=focus,
-                pro=req.pro_search,
-                language=language,
-            )
+                _save_to_history(query, "classique", len(results), _elapsed(t0))
 
-            # Sub-queries for broader coverage
-            if understanding.get("sub_queries"):
-                seen = {r["url"] for r in results}
-                for sq in understanding["sub_queries"][:2]:
-                    extra = await multi_search(
-                        sq, max_results=5,
-                        brave_api_key=search_keys["brave"],
-                        tavily_api_key=search_keys["tavily"],
-                        searxng_url=config.searxng_url,
-                        focus=focus, pro=False, language=language,
-                    )
-                    for r in extra:
-                        if r["url"] not in seen:
-                            results.append(r)
-                            seen.add(r["url"])
+                yield _sse("done", {
+                    "time_ms": _elapsed(t0),
+                    "search_count": len(results),
+                    "pro_search": False,
+                    "engines": ["duckduckgo"],
+                })
+                return
 
-            engines_used = list(set(r.get("source", "unknown") for r in results))
-            logger.info(f"[HuntR] Search done: {len(results)} results from {engines_used}")
+            # ══════════════════════════════════════════════════════════
+            # MODE PRO — Tavily + LLM
+            # ══════════════════════════════════════════════════════════
+            yield _sse("status", {"message": "Recherche approfondie (Tavily)...", "step": 1})
+
+            results = await tavily.search(query, max_results=req.max_results)
+
+            if not results:
+                # Fallback DDG si Tavily retourne rien
+                yield _sse("status", {"message": "Fallback DuckDuckGo...", "step": 1})
+                ddg = DDGProvider()
+                results = await ddg.search(query, max_results=req.max_results)
+
+            engines = list(set(r.source for r in results))
 
             yield _sse("search", {
                 "count": len(results),
-                "engines": engines_used,
+                "engines": engines,
                 "results": [
-                    {"title": r["title"], "url": r["url"], "snippet": r["snippet"],
-                     "source": r.get("source", "")}
+                    {"title": r.title, "url": r.url, "snippet": r.snippet,
+                     "source": r.source}
                     for r in results[:10]
                 ],
             })
 
-            # ── 3. Scrape ─────────────────────────────────────────────
-            yield _sse("status", {"message": f"Lecture de {len(results)} pages...", "step": 3})
-            to_scrape = [r["url"] for r in results if not r.get("text")]
-            pre_filled = [r for r in results if r.get("text") and len(r["text"]) >= 100]
-            scraped = await scrape_sources(
-                to_scrape, config.scrape_concurrency, config.scrape_timeout
-            ) if to_scrape else []
-            all_content = pre_filled + scraped
-
-            # Fallback: use search snippets if scraping failed
-            if not all_content and results:
-                for r in results:
-                    snippet = r.get("snippet", "")
-                    if snippet and len(snippet) >= 30:
-                        all_content.append({
-                            "url": r["url"],
-                            "title": r.get("title", ""),
-                            "text": snippet,
-                            "words": len(snippet.split()),
-                        })
-                if all_content:
-                    yield _sse("status", {"message": f"Utilisation des extraits ({len(all_content)} sources)", "step": 3})
-
-            yield _sse("sources", {
-                "count": len(all_content),
-                "sources": [
-                    {"title": c.get("title", ""), "url": c["url"],
-                     "words": c.get("words", 0)}
-                    for c in all_content[:10]
-                ],
-            })
-
-            if not all_content:
-                yield _sse("content", {
-                    "answer": "Impossible d'extraire le contenu des résultats. Essayez une autre requête."
-                })
-                yield _sse("done", {"time_ms": _elapsed(t0)})
-                return
-
-            # ── 4. Rerank ─────────────────────────────────────────────
-            yield _sse("status", {"message": "Classement des passages (TF-IDF)...", "step": 4})
-            top_k = 10 if req.pro_search else 6
-            passages = rerank(search_query, all_content, top_k=top_k,
-                              method=config.rerank_method)
-            citations = _build_citations(passages)
-
-            mode_label = "Pro" if req.pro_search else "Normal"
-            yield _sse("status", {
-                "message": f"[{mode_label}] Top {len(passages)} passages sélectionnés",
-                "step": 4,
-            })
+            citations = _build_citations(results)
             yield _sse("citation", {"citations": citations})
 
-            # ── 5. Answer generation ──────────────────────────────────
-            # Normal = raw formatted passages
-            # Pro    = LLM synthesis with inline citations [1], [2]...
-
-            if not req.pro_search:
-                # ── Normal: raw answer, no LLM ─────────────────────────
-                answer = _fallback_answer(req.query, passages, language)
+            # ── LLM synthesis ─────────────────────────────────────────
+            if not llm_provider:
+                # No LLM → formatted results like classic mode
+                answer = _format_classic_answer(query, results)
                 yield _sse("content", {"answer": answer})
-                yield _sse("related", {"questions": _related_fallback(req.query, language)})
-                _save_session_turn(req.session_id, req.query, answer[:200], config)
-                _save_to_history(req.query, len(results), "normal",
-                                 understanding["intent"], focus,
-                                 engines=engines_used, time_ms=_elapsed(t0))
+                yield _sse("status", {"message": f"⚠ LLM indisponible ({llm_error})"})
+                yield _sse("related", {"questions": _related_fallback(query)})
                 yield _sse("done", {
                     "time_ms": _elapsed(t0), "search_count": len(results),
-                    "passages_used": len(passages), "pro_search": False,
-                    "intent": understanding["intent"], "focus": focus,
-                    "engines": engines_used,
+                    "pro_search": True, "engines": engines, "error": True,
                 })
                 return
 
-            # ── Pro: LLM formatting on top of same pipeline ────────────
-            if not pre_provider:
-                # No LLM → fallback to Normal answer
-                answer = _fallback_answer(req.query, passages, language)
-                yield _sse("content", {"answer": answer})
-                yield _sse("status", {"message": f"⚠ LLM indisponible ({pre_llm_error}), résultat brut"})
-                yield _sse("related", {"questions": _related_fallback(req.query, language)})
-                yield _sse("done", {
-                    "time_ms": _elapsed(t0), "search_count": len(results),
-                    "passages_used": len(passages), "pro_search": True,
-                    "intent": understanding["intent"], "focus": focus,
-                    "engines": engines_used, "error": True,
-                })
-                return
+            yield _sse("status", {"message": "Synthèse LLM en cours...", "step": 2})
 
-            yield _sse("status", {"message": "[Pro] Synthèse LLM en cours...", "step": 5})
-
-            context = _build_context(passages, max_total=16000, max_words=400)
-            sys_prompt = SYSTEM_PROMPT_ACADEMIC if focus == "academic" else SYSTEM_PROMPT_PRO
+            context = _build_llm_context(results)
             messages = [
-                ChatMessage(role="system", content=sys_prompt),
+                ChatMessage(role="system", content=SYSTEM_PROMPT),
                 ChatMessage(
                     role="user",
                     content=(
-                        f"Question: {req.query}\n\n"
-                        f"Passages:\n{context}\n\n"
+                        f"Question : {query}\n\n"
+                        f"Passages :\n{context}\n\n"
                         f"Réponds avec des citations inline [1], [2], etc. "
-                        f"Chaque affirmation doit citer sa source directement dans le paragraphe."
+                        f"Chaque affirmation doit citer sa source dans le paragraphe."
                     ),
                 ),
             ]
 
             try:
-                resp = await pre_provider.chat(messages, pre_model, max_tokens=2048)
-                pro_answer = resp.content or ""
-            except Exception as llm_err:
-                logger.warning(f"[HuntR] LLM call failed, using raw answer: {llm_err}")
-                pro_answer = ""
+                resp = await llm_provider.chat(messages, llm_model, max_tokens=2048)
+                answer = resp.content or ""
+            except Exception as e:
+                logger.warning(f"[HuntR] LLM failed: {e}")
+                answer = ""
 
-            # Fallback if LLM returned empty
-            if not pro_answer.strip():
-                pro_answer = _fallback_answer(req.query, passages, language)
+            if not answer.strip():
+                answer = _format_classic_answer(query, results)
 
-            yield _sse("content", {"answer": pro_answer})
+            yield _sse("content", {"answer": answer})
+            yield _sse("related", {"questions": _related_fallback(query)})
 
-            # Related questions via LLM (fallback if fails)
-            try:
-                related = await _generate_related(pre_provider, pre_model, req.query, pro_answer[:500])
-            except Exception:
-                related = _related_fallback(req.query, language)
-            yield _sse("related", {"questions": related})
+            _save_to_history(query, "pro", len(results), _elapsed(t0))
 
-            _save_session_turn(req.session_id, req.query, pro_answer[:300], config)
-            _save_to_history(req.query, len(results), "pro",
-                             understanding["intent"], focus,
-                             engines=engines_used, time_ms=_elapsed(t0))
             yield _sse("done", {
-                "time_ms": _elapsed(t0), "search_count": len(results),
-                "passages_used": len(passages), "pro_search": True,
-                "intent": understanding["intent"], "focus": focus,
-                "engines": engines_used, "model": pre_model,
+                "time_ms": _elapsed(t0),
+                "search_count": len(results),
+                "pro_search": True,
+                "engines": engines,
+                "model": llm_model,
             })
 
         except Exception as e:
-            logger.error(f"HuntR search error: {e}", exc_info=True)
+            logger.error(f"[HuntR] Stream error: {e}", exc_info=True)
             yield _sse("error", {"message": str(e)})
             yield _sse("done", {"time_ms": 0, "error": True})
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
-@router.post("/search")
-async def search_sync(req: SearchRequest, request: Request, session: AsyncSession = Depends(get_session)):
-    """Synchronous search (non-streaming). Same pipeline as stream."""
-    t0 = time.time()
-    config = HuntRConfig.load()
-    uid = _uid(request)
-    search_keys = await _get_user_search_keys(uid)
+# ═══════════════════════════════════════════════════════════════════════════
+# Utility endpoints
+# ═══════════════════════════════════════════════════════════════════════════
 
-    provider, model, provider_name = None, "", ""
-    if req.pro_search:
-        try:
-            provider, model, provider_name = await _get_user_llm(uid, session, req.provider, req.model)
-        except Exception as e:
-            return JSONResponse({"error": f"LLM non disponible: {e}"}, status_code=400)
-
-    try:
-        session_ctx = _get_session_context(req.session_id, config.max_follow_ups)
-        understanding = await _expand_query(req.query, None, "", session_ctx)
-        search_query = understanding["rewritten"] or req.query
-        language = understanding["language"]
-        focus = req.focus
-
-        results = await multi_search(
-            search_query, req.max_results,
-            brave_api_key=search_keys["brave"],
-            tavily_api_key=search_keys["tavily"],
-            searxng_url=config.searxng_url,
-            focus=focus, pro=req.pro_search,
-            language=language,
-        )
-        if understanding.get("sub_queries"):
-            seen = {r["url"] for r in results}
-            for sq in understanding["sub_queries"][:2]:
-                extra = await multi_search(
-                    sq, 5, brave_api_key=search_keys["brave"],
-                    tavily_api_key=search_keys["tavily"],
-                    searxng_url=config.searxng_url, focus=focus, pro=False,
-                    language=language)
-                for r in extra:
-                    if r["url"] not in seen:
-                        results.append(r)
-                        seen.add(r["url"])
-
-        engines_used = list(set(r.get("source", "") for r in results))
-
-        to_scrape = [r["url"] for r in results if not r.get("text")]
-        pre_filled = [r for r in results if r.get("text") and len(r["text"]) >= 100]
-        scraped = await scrape_sources(to_scrape, config.scrape_concurrency,
-                                       config.scrape_timeout) if to_scrape else []
-        all_content = pre_filled + scraped
-
-        if not all_content and results:
-            for r in results:
-                snippet = r.get("snippet", "")
-                if snippet and len(snippet) >= 30:
-                    all_content.append({
-                        "url": r["url"], "title": r.get("title", ""),
-                        "text": snippet, "words": len(snippet.split()),
-                    })
-
-        if not all_content:
-            return JSONResponse({"error": "Aucun contenu extractible"}, status_code=404)
-
-        top_k = 10 if req.pro_search else 6
-        passages = rerank(search_query, all_content, top_k=top_k,
-                          method=config.rerank_method)
-        citations = _build_citations(passages)
-
-        if not req.pro_search:
-            answer = _fallback_answer(req.query, passages, language)
-            related = _related_fallback(req.query, language)
-            _save_session_turn(req.session_id, req.query, answer[:200], config)
-            _save_to_history(req.query, len(results), "normal",
-                             understanding["intent"], focus, engines=engines_used,
-                             time_ms=_elapsed(t0))
-            return {
-                "query": req.query, "answer": answer, "citations": citations,
-                "related_questions": related, "search_count": len(results),
-                "passages_used": len(passages), "pro_search": False,
-                "intent": understanding["intent"], "focus": focus,
-                "engines": engines_used, "time_ms": _elapsed(t0),
-            }
-
-        # Pro: LLM formatting
-        context = _build_context(passages, max_total=16000, max_words=400)
-        sys_prompt = SYSTEM_PROMPT_ACADEMIC if focus == "academic" else SYSTEM_PROMPT_PRO
-        messages = [
-            ChatMessage(role="system", content=sys_prompt),
-            ChatMessage(
-                role="user",
-                content=(
-                    f"Question: {req.query}\n\nPassages:\n{context}\n\n"
-                    f"Réponds avec des citations inline [1], [2], etc. "
-                    f"Chaque affirmation doit citer sa source directement dans le paragraphe."
-                ),
-            ),
-        ]
-        resp = await provider.chat(messages, model=model, max_tokens=2048)
-        pro_answer = resp.content or _fallback_answer(req.query, passages, language)
-        related = await _generate_related(provider, model, req.query, pro_answer[:500])
-
-        _save_session_turn(req.session_id, req.query, pro_answer[:300], config)
-        _save_to_history(req.query, len(results), "pro",
-                         understanding["intent"], focus,
-                         provider_name, model, _elapsed(t0), engines_used)
-        return {
-            "query": req.query, "answer": pro_answer, "citations": citations,
-            "related_questions": related, "search_count": len(results),
-            "passages_used": len(passages), "pro_search": True,
-            "intent": understanding["intent"], "focus": focus,
-            "engines": engines_used, "time_ms": _elapsed(t0),
-            "model": resp.model,
-            "tokens": {"input": resp.tokens_input, "output": resp.tokens_output},
-        }
-
-    except Exception as e:
-        logger.error(f"HuntR search error: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-@router.post("/fetch")
-async def fetch_url(req: FetchRequest):
-    try:
-        from backend.core.agents.tools.web_fetch import web_fetch
-        return await web_fetch(req.url, extract=req.extract, timeout=15)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+@router.get("/health")
+async def health():
+    return {"plugin": "huntr", "status": "ok", "version": "3.0.0"}
 
 
 @router.get("/history")
-async def search_history(limit: int = 30):
+async def get_history(limit: int = 30):
     return {"history": _search_history[:limit]}
 
 
@@ -839,16 +347,27 @@ async def clear_history():
     return {"status": "ok"}
 
 
-@router.delete("/sessions/{session_id}")
-async def clear_session(session_id: str):
-    _sessions.pop(session_id, None)
-    return {"status": "ok"}
+@router.get("/user-capabilities")
+async def user_capabilities(request: Request,
+                            session: AsyncSession = Depends(get_session)):
+    """Check what the current user has configured (for frontend UI)."""
+    uid = _uid(request)
+    us = await get_user_settings(uid, session)
 
+    has_tavily = False
+    tavily_svc = get_user_service_key(us, "tavily")
+    if tavily_svc and tavily_svc.get("api_key"):
+        has_tavily = True
 
-# ── SSE helpers ────────────────────────────────────────────────────────────
+    has_llm = False
+    pname = us.active_provider or "openrouter"
+    user_prov = get_user_provider_key(us, pname)
+    if user_prov and user_prov.get("api_key"):
+        has_llm = True
 
-def _sse(event_type: str, data: dict) -> str:
-    return f"data: {json.dumps({'type': event_type, 'data': data}, ensure_ascii=False)}\n\n"
-
-def _elapsed(t0: float) -> int:
-    return int((time.time() - t0) * 1000)
+    return {
+        "has_tavily": has_tavily,
+        "has_llm": has_llm,
+        "provider": pname if has_llm else None,
+        "model": us.active_model if has_llm else None,
+    }

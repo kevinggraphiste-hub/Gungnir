@@ -1,20 +1,15 @@
 /**
- * HuntR — Perplexity-like Search Engine for Gungnir
+ * HuntR v3 — Perplexity-like Search for Gungnir
  *
- * Features:
- *  - Mode Normal (gratuit) : search + scrape + citations, pas de LLM
- *  - Mode Pro : search + scrape + synthèse LLM + related questions
- *  - Focus modes : Web, Code, Actu, Academic
- *  - Follow-up conversationnel (session context)
- *  - Multi-engine badges (DDG, Brave, SearXNG, Wikipedia)
- *  - Progressive streaming (sources en temps réel)
+ * Classique (free) : DuckDuckGo → formatted results, no LLM
+ * Pro              : Tavily + LLM synthesis with inline [1][2] citations
  *
- * 100% plugin — aucune dépendance core sauf CSS variables.
+ * Per-user: each user needs their own Tavily key (free 1000/mo) + LLM provider.
  */
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useStore } from '@core/stores/appStore'
 
-// ── Types ──────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────
 
 interface Citation {
   index: number
@@ -28,23 +23,11 @@ interface SearchResult {
   citations: Citation[]
   related_questions: string[]
   search_count: number
-  passages_used: number
   pro_search: boolean
-  intent: string
-  focus: string
   engines: string[]
   time_ms: number
-}
-
-interface HistoryEntry {
-  query: string
-  sources_count: number
-  mode: string
-  intent: string
-  focus: string
-  engines: string[]
-  time_ms: number
-  timestamp: number
+  model?: string
+  error?: boolean
 }
 
 interface LiveSource {
@@ -52,128 +35,123 @@ interface LiveSource {
   url: string
   snippet?: string
   source?: string
-  words?: number
+}
+
+interface HistoryEntry {
+  query: string
+  mode: string
+  sources_count: number
+  time_ms: number
+  timestamp: number
+}
+
+interface UserCapabilities {
+  has_tavily: boolean
+  has_llm: boolean
+  provider: string | null
+  model: string | null
 }
 
 const API = '/api/plugins/browser'
 
-const FOCUS_MODES = [
-  { key: 'web', label: 'Web', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z' },
-  { key: 'code', label: 'Code', icon: 'M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z' },
-  { key: 'news', label: 'Actu', icon: 'M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 7h10v2H7V7zm0 4h10v2H7v-2zm0 4h7v2H7v-2z' },
-  { key: 'academic', label: 'Académique', icon: 'M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z' },
-]
-
 const SUGGESTIONS = [
-  { text: "Quelles sont les dernieres avancees en IA ?", focus: "web" },
-  { text: "Compare Python vs Rust pour le backend", focus: "code" },
-  { text: "Comment fonctionne le quantum computing ?", focus: "academic" },
-  { text: "Actualites tech cette semaine", focus: "news" },
-  { text: "Implementer JWT authentication Node.js", focus: "code" },
-  { text: "Microservices vs monolith : differences", focus: "web" },
+  "Quelles sont les dernières avancées en IA ?",
+  "Compare Python vs Rust pour le backend",
+  "Comment fonctionne le quantum computing ?",
+  "Actualités tech cette semaine",
+  "Implémenter JWT authentication en Node.js",
+  "Microservices vs monolith : différences",
 ]
 
 const ENGINE_COLORS: Record<string, string> = {
   duckduckgo: '#de5833',
-  brave: '#fb542b',
-  searxng: '#3b82f6',
-  wikipedia: '#636466',
+  tavily: '#6366f1',
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function generateSessionId(): string {
-  return 'huntr_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-}
+// ── Helpers ───────────────────────────────────────────────────────────────
 
 function formatTimeAgo(ts: number): string {
   const diff = Math.floor((Date.now() / 1000) - ts)
-  if (diff < 60) return "a l'instant"
+  if (diff < 60) return "à l'instant"
   if (diff < 3600) return `il y a ${Math.floor(diff / 60)}min`
   if (diff < 86400) return `il y a ${Math.floor(diff / 3600)}h`
   return `il y a ${Math.floor(diff / 86400)}j`
 }
 
-// ── Main Component ─────────────────────────────────────────────────────────
+// ── Main Component ────────────────────────────────────────────────────────
 
 export default function HuntRPlugin() {
   const { selectedProvider, selectedModel } = useStore()
-  const [searchQuery, setSearchQuery] = useState('')
+
+  const [query, setQuery] = useState('')
   const [proSearch, setProSearch] = useState(false)
-  const [focus, setFocus] = useState('web')
   const [searching, setSearching] = useState(false)
-  const [searchStatus, setSearchStatus] = useState('')
-  const [currentStep, setCurrentStep] = useState(0)
-  const [searchResult, setSearchResult] = useState<SearchResult | null>(null)
+  const [status, setStatus] = useState('')
+  const [result, setResult] = useState<SearchResult | null>(null)
   const [liveSources, setLiveSources] = useState<LiveSource[]>([])
-  const [searchError, setSearchError] = useState('')
-  const [hasTavilyKey, setHasTavilyKey] = useState(true) // assume yes until checked
+  const [error, setError] = useState('')
+  const [caps, setCaps] = useState<UserCapabilities | null>(null)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [showHistory, setShowHistory] = useState(false)
-  const [sessionId] = useState(() => generateSessionId())
 
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const resultsRef = useRef<HTMLDivElement>(null)
 
+  // ── Init: check user capabilities + history ───────────────────────
   useEffect(() => {
+    fetch(`${API}/user-capabilities`)
+      .then(r => r.json())
+      .then(d => setCaps(d))
+      .catch(() => {})
     fetch(`${API}/history?limit=30`)
       .then(r => r.json())
       .then(d => setHistory(d.history || []))
       .catch(() => {})
-    // Check if user has Tavily key configured
-    fetch('/api/config/services')
-      .then(r => r.json())
-      .then(d => {
-        const tavily = d.services?.tavily
-        setHasTavilyKey(tavily?.has_api_key || false)
-      })
-      .catch(() => {})
   }, [])
 
-  const doSearch = useCallback(async (query?: string, forceFocus?: string) => {
-    const q = (query || searchQuery).trim()
+  // ── Search ────────────────────────────────────────────────────────
+  const doSearch = useCallback(async (overrideQuery?: string) => {
+    const q = (overrideQuery || query).trim()
     if (!q) return
 
-    // Abort any previous search — no ref guard needed
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
 
     setSearching(true)
-    setSearchStatus('Initialisation...')
-    setCurrentStep(0)
-    setSearchResult(null)
+    setStatus('Initialisation...')
+    setResult(null)
     setLiveSources([])
-    setSearchError('')
-    if (query) setSearchQuery(query)
+    setError('')
+    if (overrideQuery) setQuery(overrideQuery)
 
     try {
       const resp = await fetch(`${API}/search/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query: q, pro_search: proSearch,
-          focus: forceFocus || focus,
-          max_results: 15, session_id: sessionId,
-          provider: selectedProvider, model: selectedModel,
+          query: q,
+          pro_search: proSearch,
+          max_results: 10,
         }),
         signal: controller.signal,
       })
 
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        throw new Error(body.error || `HTTP ${resp.status}`)
+      }
       if (!resp.body) throw new Error('Streaming non supporté')
 
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
       let streamDone = false
-      const finalResult: Partial<SearchResult> = {
+      const final: Partial<SearchResult> = {
         answer: '', citations: [], related_questions: [],
-        search_count: 0, passages_used: 0, pro_search: proSearch,
-        intent: '', focus: forceFocus || focus, engines: [], time_ms: 0,
+        search_count: 0, pro_search: proSearch,
+        engines: [], time_ms: 0,
       }
-      let streamedAnswer = ''
 
       try {
         while (!streamDone) {
@@ -188,58 +166,38 @@ export default function HuntRPlugin() {
             if (!line.startsWith('data: ')) continue
             try {
               const chunk = JSON.parse(line.slice(6))
-              const data = chunk.data || {}
+              const d = chunk.data || {}
+
               switch (chunk.type) {
                 case 'status':
-                  setSearchStatus(data.message || '')
-                  if (data.step) setCurrentStep(data.step)
-                  if (data.focus) setFocus(data.focus)
+                  setStatus(d.message || '')
                   break
                 case 'search':
-                  finalResult.search_count = data.count || 0
-                  finalResult.engines = data.engines || []
-                  if (data.results) {
-                    setLiveSources(data.results)
-                  }
-                  setSearchStatus(`${data.count} resultats via ${(data.engines || []).join(', ')}`)
-                  break
-                case 'sources':
-                  if (data.sources) {
-                    setLiveSources(prev => {
-                      const urls = new Set(prev.map(s => s.url))
-                      const news = data.sources.filter((s: LiveSource) => !urls.has(s.url))
-                      return [...prev, ...news]
-                    })
-                  }
-                  break
-                case 'chunk':
-                  streamedAnswer += data.content || ''
-                  finalResult.answer = streamedAnswer
-                  setSearchResult({ ...finalResult } as SearchResult)
-                  break
-                case 'content':
-                  finalResult.answer = data.answer || streamedAnswer
-                  setSearchResult({ ...finalResult } as SearchResult)
+                  final.search_count = d.count || 0
+                  final.engines = d.engines || []
+                  if (d.results) setLiveSources(d.results)
                   break
                 case 'citation':
-                  finalResult.citations = data.citations || []
-                  setSearchResult({ ...finalResult } as SearchResult)
+                  final.citations = d.citations || []
+                  setResult({ ...final } as SearchResult)
+                  break
+                case 'content':
+                  final.answer = d.answer || ''
+                  setResult({ ...final } as SearchResult)
                   break
                 case 'related':
-                  finalResult.related_questions = data.questions || []
-                  setSearchResult({ ...finalResult } as SearchResult)
+                  final.related_questions = d.questions || []
+                  setResult({ ...final } as SearchResult)
                   break
                 case 'done':
-                  Object.assign(finalResult, {
-                    time_ms: data.time_ms || 0,
-                    search_count: data.search_count || finalResult.search_count,
-                    passages_used: data.passages_used || 0,
-                    pro_search: data.pro_search ?? proSearch,
-                    intent: data.intent || '',
-                    focus: data.focus || focus,
-                    engines: data.engines || finalResult.engines,
-                  })
-                  setSearchResult({ ...finalResult } as SearchResult)
+                  final.time_ms = d.time_ms || 0
+                  final.search_count = d.search_count || final.search_count
+                  final.pro_search = d.pro_search ?? proSearch
+                  final.engines = d.engines || final.engines
+                  final.model = d.model
+                  final.error = d.error
+                  setResult({ ...final } as SearchResult)
+                  // Refresh history
                   fetch(`${API}/history?limit=30`)
                     .then(r => r.json())
                     .then(d => setHistory(d.history || []))
@@ -247,7 +205,7 @@ export default function HuntRPlugin() {
                   streamDone = true
                   break
                 case 'error':
-                  setSearchError(data.message || 'Erreur inconnue')
+                  setError(d.message || 'Erreur inconnue')
                   streamDone = true
                   break
               }
@@ -255,38 +213,30 @@ export default function HuntRPlugin() {
           }
         }
       } finally {
-        // Always close the reader — don't wait for server to hang up
         reader.cancel().catch(() => {})
       }
     } catch (e: any) {
       if (e.name !== 'AbortError') {
-        setSearchError(e.message)
+        setError(e.message)
       }
     } finally {
-      // Always unlock — no condition, no ref check
       setSearching(false)
-      setSearchStatus('')
+      setStatus('')
     }
-  }, [searchQuery, proSearch, focus, sessionId, selectedProvider, selectedModel])
-
-  const scrollToSource = (idx: number) => {
-    const el = document.getElementById(`huntr-source-${idx}`)
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }
+  }, [query, proSearch, selectedProvider, selectedModel])
 
   const handleClear = () => {
-    setSearchResult(null)
-    setSearchQuery('')
-    setSearchError('')
-    setSearchStatus('')
+    setResult(null)
+    setQuery('')
+    setError('')
     setLiveSources([])
-    setCurrentStep(0)
     inputRef.current?.focus()
   }
 
-  const hasResults = searchResult || searching
+  const hasResults = result || searching
+  const canPro = caps?.has_tavily && caps?.has_llm
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────
 
   return (
     <div style={{
@@ -312,26 +262,13 @@ export default function HuntRPlugin() {
         <div>
           <h1 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: '-0.02em' }}>
             Hunt<span style={{ color: 'var(--scarlet)' }}>R</span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>v3</span>
           </h1>
           <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)' }}>
-            Recherche multi-sources avec citations
+            Recherche web avec citations
           </p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          {/* Step indicator during search */}
-          {searching && currentStep > 0 && (
-            <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-              {[1,2,3,4,5].map(s => (
-                <div key={s} style={{
-                  width: s <= (proSearch ? 5 : 4) ? 20 : 0,
-                  height: 3, borderRadius: 2,
-                  background: s <= currentStep ? 'var(--scarlet)' : 'var(--bg-tertiary)',
-                  transition: 'background 0.3s',
-                  display: s <= (proSearch ? 5 : 4) ? 'block' : 'none',
-                }} />
-              ))}
-            </div>
-          )}
           <button
             onClick={() => setShowHistory(!showHistory)}
             style={{
@@ -360,7 +297,7 @@ export default function HuntRPlugin() {
                 minHeight: 'calc(100vh - 180px)',
               } : {}),
             }}>
-              {/* Hero (idle state) */}
+              {/* Hero (idle) */}
               {!hasResults && (
                 <div style={{ textAlign: 'center', marginBottom: 28 }}>
                   <div style={{
@@ -376,9 +313,11 @@ export default function HuntRPlugin() {
                     Hunt<span style={{ color: 'var(--scarlet)' }}>R</span>
                   </h2>
                   <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>
-                    Posez une question. Obtenez une reponse sourcee.
+                    Posez une question. Obtenez une réponse sourcée.
                   </p>
-                  {!hasTavilyKey && (
+
+                  {/* Tavily promo if not configured */}
+                  {caps && !caps.has_tavily && (
                     <div style={{
                       marginTop: 16, padding: '12px 16px', borderRadius: 10,
                       background: 'color-mix(in srgb, var(--accent-primary) 8%, transparent)',
@@ -386,47 +325,22 @@ export default function HuntRPlugin() {
                       fontSize: 12, color: 'var(--text-secondary)', textAlign: 'left',
                       maxWidth: 480, margin: '16px auto 0',
                     }}>
-                      <strong style={{ color: 'var(--accent-primary)' }}>Boostez vos recherches Pro !</strong>
+                      <strong style={{ color: 'var(--accent-primary)' }}>Débloquez le mode Pro</strong>
                       <p style={{ margin: '6px 0 0', lineHeight: 1.5 }}>
                         Créez un compte gratuit sur{' '}
                         <a href="https://app.tavily.com/sign-in" target="_blank" rel="noopener noreferrer"
                           style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>
                           Tavily (1000 req/mois gratuites)
                         </a>
-                        {' '}puis ajoutez votre clé API dans{' '}
+                        {' '}puis ajoutez votre clé dans{' '}
                         <a href="/settings?tab=services" style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>
-                          Paramètres → Services → Tavily
+                          Paramètres &rarr; Services &rarr; Tavily
                         </a>.
                       </p>
                     </div>
                   )}
                 </div>
               )}
-
-              {/* Focus mode tabs */}
-              <div style={{
-                display: 'flex', gap: 4, marginBottom: 10,
-                justifyContent: !hasResults ? 'center' : 'flex-start',
-              }}>
-                {FOCUS_MODES.map(m => (
-                  <button key={m.key}
-                    onClick={() => setFocus(m.key)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 5,
-                      padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 500,
-                      background: focus === m.key ? 'var(--scarlet-light)' : 'transparent',
-                      color: focus === m.key ? 'var(--scarlet)' : 'var(--text-muted)',
-                      border: focus === m.key ? '1px solid var(--scarlet)' : '1px solid transparent',
-                      cursor: 'pointer', transition: 'all 0.15s',
-                    }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                      <path d={m.icon}/>
-                    </svg>
-                    {m.label}
-                  </button>
-                ))}
-              </div>
 
               {/* Search bar */}
               <div style={{
@@ -440,8 +354,8 @@ export default function HuntRPlugin() {
                     <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                   </svg>
                   <input
-                    ref={inputRef} type="text" value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
+                    ref={inputRef} type="text" value={query}
+                    onChange={e => setQuery(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && doSearch()}
                     placeholder="Posez votre question..."
                     style={{
@@ -456,7 +370,8 @@ export default function HuntRPlugin() {
 
                 {/* Pro toggle */}
                 <button
-                  onClick={() => setProSearch(!proSearch)}
+                  onClick={() => canPro && setProSearch(!proSearch)}
+                  title={canPro ? 'Tavily + LLM' : 'Configurez Tavily + un provider LLM pour activer le mode Pro'}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 5,
                     padding: '11px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600,
@@ -467,7 +382,9 @@ export default function HuntRPlugin() {
                       ? '1px solid var(--amber, #f59e0b)'
                       : '1px solid var(--border)',
                     color: proSearch ? 'var(--amber, #f59e0b)' : 'var(--text-muted)',
-                    cursor: 'pointer', flexShrink: 0,
+                    cursor: canPro ? 'pointer' : 'not-allowed',
+                    opacity: canPro ? 1 : 0.4,
+                    flexShrink: 0,
                   }}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24"
@@ -481,13 +398,13 @@ export default function HuntRPlugin() {
                 {/* Search button */}
                 <button
                   onClick={() => doSearch()}
-                  disabled={searching || !searchQuery.trim()}
+                  disabled={searching || !query.trim()}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 5,
                     padding: '11px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600,
                     background: 'linear-gradient(135deg, var(--scarlet), var(--ember, #ea580c))',
                     color: '#fff', border: 'none', cursor: 'pointer', flexShrink: 0,
-                    opacity: searching || !searchQuery.trim() ? 0.5 : 1,
+                    opacity: searching || !query.trim() ? 0.5 : 1,
                   }}
                 >
                   {searching ? (
@@ -512,7 +429,7 @@ export default function HuntRPlugin() {
                 }}>
                   {SUGGESTIONS.map((s, i) => (
                     <button key={i}
-                      onClick={() => { setFocus(s.focus); setSearchQuery(s.text); doSearch(s.text, s.focus) }}
+                      onClick={() => { setQuery(s); doSearch(s) }}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8,
                         padding: '9px 12px', borderRadius: 8, fontSize: 12,
@@ -526,15 +443,15 @@ export default function HuntRPlugin() {
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
                         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                       </svg>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.text}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s}</span>
                     </button>
                   ))}
                 </div>
               )}
             </div>
 
-            {/* Status bar */}
-            {searchStatus && (
+            {/* Status */}
+            {status && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 10,
                 padding: '8px 14px', borderRadius: 8, margin: '6px 0',
@@ -545,12 +462,12 @@ export default function HuntRPlugin() {
                   border: '2px solid var(--scarlet)', borderTopColor: 'transparent',
                   animation: 'huntr-spin 0.8s linear infinite', flexShrink: 0,
                 }} />
-                <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{searchStatus}</span>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{status}</span>
               </div>
             )}
 
             {/* Live sources during search */}
-            {searching && liveSources.length > 0 && !searchResult?.answer && (
+            {searching && liveSources.length > 0 && !result?.answer && (
               <div style={{
                 padding: 12, borderRadius: 10, margin: '6px 0',
                 background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -563,25 +480,23 @@ export default function HuntRPlugin() {
                     <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
                     <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
                   </svg>
-                  Sources en cours de lecture...
+                  Sources trouvées...
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {liveSources.slice(0, 8).map((s, i) => {
                     let host = s.url
                     try { host = new URL(s.url).hostname.replace('www.', '') } catch {}
-                    const engineColor = ENGINE_COLORS[s.source || ''] || 'var(--text-muted)'
                     return (
                       <div key={i} style={{
                         padding: '4px 8px', borderRadius: 6, fontSize: 11,
                         background: 'var(--bg-primary)', border: '1px solid var(--border)',
                         display: 'flex', alignItems: 'center', gap: 4,
                         animation: 'huntr-fadeIn 0.3s ease-out',
-                        animationDelay: `${i * 0.05}s`,
-                        animationFillMode: 'both',
+                        animationDelay: `${i * 0.05}s`, animationFillMode: 'both',
                       }}>
                         <div style={{
                           width: 6, height: 6, borderRadius: '50%',
-                          background: engineColor, flexShrink: 0,
+                          background: ENGINE_COLORS[s.source || ''] || 'var(--text-muted)', flexShrink: 0,
                         }} />
                         <span style={{ color: 'var(--text-muted)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {host}
@@ -594,24 +509,24 @@ export default function HuntRPlugin() {
             )}
 
             {/* Error */}
-            {searchError && (
+            {error && (
               <div style={{
                 padding: '10px 14px', borderRadius: 10, margin: '6px 0',
                 background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.25)',
               }}>
                 <p style={{ fontWeight: 600, fontSize: 12, color: '#ef4444', margin: '0 0 2px' }}>Erreur</p>
-                <p style={{ fontSize: 12, color: '#f87171', margin: 0 }}>{searchError}</p>
+                <p style={{ fontSize: 12, color: '#f87171', margin: 0 }}>{error}</p>
               </div>
             )}
 
             {/* Results */}
-            {searchResult && (
-              <div ref={resultsRef} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 32 }}>
+            {result && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 32 }}>
 
                 {/* Meta bar */}
-                {searchResult.time_ms > 0 && (
+                {result.time_ms > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    {searchResult.pro_search && (
+                    {result.pro_search && (
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: 3,
                         padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
@@ -623,17 +538,7 @@ export default function HuntRPlugin() {
                         Pro
                       </span>
                     )}
-                    {searchResult.intent && (
-                      <span style={{
-                        padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 500,
-                        background: 'var(--bg-tertiary)', color: 'var(--scarlet)',
-                        border: '1px solid var(--border)',
-                      }}>
-                        {searchResult.intent}
-                      </span>
-                    )}
-                    {/* Engine badges */}
-                    {searchResult.engines.map(e => (
+                    {result.engines.map(e => (
                       <span key={e} style={{
                         padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 500,
                         background: 'var(--bg-tertiary)', color: ENGINE_COLORS[e] || 'var(--text-muted)',
@@ -642,25 +547,34 @@ export default function HuntRPlugin() {
                         {e}
                       </span>
                     ))}
+                    {result.model && (
+                      <span style={{
+                        padding: '2px 8px', borderRadius: 20, fontSize: 10,
+                        background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
+                        border: '1px solid var(--border)',
+                      }}>
+                        {result.model}
+                      </span>
+                    )}
                     <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                      {searchResult.search_count} sources &middot; {searchResult.passages_used} passages &middot; {searchResult.time_ms}ms
+                      {result.search_count} sources &middot; {result.time_ms}ms
                     </span>
                   </div>
                 )}
 
                 {/* Answer card */}
-                {searchResult.answer && (
+                {result.answer && (
                   <div style={{
                     padding: 18, borderRadius: 12,
                     background: 'var(--bg-secondary)', border: '1px solid var(--border)',
                     lineHeight: 1.7, fontSize: 14,
                   }}>
-                    <MarkdownRenderer text={searchResult.answer} onCiteClick={scrollToSource} />
+                    <MarkdownRenderer text={result.answer} onCiteClick={scrollToSource} />
                   </div>
                 )}
 
                 {/* Skeleton */}
-                {searching && !searchResult.answer && (
+                {searching && !result.answer && (
                   <div style={{
                     padding: 18, borderRadius: 12,
                     background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -678,7 +592,7 @@ export default function HuntRPlugin() {
                 )}
 
                 {/* Sources */}
-                {searchResult.citations.length > 0 && (
+                {result.citations.length > 0 && (
                   <div style={{
                     padding: 14, borderRadius: 12,
                     background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -692,13 +606,13 @@ export default function HuntRPlugin() {
                         <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
                         <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
                       </svg>
-                      Sources ({searchResult.citations.length})
+                      Sources ({result.citations.length})
                     </h3>
                     <div style={{
                       display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
                       gap: 6,
                     }}>
-                      {searchResult.citations.map(c => {
+                      {result.citations.map(c => {
                         let host = c.url
                         try { host = new URL(c.url).hostname.replace('www.', '') } catch {}
                         return (
@@ -707,8 +621,7 @@ export default function HuntRPlugin() {
                             style={{
                               display: 'flex', gap: 8, padding: 8, borderRadius: 8,
                               background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                              textDecoration: 'none', color: 'inherit',
-                              transition: 'border-color 0.15s',
+                              textDecoration: 'none', color: 'inherit', transition: 'border-color 0.15s',
                             }}
                             onMouseOver={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--scarlet)'}
                             onMouseOut={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'}
@@ -716,8 +629,7 @@ export default function HuntRPlugin() {
                             <div style={{
                               width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
                               display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              fontSize: 10, fontWeight: 700,
-                              background: 'var(--scarlet)', color: '#fff',
+                              fontSize: 10, fontWeight: 700, background: 'var(--scarlet)', color: '#fff',
                             }}>
                               {c.index}
                             </div>
@@ -747,7 +659,7 @@ export default function HuntRPlugin() {
                 )}
 
                 {/* Related questions */}
-                {searchResult.related_questions.length > 0 && (
+                {result.related_questions.length > 0 && (
                   <div style={{
                     padding: 14, borderRadius: 12,
                     background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -763,9 +675,9 @@ export default function HuntRPlugin() {
                       Questions similaires
                     </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {searchResult.related_questions.map((q, i) => (
+                      {result.related_questions.map((q, i) => (
                         <button key={i}
-                          onClick={() => { setSearchQuery(q); doSearch(q) }}
+                          onClick={() => { setQuery(q); doSearch(q) }}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 8,
                             padding: '8px 12px', borderRadius: 8, fontSize: 12,
@@ -818,12 +730,12 @@ export default function HuntRPlugin() {
               )}
             </div>
             {history.length === 0 ? (
-              <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Aucune recherche recente</p>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Aucune recherche récente</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {history.map((h, i) => (
                   <button key={i}
-                    onClick={() => { setSearchQuery(h.query); setFocus(h.focus || 'web'); doSearch(h.query) }}
+                    onClick={() => { setQuery(h.query); doSearch(h.query) }}
                     style={{
                       padding: '7px 8px', borderRadius: 6, fontSize: 11,
                       background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
@@ -838,9 +750,6 @@ export default function HuntRPlugin() {
                     <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, display: 'flex', gap: 5, alignItems: 'center' }}>
                       <span>{h.sources_count} sources</span>
                       {h.mode === 'pro' && <span style={{ color: 'var(--amber, #f59e0b)' }}>Pro</span>}
-                      {h.focus && h.focus !== 'web' && (
-                        <span style={{ color: 'var(--scarlet)' }}>{h.focus}</span>
-                      )}
                       <span>{formatTimeAgo(h.timestamp)}</span>
                     </div>
                   </button>
@@ -861,7 +770,15 @@ export default function HuntRPlugin() {
 }
 
 
-// ── Markdown Renderer ──────────────────────────────────────────────────────
+// ── Scroll helper ─────────────────────────────────────────────────────────
+
+function scrollToSource(idx: number) {
+  const el = document.getElementById(`huntr-source-${idx}`)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+
+// ── Markdown Renderer with citation buttons ───────────────────────────────
 
 function MarkdownRenderer({ text, onCiteClick }: { text: string; onCiteClick?: (idx: number) => void }) {
   if (!text) return null
@@ -874,16 +791,16 @@ function MarkdownRenderer({ text, onCiteClick }: { text: string; onCiteClick?: (
     const line = lines[i]
 
     if (line.startsWith('### ')) {
-      elements.push(<h4 key={key++} style={{ fontSize: 14, fontWeight: 700, margin: '12px 0 4px', color: 'var(--text-primary)' }}>{processInline(line.slice(4), key, onCiteClick)}</h4>)
+      elements.push(<h4 key={key++} style={{ fontSize: 14, fontWeight: 700, margin: '12px 0 4px', color: 'var(--text-primary)' }}>{inlineParse(line.slice(4), key, onCiteClick)}</h4>)
     } else if (line.startsWith('## ')) {
-      elements.push(<h3 key={key++} style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 4px', color: 'var(--text-primary)' }}>{processInline(line.slice(3), key, onCiteClick)}</h3>)
+      elements.push(<h3 key={key++} style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 4px', color: 'var(--text-primary)' }}>{inlineParse(line.slice(3), key, onCiteClick)}</h3>)
     } else if (line.startsWith('# ')) {
-      elements.push(<h2 key={key++} style={{ fontSize: 16, fontWeight: 700, margin: '16px 0 6px', color: 'var(--text-primary)' }}>{processInline(line.slice(2), key, onCiteClick)}</h2>)
+      elements.push(<h2 key={key++} style={{ fontSize: 16, fontWeight: 700, margin: '16px 0 6px', color: 'var(--text-primary)' }}>{inlineParse(line.slice(2), key, onCiteClick)}</h2>)
     } else if (/^[-*]\s/.test(line)) {
       elements.push(
         <div key={key++} style={{ display: 'flex', gap: 8, margin: '2px 0', paddingLeft: 8 }}>
           <span style={{ color: 'var(--scarlet)', flexShrink: 0 }}>&#8226;</span>
-          <span style={{ color: 'var(--text-secondary)' }}>{processInline(line.slice(2), key, onCiteClick)}</span>
+          <span style={{ color: 'var(--text-secondary)' }}>{inlineParse(line.slice(2), key, onCiteClick)}</span>
         </div>
       )
     } else if (/^\d+\.\s/.test(line)) {
@@ -892,7 +809,7 @@ function MarkdownRenderer({ text, onCiteClick }: { text: string; onCiteClick?: (
         elements.push(
           <div key={key++} style={{ display: 'flex', gap: 8, margin: '2px 0', paddingLeft: 8 }}>
             <span style={{ color: 'var(--scarlet)', flexShrink: 0, fontWeight: 600, fontSize: 12 }}>{match[1]}.</span>
-            <span style={{ color: 'var(--text-secondary)' }}>{processInline(match[2], key, onCiteClick)}</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{inlineParse(match[2], key, onCiteClick)}</span>
           </div>
         )
       }
@@ -916,7 +833,7 @@ function MarkdownRenderer({ text, onCiteClick }: { text: string; onCiteClick?: (
     } else if (!line.trim()) {
       elements.push(<div key={key++} style={{ height: 6 }} />)
     } else {
-      elements.push(<p key={key++} style={{ margin: '2px 0', color: 'var(--text-secondary)' }}>{processInline(line, key, onCiteClick)}</p>)
+      elements.push(<p key={key++} style={{ margin: '2px 0', color: 'var(--text-secondary)' }}>{inlineParse(line, key, onCiteClick)}</p>)
     }
   }
 
@@ -924,7 +841,7 @@ function MarkdownRenderer({ text, onCiteClick }: { text: string; onCiteClick?: (
 }
 
 
-function processInline(text: string, baseKey: number, onCiteClick?: (idx: number) => void): (string | JSX.Element)[] {
+function inlineParse(text: string, baseKey: number, onCiteClick?: (idx: number) => void): (string | JSX.Element)[] {
   const parts: (string | JSX.Element)[] = []
   const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[(\d+)\]|\[([^\]]+)\]\(([^)]+)\))/g
   let lastIndex = 0
