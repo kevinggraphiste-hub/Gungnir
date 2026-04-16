@@ -73,46 +73,47 @@ async def _get_user_search_keys(user_id: int) -> dict:
 
 async def _get_user_llm(user_id: int, provider_name: Optional[str] = None,
                         model_name: Optional[str] = None):
-    """Get LLM provider using per-user API keys first, then global."""
-    try:
-        from backend.core.db.engine import get_session
-        from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
-        async for session in get_session():
-            us = await get_user_settings(user_id, session)
-            settings = Settings.load()
-            # Find provider
-            if not provider_name:
-                # Try user's active provider first
-                if us.active_provider:
-                    provider_name = us.active_provider
-                else:
-                    for name, cfg in settings.providers.items():
-                        if cfg.enabled and cfg.api_key:
-                            provider_name = name
-                            break
-            if not provider_name:
-                raise ValueError("Aucun provider LLM configuré")
-            # Get user's key for this provider, fallback to global
-            user_prov = get_user_provider_key(us, provider_name)
-            cfg = settings.providers.get(provider_name)
-            api_key = (user_prov or {}).get("api_key") if user_prov else None
-            if not api_key and cfg:
-                from backend.core.config.settings import decrypt_value
-                api_key = decrypt_value(cfg.api_key) if cfg.api_key else None
-            if not api_key:
-                raise ValueError(f"Provider '{provider_name}' non configuré")
-            base_url = (cfg.base_url if cfg else None) or None
-            if not model_name:
-                model_name = (us.active_model if us.active_model else None) or \
-                             (cfg.default_model if cfg else None) or \
-                             (cfg.models[0] if cfg and cfg.models else None)
-            if not model_name:
-                raise ValueError(f"Aucun modèle pour '{provider_name}'")
-            return get_provider(provider_name, api_key, base_url), model_name, provider_name
-    except Exception:
-        pass
-    # Ultimate fallback to global config
-    return _get_llm(provider_name, model_name)
+    """Get LLM provider using per-user API keys first, then global decrypted."""
+    from backend.core.db.engine import get_session
+    from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
+    from backend.core.config.settings import decrypt_value
+
+    async for session in get_session():
+        us = await get_user_settings(user_id, session)
+        settings = Settings.load()
+
+        # Resolve provider name
+        if not provider_name:
+            if us.active_provider:
+                provider_name = us.active_provider
+            else:
+                for name, cfg in settings.providers.items():
+                    if cfg.enabled:
+                        provider_name = name
+                        break
+        if not provider_name:
+            provider_name = "openrouter"
+
+        # Resolve API key: per-user first, then global (decrypted)
+        cfg = settings.providers.get(provider_name)
+        user_prov = get_user_provider_key(us, provider_name)
+        api_key = (user_prov or {}).get("api_key") if user_prov else None
+        if not api_key and cfg and cfg.api_key:
+            api_key = decrypt_value(cfg.api_key)
+        if not api_key:
+            raise ValueError(f"Aucune clé API pour '{provider_name}' (user {user_id})")
+
+        base_url = (cfg.base_url if cfg else None) or None
+
+        # Resolve model
+        if not model_name:
+            model_name = (us.active_model if us.active_model else None) or \
+                         (cfg.default_model if cfg else None) or \
+                         (cfg.models[0] if cfg and cfg.models else None)
+        if not model_name:
+            raise ValueError(f"Aucun modèle pour '{provider_name}'")
+
+        return get_provider(provider_name, api_key, base_url), model_name, provider_name
 router = APIRouter()
 
 # ── In-memory state (plugin-scoped, not core) ─────────────────────────────
@@ -217,7 +218,8 @@ QUERY_EXPANSION_PROMPT = (
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _get_llm(provider_name: Optional[str] = None, model_name: Optional[str] = None):
-    """Get LLM provider + model from Gungnir config. Read-only, no mutations."""
+    """Get LLM provider + model from Gungnir global config (decrypted). Fallback only."""
+    from backend.core.config.settings import decrypt_value
     settings = Settings.load()
     if not provider_name:
         for name, cfg in settings.providers.items():
@@ -229,11 +231,12 @@ def _get_llm(provider_name: Optional[str] = None, model_name: Optional[str] = No
     cfg = settings.providers.get(provider_name)
     if not cfg or not cfg.api_key:
         raise ValueError(f"Provider '{provider_name}' non configuré")
+    api_key = decrypt_value(cfg.api_key)
     if not model_name:
         model_name = cfg.default_model or (cfg.models[0] if cfg.models else None)
     if not model_name:
         raise ValueError(f"Aucun modèle pour '{provider_name}'")
-    return get_provider(provider_name, cfg.api_key, cfg.base_url), model_name, provider_name
+    return get_provider(provider_name, api_key, cfg.base_url), model_name, provider_name
 
 
 async def _expand_query(query: str, provider, model: str,
@@ -594,6 +597,20 @@ async def search_stream(req: SearchRequest, request: Request):
             ) if to_scrape else []
             all_content = pre_filled + scraped
 
+            # Fallback: if scraping failed, use search snippets as content
+            if not all_content and results:
+                for r in results:
+                    snippet = r.get("snippet", "")
+                    if snippet and len(snippet) >= 30:
+                        all_content.append({
+                            "url": r["url"],
+                            "title": r.get("title", ""),
+                            "text": snippet,
+                            "words": len(snippet.split()),
+                        })
+                if all_content:
+                    yield _sse("status", {"message": f"Utilisation des extraits ({len(all_content)} sources)", "step": 3})
+
             # Send sources in real-time as they're scraped
             yield _sse("sources", {
                 "count": len(all_content),
@@ -746,6 +763,16 @@ async def search_sync(req: SearchRequest, request: Request):
         scraped = await scrape_sources(to_scrape, config.scrape_concurrency,
                                        config.scrape_timeout) if to_scrape else []
         all_content = pre_filled + scraped
+
+        # Fallback: use search snippets if scraping failed
+        if not all_content and results:
+            for r in results:
+                snippet = r.get("snippet", "")
+                if snippet and len(snippet) >= 30:
+                    all_content.append({
+                        "url": r["url"], "title": r.get("title", ""),
+                        "text": snippet, "words": len(snippet.split()),
+                    })
 
         if not all_content:
             return JSONResponse({"error": "Aucun contenu extractible"}, status_code=404)
