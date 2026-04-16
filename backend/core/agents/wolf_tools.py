@@ -2034,10 +2034,15 @@ async def _bash_exec(command: str, timeout: int = 30, cwd: str = ".") -> dict:
 
     # 1. Destructive system commands (wide patterns)
     destructive_patterns = [
-        r"rm\s+(-[a-z]*\s+)*(/|~|\$home)", r"del\s+/[sfq]",
-        r"format\s+[a-z]:", r"mkfs", r"dd\s+if=",
-        r"find\s+/\s+.*-delete", r"shred\s+", r"wipefs",
-        r">\s*/dev/sd[a-z]", r"remove-item\s+.*-recurse.*-force.*/",
+        r"rm\s+(-[a-z]*\s+)*(/|~|\$home)",  # rm -rf /
+        r"mkfs", r"dd\s+if=",                # disk format/overwrite
+        r"find\s+/\s+.*-delete",             # find / -delete
+        r"shred\s+", r"wipefs",              # secure erase
+        r">\s*/dev/sd[a-z]",                 # write to raw disk
+        r"chmod\s+(-[a-z]*\s+)*777\s+/",    # chmod 777 /
+        r"chown\s+.*\s+/etc",               # chown system dirs
+        r"systemctl\s+(stop|disable)\s+(docker|nginx|ssh)",  # kill critical services
+        r"reboot|shutdown|poweroff|init\s+[06]",             # system shutdown
     ]
     for pat in destructive_patterns:
         if _re.search(pat, cmd_lower):
@@ -2059,8 +2064,8 @@ async def _bash_exec(command: str, timeout: int = 30, cwd: str = ".") -> dict:
         project_root = Path(__file__).parent.parent.parent.parent
         work_dir = (project_root / cwd).resolve()
 
-        proc = await _asyncio.create_subprocess_exec(
-            "cmd", "/c", command,
+        proc = await _asyncio.create_subprocess_shell(
+            command,
             stdout=_asyncio.subprocess.PIPE,
             stderr=_asyncio.subprocess.PIPE,
             cwd=str(work_dir),
