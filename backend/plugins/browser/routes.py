@@ -21,6 +21,7 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
+from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
 import json
 import time
@@ -28,6 +29,8 @@ import logging
 
 from backend.core.config.settings import Settings
 from backend.core.providers import get_provider, ChatMessage
+from backend.core.db.engine import get_session
+from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
 
 from .config import HuntRConfig
 from .engine import (
@@ -70,39 +73,37 @@ async def _get_user_search_keys(user_id: int) -> dict:
     return keys
 
 
-async def _get_user_llm(user_id: int, provider_name: Optional[str] = None,
+async def _get_user_llm(user_id: int, session: AsyncSession,
+                        provider_name: Optional[str] = None,
                         model_name: Optional[str] = None):
     """Get user's LLM provider — exact same logic as chat.py.
-    Uses async_session() directly (not the get_session generator)
-    so it works reliably inside SSE streams."""
-    from backend.core.db.engine import async_session
-    from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
+    Uses the request-scoped session from Depends(get_session)."""
+    us = await get_user_settings(user_id, session)
+    settings = Settings.load()
 
-    async with async_session() as session:
-        us = await get_user_settings(user_id, session)
-        settings = Settings.load()
+    pname = provider_name or us.active_provider or "openrouter"
 
-        pname = provider_name or us.active_provider or "openrouter"
+    # get_user_provider_key already decrypts the key (same as chat.py line 681)
+    user_prov = get_user_provider_key(us, pname)
+    api_key = user_prov.get("api_key") if user_prov else None
+    logger.info(f"[HuntR] LLM resolve: user={user_id}, provider={pname}, has_key={bool(api_key)}")
+    if not api_key:
+        raise ValueError(
+            f"Aucune clé API pour '{pname}'. "
+            f"Configure-la dans Paramètres → Providers."
+        )
 
-        user_prov = get_user_provider_key(us, pname)
-        api_key = user_prov.get("api_key") if user_prov else None
-        if not api_key:
-            raise ValueError(
-                f"Aucune clé API pour '{pname}'. "
-                f"Configure-la dans Paramètres → Providers."
-            )
+    cfg = settings.providers.get(pname)
+    base_url = (user_prov.get("base_url") if user_prov else None) or \
+               (cfg.base_url if cfg else None)
 
-        cfg = settings.providers.get(pname)
-        base_url = (user_prov.get("base_url") if user_prov else None) or \
-                   (cfg.base_url if cfg else None)
+    mname = model_name or us.active_model or \
+            (cfg.default_model if cfg else None) or \
+            (cfg.models[0] if cfg and cfg.models else None)
+    if not mname:
+        raise ValueError(f"Aucun modèle pour '{pname}'")
 
-        mname = model_name or us.active_model or \
-                (cfg.default_model if cfg else None) or \
-                (cfg.models[0] if cfg and cfg.models else None)
-        if not mname:
-            raise ValueError(f"Aucun modèle pour '{pname}'")
-
-        return get_provider(pname, api_key, base_url), mname, pname
+    return get_provider(pname, api_key, base_url), mname, pname
 
 
 router = APIRouter()
@@ -454,7 +455,7 @@ async def update_config(req: ConfigUpdateRequest):
 
 
 @router.post("/search/stream")
-async def search_stream(req: SearchRequest, request: Request):
+async def search_stream(req: SearchRequest, request: Request, session: AsyncSession = Depends(get_session)):
     """
     Full HuntR pipeline via SSE.
 
@@ -464,12 +465,13 @@ async def search_stream(req: SearchRequest, request: Request):
     uid = _uid(request)
     search_keys = await _get_user_search_keys(uid)
 
-    # Resolve LLM BEFORE the stream while request context is active
+    # Resolve LLM BEFORE the stream using the request-scoped DB session
+    # (same session as chat.py Depends — guarantees proper key decryption)
     pre_provider, pre_model, pre_provider_name = None, "", ""
     pre_llm_error = None
     if req.pro_search or req.focus == "academic":
         try:
-            pre_provider, pre_model, pre_provider_name = await _get_user_llm(uid, req.provider, req.model)
+            pre_provider, pre_model, pre_provider_name = await _get_user_llm(uid, session, req.provider, req.model)
         except Exception as e:
             pre_llm_error = str(e)
             logger.warning(f"HuntR LLM resolution failed for user {uid}: {e}")
@@ -695,7 +697,7 @@ async def search_stream(req: SearchRequest, request: Request):
 
 
 @router.post("/search")
-async def search_sync(req: SearchRequest, request: Request):
+async def search_sync(req: SearchRequest, request: Request, session: AsyncSession = Depends(get_session)):
     """Synchronous search (non-streaming)."""
     t0 = time.time()
     config = HuntRConfig.load()
@@ -705,7 +707,7 @@ async def search_sync(req: SearchRequest, request: Request):
     provider, model, provider_name = None, "", ""
     if req.pro_search or req.focus == "academic":
         try:
-            provider, model, provider_name = await _get_user_llm(uid, req.provider, req.model)
+            provider, model, provider_name = await _get_user_llm(uid, session, req.provider, req.model)
         except Exception as e:
             if req.pro_search:
                 return JSONResponse({"error": f"LLM non disponible: {e}"}, status_code=400)
