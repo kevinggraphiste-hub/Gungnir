@@ -115,6 +115,7 @@ export default function HuntRPlugin() {
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
+  const searchingRef = useRef(false)
 
   useEffect(() => {
     fetch(`${API}/history?limit=30`)
@@ -133,8 +134,9 @@ export default function HuntRPlugin() {
 
   const doSearch = useCallback(async (query?: string, forceFocus?: string) => {
     const q = (query || searchQuery).trim()
-    if (!q || searching) return
+    if (!q || searchingRef.current) return
 
+    searchingRef.current = true
     setSearching(true)
     setSearchStatus('Initialisation...')
     setCurrentStep(0)
@@ -258,9 +260,10 @@ export default function HuntRPlugin() {
         setSearchStatus('')
       }
     } finally {
+      searchingRef.current = false
       setSearching(false)
     }
-  }, [searchQuery, proSearch, focus, searching, sessionId])
+  }, [searchQuery, proSearch, focus, sessionId])
 
   const scrollToSource = (idx: number) => {
     const el = document.getElementById(`huntr-source-${idx}`)
