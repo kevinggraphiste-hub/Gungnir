@@ -280,7 +280,8 @@ async def multi_search(
     tasks = []
 
     if focus == "academic":
-        # Multiple targeted searches to maximize academic coverage
+        # Academic: sources certifiées uniquement (Wikipedia, arXiv, PubMed, etc.)
+        # Le strict_filter dans le merge supprime tout résultat hors domaines de confiance
         tasks.append(search_wikipedia(query, 8, language))
         tasks.append(search_ddg(f"{query} site:wikipedia.org", max_results, time_filter))
         tasks.append(search_ddg(f"{query} site:arxiv.org", max_results // 2, time_filter))
@@ -291,14 +292,12 @@ async def multi_search(
         if brave_api_key:
             tasks.append(search_brave(f"{query} research paper", brave_api_key, max_results, time_filter))
     else:
-        # Normal: DDG always. Pro: DDG + Tavily + Wikipedia + Brave (if keys)
+        # Normal + Pro : scrape partout, pas de restriction de domaine
         tasks.append(search_ddg(search_query, max_results, time_filter))
-        if pro:
-            tasks.append(search_wikipedia(query, 5, language))
-            if tavily_api_key:
-                tasks.append(search_tavily(search_query, tavily_api_key, max_results))
-            if brave_api_key:
-                tasks.append(search_brave(search_query, brave_api_key, max_results, time_filter))
+        if tavily_api_key:
+            tasks.append(search_tavily(search_query, tavily_api_key, max_results))
+        if brave_api_key:
+            tasks.append(search_brave(search_query, brave_api_key, max_results, time_filter))
 
     if searxng_url:
         tasks.append(search_searxng(search_query, searxng_url, max_results, time_filter))
