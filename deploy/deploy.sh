@@ -57,7 +57,7 @@ cmd_setup() {
     fi
 
     # 3. Build et lancement du container
-    cd "$DEPLOY_DIR"
+    cd "$PROJECT_DIR"
     log "Build du container Gungnir..."
     docker compose build
     docker compose up -d
@@ -78,7 +78,7 @@ cmd_setup() {
 # ── Mise a jour ────────────────────────────────────────────────────────────
 cmd_update() {
     log "Mise a jour de Gungnir..."
-    cd "$DEPLOY_DIR"
+    cd "$PROJECT_DIR"
 
     # Backup avant update
     cmd_backup
@@ -132,13 +132,13 @@ TMPEOF
 
 # ── Logs ───────────────────────────────────────────────────────────────────
 cmd_logs() {
-    cd "$DEPLOY_DIR"
+    cd "$PROJECT_DIR"
     docker compose logs -f --tail=100
 }
 
 # ── Status ─────────────────────────────────────────────────────────────────
 cmd_status() {
-    cd "$DEPLOY_DIR"
+    cd "$PROJECT_DIR"
     echo ""
     docker compose ps
     echo ""
@@ -174,10 +174,11 @@ cmd_backup() {
     log "Backup des donnees..."
 
     if docker compose ps --format json 2>/dev/null | grep -q "running"; then
-        docker compose exec -T gungnir tar czf - -C /app data/ > "$BACKUP_FILE"
+        docker compose exec -T app tar czf - -C /app data/ > "$BACKUP_FILE"
     else
-        # Container down — backup depuis le volume
-        docker run --rm -v deploy_gungnir-data:/data alpine tar czf - -C / data/ > "$BACKUP_FILE"
+        # Container down — backup depuis le volume (Postgres 16 via service `db`)
+        docker compose exec -T db pg_dump -U gungnir gungnir > "${BACKUP_FILE%.tar.gz}.sql" && \
+            gzip "${BACKUP_FILE%.tar.gz}.sql" || true
     fi
 
     SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
@@ -189,15 +190,15 @@ cmd_backup() {
 
 # ── Stop ───────────────────────────────────────────────────────────────────
 cmd_stop() {
-    cd "$DEPLOY_DIR"
+    cd "$PROJECT_DIR"
     docker compose down
     log "Gungnir arrete."
 }
 
 # ── Shell (debug) ─────────────────────────────────────────────────────────
 cmd_shell() {
-    cd "$DEPLOY_DIR"
-    docker compose exec gungnir /bin/bash
+    cd "$PROJECT_DIR"
+    docker compose exec app /bin/bash
 }
 
 # ── Dispatch ───────────────────────────────────────────────────────────────

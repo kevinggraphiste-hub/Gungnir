@@ -18,7 +18,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from backend.core.db.engine import engine, DATABASE_URL
+from backend.core.__version__ import __version__
+from backend.core.db.engine import engine
 from backend.core.db.models import init_db
 from backend.core.config.settings import PLUGINS_DIR, Settings
 from backend.core.services.plugin_loader import (
@@ -43,69 +44,51 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     await init_db(engine)
 
-    # 1b. Auto-migrations
+    # 1b. Auto-migrations (Postgres)
     try:
         from sqlalchemy import text
         async with engine.begin() as conn:
-            _is_pg = "postgresql" in DATABASE_URL or "asyncpg" in DATABASE_URL
 
-            # Helper to check if column exists
             async def _has_col(table: str, column: str) -> bool:
-                if _is_pg:
-                    r = await conn.execute(text(
-                        f"SELECT column_name FROM information_schema.columns "
-                        f"WHERE table_name = '{table}' AND column_name = '{column}'"
-                    ))
-                    return r.fetchone() is not None
-                else:
-                    r = await conn.execute(text(f"PRAGMA table_info({table})"))
-                    return column in [row[1] for row in r.fetchall()]
+                r = await conn.execute(text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = :t AND column_name = :c"
+                ), {"t": table, "c": column})
+                return r.fetchone() is not None
 
-            # Migration: api_token on users
+            # users.api_token
             if not await _has_col("users", "api_token"):
                 await conn.execute(text("ALTER TABLE users ADD COLUMN api_token VARCHAR(128)"))
                 logger.info("Migration: added api_token column to users")
 
-            # Migration: is_admin on users
+            # users.is_admin
             if not await _has_col("users", "is_admin"):
                 await conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE"))
-                # Set first user (id=1) as admin
                 await conn.execute(text("UPDATE users SET is_admin = TRUE WHERE id = 1"))
                 logger.info("Migration: added is_admin column, user #1 set as admin")
 
-            # Migration: deleted_defaults JSON column on user_settings
+            # user_settings.deleted_defaults (JSONB)
             if not await _has_col("user_settings", "deleted_defaults"):
-                if _is_pg:
-                    await conn.execute(text(
-                        "ALTER TABLE user_settings ADD COLUMN deleted_defaults JSONB DEFAULT '{}'::jsonb"
-                    ))
-                else:
-                    await conn.execute(text(
-                        "ALTER TABLE user_settings ADD COLUMN deleted_defaults JSON DEFAULT '{}'"
-                    ))
+                await conn.execute(text(
+                    "ALTER TABLE user_settings ADD COLUMN deleted_defaults JSONB DEFAULT '{}'::jsonb"
+                ))
                 logger.info("Migration: added deleted_defaults column to user_settings")
 
-            # Migration: agent_name + onboarding_state on user_settings
+            # user_settings.agent_name / onboarding_state
             if not await _has_col("user_settings", "agent_name"):
                 await conn.execute(text(
                     "ALTER TABLE user_settings ADD COLUMN agent_name VARCHAR(100) DEFAULT ''"
                 ))
                 logger.info("Migration: added agent_name column to user_settings")
             if not await _has_col("user_settings", "onboarding_state"):
-                if _is_pg:
-                    await conn.execute(text(
-                        "ALTER TABLE user_settings ADD COLUMN onboarding_state JSONB DEFAULT '{}'::jsonb"
-                    ))
-                else:
-                    await conn.execute(text(
-                        "ALTER TABLE user_settings ADD COLUMN onboarding_state JSON DEFAULT '{}'"
-                    ))
+                await conn.execute(text(
+                    "ALTER TABLE user_settings ADD COLUMN onboarding_state JSONB DEFAULT '{}'::jsonb"
+                ))
                 logger.info("Migration: added onboarding_state column to user_settings")
 
-            # Migration: user_id on cost_analytics / budget_settings / provider_budgets
+            # user_id backfill on analytics / budget tables
             if not await _has_col("cost_analytics", "user_id"):
                 await conn.execute(text("ALTER TABLE cost_analytics ADD COLUMN user_id INTEGER"))
-                # Backfill from conversations
                 await conn.execute(text(
                     "UPDATE cost_analytics SET user_id = ("
                     " SELECT user_id FROM conversations WHERE conversations.id = cost_analytics.conversation_id"
@@ -121,15 +104,14 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text("UPDATE provider_budgets SET user_id = 1 WHERE user_id IS NULL"))
                 logger.info("Migration: added user_id column to provider_budgets (assigned to user #1)")
 
-            # Drop the legacy single-column unique constraint on provider_budgets.provider
+            # Drop legacy single-column unique constraint on provider_budgets.provider
             # (uniqueness is now enforced per (user_id, provider) at the application layer).
-            if _is_pg:
-                try:
-                    await conn.execute(text(
-                        "ALTER TABLE provider_budgets DROP CONSTRAINT IF EXISTS provider_budgets_provider_key"
-                    ))
-                except Exception as _drop_err:
-                    logger.debug(f"Drop provider_budgets_provider_key constraint: {_drop_err}")
+            try:
+                await conn.execute(text(
+                    "ALTER TABLE provider_budgets DROP CONSTRAINT IF EXISTS provider_budgets_provider_key"
+                ))
+            except Exception as _drop_err:
+                logger.debug(f"Drop provider_budgets_provider_key constraint: {_drop_err}")
 
     except Exception as e:
         logger.warning(f"Migration check skipped: {e}")
@@ -549,7 +531,7 @@ async def _auto_backup_loop():
 
 
 # ── App ──────────────────────────────────────────────────────────────────────
-app = FastAPI(title="Gungnir API", version="2.1.0", lifespan=lifespan)
+app = FastAPI(title="Gungnir API", version=__version__, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -596,7 +578,7 @@ async def security_headers(request, call_next):
 # ── Token auth middleware ───────────────────────────────────────────────────
 # Routes that don't require authentication
 PUBLIC_PATHS = {
-    "/api/health", "/api/doctor", "/api/users/login", "/api/users/me", "/api/plugins/status",
+    "/api/health", "/api/version", "/api/doctor", "/api/users/login", "/api/users/me", "/api/plugins/status",
 }
 PUBLIC_PREFIXES = (
     "/api/webhook/",                        # Incoming webhooks have their own auth

@@ -45,6 +45,7 @@ export default function Sidebar() {
       path: p.route,
       icon: ICON_MAP[p.icon] || Globe,
       label: p.display_name,
+      version: p.version,
     }))
 
   const analyticsPlugin = enabledPlugins
@@ -53,6 +54,7 @@ export default function Sidebar() {
       path: p.route,
       icon: ICON_MAP[p.icon] || Globe,
       label: p.display_name,
+      version: p.version,
     }))
 
   const allItems = [
@@ -60,7 +62,7 @@ export default function Sidebar() {
     ...regularPlugins,
     ...analyticsPlugin,
     { path: '/settings', icon: Settings2, label: t('nav.settings') },
-  ]
+  ] as Array<{ path: string; icon: any; label: string; version?: string }>
 
   return (
     <aside
@@ -87,7 +89,12 @@ export default function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
         {allItems.map((item) => (
-          <NavLink key={item.path} to={item.path} className="nav-item">
+          <NavLink
+            key={item.path}
+            to={item.path}
+            className="nav-item"
+            title={item.version ? `${item.label} v${item.version}` : item.label}
+          >
             <item.icon className="w-4 h-4 flex-shrink-0" />
             {!collapsed && (
               <span className="text-[13px] font-medium">{item.label}</span>
@@ -122,6 +129,15 @@ export default function Sidebar() {
           )}
           {!collapsed && <span className="text-[12px]">{t('nav.collapse')}</span>}
         </button>
+
+        {/* Version badge */}
+        <div
+          className="flex items-center justify-center pt-1"
+          style={{ fontSize: 10, color: 'var(--text-muted)', opacity: 0.6 }}
+          title={`Gungnir v${__APP_VERSION__}`}
+        >
+          {collapsed ? `v${__APP_VERSION__.split('.')[0]}` : `Gungnir v${__APP_VERSION__}`}
+        </div>
       </div>
     </aside>
   )

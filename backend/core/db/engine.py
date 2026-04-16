@@ -1,29 +1,38 @@
 """
-Gungnir — Database engine (PostgreSQL + fallback SQLite for dev)
+Gungnir — Database engine (PostgreSQL only, via asyncpg).
+
+Dev local : `docker compose -f compose.dev.yml up -d` (expose Postgres 16 sur 5432),
+puis DATABASE_URL=postgresql+asyncpg://gungnir:gungnir@localhost:5432/gungnir
+Prod     : DATABASE_URL injectée par docker-compose.yml (service `db`).
 """
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
-# PostgreSQL by default, SQLite fallback for local dev
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "sqlite+aiosqlite:///data/gungnir.db"
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is required. "
+        "For local dev, start Postgres with `docker compose -f compose.dev.yml up -d` "
+        "then export DATABASE_URL=postgresql+asyncpg://gungnir:gungnir@localhost:5432/gungnir"
+    )
 
-# asyncpg doesn't accept 'postgres://', must be 'postgresql+asyncpg://'
+# Normalize scheme to postgresql+asyncpg
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# Pool settings: recycle connections to avoid stale transaction state
-_is_postgres = "postgresql" in DATABASE_URL or "asyncpg" in DATABASE_URL
+if not DATABASE_URL.startswith("postgresql+asyncpg://"):
+    raise RuntimeError(
+        f"Gungnir requires PostgreSQL. DATABASE_URL scheme not supported: {DATABASE_URL.split(':', 1)[0]}"
+    )
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    pool_pre_ping=True,  # Verify connection is alive before using it
-    pool_recycle=300 if _is_postgres else -1,  # Recycle connections every 5min
-    pool_size=5 if _is_postgres else 0,
+    pool_pre_ping=True,   # Verify connection is alive before using it
+    pool_recycle=300,     # Recycle connections every 5min
+    pool_size=5,
 )
 async_session = async_sessionmaker(
     engine,
@@ -36,7 +45,6 @@ async def get_session() -> AsyncSession:
     async with async_session() as session:
         try:
             yield session
-            # Commit if there are pending changes (no-op if nothing to commit)
             if session.is_modified or session.new or session.deleted:
                 await session.commit()
         except Exception:

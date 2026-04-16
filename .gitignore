@@ -12,6 +12,8 @@ frontend/dist/
 # Data
 data/*.db
 data/*.sqlite
+data/*.sqlite3
+data/*.db-journal
 data/workspace/
 data/consciousness/
 data/agents.json
@@ -20,6 +22,12 @@ data/voice_sessions.json
 data/agent_mode.json
 data/backup_config.json
 data/channel_logs.json
+
+# Residual SQLite (dev legacy — Gungnir is now Postgres-only)
+*.db
+*.sqlite
+*.sqlite3
+!frontend/public/*.db
 
 # Environment
 .env

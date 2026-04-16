@@ -4,15 +4,21 @@
 Gungnir is a full-stack AI super-assistant platform with modular plugin architecture.
 - **Backend:** FastAPI (Python) at `/backend/core/`, port 8000
 - **Frontend:** React + Vite + TypeScript at `/frontend/`, port 5173 (proxies /api → 8000)
-- **Database:** SQLite (dev: `data/gungnir.db`), PostgreSQL (prod)
-- **Plugins:** 8 plugins in `/backend/plugins/` with manifest.json + routes.py pattern
+- **Database:** PostgreSQL 16 (dev + prod). `DATABASE_URL` required. Local dev via `docker compose -f compose.dev.yml up -d`.
+- **Plugins:** 9 plugins in `/backend/plugins/` with manifest.json + routes.py pattern (version tracked)
+- **Versioning:** semver (`backend/core/__version__.py`, `frontend/package.json`, each plugin's `manifest.json`). Exposed via `/api/health` and `/api/version`.
 - **Branding:** ScarletWolf theme — scarlet red #dc2626, dark backgrounds, wolf identity
 
 ## Quick Start
 ```bash
-# Backend
+# 1. Start Postgres (dev)
+docker compose -f compose.dev.yml up -d
+
+# 2. Backend
+export DATABASE_URL=postgresql+asyncpg://gungnir:gungnir@localhost:5432/gungnir
 python -m uvicorn backend.core.main:app --host 127.0.0.1 --port 8000 --reload
-# Frontend
+
+# 3. Frontend
 cd frontend && npm run dev
 ```
 

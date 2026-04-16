@@ -16,12 +16,33 @@ from backend.core.api.organization_routes import router as organization_router
 from backend.core.api.task_routes import router as task_router
 from backend.core.api.onboarding import router as onboarding_router
 
+from backend.core.__version__ import __version__
+
 core_router = APIRouter()
 
-# Health check
+# Health check + version
 @core_router.get("/health")
 async def health():
-    return {"status": "ok", "app": "Gungnir", "version": "2.0.0"}
+    return {"status": "ok", "app": "Gungnir", "version": __version__}
+
+
+# Version endpoint : Gungnir + tous les plugins chargés
+@core_router.get("/version")
+async def version():
+    """Single source of truth for versions : coeur Gungnir + plugins actifs."""
+    try:
+        from backend.core import main as _core_main
+        plugins = [
+            {"name": p.name, "display_name": p.display_name, "version": p.version}
+            for p in getattr(_core_main, "_loaded_plugins", [])
+        ]
+    except Exception:
+        plugins = []
+    return {
+        "app": "Gungnir",
+        "version": __version__,
+        "plugins": plugins,
+    }
 
 
 # Doctor — diagnostic complet

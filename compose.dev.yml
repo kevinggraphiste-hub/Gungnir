@@ -1,0 +1,32 @@
+# ============================================================================
+# Gungnir — Dev Docker Compose
+#
+# Usage : `docker compose -f compose.dev.yml up -d`
+#         Expose Postgres 16 sur 127.0.0.1:5432 pour le backend lancé en local
+#         (uvicorn --reload), sans conteneuriser l'app.
+#
+# Puis exporter (ou mettre dans .env à la racine) :
+#   DATABASE_URL=postgresql+asyncpg://gungnir:gungnir@localhost:5432/gungnir
+# ============================================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: gungnir-dev-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gungnir
+      POSTGRES_PASSWORD: gungnir
+      POSTGRES_DB: gungnir
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - gungnir-dev-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gungnir -d gungnir"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  gungnir-dev-pgdata:
