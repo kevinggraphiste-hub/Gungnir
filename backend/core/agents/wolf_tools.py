@@ -2864,25 +2864,14 @@ async def _doctor_check(scope: str = "full") -> dict:
 
     # ── Database
     if scope in ("full", "config"):
-        from backend.core.db.engine import DATABASE_URL
-        if DATABASE_URL and "postgresql" in DATABASE_URL:
-            # PostgreSQL — test actual connectivity
-            try:
-                from backend.core.db.engine import async_session
-                async with async_session() as session:
-                    result = await session.execute(__import__('sqlalchemy').text("SELECT 1"))
-                    result.scalar()
-                add_check("Base de données", "ok", "PostgreSQL connecté")
-            except Exception as e:
-                add_check("Base de données", "error", f"PostgreSQL inaccessible: {str(e)[:100]}")
-        else:
-            # SQLite fallback
-            db_path = project_root / "data" / "gungnir.db"
-            if db_path.exists():
-                size_mb = db_path.stat().st_size / (1024 * 1024)
-                add_check("Base de données", "ok", f"gungnir.db — {size_mb:.1f} Mo")
-            else:
-                add_check("Base de données", "warning", "gungnir.db introuvable")
+        try:
+            from backend.core.db.engine import async_session
+            async with async_session() as session:
+                result = await session.execute(__import__('sqlalchemy').text("SELECT 1"))
+                result.scalar()
+            add_check("Base de données", "ok", "PostgreSQL connecté")
+        except Exception as e:
+            add_check("Base de données", "error", f"PostgreSQL inaccessible: {str(e)[:100]}")
 
     # Summary
     total = len(results["checks"])

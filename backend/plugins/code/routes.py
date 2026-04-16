@@ -510,7 +510,7 @@ async def run_terminal(req: TerminalRequest):
         r"python[23]?\s+-c\s+", r"perl\s+-e\s+", r"ruby\s+-e\s+",
         r"base64\s+.*\|", r"eval\s+", r"exec\s+",
         r"docker\s+", r"kubectl\s+", r"systemctl\s+",
-        r"/app/data/config", r"/app/data/gungnir\.db",
+        r"/app/data/config",
         r"\.\./\.\./",  # directory traversal
     ]
     for pat in destructive_patterns:

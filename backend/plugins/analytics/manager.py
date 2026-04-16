@@ -4,7 +4,6 @@ Gungnir Analytics — Cost Manager
 All database queries for analytics. Uses core DB models (read + write).
 Self-contained business logic — no core state mutations.
 Supports per-user filtering via Conversation.user_id join.
-Compatible SQLite (dev) + PostgreSQL (prod).
 """
 import logging
 from datetime import datetime, timedelta
@@ -145,7 +144,6 @@ class CostManager:
     async def get_weekly(self, session: AsyncSession, weeks: int = 12, user_id: Optional[int] = None) -> List[dict]:
         try:
             since = datetime.utcnow() - timedelta(weeks=weeks)
-            # extract(year/week) works on both SQLite (via Python) and PostgreSQL
             yr = extract('year', CostAnalytics.created_at)
             wk = extract('week', CostAnalytics.created_at)
             q = select(

@@ -16,8 +16,9 @@ Per-user logical backup system:
   messages.conversation_id). Files under their per-user directories are
   replaced.
 - A separate admin endpoint `/backup/admin/now` still produces a legacy
-  full-instance zip (global config.json + shared SQLite DB) for disaster
-  recovery / VPS migration.
+  full-instance zip (global config.json + shared JSON data files) for
+  disaster recovery / VPS migration. PostgreSQL data is backed up
+  separately via `pg_dump` (see deploy/deploy.sh backup command).
 """
 import io
 import json
@@ -76,13 +77,7 @@ LEGACY_BACKUP_TARGETS = [
 
 
 def _legacy_backup_targets() -> list[Path]:
-    targets = list(LEGACY_BACKUP_TARGETS)
-    from backend.core.db.engine import DATABASE_URL
-    if "postgresql" not in DATABASE_URL and "asyncpg" not in DATABASE_URL:
-        db_path = DATA_DIR / "gungnir.db"
-        if db_path.exists():
-            targets.append(db_path)
-    return targets
+    return list(LEGACY_BACKUP_TARGETS)
 
 
 # ── Per-user filesystem layout ───────────────────────────────────────────────
