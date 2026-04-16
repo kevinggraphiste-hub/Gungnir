@@ -87,25 +87,31 @@ async def _resolve_llm(user_id: int, session: AsyncSession):
 # ── LLM Prompts ──────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
-Tu es HuntR, un assistant de recherche web. Tu reçois des passages extraits de pages web et tu dois produire une réponse reformulée, structurée et sourcée.
+Tu es HuntR, un assistant de recherche web. Tu transformes des passages web bruts en une réponse reformulée, structurée et sourcée.
 
-INSTRUCTIONS (à suivre À LA LETTRE) :
+STRUCTURE OBLIGATOIRE :
 
-1. REFORMULE intégralement — ne recopie JAMAIS un passage tel quel
-2. STRUCTURE ta réponse EN PROFONDEUR :
-   - Un titre ## qui résume la réponse
-   - 4 à 8 paragraphes développés, chacun explorant un aspect différent du sujet
-   - Développe chaque point : contexte, explications, nuances, exemples concrets
-   - Si pertinent : listes à puces, tableaux comparatifs, étapes numérotées
-   - Termine par « ### En résumé » (3-5 phrases de synthèse)
-3. SOIS EXHAUSTIF : utilise TOUS les passages fournis, ne laisse aucune information pertinente de côté. Plus ta réponse est complète et détaillée, mieux c'est.
-4. CITE tes sources inline — chaque affirmation doit avoir [1], [2] etc. DANS la phrase :
-   BON : « Le Python domine la data science [1], tandis que Rust gagne du terrain pour les performances [3]. »
-   MAUVAIS : « Python est populaire. [1] » (citation détachée = interdit)
-5. LANGUE : réponds dans la même langue que la question
-6. LIMITES : si l'info manque, dis-le. N'invente rien.
+# [Titre principal — une phrase qui résume la réponse]
 
-Tu n'as PAS le droit d'utiliser tes propres connaissances. UNIQUEMENT les passages fournis."""
+## [Aspect 1 — sous-titre descriptif]
+Un paragraphe développé (5-8 phrases min.) qui explore ce premier aspect. Contexte, explications, nuances, exemples concrets. Chaque affirmation cite sa source [1], [2] directement dans la phrase.
+
+## [Aspect 2 — sous-titre descriptif]
+Un paragraphe développé explorant un deuxième angle. Croise les sources, compare les points de vue [3], ajoute du contexte [1].
+
+## [Aspect 3 — sous-titre descriptif]
+Un paragraphe développé sur un troisième aspect. Détails supplémentaires, implications, exemples [2][4].
+
+## Conclusion
+3 à 5 phrases de synthèse reprenant les points clés. Pas de nouvelles informations, juste un résumé clair.
+
+REGLES :
+- REFORMULE intégralement — ne recopie JAMAIS un passage tel quel
+- Cite DANS la phrase : « Python domine [1], devant Rust [3]. » (PAS de citation détachée)
+- Utilise TOUS les passages fournis, chaque source doit être citée au moins une fois
+- Réponds dans la MÊME LANGUE que la question
+- Si l'info manque ou est contradictoire, dis-le clairement
+- N'utilise JAMAIS tes propres connaissances — UNIQUEMENT les passages fournis"""
 
 
 # ── SSE helpers ──────────────────────────────────────────────────────────
@@ -294,7 +300,7 @@ async def search_stream(req: SearchRequest, request: Request,
                 })
                 return
 
-            # Step 4: LLM synthesis
+            # Step 4: LLM synthesis (streamed)
             yield _sse("status", {"message": "Synthèse par l'IA en cours...", "step": 4, "total_steps": 4})
 
             context = _build_llm_context(results)
@@ -307,11 +313,10 @@ async def search_stream(req: SearchRequest, request: Request,
                         f"PASSAGES WEB (numérotés [1] à [{min(len(results), 10)}]) :\n\n"
                         f"{context}\n\n"
                         f"---\n"
-                        f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots) en suivant le format demandé :\n"
-                        f"- Titre ## → 4 à 8 paragraphes développés avec citations [N] inline → ### En résumé\n"
-                        f"- REFORMULE avec tes propres mots, ne copie pas les passages\n"
-                        f"- Exploite TOUS les passages : chaque source doit être citée au moins une fois\n"
-                        f"- Développe, explique, contextualise — pas de réponse superficielle"
+                        f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots).\n"
+                        f"Suis EXACTEMENT la structure : # Titre → ## Aspect 1 → ## Aspect 2 → ## Aspect 3 → ## Conclusion\n"
+                        f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
+                        f"Exploite TOUS les passages — chaque source citée au moins une fois."
                     ),
                 ),
             ]
@@ -319,10 +324,11 @@ async def search_stream(req: SearchRequest, request: Request,
             llm_ok = False
             answer = ""
             try:
-                logger.info(f"[HuntR] Calling LLM: provider={type(llm_provider).__name__}, model={llm_model}, msgs={len(messages)}")
-                resp = await llm_provider.chat(messages, llm_model, max_tokens=4096)
-                answer = resp.content or ""
-                logger.info(f"[HuntR] LLM OK: {len(answer)} chars")
+                logger.info(f"[HuntR] Streaming LLM: provider={type(llm_provider).__name__}, model={llm_model}")
+                async for token in llm_provider.chat_stream(messages, llm_model, max_tokens=4096):
+                    answer += token
+                    yield _sse("chunk", {"token": token})
+                logger.info(f"[HuntR] LLM stream done: {len(answer)} chars")
                 if answer.strip():
                     llm_ok = True
             except Exception as e:

@@ -187,7 +187,13 @@ export default function HuntRPlugin() {
                   final.citations = d.citations || []
                   setResult({ ...final } as SearchResult)
                   break
+                case 'chunk':
+                  // Streaming token from LLM
+                  final.answer += (d.token || '')
+                  setResult({ ...final } as SearchResult)
+                  break
                 case 'content':
+                  // Full answer (classic mode or fallback)
                   final.answer = d.answer || ''
                   setResult({ ...final } as SearchResult)
                   break
