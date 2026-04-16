@@ -94,8 +94,8 @@ INSTRUCTIONS (à suivre À LA LETTRE) :
    - Si pertinent : listes à puces, tableaux comparatifs, étapes numérotées
    - Termine par « ### En résumé » (2-3 phrases de synthèse)
 3. CITE tes sources inline — chaque affirmation doit avoir [1], [2] etc. DANS la phrase :
-   ✅ « Le Python domine la data science [1], tandis que Rust gagne du terrain pour les performances [3]. »
-   ❌ « Python est populaire. [1] » (citation détachée = interdit)
+   BON : « Le Python domine la data science [1], tandis que Rust gagne du terrain pour les performances [3]. »
+   MAUVAIS : « Python est populaire. [1] » (citation détachée = interdit)
 4. LANGUE : réponds dans la même langue que la question
 5. LIMITES : si l'info manque, dis-le. N'invente rien.
 
@@ -303,17 +303,21 @@ async def search_stream(req: SearchRequest, request: Request,
                 ),
             ]
 
+            llm_ok = False
+            answer = ""
             try:
+                logger.info(f"[HuntR] Calling LLM: provider={type(llm_provider).__name__}, model={llm_model}, msgs={len(messages)}")
                 resp = await llm_provider.chat(messages, llm_model)
                 answer = resp.content or ""
-                logger.info(f"[HuntR] LLM response: {len(answer)} chars, model={llm_model}")
+                logger.info(f"[HuntR] LLM OK: {len(answer)} chars")
+                if answer.strip():
+                    llm_ok = True
             except Exception as e:
-                logger.error(f"[HuntR] LLM call failed: {e}", exc_info=True)
-                answer = ""
-                yield _sse("status", {"message": f"⚠ Erreur LLM : {e}"})
+                logger.error(f"[HuntR] LLM FAILED: {type(e).__name__}: {e}", exc_info=True)
+                yield _sse("status", {"message": f"⚠ Erreur LLM ({type(e).__name__}): {e}"})
 
-            if not answer.strip():
-                logger.warning(f"[HuntR] LLM returned empty, falling back to classic")
+            if not llm_ok:
+                logger.warning("[HuntR] Using classic fallback (LLM empty or failed)")
                 answer = _format_classic_answer(query, results)
 
             yield _sse("content", {"answer": answer})
