@@ -1299,7 +1299,7 @@ export default function Chat() {
             </div>
           ))}
 
-          {loadingConvoId === currentConversation && (
+          {loadingConvoId !== null && loadingConvoId === currentConversation && (
             <div className="flex gap-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
                 style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 10%, var(--bg-primary)), color-mix(in srgb, var(--scarlet) 15%, var(--bg-primary)))', border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)' }}>
