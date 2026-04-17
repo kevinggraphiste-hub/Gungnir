@@ -9,6 +9,7 @@ import {
   Stethoscope, Pipette
 } from 'lucide-react'
 import InfoButton from '../components/InfoButton'
+import { PageHeader } from '../components/ui'
 
 const LANG_FLAG: Record<string, string> = {
   fr: 'fr', en: 'gb', es: 'es', pt: 'pt', it: 'it', de: 'de', nl: 'nl', ca: 'es-ct', be: 'be', br: 'fr',
@@ -667,15 +668,11 @@ export default function Settings() {
 
   return (
     <div className="max-w-4xl mx-auto p-6 h-full overflow-y-auto">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(to bottom right, color-mix(in srgb, var(--accent-primary) 15%, transparent), color-mix(in srgb, var(--accent-secondary) 10%, transparent))' }}>
-          <SettingsIcon className="w-6 h-6" style={{ color: 'var(--accent-primary)' }} />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{t('settings.title')}</h1>
-          <p style={{ color: 'var(--text-muted)' }}>{t('settings.subtitle')}</p>
-        </div>
-      </div>
+      <PageHeader
+        icon={<SettingsIcon size={18} />}
+        title={t('settings.title')}
+        subtitle={t('settings.subtitle')}
+      />
 
       <div className="flex gap-6">
         <aside className="w-48 flex-shrink-0">

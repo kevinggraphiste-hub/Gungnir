@@ -1,7 +1,7 @@
 /**
  * Gungnir Plugin — Channels
  * Canaux de communication : Telegram, Discord, Slack, WhatsApp, Email, Widget Web, API.
- * Indépendant — appels directs vers /api/plugins/channels/*.
+ * Aligné sur le design system Conscience.
  */
 import { useState, useEffect, useCallback } from 'react'
 import InfoButton from '@core/components/InfoButton'
@@ -10,14 +10,18 @@ import {
   Plus, Trash2, Power, PowerOff, Settings, Copy, Check, ExternalLink,
   ArrowDownLeft, ArrowUpRight, Clock, AlertTriangle, RefreshCw,
   ChevronDown, ChevronRight, Eye, EyeOff, Loader2, X, Link,
-  MessageSquare, Activity, FileText, Zap
+  MessageSquare, Activity, FileText, Zap,
 } from 'lucide-react'
+import {
+  PageHeader, TabBar, SectionCard, SectionTitle,
+  PrimaryButton, SecondaryButton, FormInput, Badge,
+} from '@core/components/ui'
 
 const API = '/api/plugins/channels'
 
 // ── Icon map ───────────────────────────────────────────────────────
 const ICONS: Record<string, any> = {
-  Send, MessageCircle, Hash, Phone, Mail, Globe, Code, MessageSquare, Radio, RadioTower, Zap
+  Send, MessageCircle, Hash, Phone, Mail, Globe, Code, MessageSquare, Radio, RadioTower, Zap,
 }
 
 const getIcon = (name: string) => ICONS[name] || Radio
@@ -51,9 +55,16 @@ const timeAgo = (iso: string | null) => {
   return `Il y a ${Math.floor(hours / 24)}j`
 }
 
+type Tab = 'channels' | 'logs'
+
+const TABS = [
+  { key: 'channels' as const, label: 'Canaux', icon: <RadioTower size={14} /> },
+  { key: 'logs' as const, label: 'Logs', icon: <FileText size={14} /> },
+]
+
 // ── Main Component ─────────────────────────────────────────────────
 export default function ChannelsPlugin() {
-  const [tab, setTab] = useState<'channels' | 'logs'>('channels')
+  const [tab, setTab] = useState<Tab>('channels')
   const [channels, setChannels] = useState<any[]>([])
   const [catalog, setCatalog] = useState<Record<string, any>>({})
   const [categories, setCategories] = useState<Record<string, any>>({})
@@ -120,7 +131,6 @@ export default function ChannelsPlugin() {
       if (res.ok) {
         setShowCatalog(false)
         loadChannels()
-        // Ouvrir directement l'édition
         setEditingChannel(res.channel)
         setEditForm(res.channel.config || {})
       }
@@ -135,12 +145,9 @@ export default function ChannelsPlugin() {
     try {
       const res = await apiFetch(`${API}/${id}/toggle`, { method: 'POST' })
       loadChannels()
-      // Show webhook registration result
       if (res.webhook) {
         if (res.webhook.ok) {
-          setWebhookMsg({ ok: true, text: res.webhook.webhook_url
-            ? `Webhook enregistré ✓`
-            : 'Webhook supprimé' })
+          setWebhookMsg({ ok: true, text: res.webhook.webhook_url ? 'Webhook enregistré ✓' : 'Webhook supprimé' })
         } else {
           setWebhookMsg({ ok: false, text: `Webhook: ${res.webhook.error}` })
         }
@@ -166,7 +173,6 @@ export default function ChannelsPlugin() {
     setEditForm(channel.config || {})
     setTestResult(null)
     setShowPassword({})
-    // Load webhook URLs
     apiFetch(`${API}/${channel.id}/webhook-url`).then(res => {
       setWebhookUrls(res.urls || {})
     }).catch(() => {})
@@ -184,7 +190,6 @@ export default function ChannelsPlugin() {
           config: editForm,
         }),
       })
-      // Show webhook registration result
       if (res.webhook) {
         if (res.webhook.ok) {
           setWebhookMsg({ ok: true, text: 'Webhook enregistré automatiquement ✓' })
@@ -221,76 +226,58 @@ export default function ChannelsPlugin() {
     setTimeout(() => setCopied(null), 2000)
   }
 
-  // ── Render helpers ─────────────────────────────────────────────
   const activeCount = channels.filter(c => c.enabled).length
 
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin" style={{ color: '#dc2626' }} />
+        <Loader2 className="w-6 h-6 animate-spin" style={{ color: 'var(--scarlet)' }} />
       </div>
     )
   }
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: 'var(--border-primary)' }}>
-        <div className="flex items-center gap-3">
-          <RadioTower className="w-5 h-5" style={{ color: '#dc2626' }} />
-          <h1 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Channels</h1>
-          <InfoButton>
+      <div style={{ padding: '16px 24px 0' }}>
+        <PageHeader
+          icon={<RadioTower size={18} />}
+          title="Channels"
+          subtitle={<span>Canaux d'entrée / sortie de ton agent <InfoButton>
             <strong>Les channels</strong> sont les portes d'entrée par lesquelles ton agent reçoit des messages de l'extérieur : Telegram, Discord, Slack, WhatsApp, email, widget web, API HTTP…
             <br /><br />
-            Chaque canal a un webhook entrant qu'un service tiers appelle quand un message arrive. Ton agent répond ensuite via le même canal (par exemple : un user t'envoie un message sur Telegram → l'agent lit et répond directement dans le chat Telegram).
+            Chaque canal a un webhook entrant qu'un service tiers appelle quand un message arrive. Ton agent répond ensuite via le même canal.
             <br /><br />
             Les canaux sont <em>per-user</em> : les messages qui arrivent sur ton Telegram déclenchent uniquement <em>ton</em> agent, avec <em>tes</em> clés API et <em>ta</em> config.
-          </InfoButton>
-          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(220,38,38,0.15)', color: '#dc2626' }}>
-            {activeCount} actif{activeCount !== 1 ? 's' : ''}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Tabs */}
-          {(['channels', 'logs'] as const).map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className="px-3 py-1.5 text-xs rounded-lg transition-colors"
-              style={{
-                background: tab === t ? 'rgba(220,38,38,0.15)' : 'transparent',
-                color: tab === t ? '#dc2626' : 'var(--text-muted)',
-              }}
-            >
-              {t === 'channels' ? 'Canaux' : 'Logs'}
-            </button>
-          ))}
-          <button
-            onClick={() => { setShowCatalog(true); setCatalogSearch('') }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-            style={{ background: '#dc2626', color: 'white' }}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Ajouter
-          </button>
-        </div>
+          </InfoButton></span> as any}
+          actions={
+            <>
+              <Badge>{activeCount} actif{activeCount !== 1 ? 's' : ''}</Badge>
+              <PrimaryButton size="sm" icon={<Plus size={14} />} onClick={() => { setShowCatalog(true); setCatalogSearch('') }}>
+                Ajouter
+              </PrimaryButton>
+            </>
+          }
+        />
       </div>
 
-      {/* Webhook feedback */}
+      <div style={{ padding: '0 24px 12px' }}>
+        <TabBar tabs={TABS} active={tab} onChange={setTab} />
+      </div>
+
       {webhookMsg && (
-        <div className="mx-6 mt-3 px-4 py-2.5 rounded-lg text-sm flex items-center gap-2"
-          style={{
-            background: webhookMsg.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
-            color: webhookMsg.ok ? '#22c55e' : '#ef4444',
-            border: webhookMsg.ok ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(239,68,68,0.3)',
-          }}>
+        <div style={{
+          margin: '0 24px 12px', padding: '10px 14px', borderRadius: 10, fontSize: 13,
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: `color-mix(in srgb, ${webhookMsg.ok ? '#22c55e' : '#ef4444'} 12%, transparent)`,
+          color: webhookMsg.ok ? '#22c55e' : '#ef4444',
+          border: `1px solid color-mix(in srgb, ${webhookMsg.ok ? '#22c55e' : '#ef4444'} 30%, transparent)`,
+        }}>
           {webhookMsg.ok ? <Check className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
           {webhookMsg.text}
         </div>
       )}
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 24px' }}>
         {tab === 'channels' && (
           <ChannelsList
             channels={channels}
@@ -300,6 +287,7 @@ export default function ChannelsPlugin() {
             onToggle={handleToggle}
             onEdit={handleEdit}
             onDelete={handleDelete}
+            onOpenCatalog={() => { setShowCatalog(true); setCatalogSearch('') }}
           />
         )}
         {tab === 'logs' && (
@@ -314,7 +302,6 @@ export default function ChannelsPlugin() {
         )}
       </div>
 
-      {/* Catalog Modal */}
       {showCatalog && (
         <CatalogModal
           catalog={catalog}
@@ -327,7 +314,6 @@ export default function ChannelsPlugin() {
         />
       )}
 
-      {/* Edit Modal */}
       {editingChannel && (
         <EditModal
           channel={editingChannel}
@@ -353,24 +339,26 @@ export default function ChannelsPlugin() {
 }
 
 // ── Channels List ──────────────────────────────────────────────────
-function ChannelsList({ channels, catalog, expandedChannel, setExpandedChannel, onToggle, onEdit, onDelete }: any) {
+function ChannelsList({ channels, catalog, expandedChannel, setExpandedChannel, onToggle, onEdit, onDelete, onOpenCatalog }: any) {
   if (channels.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 gap-3 rounded-xl border border-dashed mx-6 my-4"
-        style={{ color: 'var(--text-muted)', borderColor: 'var(--border)', background: 'var(--bg-secondary)' }}>
-        <Radio className="w-10 h-10 opacity-40" />
-        <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Aucun canal configuré</p>
-        <p className="text-xs max-w-md text-center leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-          Un canal connecte ton agent à une plateforme externe (Telegram, Discord, Slack, email, widget…) pour qu'il puisse recevoir et répondre à des messages sans passer par cette interface.
-          <br /><br />
-          Clique sur <strong>Ajouter</strong> en haut à droite pour parcourir le catalogue et connecter ta première plateforme en 2 minutes.
-        </p>
-      </div>
+      <SectionCard>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 20px', gap: 12, textAlign: 'center' }}>
+          <Radio className="w-10 h-10" style={{ opacity: 0.35, color: 'var(--text-muted)' }} />
+          <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Aucun canal configuré</p>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 460, lineHeight: 1.6 }}>
+            Un canal connecte ton agent à une plateforme externe (Telegram, Discord, Slack, email, widget…) pour qu'il puisse recevoir et répondre à des messages sans passer par cette interface.
+          </p>
+          <PrimaryButton size="sm" icon={<Plus size={14} />} onClick={onOpenCatalog}>
+            Parcourir le catalogue
+          </PrimaryButton>
+        </div>
+      </SectionCard>
     )
   }
 
   return (
-    <div className="space-y-3">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {channels.map((ch: any) => {
         const catEntry = catalog[ch.type] || {}
         const Icon = getIcon(catEntry.icon)
@@ -379,147 +367,112 @@ function ChannelsList({ channels, catalog, expandedChannel, setExpandedChannel, 
         const stats = ch.stats || {}
 
         return (
-          <div
-            key={ch.id}
-            className="rounded-xl border overflow-hidden transition-colors"
-            style={{
-              borderColor: ch.enabled ? `${color}40` : 'var(--border-primary)',
-              background: 'var(--bg-secondary)',
-            }}
-          >
-            {/* Main row */}
-            <div className="flex items-center gap-4 px-4 py-3">
-              {/* Icon */}
-              <div
-                className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                style={{ background: `${color}20` }}
-              >
+          <SectionCard key={ch.id} accent={ch.enabled ? color : undefined} padding="sm">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: `color-mix(in srgb, ${color} 15%, transparent)`,
+                border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`,
+                flexShrink: 0,
+              }}>
                 <Icon className="w-5 h-5" style={{ color }} />
               </div>
 
-              {/* Info */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>
-                    {ch.name}
-                  </span>
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded-full"
-                    style={{
-                      background: ch.enabled ? `${color}20` : 'var(--bg-tertiary)',
-                      color: ch.enabled ? color : 'var(--text-muted)',
-                    }}
-                  >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{ch.name}</span>
+                  <Badge color={ch.enabled ? color : 'var(--text-muted)'}>
                     {ch.enabled ? 'Actif' : 'Inactif'}
-                  </span>
+                  </Badge>
                 </div>
-                <div className="flex items-center gap-3 mt-0.5">
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    {catEntry.display_name || ch.type}
-                  </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 3, fontSize: 11, color: 'var(--text-muted)' }}>
+                  <span>{catEntry.display_name || ch.type}</span>
                   {stats.messages_in > 0 && (
-                    <span className="text-[11px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <ArrowDownLeft className="w-3 h-3" />{stats.messages_in}
-                      <ArrowUpRight className="w-3 h-3 ml-1" />{stats.messages_out || 0}
+                      <ArrowUpRight className="w-3 h-3" style={{ marginLeft: 4 }} />{stats.messages_out || 0}
                     </span>
                   )}
                   {stats.last_activity && (
-                    <span className="text-[11px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <Clock className="w-3 h-3" />{timeAgo(stats.last_activity)}
                     </span>
                   )}
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setExpandedChannel(expanded ? null : ch.id)}
-                  className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-                  title="Détails"
-                >
-                  {expanded ? <ChevronDown className="w-4 h-4" style={{ color: 'var(--text-muted)' }} /> : <ChevronRight className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />}
-                </button>
-                <button
-                  onClick={() => onToggle(ch.id)}
-                  className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-                  title={ch.enabled ? 'Désactiver' : 'Activer'}
-                >
-                  {ch.enabled
-                    ? <Power className="w-4 h-4" style={{ color }} />
-                    : <PowerOff className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-                  }
-                </button>
-                <button
-                  onClick={() => onEdit(ch)}
-                  className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-                  title="Configurer"
-                >
-                  <Settings className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-                </button>
-                <button
-                  onClick={() => onDelete(ch.id)}
-                  className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-                  title="Supprimer"
-                >
-                  <Trash2 className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-                </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <IconButton onClick={() => setExpandedChannel(expanded ? null : ch.id)} title="Détails">
+                  {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                </IconButton>
+                <IconButton onClick={() => onToggle(ch.id)} title={ch.enabled ? 'Désactiver' : 'Activer'} color={ch.enabled ? color : undefined}>
+                  {ch.enabled ? <Power size={16} /> : <PowerOff size={16} />}
+                </IconButton>
+                <IconButton onClick={() => onEdit(ch)} title="Configurer">
+                  <Settings size={16} />
+                </IconButton>
+                <IconButton onClick={() => onDelete(ch.id)} title="Supprimer" color="#ef4444">
+                  <Trash2 size={16} />
+                </IconButton>
               </div>
             </div>
 
-            {/* Expanded details */}
             {expanded && (
-              <div className="px-4 pb-3 pt-1 border-t" style={{ borderColor: 'var(--border-primary)' }}>
-                <div className="grid grid-cols-2 gap-4 text-xs" style={{ color: 'var(--text-muted)' }}>
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12, color: 'var(--text-muted)' }}>
+                  <div><span style={{ opacity: 0.6 }}>Type :</span> {catEntry.display_name}</div>
                   <div>
-                    <span className="opacity-60">Type:</span> {catEntry.display_name}
+                    <span style={{ opacity: 0.6 }}>ID :</span>{' '}
+                    <code style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-tertiary)' }}>{ch.id}</code>
                   </div>
-                  <div>
-                    <span className="opacity-60">ID:</span> <code className="text-[11px] px-1 py-0.5 rounded" style={{ background: 'var(--bg-tertiary)' }}>{ch.id}</code>
-                  </div>
-                  <div>
-                    <span className="opacity-60">Messages reçus:</span> {stats.messages_in || 0}
-                  </div>
-                  <div>
-                    <span className="opacity-60">Messages envoyés:</span> {stats.messages_out || 0}
-                  </div>
-                  <div>
-                    <span className="opacity-60">Créé:</span> {ch.created_at ? new Date(ch.created_at).toLocaleDateString('fr-FR') : '—'}
-                  </div>
-                  <div>
-                    <span className="opacity-60">Dernière activité:</span> {timeAgo(stats.last_activity)}
-                  </div>
+                  <div><span style={{ opacity: 0.6 }}>Messages reçus :</span> {stats.messages_in || 0}</div>
+                  <div><span style={{ opacity: 0.6 }}>Messages envoyés :</span> {stats.messages_out || 0}</div>
+                  <div><span style={{ opacity: 0.6 }}>Créé :</span> {ch.created_at ? new Date(ch.created_at).toLocaleDateString('fr-FR') : '—'}</div>
+                  <div><span style={{ opacity: 0.6 }}>Dernière activité :</span> {timeAgo(stats.last_activity)}</div>
                 </div>
                 {catEntry.doc_url && (
-                  <a
-                    href={catEntry.doc_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 mt-2 text-xs hover:underline"
-                    style={{ color }}
-                  >
+                  <a href={catEntry.doc_url} target="_blank" rel="noreferrer"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 10, fontSize: 12, color, textDecoration: 'none' }}>
                     <ExternalLink className="w-3 h-3" />Documentation
                   </a>
                 )}
               </div>
             )}
-          </div>
+          </SectionCard>
         )
       })}
     </div>
   )
 }
 
+// ── Icon Button (shared helper for list row actions) ───────────────
+function IconButton({ children, onClick, title, color }: any) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        padding: 6, borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer',
+        color: color || 'var(--text-muted)',
+        transition: 'all 0.15s',
+      }}
+      onMouseEnter={e => (e.currentTarget.style.background = 'color-mix(in srgb, var(--scarlet) 8%, transparent)')}
+      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+    >
+      {children}
+    </button>
+  )
+}
+
 // ── Catalog Modal ──────────────────────────────────────────────────
 function CatalogModal({ catalog, categories, channels, search, setSearch, onAdd, onClose }: any) {
   const existingTypes = new Set(channels.map((c: any) => c.type))
-  const filtered = Object.entries(catalog).filter(([key, val]: [string, any]) => {
+  const filtered = Object.entries(catalog).filter(([_key, val]: [string, any]) => {
     if (!search) return true
     return val.display_name.toLowerCase().includes(search.toLowerCase()) ||
            val.description.toLowerCase().includes(search.toLowerCase())
   })
 
-  // Group by category
   const byCategory: Record<string, [string, any][]> = {}
   for (const [key, val] of filtered) {
     const cat = (val as any).category || 'autre'
@@ -528,84 +481,85 @@ function CatalogModal({ catalog, categories, channels, search, setSearch, onAdd,
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 50, display: 'flex',
+      alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)',
+    }} onClick={onClose}>
       <div
-        className="w-full max-w-lg rounded-xl border shadow-2xl overflow-hidden"
-        style={{ background: 'var(--bg-primary)', borderColor: 'var(--border-primary)' }}
+        style={{
+          width: '100%', maxWidth: 560, borderRadius: 16, overflow: 'hidden',
+          background: 'var(--bg-primary)', border: '1px solid var(--border)',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+        }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border-primary)' }}>
-          <h3 className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>Ajouter un canal</h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/5">
-            <X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-          </button>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '14px 20px', borderBottom: '1px solid var(--border-subtle)',
+        }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Ajouter un canal</h3>
+          <IconButton onClick={onClose} title="Fermer"><X size={16} /></IconButton>
         </div>
 
-        {/* Search */}
-        <div className="px-5 py-3">
-          <input
+        <div style={{ padding: '14px 20px' }}>
+          <FormInput
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Rechercher..."
-            className="w-full px-3 py-2 rounded-lg text-sm border-none outline-none"
-            style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
           />
         </div>
 
-        {/* List */}
-        <div className="px-5 pb-5 max-h-[60vh] overflow-y-auto space-y-4">
+        <div style={{ padding: '0 20px 20px', maxHeight: '60vh', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
           {Object.entries(byCategory).map(([catKey, items]) => {
             const catInfo = categories[catKey] || { label: catKey }
             return (
               <div key={catKey}>
-                <h4 className="text-xs font-medium mb-2 uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                <div style={{
+                  fontSize: 10, fontWeight: 700, marginBottom: 8, textTransform: 'uppercase',
+                  letterSpacing: 1.5, color: 'var(--text-muted)',
+                }}>
                   {catInfo.label}
-                </h4>
-                <div className="space-y-2">
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {items.map(([key, val]: [string, any]) => {
                     const Icon = getIcon(val.icon)
                     const color = TYPE_COLORS[key] || '#6366f1'
                     const alreadyAdded = existingTypes.has(key)
+                    const complexColor =
+                      val.complexity === 'facile' ? '#22c55e' :
+                      val.complexity === 'moyen' ? '#eab308' : '#ef4444'
                     return (
-                      <div
-                        key={key}
-                        className="flex items-center gap-3 p-3 rounded-lg border transition-colors"
-                        style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}
-                      >
-                        <div
-                          className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                          style={{ background: `${color}20` }}
-                        >
+                      <div key={key} style={{
+                        display: 'flex', alignItems: 'center', gap: 12, padding: 12,
+                        borderRadius: 10, background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-subtle)',
+                      }}>
+                        <div style={{
+                          width: 36, height: 36, borderRadius: 10, display: 'flex',
+                          alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                          background: `color-mix(in srgb, ${color} 15%, transparent)`,
+                          border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`,
+                        }}>
                           <Icon className="w-4 h-4" style={{ color }} />
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{val.display_name}</span>
-                            {val.complexity && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full" style={{
-                                background: val.complexity === 'facile' ? 'rgba(34,197,94,0.15)' : val.complexity === 'moyen' ? 'rgba(234,179,8,0.15)' : 'rgba(239,68,68,0.15)',
-                                color: val.complexity === 'facile' ? '#22c55e' : val.complexity === 'moyen' ? '#eab308' : '#ef4444',
-                              }}>
-                                {val.complexity}
-                              </span>
-                            )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{val.display_name}</span>
+                            {val.complexity && <Badge color={complexColor}>{val.complexity}</Badge>}
                           </div>
-                          <div className="text-[11px] mt-0.5 line-clamp-1" style={{ color: 'var(--text-muted)' }}>{val.description}</div>
+                          <div style={{ fontSize: 11, marginTop: 2, color: 'var(--text-muted)',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {val.description}
+                          </div>
                         </div>
-                        <button
-                          onClick={() => onAdd(key)}
-                          disabled={alreadyAdded}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                          style={{
-                            background: alreadyAdded ? 'var(--bg-tertiary)' : `${color}20`,
-                            color: alreadyAdded ? 'var(--text-muted)' : color,
-                            cursor: alreadyAdded ? 'default' : 'pointer',
-                          }}
-                        >
-                          {alreadyAdded ? 'Ajouté' : 'Ajouter'}
-                        </button>
+                        {alreadyAdded ? (
+                          <SecondaryButton size="sm" disabled>Ajouté</SecondaryButton>
+                        ) : (
+                          <PrimaryButton size="sm" icon={<Plus size={12} />} onClick={() => onAdd(key)}>
+                            Ajouter
+                          </PrimaryButton>
+                        )}
                       </div>
                     )
                   })}
@@ -642,36 +596,51 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 50, display: 'flex',
+      alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)',
+    }} onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-xl border shadow-2xl overflow-hidden"
-        style={{ background: 'var(--bg-primary)', borderColor: 'var(--border-primary)' }}
+        style={{
+          width: '100%', maxWidth: 520, borderRadius: 16, overflow: 'hidden',
+          background: 'var(--bg-primary)', border: '1px solid var(--border)',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+        }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b" style={{ borderColor: 'var(--border-primary)' }}>
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${color}20` }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          padding: '14px 20px', borderBottom: '1px solid var(--border-subtle)',
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: 10, display: 'flex',
+            alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            background: `color-mix(in srgb, ${color} 15%, transparent)`,
+            border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`,
+          }}>
             <Icon className="w-4 h-4" style={{ color }} />
           </div>
-          <div className="flex-1">
+          <div style={{ flex: 1 }}>
             <input
               value={channel.name}
               onChange={e => setChannel({ ...channel, name: e.target.value })}
-              className="font-bold text-sm bg-transparent border-none outline-none w-full"
-              style={{ color: 'var(--text-primary)' }}
+              style={{
+                fontWeight: 700, fontSize: 14, background: 'transparent',
+                border: 'none', outline: 'none', width: '100%', color: 'var(--text-primary)',
+              }}
             />
-            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{catEntry.display_name} — {channel.id}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{catEntry.display_name} — {channel.id}</div>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/5">
-            <X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-          </button>
+          <IconButton onClick={onClose} title="Fermer"><X size={16} /></IconButton>
         </div>
 
-        {/* Fields */}
-        <div className="px-5 py-4 max-h-[50vh] overflow-y-auto space-y-3">
-          {/* Setup guide */}
+        <div style={{ padding: '16px 20px', maxHeight: '55vh', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {catEntry.setup_guide && (
-            <div className="p-3 rounded-lg text-xs leading-relaxed" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>
+            <div style={{
+              padding: 12, borderRadius: 10, fontSize: 12, lineHeight: 1.6,
+              background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
+              border: '1px solid var(--border-subtle)',
+            }}>
               {catEntry.setup_guide.split('\n').map((line: string, i: number) => (
                 <div key={i}>{line}</div>
               ))}
@@ -679,86 +648,67 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
           )}
 
           {fields.map((field: any) => (
-            <div key={field.key}>
-              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-                {field.label} {field.required && <span style={{ color: '#dc2626' }}>*</span>}
-              </label>
-              <div className="relative">
-                <input
-                  type={field.type === 'password' && !showPassword[field.key] ? 'password' : 'text'}
-                  value={form[field.key] || ''}
-                  onChange={e => setForm({ ...form, [field.key]: e.target.value })}
-                  placeholder={field.placeholder || ''}
-                  className="w-full px-3 py-2 rounded-lg text-sm border-none outline-none pr-10"
-                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
-                />
-                {field.type === 'password' && (
-                  <button
-                    onClick={() => setShowPassword({ ...showPassword, [field.key]: !showPassword[field.key] })}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-white/5"
-                  >
-                    {showPassword[field.key]
-                      ? <EyeOff className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
-                      : <Eye className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
-                    }
-                  </button>
-                )}
-              </div>
+            <div key={field.key} style={{ position: 'relative' }}>
+              <FormInput
+                label={field.label + (field.required ? ' *' : '')}
+                type={field.type === 'password' && !showPassword[field.key] ? 'password' : 'text'}
+                value={form[field.key] || ''}
+                onChange={e => setForm({ ...form, [field.key]: e.target.value })}
+                placeholder={field.placeholder || ''}
+              />
+              {field.type === 'password' && (
+                <button
+                  onClick={() => setShowPassword({ ...showPassword, [field.key]: !showPassword[field.key] })}
+                  style={{
+                    position: 'absolute', right: 10, top: 34,
+                    padding: 4, background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  {showPassword[field.key] ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              )}
             </div>
           ))}
 
-          {/* Webhook URLs */}
           {Object.keys(webhookUrls).length > 0 && (
-            <div className="pt-2 border-t" style={{ borderColor: 'var(--border-primary)' }}>
-              <label className="text-xs font-medium mb-2 block flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
-                <Link className="w-3 h-3" />URLs Webhook
-              </label>
+            <div style={{ paddingTop: 8, borderTop: '1px solid var(--border-subtle)' }}>
+              <SectionTitle icon={<Link size={12} />}>URLs Webhook</SectionTitle>
               {Object.entries(webhookUrls).map(([key, url]: [string, any]) => (
-                <div key={key} className="flex items-center gap-2 mb-1.5">
-                  <code
-                    className="flex-1 text-[11px] px-2 py-1.5 rounded truncate"
-                    style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}
-                  >
+                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <code style={{
+                    flex: 1, fontSize: 11, padding: '6px 10px', borderRadius: 6,
+                    background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
                     {String(url)}
                   </code>
-                  <button
-                    onClick={() => onCopy(String(url), key)}
-                    className="p-1 rounded hover:bg-white/5 flex-shrink-0"
-                    title="Copier"
-                  >
-                    {copied === key
-                      ? <Check className="w-3.5 h-3.5" style={{ color: '#22c55e' }} />
-                      : <Copy className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
-                    }
-                  </button>
+                  <IconButton onClick={() => onCopy(String(url), key)} title="Copier" color={copied === key ? '#22c55e' : undefined}>
+                    {copied === key ? <Check size={14} /> : <Copy size={14} />}
+                  </IconButton>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Register webhook button (Telegram, etc.) */}
           {['telegram', 'slack', 'whatsapp'].includes(channel.type) && (
-            <div className="pt-2">
-              <button
+            <div style={{ paddingTop: 8 }}>
+              <SecondaryButton
+                size="sm"
+                icon={registering ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
                 onClick={handleRegisterWebhook}
                 disabled={registering}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
-                style={{ background: `${color}20`, color }}
+                style={{ width: '100%', justifyContent: 'center' }}
               >
-                {registering
-                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  : <Zap className="w-3.5 h-3.5" />
-                }
                 {registering ? 'Enregistrement...' : 'Enregistrer le Webhook'}
-              </button>
+              </SecondaryButton>
               {registerResult && (
-                <div
-                  className="mt-2 p-2.5 rounded-lg text-xs"
-                  style={{
-                    background: registerResult.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-                    color: registerResult.ok ? '#22c55e' : '#ef4444',
-                  }}
-                >
+                <div style={{
+                  marginTop: 8, padding: 10, borderRadius: 8, fontSize: 12,
+                  background: `color-mix(in srgb, ${registerResult.ok ? '#22c55e' : '#ef4444'} 10%, transparent)`,
+                  color: registerResult.ok ? '#22c55e' : '#ef4444',
+                  border: `1px solid color-mix(in srgb, ${registerResult.ok ? '#22c55e' : '#ef4444'} 25%, transparent)`,
+                }}>
                   {registerResult.ok
                     ? `Webhook enregistré ✓${registerResult.webhook_url ? ` → ${registerResult.webhook_url}` : ''}`
                     : `Erreur — ${registerResult.error}`}
@@ -767,51 +717,40 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
             </div>
           )}
 
-          {/* Test result */}
           {testResult && (
-            <div
-              className="p-3 rounded-lg text-xs"
-              style={{
-                background: testResult.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-                color: testResult.ok ? '#22c55e' : '#ef4444',
-              }}
-            >
+            <div style={{
+              padding: 12, borderRadius: 10, fontSize: 12,
+              background: `color-mix(in srgb, ${testResult.ok ? '#22c55e' : '#ef4444'} 10%, transparent)`,
+              color: testResult.ok ? '#22c55e' : '#ef4444',
+              border: `1px solid color-mix(in srgb, ${testResult.ok ? '#22c55e' : '#ef4444'} 25%, transparent)`,
+            }}>
               {testResult.ok ? `Connecté — ${testResult.info}` : `Erreur — ${testResult.error}`}
             </div>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between px-5 py-3 border-t" style={{ borderColor: 'var(--border-primary)' }}>
-          <button
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '12px 20px', borderTop: '1px solid var(--border-subtle)',
+        }}>
+          <SecondaryButton
+            size="sm"
+            icon={testing === channel.id ? <Loader2 size={14} className="animate-spin" /> : <Activity size={14} />}
             onClick={() => onTest(channel.id)}
             disabled={testing === channel.id}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
-            style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}
           >
-            {testing === channel.id
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Activity className="w-3.5 h-3.5" />
-            }
             Tester
-          </button>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              className="px-3 py-1.5 rounded-lg text-xs"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              Annuler
-            </button>
-            <button
+          </SecondaryButton>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <SecondaryButton size="sm" onClick={onClose}>Annuler</SecondaryButton>
+            <PrimaryButton
+              size="sm"
+              icon={saving ? <Loader2 size={14} className="animate-spin" /> : undefined}
               onClick={onSave}
               disabled={saving}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-medium"
-              style={{ background: color, color: 'white' }}
             >
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
               Enregistrer
-            </button>
+            </PrimaryButton>
           </div>
         </div>
       </div>
@@ -822,61 +761,52 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
 // ── Logs List ──────────────────────────────────────────────────────
 function LogsList({ logs, onRefresh, onClear }: any) {
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{logs.length} événements</span>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onRefresh}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-white/5 transition-colors"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            <RefreshCw className="w-3 h-3" />Rafraîchir
-          </button>
-          {logs.length > 0 && (
-            <button
-              onClick={onClear}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-white/5 transition-colors"
-              style={{ color: '#ef4444' }}
-            >
-              <Trash2 className="w-3 h-3" />Vider
-            </button>
-          )}
-        </div>
-      </div>
+    <SectionCard>
+      <SectionTitle
+        icon={<FileText size={12} />}
+        right={
+          <>
+            <SecondaryButton size="sm" icon={<RefreshCw size={12} />} onClick={onRefresh}>Rafraîchir</SecondaryButton>
+            {logs.length > 0 && (
+              <SecondaryButton size="sm" danger icon={<Trash2 size={12} />} onClick={onClear}>Vider</SecondaryButton>
+            )}
+          </>
+        }
+      >
+        {logs.length} événements
+      </SectionTitle>
 
       {logs.length === 0 ? (
-        <div className="text-center py-12" style={{ color: 'var(--text-muted)' }}>
-          <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
-          <p className="text-sm">Aucun log</p>
+        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)' }}>
+          <FileText className="w-8 h-8" style={{ margin: '0 auto 8px', opacity: 0.3 }} />
+          <p style={{ fontSize: 13 }}>Aucun log</p>
         </div>
       ) : (
-        <div className="space-y-1">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {logs.map((log: any) => (
-            <div
-              key={log.id}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs"
-              style={{ background: 'var(--bg-secondary)' }}
-            >
-              {log.direction === 'in' && <ArrowDownLeft className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#3b82f6' }} />}
-              {log.direction === 'out' && <ArrowUpRight className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#22c55e' }} />}
-              {log.direction === 'system' && <Settings className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />}
-              <span className="font-medium flex-shrink-0" style={{ color: 'var(--text-primary)', minWidth: 80 }}>
-                {log.channel_name}
-              </span>
-              <span className="flex-1 truncate" style={{ color: 'var(--text-muted)' }}>
+            <div key={log.id} style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '8px 12px', borderRadius: 8, fontSize: 12,
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--border-subtle)',
+            }}>
+              {log.direction === 'in' && <ArrowDownLeft className="w-3.5 h-3.5" style={{ color: '#3b82f6', flexShrink: 0 }} />}
+              {log.direction === 'out' && <ArrowUpRight className="w-3.5 h-3.5" style={{ color: '#22c55e', flexShrink: 0 }} />}
+              {log.direction === 'system' && <Settings className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />}
+              <span style={{ fontWeight: 600, color: 'var(--text-primary)', minWidth: 80, flexShrink: 0 }}>{log.channel_name}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
                 {log.summary}
               </span>
               {log.status === 'error' && (
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#ef4444' }} />
+                <AlertTriangle className="w-3.5 h-3.5" style={{ color: '#ef4444', flexShrink: 0 }} />
               )}
-              <span className="flex-shrink-0 opacity-50" style={{ color: 'var(--text-muted)' }}>
+              <span style={{ opacity: 0.5, color: 'var(--text-muted)', flexShrink: 0 }}>
                 {log.timestamp ? new Date(log.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''}
               </span>
             </div>
           ))}
         </div>
       )}
-    </div>
+    </SectionCard>
   )
 }

@@ -8,6 +8,7 @@ import {
 import { useStore } from '../stores/appStore'
 import { api, apiFetch } from '../services/api'
 import InfoButton from '../components/InfoButton'
+import { PageHeader, TabBar } from '../components/ui'
 
 // ── Emoji picker inline pour les skills ──────────────────────────────────────
 const SKILL_EMOJIS = [
@@ -535,47 +536,35 @@ export default function AgentSettings() {
   }
 
   const tabs = [
-    { id: 'mode', label: 'Mode', icon: SettingsIcon },
-    { id: 'model', label: 'Modèle', icon: Cpu },
-    { id: 'skills', label: 'Skills', icon: Sparkles },
-    { id: 'subagents', label: 'Sous-agents', icon: Users },
-    { id: 'personality', label: 'Personnalité', icon: Bot },
-    { id: 'inter-agent', label: 'Conversations inter-agents', icon: MessageSquare },
-    { id: 'security', label: 'Sécurité', icon: Shield },
+    { key: 'mode', label: 'Mode', icon: <SettingsIcon className="w-3.5 h-3.5" /> },
+    { key: 'model', label: 'Modèle', icon: <Cpu className="w-3.5 h-3.5" /> },
+    { key: 'skills', label: 'Skills', icon: <Sparkles className="w-3.5 h-3.5" /> },
+    { key: 'subagents', label: 'Sous-agents', icon: <Users className="w-3.5 h-3.5" /> },
+    { key: 'personality', label: 'Personnalité', icon: <Bot className="w-3.5 h-3.5" /> },
+    { key: 'inter-agent', label: 'Conversations inter-agents', icon: <MessageSquare className="w-3.5 h-3.5" /> },
+    {
+      key: 'security',
+      label: 'Sécurité',
+      icon: <Shield className="w-3.5 h-3.5" />,
+      badge: securityScan ? (
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: securityScan.score >= 80 ? 'var(--accent-success)' : 'var(--accent-danger)',
+        }} />
+      ) : undefined,
+    },
   ]
 
   return (
     <div className="max-w-6xl mx-auto p-6 h-full overflow-y-auto">
-      {/* Header — aligned on the Consciousness plugin style */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <Bot className="w-7 h-7" style={{ color: 'var(--accent-primary)' }} />
-          <div>
-            <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Configuration Agent</h1>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Mode d'autonomie, modèles, skills, sous-agents, personnalité et sécurité</p>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Bot size={18} />}
+        title="Configuration Agent"
+        subtitle="Mode d'autonomie, modèles, skills, sous-agents, personnalité et sécurité"
+      />
 
-      {/* Tab bar — aligned on the Consciousness plugin style */}
-      <div className="flex gap-1 flex-wrap pb-1 mb-6">
-        {tabs.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-colors"
-            style={activeTab === tab.id
-              ? { background: 'color-mix(in srgb, var(--accent-primary) 15%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)' }
-              : { color: 'var(--text-muted)', border: '1px solid transparent' }
-            }
-          >
-            <tab.icon className="w-3.5 h-3.5" />
-            {tab.label}
-            {tab.id === 'security' && securityScan && (
-              <span className="w-2 h-2 rounded-full ml-0.5" style={{ background: securityScan.score >= 80 ? 'var(--accent-success)' : 'var(--accent-danger)' }} />
-            )}
-          </button>
-        ))}
+      <div style={{ marginBottom: 20 }}>
+        <TabBar tabs={tabs} active={activeTab} onChange={setActiveTab} />
       </div>
 
       <div className="rounded-xl border p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
