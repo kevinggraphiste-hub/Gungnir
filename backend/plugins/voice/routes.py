@@ -36,6 +36,55 @@ def _get_user_id(request_or_ws) -> int:
     return getattr(getattr(request_or_ws, "state", None), "user_id", None) or 0
 
 
+async def _authenticate_websocket(websocket: WebSocket) -> bool:
+    """Validate a WebSocket handshake against the token in query params.
+
+    WebSockets bypass the HTTP auth middleware, so this function provides the
+    equivalent protection. It mirrors core.main.token_auth_middleware: if at
+    least one user has a token, a valid Bearer-style token is required; if no
+    user has a token yet (open/setup mode), anonymous access is allowed.
+
+    Sets ``websocket.state.user_id`` / ``username`` on success so downstream
+    per-user path helpers pick the right directory.
+
+    Returns True if the WS may proceed, False if it should be closed.
+    The caller must close the WS (with code 4001) on False.
+    """
+    import hashlib
+    from backend.core.db.engine import get_session
+    from backend.core.db.models import User
+    from sqlalchemy import select
+
+    token = websocket.query_params.get("token", "") or ""
+
+    try:
+        async for session in get_session():
+            has_tokens = (await session.execute(
+                select(User.api_token).where(User.api_token.isnot(None)).limit(1)
+            )).scalar() is not None
+
+            if not has_tokens:
+                # Open/setup mode — anonymous access allowed, uid defaults to 0
+                return True
+
+            if not token:
+                return False
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            result = await session.execute(
+                select(User).where(User.api_token == token_hash, User.is_active == True)
+            )
+            user = result.scalar()
+            if not user:
+                return False
+            websocket.state.user_id = user.id
+            websocket.state.username = user.username
+            return True
+    except Exception as e:
+        logger.warning(f"WS auth error (denying): {e}")
+        return False
+    return False
+
+
 def _user_sessions_file(request: Request) -> Path:
     """Return per-user voice sessions file path."""
     uid = _get_user_id(request)
@@ -136,7 +185,13 @@ def _get_nested(data: dict, path: str):
 
 
 def _get_voice_config(provider: str = "elevenlabs") -> dict:
-    """Load voice config for a specific provider from settings."""
+    """Load GLOBAL voice config for a provider from settings.
+
+    Prefer :func:`_get_voice_config_for_user` whenever a Request/WebSocket is
+    available — it scopes the read to the authenticated user's
+    ``UserSettings.voice_config``. This sync helper is only used by the public
+    ``/health`` endpoint, which has no user context.
+    """
     try:
         from backend.core.config.settings import Settings
         settings = Settings.load()
@@ -146,6 +201,81 @@ def _get_voice_config(provider: str = "elevenlabs") -> dict:
     except Exception as e:
         logger.warning(f"Failed to load voice config: {e}")
     return {"enabled": False, "api_key": None, "voice_id": None, "agent_id": None, "language": "fr"}
+
+
+async def _load_user_voice_config(user_id: int, provider: str) -> dict:
+    """Load a user's per-provider voice config from UserSettings.voice_config.
+
+    API keys come back already decrypted. Empty dict if unset.
+    """
+    if not user_id:
+        return {}
+    from backend.core.db.engine import get_session
+    from backend.core.db.models import UserSettings
+    from backend.core.config.settings import decrypt_value
+    from sqlalchemy import select
+
+    try:
+        async for session in get_session():
+            r = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == int(user_id))
+            )
+            us = r.scalar_one_or_none()
+            if us is None:
+                return {}
+            vc = (us.voice_config or {}).get(provider) or {}
+            if not vc:
+                return {}
+            out = dict(vc)
+            if out.get("api_key"):
+                out["api_key"] = decrypt_value(out["api_key"])
+            return out
+    except Exception as e:
+        logger.warning(f"Failed to load user voice config uid={user_id}: {e}")
+    return {}
+
+
+async def _get_voice_config_for_user(request_or_ws, provider: str = "elevenlabs") -> dict:
+    """Resolve a voice provider config preferring the authenticated user's
+    ``UserSettings.voice_config`` over the legacy global ``Settings.voice``.
+
+    Order: per-user entry (if non-empty) → global. Prevents one user's API
+    key from being handed to an anonymous caller or another user.
+    """
+    uid = _get_user_id(request_or_ws)
+    if uid:
+        per_user = await _load_user_voice_config(uid, provider)
+        if per_user and per_user.get("api_key"):
+            return per_user
+    return _get_voice_config(provider)
+
+
+async def _save_user_voice_agent_id(user_id: int, provider: str, agent_id: str) -> None:
+    """Persist a ConvAI-style agent_id into the user's voice_config slot."""
+    if not user_id or not agent_id:
+        return
+    from backend.core.db.engine import get_session
+    from backend.core.db.models import UserSettings
+    from sqlalchemy import select
+    from sqlalchemy.orm.attributes import flag_modified
+
+    try:
+        async for session in get_session():
+            r = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == int(user_id))
+            )
+            us = r.scalar_one_or_none()
+            if us is None:
+                return
+            vc = dict(us.voice_config or {})
+            entry = dict(vc.get(provider) or {})
+            entry["agent_id"] = agent_id
+            vc[provider] = entry
+            us.voice_config = vc
+            flag_modified(us, "voice_config")
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"Failed to save agent_id user={user_id} provider={provider}: {e}")
 
 
 def _get_llm_key(provider: str) -> Optional[str]:
@@ -231,22 +361,16 @@ PROVIDER_INFO = {
 
 @router.get("/providers")
 async def list_voice_providers(request: Request):
-    """List all voice providers with their configuration status."""
-    try:
-        from backend.core.config.settings import Settings
-        settings = Settings.load()
-    except Exception:
-        return {"providers": []}
-
+    """List all voice providers with the current user's configuration status."""
     providers = []
     for name, info in PROVIDER_INFO.items():
-        vcfg = settings.voice.get(name, None)
-        has_voice_key = bool(vcfg and vcfg.api_key) if vcfg else False
-        has_llm_key = bool(settings.providers.get(name if name != "grok" else "xai", None))
-
-        # For grok, check xai provider or openrouter
+        vcfg = await _get_voice_config_for_user(request, name)
+        has_voice_key = bool(vcfg.get("api_key"))
+        # For grok we only care about an LLM key (no dedicated voice key).
         if name == "grok":
             has_llm_key = bool(_get_llm_key("xai"))
+        else:
+            has_llm_key = bool(_get_llm_key(name))
 
         providers.append({
             "name": name,
@@ -254,9 +378,9 @@ async def list_voice_providers(request: Request):
             "enabled": has_voice_key or has_llm_key,
             "has_voice_key": has_voice_key,
             "has_llm_key": has_llm_key,
-            "has_agent": bool(vcfg and vcfg.agent_id) if vcfg else False,
-            "voice_id": (vcfg.voice_id if vcfg else None) or "",
-            "language": (vcfg.language if vcfg else None) or "fr",
+            "has_agent": bool(vcfg.get("agent_id")),
+            "voice_id": vcfg.get("voice_id") or "",
+            "language": vcfg.get("language") or "fr",
         })
 
     # Add custom providers
@@ -284,10 +408,10 @@ async def list_voice_providers(request: Request):
 
 
 @router.post("/provider/test")
-async def test_voice_provider(data: dict):
-    """Test a voice provider connection."""
+async def test_voice_provider(data: dict, request: Request):
+    """Test a voice provider connection using the caller's own credentials."""
     provider = data.get("provider", "elevenlabs")
-    cfg = _get_voice_config(provider)
+    cfg = await _get_voice_config_for_user(request, provider)
     api_key = cfg.get("api_key") or _get_llm_key(provider if provider != "grok" else "xai")
 
     if not api_key:
@@ -348,9 +472,9 @@ ELEVENLABS_CONVAI_API = "https://api.elevenlabs.io/v1/convai"
 
 
 @router.get("/convai/config")
-async def convai_config():
-    """Return ElevenLabs ConvAI configuration status."""
-    cfg = _get_voice_config("elevenlabs")
+async def convai_config(request: Request):
+    """Return ElevenLabs ConvAI configuration status for the current user."""
+    cfg = await _get_voice_config_for_user(request, "elevenlabs")
     has_key = bool(cfg.get("api_key"))
     has_agent = bool(cfg.get("agent_id"))
     return {
@@ -364,9 +488,9 @@ async def convai_config():
 
 
 @router.get("/convai/signed-url")
-async def convai_signed_url():
-    """Generate a signed WebSocket URL for ElevenLabs ConvAI."""
-    cfg = _get_voice_config("elevenlabs")
+async def convai_signed_url(request: Request):
+    """Generate a signed WebSocket URL for ElevenLabs ConvAI (per-user)."""
+    cfg = await _get_voice_config_for_user(request, "elevenlabs")
     api_key = cfg.get("api_key")
     agent_id = cfg.get("agent_id")
 
@@ -402,9 +526,10 @@ async def convai_signed_url():
 
 
 @router.post("/convai/create-agent")
-async def convai_create_agent():
-    """Create an ElevenLabs ConvAI agent with Gungnir personality."""
-    cfg = _get_voice_config("elevenlabs")
+async def convai_create_agent(request: Request):
+    """Create an ElevenLabs ConvAI agent with Gungnir personality (per-user)."""
+    uid = _get_user_id(request)
+    cfg = await _get_voice_config_for_user(request, "elevenlabs")
     api_key = cfg.get("api_key")
     voice_id = cfg.get("voice_id")
     language = cfg.get("language", "fr")
@@ -450,15 +575,13 @@ async def convai_create_agent():
                 if not new_agent_id:
                     raise HTTPException(500, "Pas d'agent_id dans la réponse")
 
-                # Save to config
+                # Persist the agent_id to the CURRENT user's voice_config.
+                # Never write to the global Settings.voice — that would let
+                # one user overwrite another user's agent reference.
                 try:
-                    from backend.core.config.settings import Settings
-                    settings = Settings.load()
-                    if "elevenlabs" in settings.voice:
-                        settings.voice["elevenlabs"].agent_id = new_agent_id
-                        settings.save()
+                    await _save_user_voice_agent_id(uid, "elevenlabs", new_agent_id)
                 except Exception as e:
-                    logger.warning(f"Agent created but save failed: {e}")
+                    logger.warning(f"Agent created but per-user save failed: {e}")
 
                 logger.info(f"ConvAI agent created: {new_agent_id}")
                 return {"ok": True, "agent_id": new_agent_id, "name": agent_config["name"]}
@@ -474,9 +597,9 @@ async def convai_create_agent():
 
 
 @router.get("/convai/voices")
-async def convai_list_voices():
-    """List available ElevenLabs voices."""
-    cfg = _get_voice_config("elevenlabs")
+async def convai_list_voices(request: Request):
+    """List available ElevenLabs voices (per-user credentials)."""
+    cfg = await _get_voice_config_for_user(request, "elevenlabs")
     api_key = cfg.get("api_key")
     if not api_key:
         raise HTTPException(400, "Clé API ElevenLabs non configurée")
@@ -509,23 +632,11 @@ async def openai_realtime_relay(websocket: WebSocket):
     PCM16 24kHz bidirectionnel. VAD automatique côté OpenAI."""
     await websocket.accept()
 
-    # ── Auth: validate token from query params ──
-    token = websocket.query_params.get("token", "")
-    if token:
-        import hashlib
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        from backend.core.db.engine import get_session
-        from backend.core.db.models import User
-        from sqlalchemy import select
-        async for session in get_session():
-            result = await session.execute(
-                select(User).where(User.api_token == token_hash, User.is_active == True)
-            )
-            if not result.scalar():
-                await websocket.close(code=4001, reason="Token invalide")
-                return
+    if not await _authenticate_websocket(websocket):
+        await websocket.close(code=4001, reason="Authentification requise")
+        return
 
-    api_key = _get_voice_config("openai").get("api_key") or _get_llm_key("openai")
+    api_key = (await _get_voice_config_for_user(websocket, "openai")).get("api_key") or _get_llm_key("openai")
     if not api_key:
         await websocket.send_json({"type": "error", "error": "Clé API OpenAI non configurée"})
         await websocket.close()
@@ -610,23 +721,11 @@ async def google_realtime_relay(websocket: WebSocket):
     PCM16 16kHz in → 24kHz out. VAD automatique."""
     await websocket.accept()
 
-    # ── Auth: validate token from query params ──
-    token = websocket.query_params.get("token", "")
-    if token:
-        import hashlib
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        from backend.core.db.engine import get_session
-        from backend.core.db.models import User
-        from sqlalchemy import select
-        async for session in get_session():
-            result = await session.execute(
-                select(User).where(User.api_token == token_hash, User.is_active == True)
-            )
-            if not result.scalar():
-                await websocket.close(code=4001, reason="Token invalide")
-                return
+    if not await _authenticate_websocket(websocket):
+        await websocket.close(code=4001, reason="Authentification requise")
+        return
 
-    api_key = _get_voice_config("google").get("api_key") or _get_llm_key("google")
+    api_key = (await _get_voice_config_for_user(websocket, "google")).get("api_key") or _get_llm_key("google")
     if not api_key:
         await websocket.send_json({"type": "error", "error": "Clé API Google non configurée"})
         await websocket.close()
@@ -796,21 +895,9 @@ async def grok_realtime_relay(websocket: WebSocket):
     Protocole OpenAI-compatible. PCM16 24kHz."""
     await websocket.accept()
 
-    # ── Auth: validate token from query params ──
-    token = websocket.query_params.get("token", "")
-    if token:
-        import hashlib
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        from backend.core.db.engine import get_session
-        from backend.core.db.models import User
-        from sqlalchemy import select
-        async for session in get_session():
-            result = await session.execute(
-                select(User).where(User.api_token == token_hash, User.is_active == True)
-            )
-            if not result.scalar():
-                await websocket.close(code=4001, reason="Token invalide")
-                return
+    if not await _authenticate_websocket(websocket):
+        await websocket.close(code=4001, reason="Authentification requise")
+        return
 
     api_key = _get_llm_key("xai")
     if not api_key:
@@ -996,21 +1083,9 @@ async def custom_realtime_relay(websocket: WebSocket, provider_id: str):
     Uses the provider's config to build WS URL, auth, audio message format."""
     await websocket.accept()
 
-    # ── Auth: validate token from query params ──
-    token = websocket.query_params.get("token", "")
-    if token:
-        import hashlib
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        from backend.core.db.engine import get_session
-        from backend.core.db.models import User
-        from sqlalchemy import select
-        async for session in get_session():
-            result = await session.execute(
-                select(User).where(User.api_token == token_hash, User.is_active == True)
-            )
-            if not result.scalar():
-                await websocket.close(code=4001, reason="Token invalide")
-                return
+    if not await _authenticate_websocket(websocket):
+        await websocket.close(code=4001, reason="Authentification requise")
+        return
 
     # Load provider config
     providers = _load_custom_providers(_user_custom_providers_file(websocket))

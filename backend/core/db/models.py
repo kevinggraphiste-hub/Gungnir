@@ -147,6 +147,11 @@ class UserSettings(Base):
     #  "convo_id": <int|None>,  # the welcome conversation id
     #  "answers": {"name": "...", "formality": "tu", ...}}
     onboarding_state = Column(JSON, default=dict)
+    # Per-user voice provider config (ElevenLabs, OpenAI Realtime, Gemini Live, Grok).
+    # Shape: {"elevenlabs": {"enabled": bool, "api_key": "enc:...", "voice_id": str,
+    #         "agent_id": str, "language": "fr"}, "openai": {...}, ...}
+    # API keys are encrypted with Settings.encrypt_value before persistence.
+    voice_config = Column(JSON, default=dict)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="settings")
@@ -314,6 +319,7 @@ async def init_db(engine):
         ("ALTER TABLE conversations ADD COLUMN folder_id INTEGER REFERENCES conversation_folders(id)", "folder_id -> conversations"),
         ("ALTER TABLE user_settings ADD COLUMN language VARCHAR(10) DEFAULT 'fr'", "language -> user_settings"),
         ("ALTER TABLE huntr_searches ADD COLUMN topic VARCHAR(20) DEFAULT 'web'", "topic -> huntr_searches"),
+        ("ALTER TABLE user_settings ADD COLUMN voice_config JSONB DEFAULT '{}'::jsonb", "voice_config -> user_settings"),
     ]
     for sql, label in migrations:
         try:

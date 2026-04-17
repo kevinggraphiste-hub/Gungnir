@@ -1,7 +1,7 @@
 {
   "name": "analytics",
   "display_name": "Analytics",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "icon": "BarChart3",
   "route": "/analytics",
   "sidebar_position": 99,

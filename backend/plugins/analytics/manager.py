@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, List
 
-from sqlalchemy import select, func, and_, extract, cast, Date, text
+from sqlalchemy import select, func, and_, extract, cast, Date, text, false as sa_false
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.db.models import CostAnalytics, BudgetSettings, ProviderBudget, Conversation
@@ -19,9 +19,14 @@ logger = logging.getLogger("gungnir.plugins.analytics")
 
 
 def _user_filter(query, user_id: Optional[int]):
-    """Add user_id filter via Conversation join if user_id is provided."""
+    """Scope a CostAnalytics query to a user via Conversation join.
+
+    If user_id is None (open/setup mode or anomaly), return zero rows — never
+    aggregate across all users. This prevents cross-user data leaks when
+    authentication is absent or misconfigured.
+    """
     if user_id is None:
-        return query
+        return query.where(sa_false())
     return query.join(Conversation, CostAnalytics.conversation_id == Conversation.id).where(
         Conversation.user_id == user_id
     )
@@ -222,15 +227,17 @@ class CostManager:
 
     async def get_conversations(self, session: AsyncSession, limit: int = 50, user_id: Optional[int] = None) -> List[dict]:
         try:
+            if user_id is None:
+                return []
             q = select(
                 Conversation.id, Conversation.title,
                 func.sum(CostAnalytics.cost).label("tc"),
                 func.sum(CostAnalytics.tokens_input + CostAnalytics.tokens_output).label("tt"),
                 func.count(CostAnalytics.id).label("mc"),
                 func.max(CostAnalytics.created_at).label("last"),
-            ).join(CostAnalytics, CostAnalytics.conversation_id == Conversation.id)
-            if user_id is not None:
-                q = q.where(Conversation.user_id == user_id)
+            ).join(CostAnalytics, CostAnalytics.conversation_id == Conversation.id).where(
+                Conversation.user_id == user_id
+            )
             q = q.group_by(Conversation.id, Conversation.title).order_by(func.max(CostAnalytics.created_at).desc()).limit(limit)
             r = await session.execute(q)
             return [{"conversation_id": row.id, "title": row.title,

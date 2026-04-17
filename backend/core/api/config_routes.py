@@ -13,6 +13,27 @@ from sqlalchemy import select, delete
 router = APIRouter()
 
 
+async def _build_user_voice_overlay(user_id, session: AsyncSession) -> dict:
+    """Build {provider: {enabled, provider}} reflecting the caller's own
+    UserSettings.voice_config entries. Empty when the user has none."""
+    default_providers = ("elevenlabs", "openai", "google", "grok")
+    overlay = {name: {"enabled": False, "provider": name} for name in default_providers}
+    if not user_id:
+        return overlay
+    try:
+        user_settings = await get_user_settings(user_id, session)
+        for name, vc in (user_settings.voice_config or {}).items():
+            if not isinstance(vc, dict):
+                continue
+            overlay[name] = {
+                "enabled": bool(vc.get("enabled")) and bool(vc.get("api_key")),
+                "provider": vc.get("provider") or name,
+            }
+    except Exception:
+        pass
+    return overlay
+
+
 @router.get("/config")
 async def get_config(request: Request, session: AsyncSession = Depends(get_session)):
     settings = Settings.load()
@@ -36,10 +57,10 @@ async def get_config(request: Request, session: AsyncSession = Depends(get_sessi
             }
             for name, p in settings.providers.items()
         },
-        "voice": {
-            name: {"enabled": v.enabled, "provider": v.provider}
-            for name, v in settings.voice.items()
-        },
+        # Per-user voice config overlay. Reports whether THIS user has a key
+        # configured for each built-in provider (no global fallback so the UI
+        # can never show one user's config state to another).
+        "voice": await _build_user_voice_overlay(user_id, session),
         "services": {
             name: {
                 "enabled": s.enabled,
@@ -89,13 +110,91 @@ async def configure_provider(provider_name: str, config: ProviderConfig, request
 
 
 @router.post("/config/voice/{voice_name}")
-async def configure_voice(voice_name: str, config: VoiceConfig):
-    settings = Settings.load()
-    if voice_name not in settings.voice:
-        settings.voice[voice_name] = VoiceConfig()
-    settings.voice[voice_name] = config
-    settings.save()
-    return {"status": "saved"}
+async def configure_voice(
+    voice_name: str,
+    config: VoiceConfig,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Save a voice provider config for the current user. Strictly per-user:
+    the global ``Settings.voice`` store is no longer touched. In open/setup
+    mode the config is written to user #1 (admin)."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        first_user = await session.execute(select(User).order_by(User.id).limit(1))
+        fallback_user = first_user.scalar()
+        if fallback_user is None:
+            return JSONResponse(
+                {"error": "Créez un utilisateur avant de configurer la voix (POST /api/users)."},
+                status_code=400,
+            )
+        user_id = fallback_user.id
+
+    user_settings = await get_user_settings(user_id, session)
+    voice_config = dict(user_settings.voice_config or {})
+    existing = dict(voice_config.get(voice_name) or {})
+
+    payload = config.model_dump()
+    # Encrypt the API key if provided (and not an already-encrypted marker or mask)
+    api_key = (payload.get("api_key") or "").strip()
+    if api_key and api_key != "***":
+        payload["api_key"] = encrypt_value(api_key)
+    elif api_key == "***":
+        # Preserve the previously stored (encrypted) key
+        payload["api_key"] = existing.get("api_key")
+
+    # Merge: keep fields the caller didn't send
+    merged = {**existing, **{k: v for k, v in payload.items() if v is not None or k in existing}}
+    voice_config[voice_name] = merged
+
+    from sqlalchemy.orm.attributes import flag_modified
+    user_settings.voice_config = voice_config
+    flag_modified(user_settings, "voice_config")
+    await session.commit()
+    return {"status": "saved", "provider": voice_name}
+
+
+@router.get("/config/user/voice")
+async def get_user_voice_config(request: Request, session: AsyncSession = Depends(get_session)):
+    """Return the current user's voice config per provider (API keys masked)."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        return {"voice": {}}
+    user_settings = await get_user_settings(user_id, session)
+    voice_config = user_settings.voice_config or {}
+    result = {}
+    for name, vc in voice_config.items():
+        if not isinstance(vc, dict):
+            continue
+        masked = {k: v for k, v in vc.items() if k != "api_key"}
+        masked["has_api_key"] = bool(vc.get("api_key"))
+        result[name] = masked
+    return {"voice": result}
+
+
+@router.delete("/config/user/voice/{voice_name}")
+async def delete_user_voice_config(
+    voice_name: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Remove the current user's voice config entry for a provider."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        first_user = await session.execute(select(User).order_by(User.id).limit(1))
+        fallback_user = first_user.scalar()
+        if fallback_user is None:
+            return {"ok": True}
+        user_id = fallback_user.id
+    user_settings = await get_user_settings(user_id, session)
+    voice_config = dict(user_settings.voice_config or {})
+    if voice_name in voice_config:
+        del voice_config[voice_name]
+        from sqlalchemy.orm.attributes import flag_modified
+        user_settings.voice_config = voice_config
+        flag_modified(user_settings, "voice_config")
+        await session.commit()
+    return {"ok": True, "deleted": voice_name}
 
 
 @router.post("/config/app")
