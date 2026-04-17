@@ -242,6 +242,7 @@ export default function ChannelsPlugin() {
         <PageHeader
           icon={<RadioTower size={18} />}
           title="Channels"
+          version="1.0.1"
           subtitle={<span>Canaux d'entrée / sortie de ton agent <InfoButton>
             <strong>Les channels</strong> sont les portes d'entrée par lesquelles ton agent reçoit des messages de l'extérieur : Telegram, Discord, Slack, WhatsApp, email, widget web, API HTTP…
             <br /><br />

@@ -284,7 +284,15 @@ export default function ConsciousnessPage() {
           <div className="flex items-center gap-3">
             <Brain className="w-7 h-7" style={{ color: data.enabled ? 'var(--accent-primary)' : 'var(--text-muted)' }} />
             <div>
-              <h1 className="text-xl font-bold">Conscience v3</h1>
+              <div className="flex items-baseline gap-2">
+                <h1 className="text-xl font-bold">Conscience</h1>
+                <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded"
+                  style={{
+                    background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
+                    color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
+                    border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
+                  }}>v3.0.1</span>
+              </div>
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                 Architecture comportementale — {data.enabled ? `Niveau ${LEVEL_LABELS[data.level]?.label || data.level}` : 'Désactivée'}
               </p>

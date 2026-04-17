@@ -1,7 +1,7 @@
 {
   "name": "channels",
   "display_name": "Channels",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "icon": "RadioTower",
   "route": "/channels",
   "sidebar_position": 6,

@@ -573,7 +573,17 @@ export default function VoicePlugin() {
               <Radio className="w-5 h-5" style={{ color: 'var(--accent-primary-light)' }} />
             </div>
             <div>
-              <h1 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Chat Vocal Temps Réel</h1>
+              <div className="flex items-baseline gap-2">
+                <h1 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Chat Vocal Temps Réel</h1>
+                <span
+                  className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded"
+                  style={{
+                    background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
+                    color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
+                    border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
+                  }}
+                >v1.0.1</span>
+              </div>
               <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                 {enabledProviders.length} provider{enabledProviders.length !== 1 ? 's' : ''} disponible{enabledProviders.length !== 1 ? 's' : ''}
               </p>

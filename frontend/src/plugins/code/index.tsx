@@ -380,7 +380,13 @@ export default function SpearCodePlugin() {
       }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--scarlet)" strokeWidth="2.5" style={{ flexShrink: 0 }}><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: -0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>SpearCode</span>
-        <span style={{ fontSize: 8, color: 'var(--text-muted)', opacity: 0.4, flexShrink: 0 }}>v2.0</span>
+        <span style={{
+          fontSize: 10, fontFamily: 'monospace', fontWeight: 600,
+          padding: '2px 6px', borderRadius: 4, flexShrink: 0,
+          background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
+          color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
+          border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
+        }}>v2.0.1</span>
 
         <div style={{ flex: 1 }} />
 

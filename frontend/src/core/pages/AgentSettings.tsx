@@ -561,6 +561,7 @@ export default function AgentSettings() {
         icon={<Bot size={18} />}
         title="Configuration Agent"
         subtitle="Mode d'autonomie, modèles, skills, sous-agents, personnalité et sécurité"
+        version="1.0.1"
       />
 
       <div style={{ marginBottom: 20 }}>

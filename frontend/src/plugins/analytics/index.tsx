@@ -303,6 +303,7 @@ export default function AnalyticsPlugin() {
         <PageHeader
           icon={<BarChart3 size={18} />}
           title="Analytics"
+          version="1.0.1"
           subtitle="Suivi des coûts, tokens et usage par modèle"
           actions={
             <>
