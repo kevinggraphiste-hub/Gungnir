@@ -17,37 +17,188 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 router = APIRouter()
 
-# ── Data persistence ────────────────────────────────────────────────
+# ── Data persistence (per-user) ─────────────────────────────────────
+# Layout:
+#   data/channels/_index.json            → {channel_owner: {channel_id: user_id}}
+#   data/channels/{uid}/channels.json    → {channel_id: channel_obj}
+#   data/channels/{uid}/channel_logs.json → [log_entries]
+#
+# Auto-migrates from legacy layout (data/channels.json + data/channel_logs.json)
+# on module import if the new structure is missing.
 DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
-CHANNELS_FILE = DATA_DIR / "channels.json"
-CHANNEL_LOGS_FILE = DATA_DIR / "channel_logs.json"
+CHANNELS_BASE = DATA_DIR / "channels"
+CHANNELS_INDEX = CHANNELS_BASE / "_index.json"
+LEGACY_CHANNELS_FILE = DATA_DIR / "channels.json"
+LEGACY_LOGS_FILE = DATA_DIR / "channel_logs.json"
 
 MAX_LOGS = 500
+DEFAULT_ORPHAN_OWNER = 1  # kevin/admin — receives logs whose channel_id is unknown
 
 
-def _load_channels() -> dict:
-    if CHANNELS_FILE.exists():
-        return json.loads(CHANNELS_FILE.read_text(encoding="utf-8"))
+def _user_channels_path(user_id: int) -> Path:
+    p = CHANNELS_BASE / str(user_id) / "channels.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _user_logs_path(user_id: int) -> Path:
+    p = CHANNELS_BASE / str(user_id) / "channel_logs.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _load_user_channels(user_id: int) -> dict:
+    p = _user_channels_path(user_id)
+    if p.exists():
+        return json.loads(p.read_text(encoding="utf-8"))
     return {}
 
 
-def _save_channels(channels: dict):
-    CHANNELS_FILE.write_text(json.dumps(channels, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+def _save_user_channels(user_id: int, channels: dict) -> None:
+    p = _user_channels_path(user_id)
+    p.write_text(json.dumps(channels, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
 
-def _load_logs() -> list:
-    if CHANNEL_LOGS_FILE.exists():
-        return json.loads(CHANNEL_LOGS_FILE.read_text(encoding="utf-8"))
+def _load_user_logs(user_id: int) -> list:
+    p = _user_logs_path(user_id)
+    if p.exists():
+        return json.loads(p.read_text(encoding="utf-8"))
     return []
 
 
-def _save_logs(logs: list):
-    CHANNEL_LOGS_FILE.write_text(json.dumps(logs[-MAX_LOGS:], indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+def _save_user_logs(user_id: int, logs: list) -> None:
+    p = _user_logs_path(user_id)
+    p.write_text(json.dumps(logs[-MAX_LOGS:], indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+
+
+def _read_index() -> dict:
+    if not CHANNELS_INDEX.exists():
+        return {}
+    try:
+        d = json.loads(CHANNELS_INDEX.read_text(encoding="utf-8"))
+        owners = d.get("channel_owner") if isinstance(d, dict) else None
+        return owners if isinstance(owners, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_index(index: dict) -> None:
+    CHANNELS_BASE.mkdir(parents=True, exist_ok=True)
+    current = {}
+    if CHANNELS_INDEX.exists():
+        try:
+            current = json.loads(CHANNELS_INDEX.read_text(encoding="utf-8"))
+            if not isinstance(current, dict):
+                current = {}
+        except Exception:
+            current = {}
+    current["channel_owner"] = index
+    current.setdefault("_migrated_at", datetime.now(timezone.utc).isoformat())
+    CHANNELS_INDEX.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _channel_owner(channel_id: str) -> Optional[int]:
+    uid = _read_index().get(channel_id)
+    return int(uid) if uid is not None else None
+
+
+def _register_channel_owner(channel_id: str, user_id: int) -> None:
+    idx = _read_index()
+    idx[channel_id] = int(user_id)
+    _write_index(idx)
+
+
+def _unregister_channel_owner(channel_id: str) -> None:
+    idx = _read_index()
+    if channel_id in idx:
+        del idx[channel_id]
+        _write_index(idx)
+
+
+def _all_user_dirs() -> list:
+    if not CHANNELS_BASE.exists():
+        return []
+    out = []
+    for p in CHANNELS_BASE.iterdir():
+        if p.is_dir() and p.name.isdigit():
+            out.append(int(p.name))
+    return sorted(out)
+
+
+def _load_channels() -> dict:
+    """Aggregate read of all users' channels. Read-only; mutations must go
+    through the per-user helpers + index registration."""
+    merged = {}
+    for uid in _all_user_dirs():
+        merged.update(_load_user_channels(uid))
+    return merged
+
+
+def _auto_migrate_legacy() -> None:
+    """One-shot migration: legacy data/channels.json + channel_logs.json
+    → data/channels/{uid}/. Idempotent; skips if index already exists."""
+    if CHANNELS_INDEX.exists():
+        return
+    if not LEGACY_CHANNELS_FILE.exists() and not LEGACY_LOGS_FILE.exists():
+        return
+    import logging, shutil as _shutil
+    log = logging.getLogger("gungnir.plugins.channels")
+    try:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        channels_by_user: dict = {}
+        index: dict = {}
+        if LEGACY_CHANNELS_FILE.exists():
+            legacy = json.loads(LEGACY_CHANNELS_FILE.read_text(encoding="utf-8"))
+            if isinstance(legacy, dict):
+                for cid, ch in legacy.items():
+                    if not isinstance(ch, dict):
+                        continue
+                    uid = int(ch.get("user_id") or DEFAULT_ORPHAN_OWNER)
+                    index[cid] = uid
+                    channels_by_user.setdefault(uid, {})[cid] = ch
+            _shutil.copy2(LEGACY_CHANNELS_FILE, LEGACY_CHANNELS_FILE.with_suffix(f".json.bak.{stamp}"))
+
+        logs_by_user: dict = {}
+        orphan_count = 0
+        if LEGACY_LOGS_FILE.exists():
+            legacy_logs = json.loads(LEGACY_LOGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(legacy_logs, list):
+                for entry in legacy_logs:
+                    if not isinstance(entry, dict):
+                        continue
+                    uid = index.get(entry.get("channel_id"))
+                    if uid is None:
+                        uid = DEFAULT_ORPHAN_OWNER
+                        orphan_count += 1
+                    logs_by_user.setdefault(int(uid), []).append(entry)
+            _shutil.copy2(LEGACY_LOGS_FILE, LEGACY_LOGS_FILE.with_suffix(f".json.bak.{stamp}"))
+
+        CHANNELS_BASE.mkdir(parents=True, exist_ok=True)
+        _write_index(index)
+        for uid, channels in channels_by_user.items():
+            _save_user_channels(uid, channels)
+        for uid, logs in logs_by_user.items():
+            _save_user_logs(uid, logs)
+
+        log.info(
+            "channels auto-migration OK: %d channels, %d logs (orphans=%d)",
+            sum(len(c) for c in channels_by_user.values()),
+            sum(len(l) for l in logs_by_user.values()),
+            orphan_count,
+        )
+    except Exception as e:
+        log.error("channels auto-migration failed: %s", e)
+
+
+_auto_migrate_legacy()
 
 
 def _add_log(channel_id: str, channel_name: str, direction: str, summary: str, status: str = "ok"):
-    logs = _load_logs()
+    """Append a log entry under the owning user's file (falls back to admin
+    when the channel_id is unknown — e.g. after a deletion or legacy orphan)."""
+    uid = _channel_owner(channel_id) or DEFAULT_ORPHAN_OWNER
+    logs = _load_user_logs(uid)
     logs.append({
         "id": str(uuid.uuid4())[:8],
         "channel_id": channel_id,
@@ -57,7 +208,7 @@ def _add_log(channel_id: str, channel_name: str, direction: str, summary: str, s
         "status": status,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
-    _save_logs(logs)
+    _save_user_logs(uid, logs)
 
 
 def _mask_secret(value: str | None) -> str | None:
@@ -411,19 +562,19 @@ async def create_channel(data: ChannelConfig, request: Request):
     if data.type not in CHANNEL_CATALOG:
         raise HTTPException(400, f"Type inconnu: {data.type}")
 
-    channels = _load_channels()
-
-    # Assign channel to authenticated user
+    # Assign channel to authenticated user (fallback to admin for legacy no-auth contexts)
     auth_user_id = getattr(request.state, "user_id", None)
-    if auth_user_id:
-        data.user_id = auth_user_id
+    owner_uid = int(auth_user_id) if auth_user_id else DEFAULT_ORPHAN_OWNER
+    data.user_id = owner_uid
 
     # Générer une API key si type API et pas fournie
     if data.type == "api" and not data.config.get("api_key"):
         data.config["api_key"] = f"gun_{uuid.uuid4().hex[:24]}"
 
+    channels = _load_user_channels(owner_uid)
     channels[data.id] = data.model_dump()
-    _save_channels(channels)
+    _save_user_channels(owner_uid, channels)
+    _register_channel_owner(data.id, owner_uid)
     _add_log(data.id, data.name, "system", f"Canal {data.type} créé", "ok")
 
     return {"ok": True, "channel": channels[data.id]}
@@ -439,7 +590,10 @@ async def get_channel(channel_id: str):
 
 @router.put("/{channel_id}")
 async def update_channel(channel_id: str, data: dict, request: Request):
-    channels = _load_channels()
+    owner_uid = _channel_owner(channel_id)
+    if owner_uid is None:
+        raise HTTPException(404, "Canal introuvable")
+    channels = _load_user_channels(owner_uid)
     if channel_id not in channels:
         raise HTTPException(404, "Canal introuvable")
 
@@ -454,7 +608,7 @@ async def update_channel(channel_id: str, data: dict, request: Request):
             if v and "•" not in str(v):
                 ch.setdefault("config", {})[k] = v
     channels[channel_id] = ch
-    _save_channels(channels)
+    _save_user_channels(owner_uid, channels)
 
     # Auto-register webhook if channel has a token and is enabled
     webhook_result = None
@@ -473,25 +627,33 @@ async def update_channel(channel_id: str, data: dict, request: Request):
 
 @router.delete("/{channel_id}")
 async def delete_channel(channel_id: str):
-    channels = _load_channels()
+    owner_uid = _channel_owner(channel_id)
+    if owner_uid is None:
+        raise HTTPException(404, "Canal introuvable")
+    channels = _load_user_channels(owner_uid)
     if channel_id not in channels:
         raise HTTPException(404, "Canal introuvable")
     name = channels[channel_id].get("name", channel_id)
-    del channels[channel_id]
-    _save_channels(channels)
+    # Log before unregistering so _add_log can still find the owner
     _add_log(channel_id, name, "system", "Canal supprimé", "ok")
+    del channels[channel_id]
+    _save_user_channels(owner_uid, channels)
+    _unregister_channel_owner(channel_id)
     return {"ok": True}
 
 
 @router.post("/{channel_id}/toggle")
 async def toggle_channel(channel_id: str, request: Request):
-    channels = _load_channels()
+    owner_uid = _channel_owner(channel_id)
+    if owner_uid is None:
+        raise HTTPException(404, "Canal introuvable")
+    channels = _load_user_channels(owner_uid)
     if channel_id not in channels:
         raise HTTPException(404, "Canal introuvable")
     ch = channels[channel_id]
     ch["enabled"] = not ch.get("enabled", False)
     channels[channel_id] = ch
-    _save_channels(channels)
+    _save_user_channels(owner_uid, channels)
     status = "activé" if ch["enabled"] else "désactivé"
     _add_log(channel_id, ch.get("name", ""), "system", f"Canal {status}", "ok")
 
@@ -512,7 +674,10 @@ async def toggle_channel(channel_id: str, request: Request):
 # ── Incoming message handler (generic) ──────────────────────────────
 async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknown", sender_name: str = "unknown", metadata: dict = None):
     """Route un message entrant vers le chat Gungnir et retourne la réponse."""
-    channels = _load_channels()
+    owner_uid = _channel_owner(channel_id)
+    if owner_uid is None:
+        return None
+    channels = _load_user_channels(owner_uid)
     ch = channels.get(channel_id)
     if not ch:
         return None
@@ -522,7 +687,7 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
     ch["stats"]["messages_in"] = ch["stats"].get("messages_in", 0) + 1
     ch["stats"]["last_activity"] = datetime.now(timezone.utc).isoformat()
     channels[channel_id] = ch
-    _save_channels(channels)
+    _save_user_channels(owner_uid, channels)
 
     _add_log(channel_id, ch.get("name", ""), "in", f"[{sender_name}] {text[:100]}", "ok")
 
@@ -642,10 +807,11 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
             pass
 
         # Update outgoing stats
-        channels = _load_channels()
+        channels = _load_user_channels(owner_uid)
         if channel_id in channels:
+            channels[channel_id].setdefault("stats", {"messages_in": 0, "messages_out": 0, "last_activity": None})
             channels[channel_id]["stats"]["messages_out"] = channels[channel_id]["stats"].get("messages_out", 0) + 1
-            _save_channels(channels)
+            _save_user_channels(owner_uid, channels)
 
         _add_log(channel_id, ch.get("name", ""), "out", f"Réponse: {str(response_text)[:100]}", "ok")
         return response_text
@@ -1058,17 +1224,41 @@ async def register_webhook(channel_id: str, request: Request):
 
 
 # ── Logs ────────────────────────────────────────────────────────────
+async def _is_admin(auth_user_id: Optional[int]) -> bool:
+    if not auth_user_id:
+        return False
+    try:
+        from backend.core.db.engine import async_session
+        from backend.core.db.models import User
+        async with async_session() as session:
+            user = await session.get(User, int(auth_user_id))
+            return bool(user and user.is_admin)
+    except Exception:
+        return False
+
+
 @router.get("/logs")
-async def get_logs(channel_id: Optional[str] = None, limit: int = 100):
-    logs = _load_logs()
+async def get_logs(request: Request, channel_id: Optional[str] = None, limit: int = 100):
+    auth_uid = getattr(request.state, "user_id", None)
+    is_admin = await _is_admin(auth_uid)
+    # Admins see every user's logs; regular users see only their own bucket.
+    uids = _all_user_dirs() if is_admin else ([int(auth_uid)] if auth_uid else [])
+    logs: list = []
+    for uid in uids:
+        logs.extend(_load_user_logs(uid))
     if channel_id:
         logs = [l for l in logs if l.get("channel_id") == channel_id]
+    logs.sort(key=lambda l: l.get("timestamp", ""), reverse=False)
     return {"logs": logs[-limit:]}
 
 
 @router.delete("/logs")
-async def clear_logs():
-    _save_logs([])
+async def clear_logs(request: Request):
+    auth_uid = getattr(request.state, "user_id", None)
+    is_admin = await _is_admin(auth_uid)
+    uids = _all_user_dirs() if is_admin else ([int(auth_uid)] if auth_uid else [])
+    for uid in uids:
+        _save_user_logs(uid, [])
     return {"ok": True}
 
 
@@ -1217,7 +1407,8 @@ async def slack_oauth_callback(channel_id: str, request: Request):
             media_type="text/html"
         )
 
-    channels = _load_channels()
+    owner_uid = _channel_owner(channel_id)
+    channels = _load_user_channels(owner_uid) if owner_uid is not None else {}
     ch = channels.get(channel_id)
     if not ch or ch.get("type") != "slack":
         return Response(
@@ -1266,7 +1457,7 @@ async def slack_oauth_callback(channel_id: str, request: Request):
         ch["config"]["bot_user_id"] = bot_user_id
         ch["enabled"] = True
         channels[channel_id] = ch
-        _save_channels(channels)
+        _save_user_channels(owner_uid, channels)
 
         _add_log(channel_id, ch.get("name", ""), "system",
                  f"OAuth Slack réussi — workspace: {team_name}, bot activé", "ok")
@@ -1336,14 +1527,15 @@ async def discord_oauth_callback(channel_id: str, request: Request):
             media_type="text/html"
         )
 
-    channels = _load_channels()
+    owner_uid = _channel_owner(channel_id)
+    channels = _load_user_channels(owner_uid) if owner_uid is not None else {}
     ch = channels.get(channel_id)
     if ch:
         if guild_id:
             ch.setdefault("config", {})["guild_id"] = guild_id
         ch["enabled"] = True
         channels[channel_id] = ch
-        _save_channels(channels)
+        _save_user_channels(owner_uid, channels)
         _add_log(channel_id, ch.get("name", ""), "system",
                  f"OAuth Discord réussi — guild: {guild_id}", "ok")
 
