@@ -9,6 +9,8 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import InfoButton from '@core/components/InfoButton'
+import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/components/ui'
+import { Bot, Plus, RefreshCw, Settings as SettingsIcon, Play, Pencil, Trash2, Sparkles } from 'lucide-react'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -122,50 +124,36 @@ const N8N_STATUS: Record<string, { label: string; color: string }> = {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+const AUTOMATA_TABS = [
+  { key: 'tasks' as const, label: 'Tâches planifiées' },
+  { key: 'n8n' as const, label: 'Workflows n8n' },
+]
+
 export default function AutomataPlugin() {
   const [tab, setTab] = useState<'tasks' | 'n8n'>('tasks')
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Header with tabs */}
-      <div style={{
-        padding: '14px 24px 0', background: 'var(--bg-secondary)',
-        borderBottom: '1px solid var(--border)', flexShrink: 0,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>Automata</span>
-            <InfoButton>
-              <strong>Les automatas</strong> sont des tâches que l'agent exécute tout seul à des moments précis — une fois à une date donnée, toutes les N minutes/heures, ou selon une expression cron.
-              <br /><br />
-              À chaque déclenchement, l'agent lit ton prompt et y répond comme si tu venais de l'écrire dans le chat. Il a accès aux mêmes outils que pendant une conversation normale (recherche web, MCP, filesystem, etc.), donc il peut par exemple faire une veille matinale qui pousse un résumé sur Discord, ou un backup quotidien.
-              <br /><br />
-              Le <em>heartbeat</em> est le chef d'orchestre : c'est lui qui scanne tes automatas à intervalle régulier et les déclenche. Si tu arrêtes le heartbeat dans Paramètres, tes automatas ne tournent plus.
-            </InfoButton>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 0 }}>
-          <TabBtn active={tab === 'tasks'} onClick={() => setTab('tasks')}>Taches planifiees</TabBtn>
-          <TabBtn active={tab === 'n8n'} onClick={() => setTab('n8n')}>Workflows n8n</TabBtn>
-        </div>
+      <div style={{ padding: '16px 24px 0' }}>
+        <PageHeader
+          icon={<Bot size={18} />}
+          title="Automata"
+          subtitle={<span>Tâches planifiées & workflows n8n <InfoButton>
+            <strong>Les automatas</strong> sont des tâches que l'agent exécute tout seul à des moments précis — une fois à une date donnée, toutes les N minutes/heures, ou selon une expression cron.
+            <br /><br />
+            À chaque déclenchement, l'agent lit ton prompt et y répond comme si tu venais de l'écrire dans le chat. Il a accès aux mêmes outils que pendant une conversation normale.
+            <br /><br />
+            Le <em>heartbeat</em> est le chef d'orchestre : c'est lui qui scanne tes automatas à intervalle régulier et les déclenche.
+          </InfoButton></span> as any}
+        />
+      </div>
+
+      <div style={{ padding: '0 24px 12px' }}>
+        <TabBar tabs={AUTOMATA_TABS} active={tab} onChange={setTab} />
       </div>
 
       {tab === 'tasks' ? <TasksTab /> : <N8nTab />}
     </div>
-  )
-}
-
-function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} style={{
-      padding: '8px 18px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-      background: 'transparent', border: 'none',
-      borderBottom: active ? '2px solid var(--scarlet)' : '2px solid transparent',
-      color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-      transition: 'all 0.15s',
-    }}>
-      {children}
-    </button>
   )
 }
 
@@ -211,25 +199,22 @@ function TasksTab() {
         padding: '10px 24px', borderBottom: '1px solid var(--border)',
         background: 'var(--bg-secondary)', display: 'flex', gap: 20, alignItems: 'center', flexShrink: 0,
       }}>
-        <Badge label="Total" value={stats.total} color="var(--text-secondary)" />
-        <Badge label="Actives" value={stats.active} color="#22c55e" />
-        <Badge label="En pause" value={stats.paused} color="#f59e0b" />
-        <Badge label="Executions" value={stats.total_runs} color="var(--text-secondary)" />
+        <StatChip label="Total" value={stats.total} color="var(--text-secondary)" />
+        <StatChip label="Actives" value={stats.active} color="#22c55e" />
+        <StatChip label="En pause" value={stats.paused} color="#f59e0b" />
+        <StatChip label="Executions" value={stats.total_runs} color="var(--text-secondary)" />
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
           {(['all', 'active', 'paused'] as const).map(f => (
             <FilterBtn key={f} active={filter === f} onClick={() => setFilter(f)}>
               {f === 'all' ? 'Toutes' : f === 'active' ? 'Actives' : 'En pause'}
             </FilterBtn>
           ))}
-          <button onClick={() => setCreating(true)} style={{
-            background: 'var(--scarlet)', border: 'none', borderRadius: 6,
-            padding: '5px 12px', color: '#fff', cursor: 'pointer', marginLeft: 8,
-            fontSize: 11, fontWeight: 700,
-          }} title="Créer une nouvelle tâche">+ Nouvelle</button>
-          <button onClick={load} style={{
-            background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
-            padding: '3px 8px', color: 'var(--text-muted)', cursor: 'pointer',
-          }} title="Rafraichir">↻</button>
+          <PrimaryButton size="sm" icon={<Plus size={12} />} onClick={() => setCreating(true)} style={{ marginLeft: 8 }} title="Créer une nouvelle tâche">
+            Nouvelle
+          </PrimaryButton>
+          <SecondaryButton size="sm" icon={<RefreshCw size={12} />} onClick={load} title="Rafraichir">
+            Rafraichir
+          </SecondaryButton>
         </div>
       </div>
 
@@ -455,21 +440,11 @@ function N8nTab() {
 
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
               {configured && (
-                <button onClick={() => setConfigMode(false)} style={{
-                  padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)',
-                  background: 'transparent', color: 'var(--text-secondary)',
-                  cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                }}>Annuler</button>
+                <SecondaryButton size="sm" onClick={() => setConfigMode(false)}>Annuler</SecondaryButton>
               )}
-              <button onClick={handleSaveConfig} disabled={saving || !n8nUrl} style={{
-                padding: '8px 20px', borderRadius: 8, border: 'none',
-                background: n8nUrl ? 'var(--scarlet)' : 'var(--bg-tertiary)',
-                color: n8nUrl ? '#fff' : 'var(--text-muted)',
-                cursor: n8nUrl ? 'pointer' : 'not-allowed',
-                fontSize: 12, fontWeight: 600,
-              }}>
+              <PrimaryButton size="sm" onClick={handleSaveConfig} disabled={saving || !n8nUrl}>
                 {saving ? 'Test en cours...' : 'Connecter'}
-              </button>
+              </PrimaryButton>
             </div>
           </div>
         </div>
@@ -534,15 +509,18 @@ function N8nTab() {
             )}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button onClick={handleSaveMcp} disabled={mcpSaving || !mcpCommand} style={{
-                padding: '8px 20px', borderRadius: 8, border: 'none',
-                background: mcpCommand ? '#6366f1' : 'var(--bg-tertiary)',
-                color: mcpCommand ? '#fff' : 'var(--text-muted)',
-                cursor: mcpCommand ? 'pointer' : 'not-allowed',
-                fontSize: 12, fontWeight: 600,
-              }}>
+              <PrimaryButton
+                size="sm"
+                onClick={handleSaveMcp}
+                disabled={mcpSaving || !mcpCommand}
+                style={{
+                  background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                  border: '1px solid color-mix(in srgb, #6366f1 60%, transparent)',
+                  boxShadow: '0 2px 8px color-mix(in srgb, #6366f1 20%, transparent)',
+                }}
+              >
                 {mcpSaving ? 'Connexion...' : mcpConnected ? 'Reconnecter MCP' : 'Connecter MCP'}
-              </button>
+              </PrimaryButton>
             </div>
           </div>
         </div>
@@ -561,18 +539,16 @@ function N8nTab() {
         padding: '10px 24px', borderBottom: '1px solid var(--border)',
         background: 'var(--bg-secondary)', display: 'flex', gap: 20, alignItems: 'center', flexShrink: 0,
       }}>
-        <Badge label="Workflows" value={workflows.length} color="var(--text-secondary)" />
-        <Badge label="Actifs" value={activeWf} color="#22c55e" />
-        <Badge label="Inactifs" value={workflows.length - activeWf} color="#f59e0b" />
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button onClick={loadWorkflows} style={{
-            background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
-            padding: '3px 8px', color: 'var(--text-muted)', cursor: 'pointer',
-          }} title="Rafraichir">↻</button>
-          <button onClick={() => setConfigMode(true)} style={{
-            background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
-            padding: '3px 8px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11,
-          }} title="Configuration n8n">⚙️</button>
+        <StatChip label="Workflows" value={workflows.length} color="var(--text-secondary)" />
+        <StatChip label="Actifs" value={activeWf} color="#22c55e" />
+        <StatChip label="Inactifs" value={workflows.length - activeWf} color="#f59e0b" />
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+          <SecondaryButton size="sm" icon={<RefreshCw size={12} />} onClick={loadWorkflows} title="Rafraichir">
+            Rafraichir
+          </SecondaryButton>
+          <SecondaryButton size="sm" icon={<SettingsIcon size={12} />} onClick={() => setConfigMode(true)} title="Configuration n8n">
+            Config
+          </SecondaryButton>
         </div>
       </div>
 
@@ -722,8 +698,8 @@ function WorkflowCard({ workflow: w, onToggle, onExecute, onRefresh }: {
           )}
 
           <div style={{ opacity: hover ? 1 : 0, transition: 'opacity 0.15s', display: 'flex', gap: 4 }}>
-            <SmallBtn title="Modifier via IA" onClick={() => setShowModify(!showModify)}>✨</SmallBtn>
-            <SmallBtn title="Executer" onClick={onExecute}>▶</SmallBtn>
+            <SmallBtn title="Modifier via IA" onClick={() => setShowModify(!showModify)}><Sparkles size={13} /></SmallBtn>
+            <SmallBtn title="Executer" onClick={onExecute}><Play size={13} /></SmallBtn>
           </div>
         </div>
       </div>
@@ -749,19 +725,9 @@ function WorkflowCard({ workflow: w, onToggle, onExecute, onRefresh }: {
                 color: 'var(--text-primary)', fontSize: 12, outline: 'none',
               }}
             />
-            <button
-              onClick={handleModify}
-              disabled={modifying || !modifyPrompt.trim()}
-              style={{
-                padding: '8px 16px', borderRadius: 8, border: 'none',
-                background: modifyPrompt.trim() ? 'var(--scarlet)' : 'var(--bg-tertiary)',
-                color: modifyPrompt.trim() ? '#fff' : 'var(--text-muted)',
-                cursor: modifyPrompt.trim() ? 'pointer' : 'not-allowed',
-                fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
-              }}
-            >
+            <PrimaryButton size="sm" onClick={handleModify} disabled={modifying || !modifyPrompt.trim()} style={{ whiteSpace: 'nowrap' }}>
               {modifying ? 'En cours...' : 'Envoyer'}
-            </button>
+            </PrimaryButton>
           </div>
 
           {modifyResult && (
@@ -824,9 +790,9 @@ function TaskCard({ task, expanded, editing, onToggle, onDelete, onRunNow, onExp
             background: `${tc.color}20`, color: tc.color, flexShrink: 0,
           }}>{tc.label}</span>
           <div style={{ display: 'flex', gap: 4, opacity: hover ? 1 : 0, transition: 'opacity 0.15s' }}>
-            <SmallBtn title="Executer" onClick={onRunNow}>▶</SmallBtn>
-            <SmallBtn title="Modifier" onClick={onEdit}>✏️</SmallBtn>
-            <SmallBtn title="Supprimer" onClick={onDelete} danger>🗑</SmallBtn>
+            <SmallBtn title="Executer" onClick={onRunNow}><Play size={13} /></SmallBtn>
+            <SmallBtn title="Modifier" onClick={onEdit}><Pencil size={13} /></SmallBtn>
+            <SmallBtn title="Supprimer" onClick={onDelete} danger><Trash2 size={13} /></SmallBtn>
           </div>
         </div>
         <div style={{
@@ -907,8 +873,8 @@ function EditPanel({ task, onSave, onCancel }: { task: Task; onSave: (u: any) =>
       )}
       <div><label style={lStyle}>Prompt envoye au LLM</label><textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={4} style={{ ...iStyle, resize: 'vertical', fontFamily: "'JetBrains Mono', monospace" }} /></div>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button onClick={onCancel} style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>Annuler</button>
-        <button onClick={save} style={{ padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--scarlet)', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>Enregistrer</button>
+        <SecondaryButton size="sm" onClick={onCancel}>Annuler</SecondaryButton>
+        <PrimaryButton size="sm" onClick={save}>Enregistrer</PrimaryButton>
       </div>
     </div>
   )
@@ -1043,14 +1009,8 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
         {error && <div style={{ fontSize: 11, color: '#dc2626' }}>{error}</div>}
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-          <button onClick={onCancel} style={{
-            padding: '7px 16px', borderRadius: 8, border: '1px solid var(--border)',
-            background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 11, fontWeight: 600,
-          }}>Annuler</button>
-          <button onClick={submit} style={{
-            padding: '7px 16px', borderRadius: 8, border: 'none',
-            background: 'var(--scarlet)', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 700,
-          }}>Créer</button>
+          <SecondaryButton size="sm" onClick={onCancel}>Annuler</SecondaryButton>
+          <PrimaryButton size="sm" icon={<Plus size={12} />} onClick={submit}>Créer</PrimaryButton>
         </div>
       </div>
     </div>
@@ -1059,7 +1019,7 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
 
 // ── Shared components ────────────────────────────────────────────────────────
 
-function Badge({ label, value, color }: { label: string; value: number; color: string }) {
+function StatChip({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>{label}</span>

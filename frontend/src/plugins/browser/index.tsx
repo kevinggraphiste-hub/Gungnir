@@ -8,6 +8,8 @@
  */
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useStore } from '@core/stores/appStore'
+import { PrimaryButton, SecondaryButton } from '@core/components/ui'
+import { ArrowRight, Loader2, Clock, Download, Plus } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -503,17 +505,18 @@ export default function HuntRPlugin() {
           </p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button
+          <SecondaryButton
+            size="sm"
+            icon={<Clock size={12} />}
             onClick={() => setShowHistory(!showHistory)}
-            style={{
-              padding: '5px 10px', borderRadius: 6, fontSize: 11,
-              background: showHistory ? 'var(--scarlet-light)' : 'var(--bg-tertiary)',
-              color: showHistory ? 'var(--scarlet)' : 'var(--text-secondary)',
-              border: '1px solid var(--border)', cursor: 'pointer',
-            }}
+            style={showHistory ? {
+              background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
+              color: 'var(--scarlet)',
+              border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
+            } : undefined}
           >
             Historique
-          </button>
+          </SecondaryButton>
         </div>
       </div>
 
@@ -630,29 +633,16 @@ export default function HuntRPlugin() {
                 </button>
 
                 {/* Search button */}
-                <button
+                <PrimaryButton
                   onClick={() => doSearch()}
                   disabled={searching || !query.trim()}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 5,
-                    padding: '11px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600,
-                    background: 'linear-gradient(135deg, var(--scarlet), var(--ember, #ea580c))',
-                    color: '#fff', border: 'none', cursor: 'pointer', flexShrink: 0,
-                    opacity: searching || !query.trim() ? 0.5 : 1,
-                  }}
+                  icon={searching
+                    ? <Loader2 size={14} style={{ animation: 'huntr-spin 1s linear infinite' }} />
+                    : <ArrowRight size={14} />}
+                  style={{ flexShrink: 0 }}
                 >
-                  {searching ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                      style={{ animation: 'huntr-spin 1s linear infinite' }}>
-                      <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                    </svg>
-                  ) : (
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-                    </svg>
-                  )}
                   Rechercher
-                </button>
+                </PrimaryButton>
               </div>
 
               {/* Topic segmented control */}
@@ -860,22 +850,21 @@ export default function HuntRPlugin() {
                       {result.search_count} sources &middot; {result.time_ms}ms
                     </span>
                     {result.answer && !searching && (
-                      <button
+                      <SecondaryButton
+                        size="sm"
+                        icon={<Download size={11} />}
                         onClick={() => exportAsPdf(query, result)}
                         title="Exporter la réponse en PDF"
                         style={{
-                          marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4,
-                          padding: '3px 10px', borderRadius: 20, fontSize: 10, fontWeight: 600,
-                          background: 'var(--bg-tertiary)', color: 'var(--scarlet)',
-                          border: '1px solid var(--scarlet)', cursor: 'pointer',
+                          marginLeft: 'auto',
+                          padding: '3px 10px',
+                          fontSize: 10,
+                          color: 'var(--scarlet)',
+                          border: '1px solid var(--scarlet)',
                         }}
                       >
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                          <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                        </svg>
                         PDF
-                      </button>
+                      </SecondaryButton>
                     )}
                   </div>
                 )}
@@ -1030,13 +1019,14 @@ export default function HuntRPlugin() {
 
                 {/* New search */}
                 {!searching && (
-                  <button onClick={handleClear} style={{
-                    alignSelf: 'center', padding: '7px 18px', borderRadius: 8,
-                    background: 'var(--bg-tertiary)', color: 'var(--text-secondary)',
-                    border: '1px solid var(--border)', cursor: 'pointer', fontSize: 12,
-                  }}>
+                  <SecondaryButton
+                    size="sm"
+                    icon={<Plus size={12} />}
+                    onClick={handleClear}
+                    style={{ alignSelf: 'center' }}
+                  >
                     Nouvelle recherche
-                  </button>
+                  </SecondaryButton>
                 )}
               </div>
             )}

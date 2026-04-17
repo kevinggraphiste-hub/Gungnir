@@ -12,6 +12,7 @@ import {
   Paperclip, Image as ImageIcon, Copy, ListTodo, Folder, FolderMinus, GripVertical,
   Calendar, Play, Pause, CheckCircle2, AlertCircle, Clock
 } from 'lucide-react'
+import { SecondaryButton } from '../components/ui'
 import VoiceModal from '../components/VoiceModal'
 import ApiKeysModal from '../components/ApiKeysModal'
 import UserModal from '../components/UserModal'
@@ -1301,29 +1302,38 @@ export default function Chat() {
               )}
             </div>
 
-            <button onClick={toggleTaskPanel} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
-              style={{
-                background: showTaskPanel ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'var(--bg-secondary)',
-                border: `1px solid ${showTaskPanel ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border)'}`,
-                color: showTaskPanel ? 'var(--accent-primary-light, var(--accent-primary))' : 'var(--text-secondary)',
-              }}
-              title="Todo-list de la conversation">
-              <ListTodo className="w-3.5 h-3.5" /> Tâches
-            </button>
-            <button onClick={() => setShowApiKeysModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
-              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
-              <Key className="w-3.5 h-3.5" /> {t('common.apiKeys')}
-            </button>
-            <button onClick={() => setShowUserModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
-              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
-              {currentUser ? (
+            <SecondaryButton
+              size="sm"
+              icon={<ListTodo className="w-3.5 h-3.5" />}
+              onClick={toggleTaskPanel}
+              title="Todo-list de la conversation"
+              style={showTaskPanel ? {
+                background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
+                color: 'var(--scarlet)',
+              } : undefined}
+            >
+              Tâches
+            </SecondaryButton>
+            <SecondaryButton
+              size="sm"
+              icon={<Key className="w-3.5 h-3.5" />}
+              onClick={() => setShowApiKeysModal(true)}
+            >
+              {t('common.apiKeys')}
+            </SecondaryButton>
+            <SecondaryButton
+              size="sm"
+              icon={currentUser ? (
                 <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold"
                   style={{ background: 'linear-gradient(to bottom right, var(--scarlet), var(--ember))', color: 'var(--text-primary)' }}>
                   {currentUser.display_name?.charAt(0)?.toUpperCase() || 'U'}
                 </div>
               ) : <User className="w-3.5 h-3.5" />}
+              onClick={() => setShowUserModal(true)}
+            >
               {currentUser?.display_name || t('common.user')}
-            </button>
+            </SecondaryButton>
           </div>
         </div>
 

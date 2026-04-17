@@ -5,6 +5,8 @@
  * filters by price/features, quick picks, descriptions.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { PageHeader, SecondaryButton } from '@core/components/ui'
+import { Layers, RefreshCw, Search as SearchIcon } from 'lucide-react'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -249,50 +251,39 @@ export default function ModelGuidePlugin() {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       {/* Header */}
-      <div style={{
-        padding: '14px 24px', borderBottom: '1px solid var(--border)',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        background: 'var(--bg-secondary)', flexShrink: 0,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>Guide des Modeles</span>
-          <span style={{
-            fontSize: 11, padding: '2px 8px', borderRadius: 6,
-            background: 'var(--scarlet)', color: '#fff', fontWeight: 600,
-          }}>{totalModels}</span>
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            background: 'var(--bg-tertiary)', borderRadius: 8, padding: '5px 12px',
-            border: '1px solid var(--border)', minWidth: 220,
-          }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
-              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-            </svg>
-            <input
-              type="text" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Rechercher..."
-              style={{
-                background: 'transparent', border: 'none', outline: 'none', flex: 1,
-                color: 'var(--text-primary)', fontSize: 12,
-              }}
-            />
-            {search && (
-              <button onClick={() => setSearch('')} style={{
-                background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: 0,
-              }}>×</button>
-            )}
-          </div>
-          <button onClick={loadData} style={{
-            background: 'transparent', border: '1px solid var(--border)', borderRadius: 8,
-            padding: '5px 10px', color: 'var(--text-secondary)', cursor: 'pointer',
-          }} title="Rafraichir">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 12a9 9 0 11-6.219-8.56" /><polyline points="21 3 21 9 15 9" />
-            </svg>
-          </button>
-        </div>
+      <div style={{ padding: '16px 24px 0' }}>
+        <PageHeader
+          icon={<Layers size={18} />}
+          title="Guide des Modèles"
+          subtitle={`${totalModels} modèle${totalModels > 1 ? 's' : ''} disponible${totalModels > 1 ? 's' : ''}`}
+          actions={(
+            <>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                background: 'var(--bg-secondary)', borderRadius: 8, padding: '6px 12px',
+                border: '1px solid var(--border-subtle)', minWidth: 220,
+              }}>
+                <SearchIcon size={13} color="var(--text-muted)" />
+                <input
+                  type="text" value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="Rechercher..."
+                  style={{
+                    background: 'transparent', border: 'none', outline: 'none', flex: 1,
+                    color: 'var(--text-primary)', fontSize: 12,
+                  }}
+                />
+                {search && (
+                  <button onClick={() => setSearch('')} style={{
+                    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: 0,
+                  }}>×</button>
+                )}
+              </div>
+              <SecondaryButton size="sm" icon={<RefreshCw size={12} />} onClick={loadData} title="Rafraichir">
+                Rafraichir
+              </SecondaryButton>
+            </>
+          )}
+        />
       </div>
 
       {/* Filters bar */}

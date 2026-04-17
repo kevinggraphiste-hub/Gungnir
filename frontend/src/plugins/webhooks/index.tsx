@@ -7,9 +7,10 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import InfoButton from '@core/components/InfoButton'
+import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/components/ui'
 import {
-  Plug, Plus, Settings, Trash2, Play, Square, RefreshCw,
-  CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronRight,
+  Plug, Plus, Settings, Trash2, Play, Square,
+  CheckCircle, Loader2, ChevronDown, ChevronRight,
   Webhook, ArrowUpRight, ArrowDownLeft, ExternalLink,
   Wrench, X, Search, Eye, EyeOff, Copy,
 } from 'lucide-react'
@@ -226,17 +227,21 @@ export default function WebhooksPlugin() {
 
   const activeIntegrations = integrations.filter(i => i.is_running)
 
+  const tabs = [
+    { key: 'integrations' as const, label: 'Apps & MCP', icon: <Plug size={14} /> },
+    { key: 'webhooks' as const, label: 'Webhooks', icon: <Webhook size={14} /> },
+    { key: 'logs' as const, label: 'Logs', icon: <Eye size={14} /> },
+  ]
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between p-6 pb-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl" style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 20%, transparent), color-mix(in srgb, var(--accent-secondary) 15%, transparent))' }}>
-            <Plug className="w-5 h-5" style={{ color: 'var(--accent-primary)' }} />
-          </div>
-          <div>
-            <div className="flex items-center gap-1">
-              <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Intégrations</h1>
+      <div className="px-6 pt-6">
+        <PageHeader
+          icon={<Plug size={18} />}
+          title="Intégrations"
+          subtitle={(
+            <span className="inline-flex items-center gap-1">
+              {activeIntegrations.length} active{activeIntegrations.length > 1 ? 's' : ''} — {mcpStatus?.total_tools || 0} outils disponibles pour l'agent
               <InfoButton>
                 <strong>Les intégrations</strong> sont des connecteurs vers des services externes (GitHub, n8n, Notion, Linear, Supabase, Sentry…) qui s'exposent à l'agent comme des <em>outils</em> appelables.
                 <br /><br />
@@ -246,36 +251,18 @@ export default function WebhooksPlugin() {
                 <br /><br />
                 Tout est <em>per-user</em> : tes intégrations et leurs outils sont isolés des autres utilisateurs de l'instance.
               </InfoButton>
-            </div>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              {activeIntegrations.length} active{activeIntegrations.length > 1 ? 's' : ''} — {mcpStatus?.total_tools || 0} outils disponibles pour l'agent
-            </p>
-          </div>
-        </div>
-        <button onClick={() => setShowCatalog(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-          style={{ background: 'var(--accent-primary)', color: '#fff' }}>
-          <Plus className="w-4 h-4" /> Ajouter
-        </button>
+            </span>
+          ) as any}
+          actions={(
+            <PrimaryButton size="sm" icon={<Plus size={14} />} onClick={() => setShowCatalog(true)}>
+              Ajouter
+            </PrimaryButton>
+          )}
+        />
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 px-6 mb-3">
-        {([
-          { id: 'integrations', label: 'Apps & MCP', icon: Plug },
-          { id: 'webhooks', label: 'Webhooks', icon: Webhook },
-          { id: 'logs', label: 'Logs', icon: Eye },
-        ] as const).map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-colors"
-            style={{
-              background: activeTab === tab.id ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'transparent',
-              color: activeTab === tab.id ? 'var(--accent-primary)' : 'var(--text-muted)',
-              border: `1px solid ${activeTab === tab.id ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'transparent'}`,
-            }}>
-            <tab.icon className="w-3.5 h-3.5" /> {tab.label}
-          </button>
-        ))}
+      <div className="px-6 pb-3">
+        <TabBar tabs={tabs} active={activeTab} onChange={setActiveTab} />
       </div>
 
       {/* Content */}
@@ -297,11 +284,11 @@ export default function WebhooksPlugin() {
                     <p className="text-xs max-w-md mx-auto leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                       Une intégration branche un service externe (GitHub, Notion, n8n, Linear, Supabase…) à ton agent sous forme d'<em>outils</em> qu'il pourra invoquer pendant une conversation ou un cron.
                     </p>
-                    <button onClick={() => setShowCatalog(true)}
-                      className="px-4 py-2 rounded-lg text-sm font-medium"
-                      style={{ background: 'var(--accent-primary)', color: '#fff' }}>
-                      <Plus className="w-4 h-4 inline mr-1" /> Parcourir le catalogue
-                    </button>
+                    <div className="flex justify-center">
+                      <PrimaryButton size="sm" icon={<Plus size={14} />} onClick={() => setShowCatalog(true)}>
+                        Parcourir le catalogue
+                      </PrimaryButton>
+                    </div>
                   </div>
                 ) : (
                   integrations.map(integ => {
@@ -403,11 +390,9 @@ export default function WebhooksPlugin() {
             {activeTab === 'webhooks' && (
               <div className="space-y-3">
                 <div className="flex justify-end">
-                  <button onClick={() => setShowNewWebhook(true)}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium"
-                    style={{ background: 'color-mix(in srgb, var(--accent-primary) 15%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)' }}>
-                    <Plus className="w-3 h-3" /> Nouveau webhook
-                  </button>
+                  <PrimaryButton size="sm" icon={<Plus size={12} />} onClick={() => setShowNewWebhook(true)}>
+                    Nouveau webhook
+                  </PrimaryButton>
                 </div>
 
                 {webhooks.length === 0 ? (
@@ -601,16 +586,12 @@ export default function WebhooksPlugin() {
             </div>
 
             <div className="flex gap-2 pt-2">
-              <button onClick={saveIntegration} disabled={actionLoading === 'save'}
-                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium"
-                style={{ background: 'var(--accent-primary)', color: '#fff' }}>
+              <PrimaryButton size="sm" className="flex-1 justify-center" onClick={saveIntegration} disabled={actionLoading === 'save'}>
                 {actionLoading === 'save' ? 'Sauvegarde...' : 'Sauvegarder & Fermer'}
-              </button>
-              <button onClick={() => setEditingInteg(null)}
-                className="px-4 py-2 rounded-lg text-sm border"
-                style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+              </PrimaryButton>
+              <SecondaryButton size="sm" onClick={() => setEditingInteg(null)}>
                 Annuler
-              </button>
+              </SecondaryButton>
             </div>
           </div>
         </div>
@@ -653,16 +634,13 @@ export default function WebhooksPlugin() {
             )}
 
             <div className="flex gap-2 pt-2">
-              <button onClick={createWebhook} disabled={!newWebhook.name || actionLoading === 'webhook'}
-                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-                style={{ background: 'var(--accent-primary)', color: '#fff' }}>
+              <PrimaryButton size="sm" className="flex-1 justify-center" icon={<Plus size={12} />}
+                onClick={createWebhook} disabled={!newWebhook.name || actionLoading === 'webhook'}>
                 Créer
-              </button>
-              <button onClick={() => setShowNewWebhook(false)}
-                className="px-4 py-2 rounded-lg text-sm border"
-                style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+              </PrimaryButton>
+              <SecondaryButton size="sm" onClick={() => setShowNewWebhook(false)}>
                 Annuler
-              </button>
+              </SecondaryButton>
             </div>
           </div>
         </div>
