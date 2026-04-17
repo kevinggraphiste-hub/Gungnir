@@ -386,7 +386,7 @@ export default function SpearCodePlugin() {
           background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
           color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
           border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
-        }}>v2.0.1</span>
+        }}>v2.1.0</span>
 
         <div style={{ flex: 1 }} />
 
