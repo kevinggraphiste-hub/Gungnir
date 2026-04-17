@@ -12,6 +12,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -102,22 +103,46 @@ def _is_allowed_workspace(p: Path) -> bool:
     return False
 
 
+def _default_workspace_for_current_user() -> Path:
+    """Workspace path used when a user has no custom override in their config.
+
+    Authenticated users get their own subfolder `data/workspace/{uid}`, open
+    mode keeps the shared `data/workspace` (no uid available to isolate by).
+    """
+    uid = _current_user_id.get(0) or 0
+    if uid > 0:
+        return DEFAULT_WORKSPACE / str(uid)
+    return DEFAULT_WORKSPACE
+
+
 def _load_config() -> dict:
     path = _user_config_file()
-    default = {"workspace": str(DEFAULT_WORKSPACE), "recent_files": [], "font_size": 14}
+    default = {
+        "workspace": str(_default_workspace_for_current_user()),
+        "recent_files": [],
+        "font_size": 14,
+    }
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return {**default, **(data or {})}
+            merged = {**default, **(data or {})}
+            # Legacy migration: if an older config still points at the shared
+            # root while this user now has an isolated default, swap it so
+            # the user's files don't silently leak into the shared folder.
+            uid = _current_user_id.get(0) or 0
+            if uid > 0 and merged.get("workspace") == str(DEFAULT_WORKSPACE):
+                merged["workspace"] = str(_default_workspace_for_current_user())
+            return merged
         except Exception:
             pass
-    # One-shot migration: if the legacy shared config still exists, copy it
-    # into the current user's file on first access so settings carry over.
+    # One-shot migration from the old shared config file.
     uid = _current_user_id.get(0) or 0
     if uid > 0 and _LEGACY_CODE_CONFIG_FILE.exists():
         try:
             legacy = json.loads(_LEGACY_CODE_CONFIG_FILE.read_text(encoding="utf-8"))
             merged = {**default, **(legacy or {})}
+            # Never carry the shared workspace over — rewrite to per-user path.
+            merged["workspace"] = str(_default_workspace_for_current_user())
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
             return merged
@@ -133,13 +158,23 @@ def _save_config(cfg: dict):
 
 
 def _workspace() -> Path:
-    uid = _current_user_id.get(0)
-    if uid and uid > 0:
-        # Per-user isolated workspace
-        ws = DEFAULT_WORKSPACE / str(uid)
-    else:
-        # Fallback: shared workspace (open mode / admin)
-        ws = DEFAULT_WORKSPACE
+    """Resolve the effective workspace: user-configured path if it passes the
+    allowed-path check, otherwise the per-user default (falls back to the
+    shared root only in open/setup mode)."""
+    try:
+        cfg = _load_config()
+        configured = cfg.get("workspace")
+    except Exception:
+        configured = None
+    if configured:
+        try:
+            p = Path(configured).resolve()
+            if _is_allowed_workspace(p):
+                p.mkdir(parents=True, exist_ok=True)
+                return p
+        except Exception:
+            pass
+    ws = _default_workspace_for_current_user()
     ws.mkdir(parents=True, exist_ok=True)
     return ws
 
@@ -451,9 +486,16 @@ async def upload_files(
 
 
 @router.get("/download")
-async def download_path(path: str = Query(..., min_length=1)):
-    """Download a workspace file (raw) or a directory (zip)."""
-    target = _safe_path(path)
+async def download_path(path: str = Query("", description="Chemin relatif ou vide pour exporter le workspace complet")):
+    """Download a workspace file (raw) or a directory (zip).
+
+    An empty path exports the entire workspace as <workspace>.zip.
+    """
+    rel = (path or "").strip()
+    if not rel or rel in (".", "/", "./"):
+        target = _workspace()
+    else:
+        target = _safe_path(rel)
     if not target.exists():
         raise HTTPException(404, "Introuvable")
 
@@ -947,15 +989,18 @@ class GitCommitRequest(BaseModel):
 
 @router.post("/git/commit")
 async def git_commit(req: GitCommitRequest):
-    """Stage files and commit."""
+    """Stage files and commit. Identity is taken from the user's saved
+    git_config entry (falls back to git defaults otherwise)."""
     ws = str(_workspace())
     if req.files:
         for f in req.files:
             await _git_exec("add", f, cwd=ws)
     else:
         await _git_exec("add", "-A", cwd=ws)
-    ok, out = await _git_exec("commit", "-m", req.message, cwd=ws)
-    return {"ok": ok, "output": out}
+    name, email = await _user_git_identity()
+    args = _apply_identity_args(name, email) + ["commit", "-m", req.message]
+    ok, out = await _git_exec(*args, cwd=ws)
+    return {"ok": ok, "output": out, "identity": {"name": name, "email": email} if name or email else None}
 
 
 @router.post("/git/init")
@@ -994,6 +1039,407 @@ async def git_checkout(data: dict):
         raise HTTPException(400, "Branche requise")
     ok, out = await _git_exec("checkout", branch, cwd=ws)
     return {"ok": ok, "output": out}
+
+
+# ── Git remote (push / pull / clone / remotes, with PAT credential helper) ──
+
+_GIT_HOST_TO_SERVICE = {
+    "github.com": "git_github",
+    "gitlab.com": "git_gitlab",
+    "bitbucket.org": "git_bitbucket",
+}
+
+_GIT_HOST_USERNAME = {
+    "github.com": "x-access-token",
+    "gitlab.com": "oauth2",
+    "bitbucket.org": "x-token-auth",
+}
+
+
+async def _git_exec_env(*args: str, cwd: str | None = None, env: dict | None = None) -> tuple[bool, str]:
+    """Like _git_exec but accepts a custom environment (for credential injection)."""
+    merged_env = os.environ.copy()
+    # Disable any interactive prompt — we never want git to block waiting for
+    # a password in a Docker container. Either the URL carries a PAT or the
+    # command fails fast with a clear error.
+    merged_env["GIT_TERMINAL_PROMPT"] = "0"
+    merged_env["GIT_ASKPASS"] = "/bin/echo"
+    if env:
+        merged_env.update(env)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd or str(_workspace()),
+            env=merged_env,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        out = stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")
+        return proc.returncode == 0, out.strip()
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return False, "Timeout (60s) — verifie ton PAT ou la connectivite."
+    except Exception as e:
+        return False, str(e)
+
+
+def _git_host_of(url: str) -> Optional[str]:
+    """Extract host from a git URL (https, git@host:... or bare host)."""
+    if not url:
+        return None
+    m = re.match(r"https?://([^/@]+?)(?::\d+)?/", url)
+    if m:
+        return m.group(1).lower()
+    m = re.match(r"git@([^:]+):", url)
+    if m:
+        return m.group(1).lower()
+    return None
+
+
+def _authed_url(url: str, token: Optional[str]) -> str:
+    """Inject a PAT into an https URL. Returns the url unchanged when no token
+    or when the URL is not https (SSH urls use a different mechanism entirely).
+
+    A URL already containing credentials is not modified.
+    """
+    if not token or not url.startswith(("http://", "https://")):
+        return url
+    if re.match(r"https?://[^/@]+@", url):
+        return url  # already has creds
+    host = _git_host_of(url) or ""
+    username = _GIT_HOST_USERNAME.get(host, "x-access-token")
+    scheme_end = url.find("://") + 3
+    # URL-encode the token just enough to protect ':' and '@' inside it.
+    from urllib.parse import quote
+    safe_token = quote(token, safe="")
+    return url[:scheme_end] + f"{username}:{safe_token}@" + url[scheme_end:]
+
+
+async def _user_git_token_for_url(url: str) -> Optional[str]:
+    """Look up the current user's stored PAT for the host of `url`."""
+    host = _git_host_of(url)
+    if not host:
+        return None
+    service = _GIT_HOST_TO_SERVICE.get(host)
+    if not service:
+        return None
+    try:
+        from backend.core.db.engine import async_session
+        from backend.core.api.auth_helpers import get_user_settings, get_user_service_key
+    except ImportError:
+        return None
+    uid = await _effective_user_id()
+    if uid <= 0:
+        return None
+    async with async_session() as _s:
+        user_settings = await get_user_settings(uid, _s)
+        svc = get_user_service_key(user_settings, service)
+        if not svc:
+            return None
+        return svc.get("token") or svc.get("api_key")
+
+
+async def _user_git_identity() -> tuple[Optional[str], Optional[str]]:
+    """Return (user.name, user.email) stored for the current user, or (None, None)."""
+    try:
+        from backend.core.db.engine import async_session
+        from backend.core.api.auth_helpers import get_user_settings
+    except ImportError:
+        return None, None
+    uid = await _effective_user_id()
+    if uid <= 0:
+        return None, None
+    async with async_session() as _s:
+        user_settings = await get_user_settings(uid, _s)
+        cfg = (user_settings.service_keys or {}).get("git_config") or {}
+        return cfg.get("user_name") or None, cfg.get("user_email") or None
+
+
+def _apply_identity_args(name: Optional[str], email: Optional[str]) -> list[str]:
+    """Build `-c user.name=... -c user.email=...` args for inline git config."""
+    extra: list[str] = []
+    if name:
+        extra += ["-c", f"user.name={name}"]
+    if email:
+        extra += ["-c", f"user.email={email}"]
+    return extra
+
+
+@router.get("/git/remote")
+async def git_remote_list():
+    """List configured remotes (name → url) for the workspace repo."""
+    ws = str(_workspace())
+    ok, out = await _git_exec("remote", "-v", cwd=ws)
+    if not ok:
+        return {"is_repo": False, "remotes": []}
+    seen: dict[str, str] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] not in seen:
+            seen[parts[0]] = parts[1]
+    return {"is_repo": True, "remotes": [{"name": n, "url": u, "host": _git_host_of(u)} for n, u in seen.items()]}
+
+
+class GitRemoteAddRequest(BaseModel):
+    name: str = "origin"
+    url: str
+
+
+@router.post("/git/remote")
+async def git_remote_add(req: GitRemoteAddRequest):
+    """Add or replace a remote (defaults to 'origin')."""
+    ws = str(_workspace())
+    name = (req.name or "origin").strip() or "origin"
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(400, "URL requise")
+    # Try add first; if it exists, set-url instead.
+    ok, out = await _git_exec("remote", "add", name, url, cwd=ws)
+    if not ok and "already exists" in out.lower():
+        ok, out = await _git_exec("remote", "set-url", name, url, cwd=ws)
+    return {"ok": ok, "output": out, "name": name, "url": url}
+
+
+@router.delete("/git/remote/{name}")
+async def git_remote_remove(name: str):
+    ws = str(_workspace())
+    ok, out = await _git_exec("remote", "remove", name, cwd=ws)
+    return {"ok": ok, "output": out}
+
+
+class GitPushPullRequest(BaseModel):
+    remote: str = "origin"
+    branch: Optional[str] = None  # None = current branch
+    set_upstream: bool = False     # push only
+
+
+@router.post("/git/push")
+async def git_push(req: GitPushPullRequest):
+    """Push to remote using the user's stored PAT for credential injection.
+
+    The PAT is never written to disk — it is injected into the remote URL for
+    the duration of one command via `-c remote.<name>.url=<authed>`.
+    """
+    ws = str(_workspace())
+    _, branch = await _git_exec("branch", "--show-current", cwd=ws)
+    target_branch = (req.branch or branch or "main").strip()
+    # Read remote URL
+    ok, remote_url = await _git_exec("remote", "get-url", req.remote, cwd=ws)
+    if not ok or not remote_url:
+        raise HTTPException(400, f"Remote '{req.remote}' introuvable. Ajoute-le d'abord via /git/remote.")
+    token = await _user_git_token_for_url(remote_url)
+    authed = _authed_url(remote_url, token)
+    args: list[str] = []
+    if authed != remote_url:
+        args += ["-c", f"remote.{req.remote}.url={authed}"]
+    args += ["push"]
+    if req.set_upstream:
+        args += ["--set-upstream"]
+    args += [req.remote, target_branch]
+    ok, out = await _git_exec_env(*args, cwd=ws)
+    # Never leak the PAT back to the UI, even if git echoed it in an error.
+    if token:
+        out = out.replace(token, "***")
+    return {"ok": ok, "output": out, "branch": target_branch, "remote": req.remote, "authenticated": bool(token)}
+
+
+@router.post("/git/pull")
+async def git_pull(req: GitPushPullRequest):
+    ws = str(_workspace())
+    _, branch = await _git_exec("branch", "--show-current", cwd=ws)
+    target_branch = (req.branch or branch or "main").strip()
+    ok, remote_url = await _git_exec("remote", "get-url", req.remote, cwd=ws)
+    if not ok or not remote_url:
+        raise HTTPException(400, f"Remote '{req.remote}' introuvable.")
+    token = await _user_git_token_for_url(remote_url)
+    authed = _authed_url(remote_url, token)
+    args: list[str] = []
+    if authed != remote_url:
+        args += ["-c", f"remote.{req.remote}.url={authed}"]
+    # Identity is needed for the merge commit when pull creates one.
+    name, email = await _user_git_identity()
+    args += _apply_identity_args(name, email)
+    args += ["pull", req.remote, target_branch]
+    ok, out = await _git_exec_env(*args, cwd=ws)
+    if token:
+        out = out.replace(token, "***")
+    return {"ok": ok, "output": out, "branch": target_branch, "remote": req.remote, "authenticated": bool(token)}
+
+
+@router.post("/git/fetch")
+async def git_fetch(req: GitPushPullRequest):
+    ws = str(_workspace())
+    ok, remote_url = await _git_exec("remote", "get-url", req.remote, cwd=ws)
+    if not ok or not remote_url:
+        raise HTTPException(400, f"Remote '{req.remote}' introuvable.")
+    token = await _user_git_token_for_url(remote_url)
+    authed = _authed_url(remote_url, token)
+    args: list[str] = []
+    if authed != remote_url:
+        args += ["-c", f"remote.{req.remote}.url={authed}"]
+    args += ["fetch", "--prune", req.remote]
+    ok, out = await _git_exec_env(*args, cwd=ws)
+    if token:
+        out = out.replace(token, "***")
+    return {"ok": ok, "output": out, "remote": req.remote}
+
+
+class GitCloneRequest(BaseModel):
+    url: str
+    target: Optional[str] = None  # subdir name inside workspace; defaults to repo basename
+
+
+@router.post("/git/clone")
+async def git_clone(req: GitCloneRequest):
+    """Clone a remote repo into the workspace (or a named sub-folder).
+
+    Writing into the workspace root is allowed only when it is empty; otherwise
+    a subfolder is required so we never clobber user files.
+    """
+    ws = _workspace()
+    url = (req.url or "").strip()
+    if not url:
+        raise HTTPException(400, "URL requise")
+    # Determine target directory
+    sub = (req.target or "").strip().strip("/") or None
+    if sub is None:
+        m = re.search(r"/([^/]+?)(?:\.git)?/?$", url)
+        sub = m.group(1) if m else "cloned_repo"
+    dest = _safe_path(sub) if sub else ws
+    if dest.exists() and any(dest.iterdir()):
+        raise HTTPException(409, f"'{sub}' existe deja et n'est pas vide.")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    token = await _user_git_token_for_url(url)
+    authed = _authed_url(url, token)
+    ok, out = await _git_exec_env("clone", authed, str(dest), cwd=str(ws))
+    if token:
+        out = out.replace(token, "***")
+    return {"ok": ok, "output": out, "target": sub, "authenticated": bool(token)}
+
+
+class GitCredentialSaveRequest(BaseModel):
+    host: str  # github.com | gitlab.com | bitbucket.org
+    token: str
+
+
+@router.post("/git/credentials")
+async def git_credentials_save(req: GitCredentialSaveRequest):
+    """Store an encrypted PAT for a given host under the current user."""
+    try:
+        from backend.core.db.engine import async_session
+        from backend.core.api.auth_helpers import get_user_settings
+        from backend.core.config.settings import encrypt_value
+        from sqlalchemy.orm.attributes import flag_modified
+    except ImportError:
+        raise HTTPException(500, "Backend auth indisponible")
+    host = (req.host or "").strip().lower()
+    service = _GIT_HOST_TO_SERVICE.get(host)
+    if not service:
+        raise HTTPException(400, f"Host non supporte: {host}. Supportes: {list(_GIT_HOST_TO_SERVICE.keys())}")
+    token = (req.token or "").strip()
+    if not token:
+        raise HTTPException(400, "Token requis")
+    uid = await _effective_user_id()
+    if uid <= 0:
+        raise HTTPException(401, "Authentification requise")
+    async with async_session() as _s:
+        user_settings = await get_user_settings(uid, _s)
+        service_keys = dict(user_settings.service_keys or {})
+        service_keys[service] = {
+            "token": encrypt_value(token),
+            "enabled": True,
+            "host": host,
+        }
+        user_settings.service_keys = service_keys
+        flag_modified(user_settings, "service_keys")
+        await _s.commit()
+    return {"ok": True, "host": host}
+
+
+@router.get("/git/credentials")
+async def git_credentials_list():
+    """Return which hosts have a stored PAT (without exposing the value)."""
+    try:
+        from backend.core.db.engine import async_session
+        from backend.core.api.auth_helpers import get_user_settings
+    except ImportError:
+        return {"hosts": []}
+    uid = await _effective_user_id()
+    if uid <= 0:
+        return {"hosts": []}
+    async with async_session() as _s:
+        user_settings = await get_user_settings(uid, _s)
+        service_keys = user_settings.service_keys or {}
+        hosts = []
+        for host, service in _GIT_HOST_TO_SERVICE.items():
+            entry = service_keys.get(service) or {}
+            hosts.append({"host": host, "configured": bool(entry.get("token")), "enabled": bool(entry.get("enabled", True))})
+        cfg = service_keys.get("git_config") or {}
+        return {"hosts": hosts, "user_name": cfg.get("user_name"), "user_email": cfg.get("user_email")}
+
+
+@router.delete("/git/credentials/{host}")
+async def git_credentials_remove(host: str):
+    try:
+        from backend.core.db.engine import async_session
+        from backend.core.api.auth_helpers import get_user_settings
+        from sqlalchemy.orm.attributes import flag_modified
+    except ImportError:
+        return {"ok": False}
+    service = _GIT_HOST_TO_SERVICE.get(host.lower())
+    if not service:
+        raise HTTPException(400, f"Host non supporte: {host}")
+    uid = await _effective_user_id()
+    if uid <= 0:
+        raise HTTPException(401, "Authentification requise")
+    async with async_session() as _s:
+        user_settings = await get_user_settings(uid, _s)
+        service_keys = dict(user_settings.service_keys or {})
+        if service in service_keys:
+            del service_keys[service]
+            user_settings.service_keys = service_keys
+            flag_modified(user_settings, "service_keys")
+            await _s.commit()
+    return {"ok": True}
+
+
+class GitIdentityRequest(BaseModel):
+    user_name: str
+    user_email: str
+
+
+@router.post("/git/config/identity")
+async def git_set_identity(req: GitIdentityRequest):
+    """Store the user.name / user.email applied to all commits for this user.
+
+    Values are injected per-command via `-c user.name=...` so nothing is
+    written to the container's global gitconfig.
+    """
+    try:
+        from backend.core.db.engine import async_session
+        from backend.core.api.auth_helpers import get_user_settings
+        from sqlalchemy.orm.attributes import flag_modified
+    except ImportError:
+        raise HTTPException(500, "Backend auth indisponible")
+    uid = await _effective_user_id()
+    if uid <= 0:
+        raise HTTPException(401, "Authentification requise")
+    name = (req.user_name or "").strip()
+    email = (req.user_email or "").strip()
+    if not name or not email:
+        raise HTTPException(400, "user_name et user_email requis")
+    async with async_session() as _s:
+        user_settings = await get_user_settings(uid, _s)
+        service_keys = dict(user_settings.service_keys or {})
+        service_keys["git_config"] = {"user_name": name, "user_email": email}
+        user_settings.service_keys = service_keys
+        flag_modified(user_settings, "service_keys")
+        await _s.commit()
+    return {"ok": True, "user_name": name, "user_email": email}
 
 
 # ── Provider list (for model selector) ──────────────────────────────────────
@@ -1792,18 +2238,39 @@ async def ai_code_chat_stream(req: AIChatRequest):
 
 # ── Agent Mode (Autonomous coding loop) ──────────────────────────────────
 
-AGENT_TOOLS_DESC = """Tu as acces aux outils suivants. Reponds UNIQUEMENT avec un bloc JSON pour executer un outil, ou du texte normal pour repondre a l'utilisateur.
+AGENT_TOOLS_DESC = """PROTOCOLE OBLIGATOIRE (lis-le en entier avant toute reponse)
 
-Outils disponibles (reponds avec ```json {"tool": "nom", "args": {...}} ``` pour les utiliser):
+Tu as acces a ces outils :
+- read_file(path)      — lire un fichier du workspace
+- write_file(path, content) — CREER ou ECRIRE un fichier (tout type : .html, .css, .js, .py, .md, .json, binaire texte, etc.)
+- run_command(command) — executer une commande shell dans le workspace
+- search(query)        — chercher dans le workspace
+- list_files(path)     — lister le contenu d'un dossier
 
-1. read_file(path) — Lire un fichier du workspace
-2. write_file(path, content) — Ecrire/creer un fichier
-3. run_command(command) — Executer une commande shell
-4. search(query) — Chercher dans le workspace
-5. list_files(path) — Lister les fichiers d'un dossier
+REGLES STRICTES — AUCUNE EXCEPTION :
 
-Quand tu as fini, reponds normalement sans bloc JSON outil.
-Chaque etape, explique brievement ce que tu fais et pourquoi."""
+1. Pour APPELER un outil, ta reponse doit etre EXACTEMENT :
+   ```json
+   {"tool": "<nom>", "args": {...}}
+   ```
+   Un seul bloc, un seul outil par tour. Rien d'autre dans la reponse a ce tour-la (pas d'autre texte, pas de bloc code en plus).
+
+2. Pour CREER UN FICHIER (HTML, CSS, JS, etc.), tu DOIS utiliser write_file. Tu NE dois JAMAIS mettre le contenu du fichier dans ta reponse finale en texte — le contenu doit aller UNIQUEMENT dans args.content de write_file.
+
+   Exemple CORRECT pour "cree un fichier index.html" :
+   ```json
+   {"tool": "write_file", "args": {"path": "index.html", "content": "<!DOCTYPE html>\\n<html>...</html>"}}
+   ```
+
+   Exemple INCORRECT (NE FAIS JAMAIS CA) : repondre avec du texte "Voici ton HTML :" suivi d'un bloc html — cela ne cree AUCUN fichier.
+
+3. Le champ args.content est une string JSON : echappe les `"` en `\\"`, les sauts de ligne en `\\n`, et les backslashes en `\\\\`. Evite les triple-backticks DANS args.content (utilise des simples backticks si tu dois en mettre).
+
+4. Quand tu as ecrit tous les fichiers demandes ET que le travail est termine, arrete d'appeler des outils et reponds en francais, en texte pur, en resumant ce que tu as fait (sans recoller le code). Exemple : "J'ai cree index.html et style.css dans le workspace."
+
+5. Un outil a la fois. Attends son resultat avant d'en appeler un autre.
+
+Methodologie : analyse la demande → plan mental bref → appelle l'outil → verifie le resultat → continue ou termine."""
 
 
 class AgentRequest(BaseModel):
@@ -1882,9 +2349,21 @@ async def ai_agent_run(req: AgentRequest):
             # Try to extract tool call
             tool_call = _extract_tool_call(ai_text)
 
+            # Heuristic: the model produced a big fenced code block (html/css/js/etc)
+            # but forgot to wrap it in a write_file tool call. Catch this and ask
+            # it to reissue as a proper tool call rather than show the raw code.
+            looks_like_raw_code = (
+                tool_call is None
+                and bool(re.search(r"```[a-zA-Z0-9_+-]{2,}\s", ai_text))
+                and "```json" not in ai_text.lower()
+                and len(ai_text) > 200
+            )
+
             if tool_call:
                 tool_name = tool_call.get("tool", "")
-                tool_args = tool_call.get("args", {})
+                tool_args = tool_call.get("args", {}) or {}
+                if not isinstance(tool_args, dict):
+                    tool_args = {}
 
                 yield f"data: {json.dumps({'type': 'tool_call', 'step': steps_done, 'tool': tool_name, 'args': tool_args, 'reasoning': ai_text.split('```')[0].strip()}, ensure_ascii=False)}\n\n"
 
@@ -1896,7 +2375,23 @@ async def ai_agent_run(req: AgentRequest):
                 # Feed result back to AI
                 conversation.append(ChatMessage(
                     role="user",
-                    content=f"Resultat de {tool_name}:\n{result[:3000]}\n\nContinue ta tache. Si tu as fini, reponds normalement sans outil."
+                    content=f"Resultat de {tool_name}:\n{result[:3000]}\n\nContinue ta tache. Si tu as fini, reponds en texte pur (pas de bloc ```json)."
+                ))
+            elif looks_like_raw_code and step < max_steps - 1:
+                # Force the model to reissue via write_file instead of
+                # dumping the raw code as its final answer.
+                yield f"data: {json.dumps({'type': 'tool_result', 'step': steps_done, 'tool': 'format_check', 'result': 'Format invalide : du code a ete retourne en texte sans write_file. Rappel : pour creer un fichier, appelle write_file avec le contenu dans args.content.'}, ensure_ascii=False)}\n\n"
+                conversation.append(ChatMessage(
+                    role="user",
+                    content=(
+                        "Ta derniere reponse contenait du code en bloc fenced "
+                        "au lieu d'un appel write_file. Rappel du protocole : "
+                        "pour CREER un fichier tu DOIS repondre UNIQUEMENT avec "
+                        "```json\\n{\"tool\":\"write_file\",\"args\":{\"path\":\"...\",\"content\":\"...\"}}\\n``` "
+                        "Le contenu complet du fichier va dans args.content "
+                        "(string JSON echappee). Reessaie maintenant pour cette "
+                        "tache precisement."
+                    ),
                 ))
             else:
                 # No tool call — AI is done
@@ -1908,36 +2403,88 @@ async def ai_agent_run(req: AgentRequest):
     return StreamingResponse(agent_stream(), media_type="text/event-stream")
 
 
+def _scan_balanced_json(text: str, start: int) -> Optional[str]:
+    """Scan text[start:] and return the first balanced {...} block.
+
+    Respects JSON string literals so that a `{` inside `"..."` is not counted,
+    and handles backslash escapes. This lets us safely extract a tool call
+    whose args.content contains braces, quotes, newlines or even backticks.
+    """
+    if start < 0 or start >= len(text) or text[start] != "{":
+        return None
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+        else:
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+    return None
+
+
 def _extract_tool_call(text: str) -> Optional[dict]:
-    """Extract a JSON tool call from AI response text."""
-    # Look for ```json {...} ``` blocks
-    import re
-    matches = re.findall(r'```(?:json)?\s*(\{[^`]+\})\s*```', text, re.DOTALL)
-    for match in matches:
-        try:
-            data = json.loads(match)
-            if "tool" in data:
-                return data
-        except json.JSONDecodeError:
+    """Extract a JSON tool call from an AI response, resilient to formatting.
+
+    Accepts:
+    - ```json {"tool": ..., "args": {...}} ``` fenced blocks
+    - any fenced block whose payload parses as JSON with a "tool" key
+    - a bare {"tool": ...} anywhere in the text, even if followed by prose
+
+    The parser is balanced-brace-aware (respects string literals) so content
+    with internal braces, quotes or backticks no longer breaks extraction.
+    """
+    if not text:
+        return None
+
+    # 1) Fenced blocks first (most explicit).
+    for match in re.finditer(r"```[a-zA-Z0-9_-]*\s*(.*?)```", text, re.DOTALL):
+        payload = match.group(1).strip()
+        if not payload.startswith("{"):
             continue
-    # Also try inline JSON
-    matches = re.findall(r'\{["\']tool["\']\s*:\s*["\'](\w+)["\'].*?\}', text, re.DOTALL)
-    if matches:
         try:
-            # Find the full JSON object
-            start = text.find('{"tool"')
-            if start == -1:
-                start = text.find("{'tool'")
-            if start >= 0:
-                # Find matching brace
-                depth = 0
-                for i in range(start, len(text)):
-                    if text[i] == '{': depth += 1
-                    elif text[i] == '}': depth -= 1
-                    if depth == 0:
-                        return json.loads(text[start:i+1].replace("'", '"'))
-        except (json.JSONDecodeError, ValueError):
-            pass
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            # try balanced scan from start of payload
+            candidate = _scan_balanced_json(payload, 0)
+            if not candidate:
+                continue
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+        if isinstance(data, dict) and "tool" in data:
+            return data
+
+    # 2) Bare inline JSON anywhere in the text.
+    for m in re.finditer(r'\{\s*["\']tool["\']', text):
+        candidate = _scan_balanced_json(text, m.start())
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            # tolerate single-quoted keys by normalising
+            try:
+                data = json.loads(candidate.replace("'", '"'))
+            except json.JSONDecodeError:
+                continue
+        if isinstance(data, dict) and "tool" in data:
+            return data
+
     return None
 
 

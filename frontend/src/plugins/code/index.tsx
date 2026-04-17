@@ -1,5 +1,5 @@
 /**
- * Gungnir Plugin — SpearCode v2.1.3
+ * Gungnir Plugin — SpearCode v2.2.0
  *
  * Superior web IDE: command palette, find & replace, minimap, markdown preview,
  * AI code apply, multi-terminal, diff viewer, git integration, status bar.
@@ -386,7 +386,7 @@ export default function SpearCodePlugin() {
           background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
           color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
           border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
-        }}>v2.1.3</span>
+        }}>v2.2.0</span>
 
         <div style={{ flex: 1 }} />
 
@@ -556,8 +556,8 @@ function HBtn({ active, onClick, children, title }: { active?: boolean; onClick:
   return <button onClick={onClick} title={title} style={{ padding: '4px 7px', cursor: 'pointer', border: 'none', borderRadius: 4, background: active ? 'var(--scarlet)' : 'transparent', color: active ? '#fff' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.12s' }}>{children}</button>
 }
 
-function IconBtn({ onClick, children, title }: { onClick: () => void; children: React.ReactNode; title?: string }) {
-  return <button onClick={onClick} title={title} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px 3px', display: 'flex' }}>{children}</button>
+function IconBtn({ onClick, children, title, disabled }: { onClick: () => void; children: React.ReactNode; title?: string; disabled?: boolean }) {
+  return <button onClick={onClick} title={title} disabled={disabled} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: disabled ? 'not-allowed' : 'pointer', padding: '2px 3px', display: 'flex', opacity: disabled ? 0.4 : 1 }}>{children}</button>
 }
 
 function TabBtn({ tab, active, onClick, onClose }: { tab: OpenTab; active: boolean; onClick: () => void; onClose: () => void }) {
@@ -981,6 +981,8 @@ function SearchPanel({ onOpenFile }: { onOpenFile: (path: string, name?: string)
 // GIT PANEL
 // ═══════════════════════════════════════════════════════════════════════════════
 
+interface GitRemote { name: string; url: string; host?: string | null }
+
 function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => void }) {
   const [status, setStatus] = useState<GitStatus | null>(null)
   const [loading, setLoading] = useState(true)
@@ -991,6 +993,12 @@ function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => void }) {
   const [diffFile, setDiffFile] = useState<string | null>(null)
   const [branches, setBranches] = useState<string[]>([])
   const [showBranches, setShowBranches] = useState(false)
+  const [remotes, setRemotes] = useState<GitRemote[]>([])
+  const [showRemote, setShowRemote] = useState(false)
+  const [newRemoteUrl, setNewRemoteUrl] = useState('')
+  const [pushing, setPushing] = useState(false)
+  const [pulling, setPulling] = useState(false)
+  const [remoteOutput, setRemoteOutput] = useState<string>('')
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -998,6 +1006,8 @@ function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => void }) {
     if (data) { setStatus(data); if (data.branch) onBranchChange(data.branch) }
     const br = await apiFetch<{ branches: string[] }>('/git/branches')
     if (br) setBranches(br.branches)
+    const rm = await apiFetch<{ is_repo: boolean; remotes: GitRemote[] }>('/git/remote')
+    if (rm?.remotes) setRemotes(rm.remotes)
     setLoading(false)
   }, [onBranchChange])
 
@@ -1007,7 +1017,8 @@ function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => void }) {
   const commit = async () => {
     if (!commitMsg.trim()) return
     setCommitting(true)
-    await apiFetch<any>('/git/commit', { method: 'POST', body: JSON.stringify({ message: commitMsg }) })
+    const res = await apiFetch<{ ok: boolean; output?: string }>('/git/commit', { method: 'POST', body: JSON.stringify({ message: commitMsg }) })
+    if (res && !res.ok && res.output) setRemoteOutput(res.output)
     setCommitMsg(''); setCommitting(false); refresh()
   }
   const toggleDiff = async (path: string) => {
@@ -1018,6 +1029,34 @@ function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => void }) {
   const switchBranch = async (br: string) => {
     await apiFetch<any>('/git/checkout', { method: 'POST', body: JSON.stringify({ branch: br }) })
     setShowBranches(false); refresh()
+  }
+
+  const addRemote = async () => {
+    const url = newRemoteUrl.trim()
+    if (!url) return
+    const res = await apiFetch<{ ok: boolean; output?: string }>('/git/remote', { method: 'POST', body: JSON.stringify({ name: 'origin', url }) })
+    setRemoteOutput(res?.output || '')
+    setNewRemoteUrl('')
+    refresh()
+  }
+  const removeRemote = async (name: string) => {
+    if (!confirm(`Supprimer le remote "${name}" ?`)) return
+    await apiFetch(`/git/remote/${encodeURIComponent(name)}`, { method: 'DELETE' })
+    refresh()
+  }
+  const doPush = async (setUpstream = false) => {
+    setPushing(true); setRemoteOutput('')
+    const res = await apiFetch<{ ok: boolean; output?: string; authenticated?: boolean }>('/git/push', {
+      method: 'POST', body: JSON.stringify({ remote: 'origin', set_upstream: setUpstream }),
+    })
+    setRemoteOutput((res?.output || '') + (res?.authenticated === false ? '\n\nAucun PAT stocke — configure ton token dans Parametres > Git.' : ''))
+    setPushing(false); refresh()
+  }
+  const doPull = async () => {
+    setPulling(true); setRemoteOutput('')
+    const res = await apiFetch<{ ok: boolean; output?: string }>('/git/pull', { method: 'POST', body: JSON.stringify({ remote: 'origin' }) })
+    setRemoteOutput(res?.output || '')
+    setPulling(false); refresh()
   }
 
   if (loading) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Chargement...</div>
@@ -1036,8 +1075,41 @@ function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => void }) {
           {status.branch} {branches.length > 1 ? '\u25BE' : ''}
         </button>
         <div style={{ flex: 1 }} />
+        <IconBtn onClick={() => doPull()} title="git pull origin" disabled={pulling || remotes.length === 0}>
+          {pulling
+            ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>
+            : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>}
+        </IconBtn>
+        <IconBtn onClick={() => doPush(remotes.length > 0)} title="git push origin" disabled={pushing || remotes.length === 0}>
+          {pushing
+            ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>
+            : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>}
+        </IconBtn>
+        <IconBtn onClick={() => setShowRemote(!showRemote)} title="Remote"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/></svg></IconBtn>
         <IconBtn onClick={refresh} title="Rafraichir"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></IconBtn>
       </div>
+      {showRemote && (
+        <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-tertiary)', padding: '6px 12px 8px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4 }}>Remotes</div>
+          {remotes.length === 0 && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Aucun remote. Ajoute l'URL https du repo ci-dessous.</div>}
+          {remotes.map(r => (
+            <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10 }}>
+              <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{r.name}</span>
+              <span style={{ flex: 1, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: MONO, fontSize: 9 }}>{r.url}</span>
+              {r.host && <span style={{ ...S.badge('#3b82f6', true), fontSize: 7 }}>{r.host}</span>}
+              <button onClick={() => removeRemote(r.name)} title="Supprimer" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', opacity: 0.6, fontSize: 11 }}>&times;</button>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 4 }}>
+            <input value={newRemoteUrl} onChange={e => setNewRemoteUrl(e.target.value)} placeholder="https://github.com/owner/repo.git"
+              style={{ flex: 1, padding: '3px 8px', fontSize: 10, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
+            <button onClick={addRemote} disabled={!newRemoteUrl.trim()} style={{ padding: '3px 8px', fontSize: 9, fontWeight: 700, borderRadius: 4, border: 'none', background: 'var(--scarlet)', color: '#fff', cursor: newRemoteUrl.trim() ? 'pointer' : 'not-allowed' }}>Ajouter</button>
+          </div>
+          {remoteOutput && (
+            <pre style={{ margin: '4px 0 0', padding: 6, borderRadius: 4, fontSize: 9, background: '#0c0f14', color: '#c9d1d9', overflow: 'auto', maxHeight: 100, fontFamily: MONO, lineHeight: 1.35, border: '1px solid #1e2633', whiteSpace: 'pre-wrap' }}>{remoteOutput}</pre>
+          )}
+        </div>
+      )}
       {showBranches && branches.length > 1 && (
         <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-tertiary)' }}>
           {branches.map(br => (
@@ -1118,6 +1190,109 @@ const PROVIDER_PRESETS: { id: string; label: string; hint: string; baseUrlPlaceh
 ]
 
 const PROVIDERS_UPDATED_EVENT = 'spearcode-providers-updated'
+
+interface GitCredentialHost { host: string; configured: boolean; enabled: boolean }
+interface GitCredentialsState { hosts: GitCredentialHost[]; user_name?: string; user_email?: string }
+
+const GIT_HOST_LABELS: Record<string, string> = {
+  'github.com': 'GitHub',
+  'gitlab.com': 'GitLab',
+  'bitbucket.org': 'Bitbucket',
+}
+
+function GitCredentialsPanel() {
+  const [state, setState] = useState<GitCredentialsState>({ hosts: [] })
+  const [selectedHost, setSelectedHost] = useState('github.com')
+  const [tokenInput, setTokenInput] = useState('')
+  const [nameInput, setNameInput] = useState('')
+  const [emailInput, setEmailInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const reload = useCallback(async () => {
+    const d = await apiFetch<GitCredentialsState>('/git/credentials')
+    if (d) {
+      setState(d)
+      setNameInput(d.user_name || '')
+      setEmailInput(d.user_email || '')
+    }
+  }, [])
+
+  useEffect(() => { reload() }, [reload])
+
+  const saveToken = async () => {
+    if (!tokenInput.trim()) return
+    setBusy(true); setMsg(null)
+    const res = await apiFetch<{ ok: boolean }>('/git/credentials', {
+      method: 'POST', body: JSON.stringify({ host: selectedHost, token: tokenInput.trim() }),
+    })
+    setBusy(false); setTokenInput('')
+    setMsg(res?.ok ? `PAT ${selectedHost} enregistre` : 'Erreur')
+    reload()
+    setTimeout(() => setMsg(null), 2500)
+  }
+
+  const removeToken = async (host: string) => {
+    if (!confirm(`Supprimer le PAT pour ${host} ?`)) return
+    await apiFetch(`/git/credentials/${encodeURIComponent(host)}`, { method: 'DELETE' })
+    reload()
+  }
+
+  const saveIdentity = async () => {
+    if (!nameInput.trim() || !emailInput.trim()) return
+    setBusy(true); setMsg(null)
+    const res = await apiFetch<{ ok: boolean }>('/git/config/identity', {
+      method: 'POST', body: JSON.stringify({ user_name: nameInput.trim(), user_email: emailInput.trim() }),
+    })
+    setBusy(false)
+    setMsg(res?.ok ? 'Identite enregistree' : 'Erreur')
+    reload()
+    setTimeout(() => setMsg(null), 2500)
+  }
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border)' }}>
+      <div style={{ ...S.sl, paddingTop: 10 }}>Git — Identite & PAT</div>
+      <div style={{ padding: '4px 12px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <label style={{ fontSize: 9, color: 'var(--text-muted)' }}>Nom (git commit author)</label>
+        <input value={nameInput} onChange={e => setNameInput(e.target.value)} placeholder="Kevin Graphiste"
+          style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+        <label style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4 }}>Email</label>
+        <input value={emailInput} onChange={e => setEmailInput(e.target.value)} placeholder="kevin@exemple.com"
+          style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+        <button onClick={saveIdentity} disabled={busy || !nameInput.trim() || !emailInput.trim()}
+          style={{ marginTop: 4, padding: '5px 0', borderRadius: 4, border: 'none', fontSize: 10, fontWeight: 700, cursor: (busy || !nameInput.trim() || !emailInput.trim()) ? 'not-allowed' : 'pointer', background: 'var(--scarlet)', color: '#fff', opacity: (busy || !nameInput.trim() || !emailInput.trim()) ? 0.6 : 1 }}>
+          Enregistrer identite
+        </button>
+      </div>
+
+      <div style={{ padding: '4px 12px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <label style={{ fontSize: 9, color: 'var(--text-muted)' }}>Tokens d'acces (chiffres)</label>
+        {state.hosts.map(h => (
+          <div key={h.host} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: h.configured ? '#22c55e' : '#6b7280' }} />
+            <span style={{ fontWeight: 600, color: 'var(--text-primary)', minWidth: 70 }}>{GIT_HOST_LABELS[h.host] || h.host}</span>
+            <span style={{ flex: 1, color: 'var(--text-muted)', fontSize: 9 }}>{h.configured ? 'Configure' : 'Aucun token'}</span>
+            {h.configured && <button onClick={() => removeToken(h.host)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', opacity: 0.6, fontSize: 11 }}>&times;</button>}
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+          <select value={selectedHost} onChange={e => setSelectedHost(e.target.value)}
+            style={{ padding: '3px 6px', fontSize: 10, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}>
+            {Object.entries(GIT_HOST_LABELS).map(([h, label]) => <option key={h} value={h}>{label}</option>)}
+          </select>
+          <input type="password" value={tokenInput} onChange={e => setTokenInput(e.target.value)} placeholder={`PAT ${selectedHost}`}
+            autoComplete="new-password"
+            style={{ flex: 1, padding: '3px 6px', fontSize: 10, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
+          <button onClick={saveToken} disabled={busy || !tokenInput.trim()}
+            style={{ padding: '3px 8px', fontSize: 9, fontWeight: 700, borderRadius: 4, border: 'none', background: 'var(--scarlet)', color: '#fff', cursor: (busy || !tokenInput.trim()) ? 'not-allowed' : 'pointer', opacity: (busy || !tokenInput.trim()) ? 0.6 : 1 }}>Ajouter</button>
+        </div>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.8 }}>Scopes GitHub minimum : repo. Le token est chiffre en base et injecte uniquement dans l'URL au moment du push/pull.</span>
+        {msg && <span style={{ fontSize: 10, color: msg.includes('Erreur') ? '#f87171' : '#22c55e' }}>{msg}</span>}
+      </div>
+    </div>
+  )
+}
 
 function SettingsPanel() {
   const [config, setConfig] = useState<any>(null)
@@ -1264,6 +1439,7 @@ function SettingsPanel() {
           })
         }
       </div>
+      <GitCredentialsPanel />
       <div style={{ borderTop: '1px solid var(--border)', padding: '0 12px 14px' }}>
         <div style={{ ...S.sl, padding: '10px 0 6px' }}>Raccourcis</div>
         {[['Ctrl+K', 'Command palette'], ['Ctrl+S', 'Sauvegarder'], ['Ctrl+H', 'Chercher/Remplacer'], ['Ctrl+D', 'Diff'], ['Ctrl+Shift+T', 'Terminal'], ['Ctrl+Shift+P', 'Apercu Markdown']].map(([k, d]) => (
