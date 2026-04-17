@@ -1,5 +1,5 @@
 /**
- * Gungnir Plugin — SpearCode v2.1.0
+ * Gungnir Plugin — SpearCode v2.1.1
  *
  * Superior web IDE: command palette, find & replace, minimap, markdown preview,
  * AI code apply, multi-terminal, diff viewer, git integration, status bar.
@@ -386,7 +386,7 @@ export default function SpearCodePlugin() {
           background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
           color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
           border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
-        }}>v2.1.0</span>
+        }}>v2.1.1</span>
 
         <div style={{ flex: 1 }} />
 
@@ -1103,6 +1103,17 @@ function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => void }) {
 // SETTINGS PANEL (with model selector)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const PROVIDER_PRESETS: { id: string; label: string; hint: string; baseUrlPlaceholder?: string }[] = [
+  { id: 'openrouter', label: 'OpenRouter', hint: 'Claude + GPT + 200 modeles via cle unique' },
+  { id: 'anthropic', label: 'Anthropic (Claude API)', hint: 'console.anthropic.com/settings/keys' },
+  { id: 'openai', label: 'OpenAI', hint: 'platform.openai.com/api-keys' },
+  { id: 'google', label: 'Google Gemini', hint: 'aistudio.google.com/apikey' },
+  { id: 'groq', label: 'Groq', hint: 'console.groq.com/keys' },
+  { id: 'minimax', label: 'MiniMax', hint: '' },
+  { id: 'ollama', label: 'Ollama (local)', hint: 'base URL http://localhost:11434', baseUrlPlaceholder: 'http://localhost:11434' },
+  { id: 'custom', label: 'Personnalise…', hint: 'Entre un nom + base URL compatible OpenAI', baseUrlPlaceholder: 'https://…/v1' },
+]
+
 function SettingsPanel() {
   const [config, setConfig] = useState<any>(null)
   const [providers, setProviders] = useState<ProviderInfo[]>([])
@@ -1111,16 +1122,64 @@ function SettingsPanel() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
-  useEffect(() => {
-    apiFetch<any>('/config').then(c => { if (c) { setConfig(c); setWsInput(c.workspace || ''); setFontInput(c.font_size || 14) } })
+  // Add-provider form state
+  const [showAdd, setShowAdd] = useState(false)
+  const [addPreset, setAddPreset] = useState(PROVIDER_PRESETS[0].id)
+  const [addCustomName, setAddCustomName] = useState('')
+  const [addApiKey, setAddApiKey] = useState('')
+  const [addBaseUrl, setAddBaseUrl] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
+  const [addError, setAddError] = useState('')
+
+  const reloadProviders = useCallback(() => {
     apiFetch<{ providers: ProviderInfo[] }>('/providers').then(p => { if (p) setProviders(p.providers) })
   }, [])
+
+  useEffect(() => {
+    apiFetch<any>('/config').then(c => { if (c) { setConfig(c); setWsInput(c.workspace || ''); setFontInput(c.font_size || 14) } })
+    reloadProviders()
+  }, [reloadProviders])
 
   const save = async () => {
     setSaving(true)
     await apiFetch('/config', { method: 'PUT', body: JSON.stringify({ workspace: wsInput || undefined, font_size: fontInput }) })
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000)
   }
+
+  const submitAddProvider = async () => {
+    setAddError('')
+    const preset = PROVIDER_PRESETS.find(p => p.id === addPreset)!
+    const name = preset.id === 'custom' ? addCustomName.trim().toLowerCase() : preset.id
+    if (!name) { setAddError('Nom du provider requis'); return }
+    if (!addApiKey.trim() && preset.id !== 'ollama') { setAddError('Cle API requise'); return }
+    setAddBusy(true)
+    try {
+      const body: any = { api_key: addApiKey.trim() || 'local', enabled: true }
+      if (addBaseUrl.trim()) body.base_url = addBaseUrl.trim()
+      const res = await fetch(`/api/config/user/providers/${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '')
+        setAddError(`Erreur ${res.status}: ${msg.slice(0, 200)}`)
+        return
+      }
+      setAddApiKey(''); setAddBaseUrl(''); setAddCustomName(''); setShowAdd(false)
+      reloadProviders()
+    } finally {
+      setAddBusy(false)
+    }
+  }
+
+  const removeProvider = async (name: string) => {
+    if (!confirm(`Supprimer la cle ${name} ?`)) return
+    await fetch(`/api/config/user/providers/${encodeURIComponent(name)}`, { method: 'DELETE' })
+    reloadProviders()
+  }
+
+  const currentPreset = PROVIDER_PRESETS.find(p => p.id === addPreset)!
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'auto' }}>
@@ -1138,15 +1197,60 @@ function SettingsPanel() {
           {saving ? 'Sauvegarde...' : saved ? 'OK !' : 'Sauvegarder'}
         </button>
       </div>
+
       <div style={{ borderTop: '1px solid var(--border)' }}>
-        <div style={{ ...S.sl, paddingTop: 10 }}>Providers IA</div>
+        <div style={{ ...S.sl, paddingTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ flex: 1 }}>Providers IA</span>
+          <button onClick={() => setShowAdd(s => !s)}
+            style={{ border: 'none', cursor: 'pointer', background: showAdd ? 'var(--bg-tertiary)' : 'var(--scarlet)', color: showAdd ? 'var(--text-primary)' : '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 9, fontWeight: 700, letterSpacing: 0.3 }}>
+            {showAdd ? 'Annuler' : '+ Ajouter'}
+          </button>
+        </div>
+
+        {showAdd && (
+          <div style={{ padding: '6px 12px 10px', background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <label style={{ fontSize: 9, color: 'var(--text-muted)' }}>Provider</label>
+            <select value={addPreset} onChange={e => setAddPreset(e.target.value)}
+              style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}>
+              {PROVIDER_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+            {currentPreset.hint && <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.8 }}>{currentPreset.hint}</span>}
+
+            {addPreset === 'custom' && (
+              <input value={addCustomName} onChange={e => setAddCustomName(e.target.value)} placeholder="nom (ex. together)" autoCapitalize="none" autoCorrect="off"
+                style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+            )}
+
+            <input type="password" value={addApiKey} onChange={e => setAddApiKey(e.target.value)}
+              placeholder={addPreset === 'ollama' ? 'Laisse vide (local)' : 'sk-...'}
+              autoComplete="new-password"
+              style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
+
+            {(currentPreset.baseUrlPlaceholder || addPreset === 'custom') && (
+              <input value={addBaseUrl} onChange={e => setAddBaseUrl(e.target.value)} placeholder={currentPreset.baseUrlPlaceholder || 'Base URL (optionnel)'}
+                style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
+            )}
+
+            {addError && <span style={{ fontSize: 10, color: '#f87171' }}>{addError}</span>}
+
+            <button onClick={submitAddProvider} disabled={addBusy}
+              style={{ marginTop: 2, padding: '5px 0', borderRadius: 4, border: 'none', fontSize: 10, fontWeight: 700, cursor: addBusy ? 'wait' : 'pointer', background: 'var(--scarlet)', color: '#fff' }}>
+              {addBusy ? 'Enregistrement...' : 'Enregistrer la cle'}
+            </button>
+          </div>
+        )}
+
         {providers.length === 0
-          ? <div style={{ padding: '6px 12px', fontSize: 10, color: 'var(--text-muted)' }}>Aucun provider configure</div>
+          ? <div style={{ padding: '6px 12px', fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              Aucun provider configure. Clique sur <b>+ Ajouter</b> pour brancher OpenRouter, Anthropic, OpenAI, etc.
+            </div>
           : providers.map(p => (
             <div key={p.name} style={{ padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border)' }}>
               <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e' }} />
               <span style={{ fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, flex: 1 }}>{p.name}</span>
               <span style={{ ...S.badge('#3b82f6', true), fontSize: 8 }}>{p.default_model}</span>
+              <button onClick={() => removeProvider(p.name)} title="Supprimer la cle"
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', opacity: 0.6, padding: '0 3px', fontSize: 11 }}>&times;</button>
             </div>
           ))
         }
