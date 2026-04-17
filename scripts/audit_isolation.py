@@ -105,6 +105,31 @@ def main() -> None:
     section("code_snippets.json")
     inspect_json(DATA / "code_snippets.json")
 
+    section("Plugins per-user filesystem")
+    per_user_dirs = [
+        ("scheduler", DATA / "automata"),
+        ("webhooks", DATA / "webhooks"),
+        ("integrations", DATA / "integrations"),
+        ("voice sessions", DATA / "voice_sessions"),
+        ("consciousness", DATA / "consciousness"),
+    ]
+    for label, base in per_user_dirs:
+        if not base.exists():
+            print(f"  {label} ({base.name}/): absent")
+            continue
+        uids = sorted(
+            [p.name for p in base.iterdir() if p.is_dir()],
+            key=lambda x: (not x.isdigit(), x),
+        )
+        print(f"  {label} ({base.name}/): uids={uids or '(vide)'}")
+
+    code_cfg = DATA / "code_configs"
+    if code_cfg.exists():
+        files = sorted(p.name for p in code_cfg.iterdir() if p.is_file())
+        print(f"  code configs (code_configs/): fichiers={files or '(vide)'}")
+    else:
+        print(f"  code configs (code_configs/): absent")
+
     section("config.json → voice")
     cfg = DATA / "config.json"
     if not cfg.exists():
