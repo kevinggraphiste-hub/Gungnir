@@ -239,6 +239,7 @@ export default function WebhooksPlugin() {
         <PageHeader
           icon={<Plug size={18} />}
           title="Intégrations"
+          version="2.0.1"
           subtitle={(
             <span className="inline-flex items-center gap-1">
               {activeIntegrations.length} active{activeIntegrations.length > 1 ? 's' : ''} — {mcpStatus?.total_tools || 0} outils disponibles pour l'agent

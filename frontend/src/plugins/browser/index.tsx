@@ -496,9 +496,15 @@ export default function HuntRPlugin() {
           </svg>
         </div>
         <div>
-          <h1 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: '-0.02em' }}>
-            Hunt<span style={{ color: 'var(--scarlet)' }}>R</span>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>v3</span>
+          <h1 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: '-0.02em', display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <span>Hunt<span style={{ color: 'var(--scarlet)' }}>R</span></span>
+            <span style={{
+              fontSize: 10, fontFamily: 'monospace', fontWeight: 600,
+              padding: '2px 6px', borderRadius: 4,
+              background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
+              color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
+              border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
+            }}>v3.2.1</span>
           </h1>
           <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)' }}>
             Recherche web avec citations

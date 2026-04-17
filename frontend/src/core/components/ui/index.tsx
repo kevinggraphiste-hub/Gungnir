@@ -242,10 +242,11 @@ type PageHeaderProps = {
   icon?: ReactNode
   title: string
   subtitle?: string
+  version?: string        // small muted pill next to the title (e.g. "v1.0.1")
   actions?: ReactNode
   className?: string
 }
-export function PageHeader({ icon, title, subtitle, actions, className = '' }: PageHeaderProps) {
+export function PageHeader({ icon, title, subtitle, version, actions, className = '' }: PageHeaderProps) {
   return (
     <div className={`flex items-center justify-between pb-4 mb-4 ${className}`}
       style={{ borderBottom: '1px solid var(--border-subtle)' }}>
@@ -261,7 +262,19 @@ export function PageHeader({ icon, title, subtitle, actions, className = '' }: P
           </div>
         )}
         <div>
-          <h1 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>{title}</h1>
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>{title}</h1>
+            {version && (
+              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded"
+                style={{
+                  background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
+                  color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
+                  border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
+                }}>
+                v{version}
+              </span>
+            )}
+          </div>
           {subtitle && (
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{subtitle}</p>
           )}

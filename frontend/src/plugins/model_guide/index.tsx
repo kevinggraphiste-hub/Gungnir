@@ -255,6 +255,7 @@ export default function ModelGuidePlugin() {
         <PageHeader
           icon={<Layers size={18} />}
           title="Guide des Modèles"
+          version="1.0.1"
           subtitle={`${totalModels} modèle${totalModels > 1 ? 's' : ''} disponible${totalModels > 1 ? 's' : ''}`}
           actions={(
             <>

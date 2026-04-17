@@ -138,6 +138,7 @@ export default function AutomataPlugin() {
         <PageHeader
           icon={<Bot size={18} />}
           title="Automata"
+          version="1.0.1"
           subtitle={<span>Tâches planifiées & workflows n8n <InfoButton>
             <strong>Les automatas</strong> sont des tâches que l'agent exécute tout seul à des moments précis — une fois à une date donnée, toutes les N minutes/heures, ou selon une expression cron.
             <br /><br />
