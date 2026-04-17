@@ -1,5 +1,5 @@
 /**
- * Gungnir Plugin — SpearCode v2.2.0
+ * Gungnir Plugin — SpearCode v2.2.1
  *
  * Superior web IDE: command palette, find & replace, minimap, markdown preview,
  * AI code apply, multi-terminal, diff viewer, git integration, status bar.
@@ -386,7 +386,7 @@ export default function SpearCodePlugin() {
           background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
           color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
           border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
-        }}>v2.2.0</span>
+        }}>v2.2.1</span>
 
         <div style={{ flex: 1 }} />
 

@@ -2241,11 +2241,12 @@ async def ai_code_chat_stream(req: AIChatRequest):
 AGENT_TOOLS_DESC = """PROTOCOLE OBLIGATOIRE (lis-le en entier avant toute reponse)
 
 Tu as acces a ces outils :
-- read_file(path)      — lire un fichier du workspace
-- write_file(path, content) — CREER ou ECRIRE un fichier (tout type : .html, .css, .js, .py, .md, .json, binaire texte, etc.)
-- run_command(command) — executer une commande shell dans le workspace
-- search(query)        — chercher dans le workspace
-- list_files(path)     — lister le contenu d'un dossier
+- read_file(path)       — lire un fichier du workspace
+- write_file(path, content) — CREER ou ECRIRE un fichier (tout type : .html, .css, .js, .py, .md, .json, binaire texte, etc.). Cree automatiquement les dossiers parents.
+- make_directory(path)  — CREER un dossier (et ses parents si besoin). A utiliser pour des dossiers vides OU avant d'organiser une arborescence.
+- run_command(command)  — executer une commande shell dans le workspace
+- search(query)         — chercher dans le workspace
+- list_files(path)      — lister le contenu d'un dossier
 
 REGLES STRICTES — AUCUNE EXCEPTION :
 
@@ -2269,6 +2270,8 @@ REGLES STRICTES — AUCUNE EXCEPTION :
 4. Quand tu as ecrit tous les fichiers demandes ET que le travail est termine, arrete d'appeler des outils et reponds en francais, en texte pur, en resumant ce que tu as fait (sans recoller le code). Exemple : "J'ai cree index.html et style.css dans le workspace."
 
 5. Un outil a la fois. Attends son resultat avant d'en appeler un autre.
+
+6. DOSSIERS : ne dis JAMAIS "je cree le dossier X" sans appeler un outil. Soit tu appelles make_directory(X), soit tu appelles write_file(X/fichier.ext, ...) (qui cree X automatiquement). Annoncer une creation de dossier sans appel d'outil = HALLUCINATION interdite.
 
 Methodologie : analyse la demande → plan mental bref → appelle l'outil → verifie le resultat → continue ou termine."""
 
@@ -2524,6 +2527,20 @@ async def _execute_agent_tool(tool_name: str, args: dict, ws: Path) -> str:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             return f"OK: {path} ecrit ({len(content)} chars)"
+
+        elif tool_name == "make_directory":
+            path = args.get("path", "")
+            if not path or path.strip() in (".", "/", "./"):
+                return "ERREUR: Chemin vide"
+            target = (ws / path).resolve()
+            if not str(target).startswith(str(ws.resolve())):
+                return "ERREUR: Chemin hors du workspace"
+            if target.exists():
+                if target.is_dir():
+                    return f"OK: dossier {path} existe deja"
+                return f"ERREUR: {path} existe et n'est pas un dossier"
+            target.mkdir(parents=True, exist_ok=True)
+            return f"OK: dossier {path} cree"
 
         elif tool_name == "run_command":
             command = args.get("command", "")
