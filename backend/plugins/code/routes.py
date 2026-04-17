@@ -39,6 +39,29 @@ def _inject_user_id(request: Request):
 
 router = APIRouter(dependencies=[Depends(_inject_user_id)])
 
+
+async def _effective_user_id() -> int:
+    """Return the current user id, falling back to user #1 in open/setup mode.
+
+    Mirrors the behaviour of save_user_provider in config_routes.py so that
+    providers saved in open mode are visible back through the plugin's
+    /providers endpoint — otherwise a POST would store on user #1 while the
+    GET would return an empty list.
+    """
+    uid = _current_user_id.get(0) or 0
+    if uid > 0:
+        return uid
+    try:
+        from backend.core.db.engine import async_session
+        from backend.core.db.models import User
+        from sqlalchemy import select
+        async with async_session() as s:
+            result = await s.execute(select(User).order_by(User.id).limit(1))
+            fallback = result.scalar()
+            return fallback.id if fallback else 0
+    except Exception:
+        return 0
+
 # ── Workspace ────────────────────────────────────────────────────────────────
 
 DEFAULT_WORKSPACE = Path("data/workspace")
@@ -995,7 +1018,7 @@ async def _resolve_user_provider(
     from backend.core.db.engine import async_session
     from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
 
-    uid = _current_user_id.get() or 0
+    uid = await _effective_user_id()
     if uid <= 0:
         return None, None, "Authentification requise pour utiliser les providers LLM"
 
@@ -1062,7 +1085,11 @@ async def _fetch_provider_models(pname: str, api_key: str, base_url: Optional[st
 
 @router.get("/providers")
 async def list_providers():
-    """List the current user's configured LLM providers with live model lists."""
+    """List the current user's configured LLM providers with live model lists.
+
+    Same storage as the main Chat settings (user_settings.provider_keys), so
+    any key added in the Chat settings is visible here and vice-versa.
+    """
     try:
         from backend.core.config.settings import Settings
         from backend.core.db.engine import async_session
@@ -1070,7 +1097,7 @@ async def list_providers():
     except ImportError:
         return {"providers": []}
 
-    uid = _current_user_id.get() or 0
+    uid = await _effective_user_id()
     if uid <= 0:
         return {"providers": []}
 
@@ -1087,11 +1114,16 @@ async def list_providers():
             static_models = list(meta.models) if meta and meta.models else []
             default_model = meta.default_model if meta else None
             models = await _fetch_provider_models(pname, decoded["api_key"], base_url, static_models, default_model)
+            # If the provider isn't registered backend-side we still list it
+            # so the user sees their saved key — just flag it so the UI can
+            # show a warning instead of pretending it works.
+            registered = pname in getattr(settings, "providers", {})
             result.append({
                 "name": pname,
-                "default_model": default_model,
-                "enabled": True,
+                "default_model": default_model or (models[0] if models else None),
+                "enabled": bool(decoded.get("enabled", True)),
                 "models": models,
+                "registered": registered,
             })
     return {"providers": result}
 
@@ -1108,7 +1140,7 @@ async def refresh_provider_models(provider_name: str):
     except ImportError:
         raise HTTPException(404, "Settings not available")
 
-    uid = _current_user_id.get() or 0
+    uid = await _effective_user_id()
     if uid <= 0:
         raise HTTPException(401, "Authentification requise")
 

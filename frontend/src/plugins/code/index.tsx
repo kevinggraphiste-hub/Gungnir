@@ -1,5 +1,5 @@
 /**
- * Gungnir Plugin — SpearCode v2.1.2
+ * Gungnir Plugin — SpearCode v2.1.3
  *
  * Superior web IDE: command palette, find & replace, minimap, markdown preview,
  * AI code apply, multi-terminal, diff viewer, git integration, status bar.
@@ -19,7 +19,7 @@ interface OpenTab { path: string; name: string; language: string; content: strin
 interface CodingPersona { id: string; name: string; icon: string; description: string; system_prompt: string }
 interface GitFile { status: string; path: string }
 interface GitStatus { is_repo: boolean; branch?: string; files?: GitFile[]; log?: string[] }
-interface ProviderInfo { name: string; default_model: string; enabled: boolean; models: string[] }
+interface ProviderInfo { name: string; default_model: string; enabled: boolean; models: string[]; registered?: boolean }
 interface QuickFile { path: string; name: string; language: string; ext: string }
 interface TermEntry { cmd: string; result: RunResult; isAI?: boolean; streaming?: boolean }
 interface TermSession { id: string; name: string; history: TermEntry[]; aiHistory: Array<{ role: string; content: string }> }
@@ -386,7 +386,7 @@ export default function SpearCodePlugin() {
           background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
           color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
           border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
-        }}>v2.1.2</span>
+        }}>v2.1.3</span>
 
         <div style={{ flex: 1 }} />
 
@@ -1103,16 +1103,21 @@ function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => void }) {
 // SETTINGS PANEL (with model selector)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Must match backend/core/providers/__init__.py PROVIDERS (registered classes).
+// Ajouter un provider ici sans backend correspondant crée une cle "orpheline"
+// que le backend stocke mais ne peut pas appeler.
 const PROVIDER_PRESETS: { id: string; label: string; hint: string; baseUrlPlaceholder?: string }[] = [
   { id: 'openrouter', label: 'OpenRouter', hint: 'Claude + GPT + 200 modeles via cle unique' },
   { id: 'anthropic', label: 'Anthropic (Claude API)', hint: 'console.anthropic.com/settings/keys' },
   { id: 'openai', label: 'OpenAI', hint: 'platform.openai.com/api-keys' },
   { id: 'google', label: 'Google Gemini', hint: 'aistudio.google.com/apikey' },
-  { id: 'groq', label: 'Groq', hint: 'console.groq.com/keys' },
-  { id: 'minimax', label: 'MiniMax', hint: '' },
+  { id: 'mistral', label: 'Mistral', hint: 'console.mistral.ai/api-keys' },
+  { id: 'xai', label: 'xAI (Grok)', hint: 'console.x.ai' },
+  { id: 'minimax', label: 'MiniMax', hint: 'api.minimax.chat' },
   { id: 'ollama', label: 'Ollama (local)', hint: 'base URL http://localhost:11434', baseUrlPlaceholder: 'http://localhost:11434' },
-  { id: 'custom', label: 'Personnalise…', hint: 'Entre un nom + base URL compatible OpenAI', baseUrlPlaceholder: 'https://…/v1' },
 ]
+
+const PROVIDERS_UPDATED_EVENT = 'spearcode-providers-updated'
 
 function SettingsPanel() {
   const [config, setConfig] = useState<any>(null)
@@ -1125,14 +1130,14 @@ function SettingsPanel() {
   // Add-provider form state
   const [showAdd, setShowAdd] = useState(false)
   const [addPreset, setAddPreset] = useState(PROVIDER_PRESETS[0].id)
-  const [addCustomName, setAddCustomName] = useState('')
   const [addApiKey, setAddApiKey] = useState('')
   const [addBaseUrl, setAddBaseUrl] = useState('')
   const [addBusy, setAddBusy] = useState(false)
   const [addError, setAddError] = useState('')
 
-  const reloadProviders = useCallback(() => {
-    apiFetch<{ providers: ProviderInfo[] }>('/providers').then(p => { if (p) setProviders(p.providers) })
+  const reloadProviders = useCallback(async () => {
+    const p = await apiFetch<{ providers: ProviderInfo[] }>('/providers')
+    if (p) setProviders(p.providers)
   }, [])
 
   useEffect(() => {
@@ -1149,8 +1154,7 @@ function SettingsPanel() {
   const submitAddProvider = async () => {
     setAddError('')
     const preset = PROVIDER_PRESETS.find(p => p.id === addPreset)!
-    const name = preset.id === 'custom' ? addCustomName.trim().toLowerCase() : preset.id
-    if (!name) { setAddError('Nom du provider requis'); return }
+    const name = preset.id
     if (!addApiKey.trim() && preset.id !== 'ollama') { setAddError('Cle API requise'); return }
     setAddBusy(true)
     try {
@@ -1166,8 +1170,9 @@ function SettingsPanel() {
         setAddError(`Erreur ${res.status}: ${msg.slice(0, 200)}`)
         return
       }
-      setAddApiKey(''); setAddBaseUrl(''); setAddCustomName(''); setShowAdd(false)
-      reloadProviders()
+      setAddApiKey(''); setAddBaseUrl(''); setShowAdd(false)
+      await reloadProviders()
+      window.dispatchEvent(new CustomEvent(PROVIDERS_UPDATED_EVENT))
     } finally {
       setAddBusy(false)
     }
@@ -1176,7 +1181,8 @@ function SettingsPanel() {
   const removeProvider = async (name: string) => {
     if (!confirm(`Supprimer la cle ${name} ?`)) return
     await fetch(`/api/config/user/providers/${encodeURIComponent(name)}`, { method: 'DELETE' })
-    reloadProviders()
+    await reloadProviders()
+    window.dispatchEvent(new CustomEvent(PROVIDERS_UPDATED_EVENT))
   }
 
   const currentPreset = PROVIDER_PRESETS.find(p => p.id === addPreset)!
@@ -1220,18 +1226,13 @@ function SettingsPanel() {
             </select>
             {currentPreset.hint && <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.8 }}>{currentPreset.hint}</span>}
 
-            {addPreset === 'custom' && (
-              <input value={addCustomName} onChange={e => setAddCustomName(e.target.value)} placeholder="nom (ex. together)" autoCapitalize="none" autoCorrect="off"
-                style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
-            )}
-
             <input type="password" value={addApiKey} onChange={e => setAddApiKey(e.target.value)}
               placeholder={addPreset === 'ollama' ? 'Laisse vide (local)' : 'sk-...'}
               autoComplete="new-password"
               style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
 
-            {(currentPreset.baseUrlPlaceholder || addPreset === 'custom') && (
-              <input value={addBaseUrl} onChange={e => setAddBaseUrl(e.target.value)} placeholder={currentPreset.baseUrlPlaceholder || 'Base URL (optionnel)'}
+            {currentPreset.baseUrlPlaceholder && (
+              <input value={addBaseUrl} onChange={e => setAddBaseUrl(e.target.value)} placeholder={currentPreset.baseUrlPlaceholder}
                 style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
             )}
 
@@ -1248,15 +1249,19 @@ function SettingsPanel() {
           ? <div style={{ padding: '6px 12px', fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
               Aucun provider configure. Clique sur <b>+ Ajouter</b> pour brancher OpenRouter, Anthropic, OpenAI, etc.
             </div>
-          : providers.map(p => (
-            <div key={p.name} style={{ padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border)' }}>
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e' }} />
-              <span style={{ fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, flex: 1 }}>{p.name}</span>
-              <span style={{ ...S.badge('#3b82f6', true), fontSize: 8 }}>{p.default_model}</span>
-              <button onClick={() => removeProvider(p.name)} title="Supprimer la cle"
-                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', opacity: 0.6, padding: '0 3px', fontSize: 11 }}>&times;</button>
-            </div>
-          ))
+          : providers.map(p => {
+            const ok = p.registered !== false && p.enabled !== false
+            return (
+              <div key={p.name} style={{ padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border)' }}>
+                <span title={ok ? 'Actif' : 'Non supporté par ce backend'} style={{ width: 6, height: 6, borderRadius: '50%', background: ok ? '#22c55e' : '#f59e0b' }} />
+                <span style={{ fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, flex: 1 }}>{p.name}</span>
+                {p.default_model && <span style={{ ...S.badge('#3b82f6', true), fontSize: 8 }}>{p.default_model}</span>}
+                {p.models?.length > 0 && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{p.models.length} mod.</span>}
+                <button onClick={() => removeProvider(p.name)} title="Supprimer la cle"
+                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', opacity: 0.6, padding: '0 3px', fontSize: 11 }}>&times;</button>
+              </div>
+            )
+          })
         }
       </div>
       <div style={{ borderTop: '1px solid var(--border)', padding: '0 12px 14px' }}>
@@ -1402,18 +1407,23 @@ function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { filePath
     } catch { /* ignore */ }
   }, [])
 
-  // Load providers & personas
+  // Load providers & personas (+ re-fetch when the Settings panel adds/removes a key)
   useEffect(() => {
     apiFetch<{ personas: CodingPersona[] }>('/personas').then(d => d && setPersonas(d.personas))
-    apiFetch<{ providers: ProviderInfo[] }>('/providers').then(d => {
-      if (d?.providers) {
-        setProviders(d.providers)
-        if (!selectedProvider && d.providers.length > 0) {
-          setSelectedProvider(d.providers[0].name)
-          setSelectedModel(d.providers[0].default_model)
+    const loadProviders = () => {
+      apiFetch<{ providers: ProviderInfo[] }>('/providers').then(d => {
+        if (d?.providers) {
+          setProviders(d.providers)
+          if (!selectedProvider && d.providers.length > 0) {
+            setSelectedProvider(d.providers[0].name)
+            setSelectedModel(d.providers[0].default_model)
+          }
         }
-      }
-    })
+      })
+    }
+    loadProviders()
+    window.addEventListener(PROVIDERS_UPDATED_EVENT, loadProviders)
+    return () => window.removeEventListener(PROVIDERS_UPDATED_EVENT, loadProviders)
   }, [])
 
   const selectModel = (provName: string, model: string) => {
