@@ -1,13 +1,22 @@
 /**
  * Gungnir Plugin — Analytics Dashboard
  * Full cost tracking, trends, budgets, heatmap, and exports.
- * Self-contained — only depends on recharts + CSS variables from core themes.
+ * Aligné sur le design system Conscience (SectionCard, TabBar, StatCard...).
  */
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   AreaChart, Area, PieChart, Pie, Cell, BarChart, Bar,
-  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
+  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
+import {
+  BarChart3, RefreshCw, Download, DollarSign, Hash, MessageSquare,
+  TrendingUp, AlertTriangle, Calendar, PieChart as PieIcon, Activity,
+  Layers, Wallet, MessagesSquare, Edit3, Trash2, Save, X,
+} from 'lucide-react'
+import {
+  PageHeader, TabBar, SectionCard, SectionTitle, StatCard,
+  PrimaryButton, SecondaryButton, FormInput, Badge,
+} from '@core/components/ui'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -142,12 +151,12 @@ function fmtDate(d: string): string {
 
 type Tab = 'overview' | 'trends' | 'models' | 'budget' | 'conversations'
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'overview', label: 'Vue globale' },
-  { key: 'trends', label: 'Tendances' },
-  { key: 'models', label: 'Modeles' },
-  { key: 'budget', label: 'Budget' },
-  { key: 'conversations', label: 'Conversations' },
+const TABS = [
+  { key: 'overview' as const, label: 'Vue globale', icon: <Activity size={14} /> },
+  { key: 'trends' as const, label: 'Tendances', icon: <TrendingUp size={14} /> },
+  { key: 'models' as const, label: 'Modèles', icon: <Layers size={14} /> },
+  { key: 'budget' as const, label: 'Budget', icon: <Wallet size={14} /> },
+  { key: 'conversations' as const, label: 'Conversations', icon: <MessagesSquare size={14} /> },
 ]
 
 // ── Custom Tooltip ───────────────────────────────────────────────────────────
@@ -156,7 +165,7 @@ function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null
   return (
     <div style={{
-      background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+      background: 'var(--bg-elevated, var(--bg-secondary))', border: '1px solid var(--border)',
       borderRadius: 8, padding: '8px 12px', fontSize: 12,
     }}>
       <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>{label}</div>
@@ -244,7 +253,6 @@ export default function AnalyticsPlugin() {
 
   const handleExport = async (format: 'csv' | 'json' | 'md' | 'html' | 'pdf' = 'csv') => {
     setExportOpen(false)
-    // PDF: fetch the styled HTML, create a blob URL and open for browser Print → Save as PDF
     if (format === 'pdf') {
       const res = await fetch(`${API}${withUser('/export/html')}`)
       const htmlContent = await res.text()
@@ -287,124 +295,69 @@ export default function AnalyticsPlugin() {
     loadData()
   }
 
-  // ── Styles ───────────────────────────────────────────────────────────────
-
-  const card: React.CSSProperties = {
-    background: 'var(--bg-card)', border: '1px solid var(--border)',
-    borderRadius: 12, padding: 20,
-  }
-
-  const statCard: React.CSSProperties = {
-    ...card, flex: 1, minWidth: 180,
-  }
-
-  const statValue: React.CSSProperties = {
-    fontSize: 28, fontWeight: 700, color: 'var(--scarlet)',
-    fontFamily: "'JetBrains Mono', monospace",
-  }
-
-  const statLabel: React.CSSProperties = {
-    fontSize: 12, color: 'var(--text-muted)', marginTop: 4, textTransform: 'uppercase' as const,
-    letterSpacing: 1,
-  }
-
-  const sectionTitle: React.CSSProperties = {
-    fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 16,
-  }
-
-  const btn: React.CSSProperties = {
-    background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 8,
-    padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-  }
-
-  const btnOutline: React.CSSProperties = {
-    background: 'transparent', color: 'var(--text-secondary)',
-    border: '1px solid var(--border)', borderRadius: 8,
-    padding: '8px 16px', fontSize: 13, cursor: 'pointer',
-  }
-
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Header */}
-      <div style={{
-        padding: '16px 24px', borderBottom: '1px solid var(--border)',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        background: 'var(--bg-secondary)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>
-            Analytics
-          </span>
-          <span style={{
-            fontSize: 11, padding: '2px 8px', borderRadius: 6,
-            background: 'var(--scarlet)', color: '#fff', fontWeight: 600,
-          }}>v2</span>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={loadData} style={btnOutline} title="Rafraichir">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 12a9 9 0 11-6.219-8.56" /><polyline points="21 3 21 9 15 9" />
-            </svg>
-          </button>
-          <div style={{ position: 'relative' }}>
-            <button onClick={() => setExportOpen(!exportOpen)} style={btnOutline}>
-              Exporter ▾
-            </button>
-            {exportOpen && (
-              <>
-                <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setExportOpen(false)} />
-                <div style={{
-                  position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 50,
-                  background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-                  borderRadius: 10, padding: 4, minWidth: 160, boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-                }}>
-                  {([
-                    { fmt: 'pdf' as const, label: '📄 PDF', desc: 'Rapport ScarletWolf' },
-                    { fmt: 'html' as const, label: '🌐 HTML', desc: 'Rapport stylisé' },
-                    { fmt: 'json' as const, label: '📦 JSON', desc: 'Données structurées' },
-                    { fmt: 'md' as const, label: '📝 Markdown', desc: 'Documentation' },
-                    { fmt: 'csv' as const, label: '📊 CSV', desc: 'Tableur' },
-                  ]).map(({ fmt, label, desc }) => (
-                    <button key={fmt} onClick={() => handleExport(fmt)} style={{
-                      display: 'flex', flexDirection: 'column', width: '100%',
-                      padding: '8px 12px', background: 'transparent', border: 'none',
-                      borderRadius: 6, cursor: 'pointer', textAlign: 'left',
-                    }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(220,38,38,0.08)')}
-                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{label}</span>
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{desc}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+      <div style={{ padding: '16px 24px 0' }}>
+        <PageHeader
+          icon={<BarChart3 size={18} />}
+          title="Analytics"
+          subtitle="Suivi des coûts, tokens et usage par modèle"
+          actions={
+            <>
+              <SecondaryButton
+                size="sm"
+                icon={<RefreshCw size={14} />}
+                onClick={loadData}
+                title="Rafraîchir"
+              >
+                Rafraîchir
+              </SecondaryButton>
+              <div style={{ position: 'relative' }}>
+                <PrimaryButton size="sm" icon={<Download size={14} />} onClick={() => setExportOpen(!exportOpen)}>
+                  Exporter
+                </PrimaryButton>
+                {exportOpen && (
+                  <>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setExportOpen(false)} />
+                    <div style={{
+                      position: 'absolute', right: 0, top: '100%', marginTop: 6, zIndex: 50,
+                      background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                      borderRadius: 12, padding: 6, minWidth: 180, boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                    }}>
+                      {([
+                        { fmt: 'pdf' as const, label: 'PDF', desc: 'Rapport ScarletWolf' },
+                        { fmt: 'html' as const, label: 'HTML', desc: 'Rapport stylisé' },
+                        { fmt: 'json' as const, label: 'JSON', desc: 'Données structurées' },
+                        { fmt: 'md' as const, label: 'Markdown', desc: 'Documentation' },
+                        { fmt: 'csv' as const, label: 'CSV', desc: 'Tableur' },
+                      ]).map(({ fmt, label, desc }) => (
+                        <button key={fmt} onClick={() => handleExport(fmt)} style={{
+                          display: 'flex', flexDirection: 'column', width: '100%',
+                          padding: '8px 12px', background: 'transparent', border: 'none',
+                          borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                        }}
+                          onMouseEnter={e => (e.currentTarget.style.background = 'color-mix(in srgb, var(--scarlet) 10%, transparent)')}
+                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{label}</span>
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          }
+        />
       </div>
 
-      {/* Tabs */}
-      <div style={{
-        display: 'flex', gap: 0, borderBottom: '1px solid var(--border)',
-        background: 'var(--bg-secondary)', padding: '0 24px',
-      }}>
-        {TABS.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)} style={{
-            padding: '10px 20px', fontSize: 13, fontWeight: tab === t.key ? 600 : 400,
-            color: tab === t.key ? 'var(--scarlet)' : 'var(--text-muted)',
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            borderBottom: tab === t.key ? '2px solid var(--scarlet)' : '2px solid transparent',
-            transition: 'all 0.15s',
-          }}>
-            {t.label}
-          </button>
-        ))}
+      <div style={{ padding: '0 24px 12px' }}>
+        <TabBar tabs={TABS} active={tab} onChange={setTab} />
       </div>
 
-      {/* Content */}
-      <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 24px' }}>
         {loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200 }}>
             <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Chargement...</div>
@@ -414,28 +367,19 @@ export default function AnalyticsPlugin() {
             {tab === 'overview' && <OverviewTab
               summary={summary} byProvider={byProvider} daily={daily}
               heatmap={heatmap} budgetCheck={budgetCheck}
-              card={card} statCard={statCard} statValue={statValue}
-              statLabel={statLabel} sectionTitle={sectionTitle}
             />}
             {tab === 'trends' && <TrendsTab
-              trendData={trendData} trendPeriod={trendPeriod}
-              setTrendPeriod={setTrendPeriod} card={card} sectionTitle={sectionTitle}
+              trendData={trendData} trendPeriod={trendPeriod} setTrendPeriod={setTrendPeriod}
             />}
-            {tab === 'models' && <ModelsTab
-              byModel={byModel} byProvider={byProvider}
-              card={card} sectionTitle={sectionTitle}
-            />}
+            {tab === 'models' && <ModelsTab byModel={byModel} byProvider={byProvider} />}
             {tab === 'budget' && <BudgetTab
               budget={budget} setBudget={setBudget} budgetCheck={budgetCheck}
               providerBudgets={providerBudgets}
               editBudget={editBudget} setEditBudget={setEditBudget}
               budgetForm={budgetForm} setBudgetForm={setBudgetForm}
               saveBudget={saveBudget} loadData={loadData}
-              card={card} sectionTitle={sectionTitle} btn={btn} btnOutline={btnOutline}
             />}
-            {tab === 'conversations' && <ConversationsTab
-              conversations={conversations} card={card} sectionTitle={sectionTitle}
-            />}
+            {tab === 'conversations' && <ConversationsTab conversations={conversations} />}
           </>
         )}
       </div>
@@ -445,50 +389,36 @@ export default function AnalyticsPlugin() {
 
 // ── Overview Tab ─────────────────────────────────────────────────────────────
 
-function OverviewTab({ summary, byProvider, daily, heatmap, budgetCheck, card, statCard, statValue, statLabel, sectionTitle }: any) {
+function OverviewTab({ summary, byProvider, daily, heatmap, budgetCheck }: any) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Budget alerts */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {budgetCheck.alerts.length > 0 && (
-        <div style={{
-          ...card, background: budgetCheck.should_block ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)',
-          borderColor: budgetCheck.should_block ? 'var(--accent-danger)' : 'var(--accent-warning)',
-        }}>
-          <div style={{ fontWeight: 600, color: budgetCheck.should_block ? 'var(--accent-danger)' : 'var(--accent-warning)', marginBottom: 8 }}>
-            {budgetCheck.should_block ? 'Budget depasse !' : 'Alertes budget'}
+        <SectionCard accent={budgetCheck.should_block ? '#ef4444' : '#f59e0b'}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
+            fontWeight: 700, color: budgetCheck.should_block ? '#ef4444' : '#f59e0b',
+          }}>
+            <AlertTriangle size={16} />
+            {budgetCheck.should_block ? 'Budget dépassé !' : 'Alertes budget'}
           </div>
           {budgetCheck.alerts.map((a: any, i: number) => (
             <div key={i} style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>
               {a.scope}: {fmtCost(a.cost)} / {fmtCost(a.limit)} ({a.percent}%)
             </div>
           ))}
-        </div>
+        </SectionCard>
       )}
 
-      {/* Summary cards */}
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        <div style={statCard}>
-          <div style={statValue}>{fmtCost(summary.total_cost)}</div>
-          <div style={statLabel}>Cout total</div>
-        </div>
-        <div style={statCard}>
-          <div style={statValue}>{fmtTokens(summary.total_tokens)}</div>
-          <div style={statLabel}>Tokens total</div>
-        </div>
-        <div style={statCard}>
-          <div style={statValue}>{summary.message_count}</div>
-          <div style={statLabel}>Messages</div>
-        </div>
-        <div style={statCard}>
-          <div style={statValue}>{fmtCost(summary.avg_cost_per_message)}</div>
-          <div style={statLabel}>Moy / message</div>
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+        <StatCard label="Coût total" value={fmtCost(summary.total_cost)} icon={<DollarSign size={14} />} />
+        <StatCard label="Tokens total" value={fmtTokens(summary.total_tokens)} icon={<Hash size={14} />} accent="#f97316" />
+        <StatCard label="Messages" value={summary.message_count} icon={<MessageSquare size={14} />} accent="#22c55e" />
+        <StatCard label="Moy / message" value={fmtCost(summary.avg_cost_per_message)} icon={<TrendingUp size={14} />} accent="#3b82f6" />
       </div>
 
-      {/* Mini trend + provider pie */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-        <div style={card}>
-          <div style={sectionTitle}>Cout journalier (30j)</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+        <SectionCard>
+          <SectionTitle icon={<Calendar size={12} />}>Coût journalier (30j)</SectionTitle>
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={daily.map((d: TimeEntry) => ({ ...d, label: fmtDate(d.date || '') }))}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -498,10 +428,10 @@ function OverviewTab({ summary, byProvider, daily, heatmap, budgetCheck, card, s
               <Area type="monotone" dataKey="cost" name="Cost" stroke="var(--scarlet)" fill="var(--scarlet)" fillOpacity={0.15} strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
-        </div>
+        </SectionCard>
 
-        <div style={card}>
-          <div style={sectionTitle}>Par fournisseur</div>
+        <SectionCard>
+          <SectionTitle icon={<PieIcon size={12} />}>Par fournisseur</SectionTitle>
           {byProvider.length > 0 ? (
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
@@ -512,16 +442,15 @@ function OverviewTab({ summary, byProvider, daily, heatmap, budgetCheck, card, s
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <div style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', paddingTop: 60 }}>Pas de donnees</div>
+            <NoData />
           )}
-        </div>
+        </SectionCard>
       </div>
 
-      {/* Heatmap */}
-      <div style={card}>
-        <div style={sectionTitle}>Activite (90j)</div>
+      <SectionCard>
+        <SectionTitle icon={<Activity size={12} />}>Activité (90j)</SectionTitle>
         <HeatmapGrid data={heatmap} />
-      </div>
+      </SectionCard>
     </div>
   )
 }
@@ -529,12 +458,11 @@ function OverviewTab({ summary, byProvider, daily, heatmap, budgetCheck, card, s
 // ── Heatmap Grid ─────────────────────────────────────────────────────────────
 
 function HeatmapGrid({ data }: { data: HeatmapEntry[] }) {
-  if (!data.length) return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Pas de donnees</div>
+  if (!data.length) return <NoData />
 
   const maxCount = Math.max(...data.map(d => d.count), 1)
   const dateMap = new Map(data.map(d => [d.date, d]))
 
-  // Generate 90 days grid
   const days: string[] = []
   const now = new Date()
   for (let i = 89; i >= 0; i--) {
@@ -550,10 +478,10 @@ function HeatmapGrid({ data }: { data: HeatmapEntry[] }) {
         const intensity = entry ? entry.count / maxCount : 0
         return (
           <div key={`${day}-${idx}`} title={`${day}: ${entry?.count || 0} msgs, ${fmtCost(entry?.cost || 0)}`} style={{
-            width: 12, height: 12, borderRadius: 2,
+            width: 12, height: 12, borderRadius: 3,
             background: intensity === 0
               ? 'var(--bg-tertiary)'
-              : `rgba(220, 38, 38, ${0.2 + intensity * 0.8})`,
+              : `color-mix(in srgb, var(--scarlet) ${20 + intensity * 80}%, transparent)`,
             transition: 'background 0.15s',
           }} />
         )
@@ -564,30 +492,19 @@ function HeatmapGrid({ data }: { data: HeatmapEntry[] }) {
 
 // ── Trends Tab ───────────────────────────────────────────────────────────────
 
-function TrendsTab({ trendData, trendPeriod, setTrendPeriod, card, sectionTitle }: any) {
-  const periods = [
-    { key: 'day', label: 'Jour' },
-    { key: 'week', label: 'Semaine' },
-    { key: 'month', label: 'Mois' },
+function TrendsTab({ trendData, trendPeriod, setTrendPeriod }: any) {
+  const PERIODS = [
+    { key: 'day' as const, label: 'Jour' },
+    { key: 'week' as const, label: 'Semaine' },
+    { key: 'month' as const, label: 'Mois' },
   ]
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div style={{ display: 'flex', gap: 8 }}>
-        {periods.map(p => (
-          <button key={p.key} onClick={() => setTrendPeriod(p.key)} style={{
-            padding: '6px 16px', fontSize: 12, fontWeight: trendPeriod === p.key ? 600 : 400,
-            background: trendPeriod === p.key ? 'var(--scarlet)' : 'var(--bg-tertiary)',
-            color: trendPeriod === p.key ? '#fff' : 'var(--text-secondary)',
-            border: 'none', borderRadius: 6, cursor: 'pointer',
-          }}>
-            {p.label}
-          </button>
-        ))}
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <TabBar tabs={PERIODS} active={trendPeriod} onChange={setTrendPeriod} size="sm" />
 
-      <div style={card}>
-        <div style={sectionTitle}>Cout</div>
+      <SectionCard>
+        <SectionTitle icon={<DollarSign size={12} />}>Coût</SectionTitle>
         <ResponsiveContainer width="100%" height={300}>
           <AreaChart data={trendData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -597,23 +514,23 @@ function TrendsTab({ trendData, trendPeriod, setTrendPeriod, card, sectionTitle 
             <Area type="monotone" dataKey="cost" name="Cost" stroke="var(--scarlet)" fill="var(--scarlet)" fillOpacity={0.15} strokeWidth={2} />
           </AreaChart>
         </ResponsiveContainer>
-      </div>
+      </SectionCard>
 
-      <div style={card}>
-        <div style={sectionTitle}>Tokens</div>
+      <SectionCard>
+        <SectionTitle icon={<Hash size={12} />}>Tokens</SectionTitle>
         <ResponsiveContainer width="100%" height={300}>
           <AreaChart data={trendData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis dataKey="label" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
             <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickFormatter={(v: number) => fmtTokens(v)} />
             <Tooltip content={<ChartTooltip />} />
-            <Area type="monotone" dataKey="tokens" name="Tokens" stroke="var(--ember)" fill="var(--ember)" fillOpacity={0.15} strokeWidth={2} />
+            <Area type="monotone" dataKey="tokens" name="Tokens" stroke="#f97316" fill="#f97316" fillOpacity={0.15} strokeWidth={2} />
           </AreaChart>
         </ResponsiveContainer>
-      </div>
+      </SectionCard>
 
-      <div style={card}>
-        <div style={sectionTitle}>Messages</div>
+      <SectionCard>
+        <SectionTitle icon={<MessageSquare size={12} />}>Messages</SectionTitle>
         <ResponsiveContainer width="100%" height={250}>
           <BarChart data={trendData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -623,20 +540,19 @@ function TrendsTab({ trendData, trendPeriod, setTrendPeriod, card, sectionTitle 
             <Bar dataKey="messages" name="Messages" fill="var(--scarlet)" radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
-      </div>
+      </SectionCard>
     </div>
   )
 }
 
 // ── Models Tab ───────────────────────────────────────────────────────────────
 
-function ModelsTab({ byModel, byProvider, card, sectionTitle }: any) {
+function ModelsTab({ byModel, byProvider }: any) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        {/* By model pie */}
-        <div style={card}>
-          <div style={sectionTitle}>Repartition par modele</div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <SectionCard>
+          <SectionTitle icon={<Layers size={12} />}>Répartition par modèle</SectionTitle>
           {byModel.length > 0 ? (
             <ResponsiveContainer width="100%" height={280}>
               <PieChart>
@@ -649,11 +565,10 @@ function ModelsTab({ byModel, byProvider, card, sectionTitle }: any) {
               </PieChart>
             </ResponsiveContainer>
           ) : <NoData />}
-        </div>
+        </SectionCard>
 
-        {/* By provider pie */}
-        <div style={card}>
-          <div style={sectionTitle}>Repartition par fournisseur</div>
+        <SectionCard>
+          <SectionTitle icon={<PieIcon size={12} />}>Répartition par fournisseur</SectionTitle>
           {byProvider.length > 0 ? (
             <ResponsiveContainer width="100%" height={280}>
               <PieChart>
@@ -666,18 +581,17 @@ function ModelsTab({ byModel, byProvider, card, sectionTitle }: any) {
               </PieChart>
             </ResponsiveContainer>
           ) : <NoData />}
-        </div>
+        </SectionCard>
       </div>
 
-      {/* Model table */}
-      <div style={card}>
-        <div style={sectionTitle}>Details par modele</div>
+      <SectionCard>
+        <SectionTitle icon={<Layers size={12} />}>Détails par modèle</SectionTitle>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                {['Modele', 'Cout', 'Tokens', 'Messages', '% Total'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-muted)', fontWeight: 500, fontSize: 11, textTransform: 'uppercase' }}>{h}</th>
+                {['Modèle', 'Coût', 'Tokens', 'Messages', '% Total'].map(h => (
+                  <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-muted)', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -687,11 +601,13 @@ function ModelsTab({ byModel, byProvider, card, sectionTitle }: any) {
                 const pct = totalCost > 0 ? (m.total_cost / totalCost) * 100 : 0
                 return (
                   <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td style={{ padding: '8px 12px', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS[i % COLORS.length] }} />
-                      {m.model}
+                    <td style={{ padding: '8px 12px', color: 'var(--text-primary)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS[i % COLORS.length] }} />
+                        {m.model}
+                      </div>
                     </td>
-                    <td style={{ padding: '8px 12px', color: 'var(--scarlet)', fontFamily: "'JetBrains Mono', monospace" }}>{fmtCost(m.total_cost)}</td>
+                    <td style={{ padding: '8px 12px', color: 'var(--scarlet)', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{fmtCost(m.total_cost)}</td>
                     <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtTokens(m.total_tokens)}</td>
                     <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{m.message_count}</td>
                     <td style={{ padding: '8px 12px' }}>
@@ -708,14 +624,14 @@ function ModelsTab({ byModel, byProvider, card, sectionTitle }: any) {
             </tbody>
           </table>
         </div>
-      </div>
+      </SectionCard>
     </div>
   )
 }
 
 // ── Budget Tab ───────────────────────────────────────────────────────────────
 
-function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget, setEditBudget, budgetForm, setBudgetForm, saveBudget, loadData, card, sectionTitle, btn, btnOutline }: any) {
+function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget, setEditBudget, budgetForm, setBudgetForm, saveBudget, loadData }: any) {
   const startEdit = () => {
     setBudgetForm({
       monthly_limit: budget.monthly_limit?.toString() || '',
@@ -725,18 +641,19 @@ function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Alerts */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {budgetCheck.alerts.length > 0 && (
-        <div style={{
-          ...card,
-          background: budgetCheck.should_block ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)',
-          borderColor: budgetCheck.should_block ? 'var(--accent-danger)' : 'var(--accent-warning)',
-        }}>
+        <SectionCard accent={budgetCheck.should_block ? '#ef4444' : '#f59e0b'}>
+          <SectionTitle
+            icon={<AlertTriangle size={12} />}
+            color={budgetCheck.should_block ? '#ef4444' : '#f59e0b'}
+          >
+            {budgetCheck.should_block ? 'Budget dépassé' : 'Alertes budget'}
+          </SectionTitle>
           {budgetCheck.alerts.map((a: any, i: number) => (
             <div key={i} style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '6px 0', color: a.level >= 100 ? 'var(--accent-danger)' : 'var(--accent-warning)',
+              padding: '6px 0', color: a.level >= 100 ? '#ef4444' : '#f59e0b',
               fontSize: 13,
             }}>
               <span>{a.scope}</span>
@@ -745,48 +662,45 @@ function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget
               </span>
             </div>
           ))}
-        </div>
+        </SectionCard>
       )}
 
-      {/* Global budget */}
-      <div style={card}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div style={sectionTitle}>Budget global</div>
-          {!editBudget && <button onClick={startEdit} style={btnOutline}>Modifier</button>}
-        </div>
+      <SectionCard>
+        <SectionTitle
+          icon={<Wallet size={12} />}
+          right={!editBudget ? (
+            <SecondaryButton size="sm" icon={<Edit3 size={12} />} onClick={startEdit}>Modifier</SecondaryButton>
+          ) : undefined}
+        >
+          Budget global
+        </SectionTitle>
 
         {editBudget ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', gap: 16 }}>
-              <label style={{ flex: 1 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Limite mensuelle ($)</div>
-                <input type="number" step="0.01" value={budgetForm.monthly_limit}
-                  onChange={e => setBudgetForm({ ...budgetForm, monthly_limit: e.target.value })}
-                  placeholder="Pas de limite"
-                  style={{
-                    width: '100%', padding: '8px 12px', borderRadius: 8, fontSize: 14,
-                    background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-                    color: 'var(--text-primary)', outline: 'none',
-                  }} />
-              </label>
-              <label style={{ flex: 1 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Limite hebdo ($)</div>
-                <input type="number" step="0.01" value={budgetForm.weekly_limit}
-                  onChange={e => setBudgetForm({ ...budgetForm, weekly_limit: e.target.value })}
-                  placeholder="Pas de limite"
-                  style={{
-                    width: '100%', padding: '8px 12px', borderRadius: 8, fontSize: 14,
-                    background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-                    color: 'var(--text-primary)', outline: 'none',
-                  }} />
-              </label>
-            </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div style={{ display: 'flex', gap: 12 }}>
+              <FormInput
+                label="Limite mensuelle ($)"
+                type="number"
+                step="0.01"
+                value={budgetForm.monthly_limit}
+                onChange={e => setBudgetForm({ ...budgetForm, monthly_limit: e.target.value })}
+                placeholder="Pas de limite"
+              />
+              <FormInput
+                label="Limite hebdo ($)"
+                type="number"
+                step="0.01"
+                value={budgetForm.weekly_limit}
+                onChange={e => setBudgetForm({ ...budgetForm, weekly_limit: e.target.value })}
+                placeholder="Pas de limite"
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
               {[
                 { key: 'alert_80', label: 'Alerte 80%' },
                 { key: 'alert_90', label: 'Alerte 90%' },
                 { key: 'alert_100', label: 'Alerte 100%' },
-                { key: 'block_on_limit', label: 'Bloquer' },
+                { key: 'block_on_limit', label: 'Bloquer au dépassement' },
               ].map(opt => (
                 <label key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
                   <input type="checkbox" checked={budget[opt.key]}
@@ -797,79 +711,81 @@ function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget
               ))}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={saveBudget} style={btn}>Enregistrer</button>
-              <button onClick={() => setEditBudget(false)} style={btnOutline}>Annuler</button>
+              <PrimaryButton size="sm" icon={<Save size={14} />} onClick={saveBudget}>Enregistrer</PrimaryButton>
+              <SecondaryButton size="sm" icon={<X size={14} />} onClick={() => setEditBudget(false)}>Annuler</SecondaryButton>
             </div>
           </div>
         ) : (
-          <div style={{ display: 'flex', gap: 32 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
             <div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Mensuel</div>
-              <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>
-                {budget.monthly_limit ? fmtCost(budget.monthly_limit) : 'Illimite'}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Mensuel</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", marginTop: 4 }}>
+                {budget.monthly_limit ? fmtCost(budget.monthly_limit) : 'Illimité'}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Hebdo</div>
-              <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>
-                {budget.weekly_limit ? fmtCost(budget.weekly_limit) : 'Illimite'}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Hebdo</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", marginTop: 4 }}>
+                {budget.weekly_limit ? fmtCost(budget.weekly_limit) : 'Illimité'}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Blocage</div>
-              <div style={{ fontSize: 14, color: budget.block_on_limit ? 'var(--accent-danger)' : 'var(--accent-success)' }}>
-                {budget.block_on_limit ? 'Actif' : 'Inactif'}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Blocage</div>
+              <div style={{ marginTop: 4 }}>
+                <Badge color={budget.block_on_limit ? '#ef4444' : '#22c55e'}>
+                  {budget.block_on_limit ? 'Actif' : 'Inactif'}
+                </Badge>
               </div>
             </div>
           </div>
         )}
-      </div>
+      </SectionCard>
 
-      {/* Provider budgets */}
-      <div style={card}>
-        <div style={sectionTitle}>Budgets par fournisseur</div>
+      <SectionCard>
+        <SectionTitle icon={<Layers size={12} />}>Budgets par fournisseur</SectionTitle>
         {providerBudgets.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {providerBudgets.map((pb: ProviderBudget) => (
               <div key={pb.id} style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '10px 14px', background: 'var(--bg-tertiary)', borderRadius: 8,
+                padding: '10px 14px', background: 'var(--bg-tertiary)', borderRadius: 10,
+                border: '1px solid var(--border-subtle)',
               }}>
                 <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{pb.provider}</span>
-                <div style={{ display: 'flex', gap: 16, fontSize: 13, color: 'var(--text-secondary)' }}>
-                  <span>Mensuel: {pb.monthly_limit ? fmtCost(pb.monthly_limit) : '-'}</span>
-                  <span>Hebdo: {pb.weekly_limit ? fmtCost(pb.weekly_limit) : '-'}</span>
-                  <button onClick={async () => {
+                <div style={{ display: 'flex', gap: 16, fontSize: 13, color: 'var(--text-secondary)', alignItems: 'center' }}>
+                  <span>Mensuel: {pb.monthly_limit ? fmtCost(pb.monthly_limit) : '—'}</span>
+                  <span>Hebdo: {pb.weekly_limit ? fmtCost(pb.weekly_limit) : '—'}</span>
+                  <SecondaryButton size="sm" danger icon={<Trash2 size={12} />} onClick={async () => {
                     await apiFetch(`/provider-budgets/${pb.provider}`, { method: 'DELETE' })
                     loadData()
-                  }} style={{ background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer', fontSize: 12 }}>
+                  }}>
                     Supprimer
-                  </button>
+                  </SecondaryButton>
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Aucun budget fournisseur configure</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Aucun budget fournisseur configuré</div>
         )}
-      </div>
+      </SectionCard>
     </div>
   )
 }
 
 // ── Conversations Tab ────────────────────────────────────────────────────────
 
-function ConversationsTab({ conversations, card, sectionTitle }: any) {
+function ConversationsTab({ conversations }: any) {
   return (
-    <div style={card}>
-      <div style={sectionTitle}>Cout par conversation</div>
+    <SectionCard>
+      <SectionTitle icon={<MessagesSquare size={12} />}>Coût par conversation</SectionTitle>
       {conversations.length > 0 ? (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                {['Conversation', 'Cout', 'Tokens', 'Messages', 'Dernier msg'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-muted)', fontWeight: 500, fontSize: 11, textTransform: 'uppercase' }}>{h}</th>
+                {['Conversation', 'Coût', 'Tokens', 'Messages', 'Dernier msg'].map(h => (
+                  <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-muted)', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -879,11 +795,11 @@ function ConversationsTab({ conversations, card, sectionTitle }: any) {
                   <td style={{ padding: '8px 12px', color: 'var(--text-primary)', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {c.title || `Conv #${c.conversation_id}`}
                   </td>
-                  <td style={{ padding: '8px 12px', color: 'var(--scarlet)', fontFamily: "'JetBrains Mono', monospace" }}>{fmtCost(c.total_cost)}</td>
+                  <td style={{ padding: '8px 12px', color: 'var(--scarlet)', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{fmtCost(c.total_cost)}</td>
                   <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtTokens(c.total_tokens)}</td>
                   <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{c.message_count}</td>
                   <td style={{ padding: '8px 12px', color: 'var(--text-muted)', fontSize: 11 }}>
-                    {c.last_message ? new Date(c.last_message).toLocaleDateString('fr-FR') : '-'}
+                    {c.last_message ? new Date(c.last_message).toLocaleDateString('fr-FR') : '—'}
                   </td>
                 </tr>
               ))}
@@ -891,12 +807,12 @@ function ConversationsTab({ conversations, card, sectionTitle }: any) {
           </table>
         </div>
       ) : <NoData />}
-    </div>
+    </SectionCard>
   )
 }
 
 // ── Shared ────────────────────────────────────────────────────────────────────
 
 function NoData() {
-  return <div style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: 40 }}>Pas de donnees</div>
+  return <div style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: 40 }}>Pas de données</div>
 }
