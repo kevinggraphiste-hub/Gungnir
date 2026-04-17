@@ -27,8 +27,10 @@ Usage:
 Requires ``DATABASE_URL`` to be set (same format as the backend).
 """
 import argparse
+import asyncio
 import os
 import pathlib
+import re
 import sys
 from datetime import datetime, timezone
 from typing import Iterable
@@ -63,29 +65,43 @@ def timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+async def _fetch_user_ids_async(dsn: str) -> set[int]:
+    import asyncpg  # type: ignore
+
+    conn = await asyncpg.connect(dsn=dsn)
+    try:
+        rows = await conn.fetch("SELECT id FROM users")
+    finally:
+        await conn.close()
+    return {int(r["id"]) for r in rows}
+
+
 def load_valid_user_ids() -> set[int]:
     """Return the set of user IDs currently present in the DB, plus ``0``
-    (the anonymous / open-mode bucket which must never be archived)."""
+    (the anonymous / open-mode bucket which must never be archived).
+
+    Uses asyncpg (the backend's own driver) so the script runs out of the box
+    inside the ``app`` container without extra dependencies.
+    """
     db_url = os.environ.get("DATABASE_URL", "").strip()
     if not db_url:
         log("ERROR: DATABASE_URL is not set — cannot determine valid user IDs.")
         sys.exit(2)
 
-    # Strip any async driver prefix — we connect synchronously here.
-    sync_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+    # asyncpg only accepts plain ``postgresql://`` DSNs — strip SQLAlchemy's
+    # ``+asyncpg`` / ``+psycopg2`` suffixes so the same env value works here.
+    dsn = re.sub(r"^postgresql\+[^:]+://", "postgresql://", db_url)
 
     try:
-        import psycopg2
+        ids = asyncio.run(_fetch_user_ids_async(dsn))
     except ImportError:
-        log("ERROR: psycopg2 is required. Install with: pip install psycopg2-binary")
+        log("ERROR: asyncpg is required. Install with: pip install asyncpg")
+        sys.exit(2)
+    except Exception as e:
+        log(f"ERROR: could not query users table: {e}")
         sys.exit(2)
 
-    ids: set[int] = {0}
-    with psycopg2.connect(sync_url) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM users")
-            for (uid,) in cur.fetchall():
-                ids.add(int(uid))
+    ids.add(0)  # anonymous / open-mode bucket must never be archived
     return ids
 
 
