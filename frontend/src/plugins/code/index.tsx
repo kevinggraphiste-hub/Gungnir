@@ -1,5 +1,5 @@
 /**
- * Gungnir Plugin — SpearCode v2.2.1
+ * Gungnir Plugin — SpearCode v2.2.2
  *
  * Superior web IDE: command palette, find & replace, minimap, markdown preview,
  * AI code apply, multi-terminal, diff viewer, git integration, status bar.
@@ -386,7 +386,7 @@ export default function SpearCodePlugin() {
           background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
           color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
           border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
-        }}>v2.2.1</span>
+        }}>v2.2.2</span>
 
         <div style={{ flex: 1 }} />
 
@@ -2362,7 +2362,7 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
   }
 
   // Smart detection: shell command vs natural language AI question
-  const detectMode = (text: string): 'shell' | 'ai' => {
+  const detectMode = (text: string, lastWasAi?: boolean): 'shell' | 'ai' => {
     const t = text.trim().toLowerCase()
     // Force shell with $ prefix, force AI with ? prefix
     if (t.startsWith('$')) return 'shell'
@@ -2373,6 +2373,10 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
     if (/^[.\/~]/.test(t)) return 'shell'
     if (/[|><]/.test(t) && t.split(' ').length <= 6) return 'shell'
     if (/&&|\|\||;/.test(t)) return 'shell'
+    // Short conversational replies (oui/non/ok/...) — always AI, even without context,
+    // because they never make sense as shell commands.
+    const shortReplies = /^(oui|non|yes|no|y|n|ok|okay|d'accord|ouais|nope|yep|yeah|si|peut-etre|peut-être|parfait|super|merci|thanks|stop|continue|applique|applique-le|applique le|valide|valide-le|valide le|confirme|vas-y|vas y|go|fais-le|fais le|fait-le|fait le|oui stp|oui s'il te plait|yes please)([\s.!?,]|$)/i
+    if (shortReplies.test(t)) return 'ai'
     // AI indicators: question marks, French question/action words, long sentences
     if (t.endsWith('?')) return 'ai'
     const aiStarts = /^(comment|pourquoi|quoi|quel|quelle|quels|quelles|est-ce|est ce|peux|peut|pouvez|explique|corrige|montre|aide|ajoute|modifie|cree|genere|ecris|refactorise|optimise|analyse|debug|teste|review|fait|fais|dis|donne|liste|compare|traduis|transforme|supprime|renomme|documente|implement|fix|add|create|write|show|help|explain|find me|how|what|why|where|when|can|could|would|should|please|do|make|update|change|remove|delete|build|run me|tell|describe|is there|are there|j'ai|je veux|je voudrais|il faut|on peut|tu peux)/
@@ -2380,12 +2384,20 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
     // Heuristic: >5 words without shell chars = probably natural language
     const words = t.split(/\s+/).length
     if (words >= 5 && !/[|><;$`]/.test(t)) return 'ai'
+    // Context-aware: after an AI turn, short natural-language replies stay AI.
+    if (lastWasAi && words <= 4 && !/[|><;$`\\]/.test(t)) return 'ai'
     // Short text with no shell pattern = probably shell
     return 'shell'
   }
 
+  const lastEntryIsAi = (): boolean => {
+    const sess = sessions.find(s => s.id === activeSession)
+    const last = sess?.history?.[sess.history.length - 1]
+    return !!last?.isAI
+  }
+
   const [inputMode, setInputMode] = useState<'shell' | 'ai'>('shell')
-  useEffect(() => { setInputMode(command.trim() ? detectMode(command) : 'shell') }, [command])
+  useEffect(() => { setInputMode(command.trim() ? detectMode(command, lastEntryIsAi()) : 'shell') }, [command, sessions, activeSession])
 
   // Streaming AI chat with conversation history per session
   const runAI = async (question: string) => {
@@ -2486,7 +2498,7 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
     const toRun = cmd || command.trim(); if (!toRun || running) return
     setRunning(true); setCmdHistory(prev => [toRun, ...prev.filter(c => c !== toRun)].slice(0, 50)); setHistIdx(-1)
 
-    const mode = detectMode(toRun)
+    const mode = detectMode(toRun, lastEntryIsAi())
     const cleanCmd = toRun.startsWith('$') ? toRun.substring(1).trim() : toRun.startsWith('?') ? toRun.substring(1).trim() : toRun
 
     if (mode === 'ai') {
