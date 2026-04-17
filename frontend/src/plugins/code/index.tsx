@@ -1,5 +1,5 @@
 /**
- * Gungnir Plugin — SpearCode v2.1.1
+ * Gungnir Plugin — SpearCode v2.1.2
  *
  * Superior web IDE: command palette, find & replace, minimap, markdown preview,
  * AI code apply, multi-terminal, diff viewer, git integration, status bar.
@@ -386,7 +386,7 @@ export default function SpearCodePlugin() {
           background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
           color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
           border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
-        }}>v2.1.1</span>
+        }}>v2.1.2</span>
 
         <div style={{ flex: 1 }} />
 
@@ -1199,11 +1199,15 @@ function SettingsPanel() {
       </div>
 
       <div style={{ borderTop: '1px solid var(--border)' }}>
-        <div style={{ ...S.sl, paddingTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ flex: 1 }}>Providers IA</span>
-          <button onClick={() => setShowAdd(s => !s)}
-            style={{ border: 'none', cursor: 'pointer', background: showAdd ? 'var(--bg-tertiary)' : 'var(--scarlet)', color: showAdd ? 'var(--text-primary)' : '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 9, fontWeight: 700, letterSpacing: 0.3 }}>
-            {showAdd ? 'Annuler' : '+ Ajouter'}
+        <div style={{ ...S.sl, paddingTop: 10 }}>Providers IA</div>
+
+        <div style={{ padding: '0 12px 8px' }}>
+          <button type="button" onClick={() => setShowAdd(s => !s)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 'none', cursor: 'pointer', background: showAdd ? 'var(--bg-tertiary)' : 'var(--scarlet)', color: showAdd ? 'var(--text-primary)' : '#fff', borderRadius: 6, padding: '8px 12px', fontSize: 11, fontWeight: 700, letterSpacing: 0.3, transition: 'background 0.15s' }}>
+            {showAdd
+              ? <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Annuler</>
+              : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Ajouter un provider</>
+            }
           </button>
         </div>
 
