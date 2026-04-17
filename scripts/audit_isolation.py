@@ -42,15 +42,65 @@ def inspect_json(path: pathlib.Path) -> None:
                 print(f"  user_id distincts sous {k!r}: {uids}")
 
 
+SECRET_KEYS = {"token", "api_key", "secret", "webhook_url", "password", "bot_token"}
+
+
+def redact(obj):
+    """Recursively mask values for sensitive keys."""
+    if isinstance(obj, dict):
+        return {
+            k: ("<redacted>" if any(s in k.lower() for s in SECRET_KEYS) else redact(v))
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [redact(x) for x in obj]
+    return obj
+
+
+def deep_channels(path: pathlib.Path) -> None:
+    if not path.exists():
+        return
+    d = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(d, dict):
+        return
+    print("  --- détail canal(aux) ---")
+    for cid, channel in d.items():
+        if not isinstance(channel, dict):
+            print(f"  {cid}: non-dict ({type(channel).__name__})")
+            continue
+        keys = list(channel.keys())
+        has_uid = "user_id" in channel
+        uid_val = channel.get("user_id") if has_uid else None
+        print(f"  channel_id={cid}")
+        print(f"    clés: {keys}")
+        print(f"    user_id présent: {has_uid} (valeur={uid_val!r})")
+        print(f"    contenu redacté: {json.dumps(redact(channel), ensure_ascii=False)[:300]}")
+
+
+def logs_by_channel(path: pathlib.Path) -> None:
+    if not path.exists():
+        return
+    d = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(d, list):
+        return
+    from collections import Counter
+    counter = Counter(e.get("channel_id", "<missing>") for e in d if isinstance(e, dict))
+    print("  --- logs groupés par channel_id ---")
+    for cid, n in counter.most_common():
+        print(f"    {cid}: {n} logs")
+
+
 def main() -> None:
     section("Emplacement")
     print(f"  DATA = {DATA}")
 
     section("channels.json")
     inspect_json(DATA / "channels.json")
+    deep_channels(DATA / "channels.json")
 
     section("channel_logs.json")
     inspect_json(DATA / "channel_logs.json")
+    logs_by_channel(DATA / "channel_logs.json")
 
     section("code_snippets.json")
     inspect_json(DATA / "code_snippets.json")
