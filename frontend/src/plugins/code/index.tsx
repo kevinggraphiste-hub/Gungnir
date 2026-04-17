@@ -1,5 +1,5 @@
 /**
- * Gungnir Plugin — SpearCode v2.0.0
+ * Gungnir Plugin — SpearCode v2.1.0
  *
  * Superior web IDE: command palette, find & replace, minimap, markdown preview,
  * AI code apply, multi-terminal, diff viewer, git integration, status bar.
@@ -812,6 +812,8 @@ function FileExplorer({ onOpenFile }: { onOpenFile: (path: string, name?: string
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState<'file' | 'folder' | null>(null)
   const [newName, setNewName] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const loadTree = useCallback(async (path = '') => {
     setLoading(true)
@@ -839,13 +841,66 @@ function FileExplorer({ onOpenFile }: { onOpenFile: (path: string, name?: string
     loadTree(currentPath)
   }
 
+  const handleUpload = async (filesList: FileList | null) => {
+    if (!filesList || filesList.length === 0) return
+    setUploading(true)
+    try {
+      const form = new FormData()
+      for (const f of Array.from(filesList)) form.append('files', f, f.name)
+      if (currentPath) form.append('dest', currentPath)
+      // Don't set Content-Type — the browser fills multipart boundary itself.
+      const res = await fetch(`${API}/upload`, { method: 'POST', body: form })
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '')
+        alert(`Import echec (${res.status}) ${msg.slice(0, 200)}`)
+      }
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      loadTree(currentPath)
+    }
+  }
+
+  const handleExport = async () => {
+    const path = currentPath || ''
+    const target = path || 'workspace'
+    const label = path ? path.split('/').pop() || path : 'workspace'
+    try {
+      const res = await fetch(`${API}/download?path=${encodeURIComponent(target === 'workspace' ? '' : path)}`)
+      if (!res.ok) {
+        alert(`Export echec (${res.status})`)
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      // Backend sets Content-Disposition; browser honors it, but fallback is safer.
+      a.download = `${label}.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert(`Export erreur: ${String(e)}`)
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }}
+        onChange={e => handleUpload(e.target.files)} />
       <div style={{ padding: '7px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 4 }}>
         {currentPath && <IconBtn onClick={navBack}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg></IconBtn>}
         <span style={{ ...S.sl, padding: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentPath || 'Workspace'}</span>
         <IconBtn onClick={() => setCreating(creating ? null : 'file')} title="Nouveau fichier"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg></IconBtn>
         <IconBtn onClick={() => setCreating(creating ? null : 'folder')} title="Nouveau dossier"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg></IconBtn>
+        <IconBtn onClick={() => !uploading && fileInputRef.current?.click()} title={uploading ? 'Import en cours...' : 'Importer depuis le PC'}>
+          {uploading
+            ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>
+            : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>}
+        </IconBtn>
+        <IconBtn onClick={handleExport} title={`Exporter ${currentPath || 'workspace'} (.zip)`}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></IconBtn>
         <IconBtn onClick={() => loadTree(currentPath)} title="Rafraichir"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></IconBtn>
       </div>
       {creating && (

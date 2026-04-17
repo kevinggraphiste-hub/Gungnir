@@ -7,18 +7,22 @@ Workspace scoped to data/workspace/ by default (configurable).
 Self-contained — no core dependency.
 """
 import asyncio
+import io
 import json
 import logging
 import mimetypes
 import os
+import shutil
 import subprocess
 import uuid
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from contextvars import ContextVar
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger("gungnir.plugins.code")
@@ -338,7 +342,6 @@ async def delete_file(path: str):
         try:
             target.rmdir()
         except OSError:
-            import shutil
             shutil.rmtree(target)
     else:
         target.unlink()
@@ -359,6 +362,106 @@ async def create_folder(data: FolderCreate):
     target.mkdir(parents=True, exist_ok=True)
     logger.info(f"Folder created: {data.path}")
     return {"ok": True, "path": data.path}
+
+
+# ── Upload / Download (PC ↔ workspace) ──────────────────────────────────────
+
+# Cap uploaded files so a single request can't fill the disk. 50 MiB per file
+# is generous for source / assets; binaries above that belong in git-lfs / S3.
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
+def _sanitize_upload_name(name: str) -> str:
+    """Keep only the basename and strip anything funky. Caller still resolves
+    the final path through ``_safe_path`` so traversal is blocked either way."""
+    base = os.path.basename(name or "").strip()
+    # Drop leading dots so uploads don't silently overwrite dotfiles
+    base = base.lstrip(".") or "upload.bin"
+    # Replace path-ish chars that slipped through basename on Windows clients
+    for bad in ("\\", "/", "\x00"):
+        base = base.replace(bad, "_")
+    return base[:255]
+
+
+@router.post("/upload")
+async def upload_files(
+    files: list[UploadFile] = File(...),
+    dest: str = "",
+):
+    """Upload one or more files from the user's PC into the workspace.
+
+    ``dest`` is the workspace-relative destination directory (empty = root).
+    Existing files are overwritten. Each file is capped at _MAX_UPLOAD_BYTES.
+    """
+    dest_dir = _safe_path(dest) if dest else _workspace()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if not dest_dir.is_dir():
+        raise HTTPException(400, "La destination n'est pas un dossier")
+
+    saved: list[dict] = []
+    for up in files:
+        name = _sanitize_upload_name(up.filename or "upload.bin")
+        # Resolve through _safe_path so even a sanitized name can't escape
+        rel = f"{dest}/{name}" if dest else name
+        target = _safe_path(rel)
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        total = 0
+        with target.open("wb") as out:
+            while True:
+                chunk = await up.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_UPLOAD_BYTES:
+                    out.close()
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(
+                        413,
+                        f"Fichier trop volumineux (> {_MAX_UPLOAD_BYTES // (1024*1024)} Mo): {name}",
+                    )
+                out.write(chunk)
+        saved.append({"path": rel, "size": total})
+        logger.info(f"Uploaded: {rel} ({total} bytes)")
+
+    return {"ok": True, "files": saved}
+
+
+@router.get("/download")
+async def download_path(path: str = Query(..., min_length=1)):
+    """Download a workspace file (raw) or a directory (zip)."""
+    target = _safe_path(path)
+    if not target.exists():
+        raise HTTPException(404, "Introuvable")
+
+    if target.is_file():
+        mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        data = target.read_bytes()
+        headers = {
+            "Content-Disposition": f'attachment; filename="{target.name}"',
+            "Content-Length": str(len(data)),
+        }
+        return Response(content=data, media_type=mime, headers=headers)
+
+    # Directory → build a zip in memory. Workspace trees are typically small;
+    # a stream wrapper would be fancier but adds no meaningful benefit here.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for root, _dirs, files in os.walk(target):
+            for f in files:
+                fp = Path(root) / f
+                try:
+                    arcname = str(fp.relative_to(target.parent)).replace("\\", "/")
+                    zf.write(fp, arcname=arcname)
+                except (OSError, ValueError):
+                    continue
+    buf.seek(0)
+    zip_name = f"{target.name}.zip"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{zip_name}"',
+        "Content-Length": str(buf.getbuffer().nbytes),
+    }
+    return Response(content=buf.getvalue(), media_type="application/zip", headers=headers)
 
 
 # ── Search ───────────────────────────────────────────────────────────────────
@@ -659,9 +762,16 @@ VERSIONS_DIR = Path("data/code_versions")
 
 
 def _versions_path(file_path: str) -> Path:
-    """Get version storage directory for a file."""
+    """Per-user version storage dir for a file.
+
+    Layout: ``data/code_versions/{uid}/{encoded_path}/`` (uid=0 → flat legacy
+    layout for open/setup mode). Historical versions under the old flat layout
+    are relocated to user #1 by ``scripts/migrate_code_per_user.py``.
+    """
     safe_name = file_path.replace("/", "__").replace("\\", "__")
-    return VERSIONS_DIR / safe_name
+    uid = _current_user_id.get(0) or 0
+    user_root = VERSIONS_DIR / str(uid) if uid > 0 else VERSIONS_DIR
+    return user_root / safe_name
 
 
 @router.post("/version/save")
@@ -1601,8 +1711,6 @@ async def _build_chat_context(req: AIChatRequest):
 
 # ── Streaming AI Chat (SSE) ──────────────────────────────────────────────
 
-from fastapi.responses import StreamingResponse
-
 
 @router.post("/ai/chat/stream")
 async def ai_code_chat_stream(req: AIChatRequest):
@@ -2144,24 +2252,47 @@ async def save_project_rules(data: dict):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Snippets Library
+# Snippets Library (per-user)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SNIPPETS_FILE = Path("data/code_snippets.json")
+SNIPPETS_DIR = Path("data/code_snippets")
+_LEGACY_SNIPPETS_FILE = Path("data/code_snippets.json")
+
+
+def _user_snippets_file() -> Path:
+    """Return the per-user snippets file. Falls back to the legacy shared file
+    in open/setup mode so the plugin still works before any user exists."""
+    uid = _current_user_id.get(0) or 0
+    if uid > 0:
+        return SNIPPETS_DIR / f"{uid}.json"
+    return _LEGACY_SNIPPETS_FILE
 
 
 def _load_snippets() -> list[dict]:
-    if SNIPPETS_FILE.exists():
+    path = _user_snippets_file()
+    if path.exists():
         try:
-            return json.loads(SNIPPETS_FILE.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    # One-shot migration: if a legacy shared snippets file exists, seed the
+    # current user's file with it on first access so nothing is lost.
+    uid = _current_user_id.get(0) or 0
+    if uid > 0 and _LEGACY_SNIPPETS_FILE.exists() and path != _LEGACY_SNIPPETS_FILE:
+        try:
+            legacy = json.loads(_LEGACY_SNIPPETS_FILE.read_text(encoding="utf-8")) or []
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(legacy, indent=2, ensure_ascii=False), encoding="utf-8")
+            return legacy
         except Exception:
             pass
     return []
 
 
 def _save_snippets(snippets: list[dict]):
-    SNIPPETS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SNIPPETS_FILE.write_text(json.dumps(snippets, indent=2, ensure_ascii=False), encoding="utf-8")
+    path = _user_snippets_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(snippets, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 @router.get("/snippets")
