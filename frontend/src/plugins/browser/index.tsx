@@ -12,7 +12,7 @@ import { PrimaryButton, SecondaryButton } from '@core/components/ui'
 import {
   ArrowRight, Loader2, Clock, Download, Plus, Sliders, X, Save,
   Bold, Italic, Underline, Strikethrough, Code, Link2, Quote, Minus,
-  List, ListOrdered, Table as TableIcon, ChevronDown, Undo2, Redo2,
+  List, ListOrdered, Table as TableIcon, ChevronDown, Undo2, Redo2, Sparkles,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ const API = '/api/plugins/browser'
 // block editor) est conservee pour migrer les utilisateurs existants
 // automatiquement vers du Markdown.
 
-const DEFAULT_MARKDOWN_TEMPLATE = `# Titre principal de la réponse
+const DEFAULT_MARKDOWN_TEMPLATE = `# {{TITRE}}
 
 ## Contexte
 Paragraphe de 5 à 8 phrases qui posent le sujet, citations [1][2] dans le texte.
@@ -136,6 +136,13 @@ function legacyBlocksToMarkdown(raw: string): string | null {
   } catch { return null }
 }
 
+// Markdown rendered as a chip in the WYSIWYG → LLM substitues its content.
+// Supported variables:
+//   {{TITRE}} → dynamic title reformulated from the search query.
+function renderVariableChip(name: string, label: string): string {
+  return `<span class="huntr-variable" data-var="${escapeHtmlShort(name)}" contenteditable="false">${escapeHtmlShort(label)}</span>`
+}
+
 function mdToHtml(md: string): string {
   if (!md) return ''
   const lines = md.replace(/\r\n/g, '\n').split('\n')
@@ -143,6 +150,7 @@ function mdToHtml(md: string): string {
   let i = 0
   const inline = (s: string): string => {
     let v = escapeHtmlShort(s)
+    v = v.replace(/\{\{TITRE\}\}/g, renderVariableChip('TITRE', 'Titre dynamique'))
     v = v.replace(/`([^`]+)`/g, '<code>$1</code>')
     v = v.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     v = v.replace(/\*([^*]+)\*/g, '<em>$1</em>')
@@ -235,6 +243,11 @@ function htmlToMd(html: string): string {
       case 'ol':
         return Array.from(el.children).map((li, idx) => `${idx + 1}. ${walk(li).trim()}`).join('\n') + '\n\n'
       case 'li': return inner
+      case 'span': {
+        const v = el.getAttribute('data-var')
+        if (v) return `{{${v}}}`
+        return inner
+      }
       case 'table': {
         const rows = Array.from(el.querySelectorAll('tr'))
         if (!rows.length) return ''
@@ -1875,6 +1888,30 @@ function WysiwygEditor({
     emitChange()
   }
 
+  // Insere un chip {{TITRE}} a la position du caret. A la sauvegarde,
+  // le chip est serialise en `{{TITRE}}` dans le Markdown ; cote backend,
+  // le LLM remplace ce marqueur par un titre d'une phrase reformulant la
+  // question de recherche.
+  const insertTitleVariable = () => {
+    editorRef.current?.focus()
+    const chip = document.createElement('span')
+    chip.className = 'huntr-variable'
+    chip.setAttribute('data-var', 'TITRE')
+    chip.setAttribute('contenteditable', 'false')
+    chip.textContent = 'Titre dynamique'
+    insertNodeAtCaret(chip)
+    // Ajoute un espace insecable apres pour que le caret puisse sortir du chip.
+    const sp = document.createTextNode('\u00A0')
+    const sel = window.getSelection()
+    if (sel && sel.rangeCount) {
+      const r = sel.getRangeAt(0)
+      r.insertNode(sp)
+      r.setStartAfter(sp); r.collapse(true)
+      sel.removeAllRanges(); sel.addRange(r)
+    }
+    emitChange()
+  }
+
   const wrapInline = (tag: string) => {
     const sel = window.getSelection()
     if (!sel || !sel.rangeCount || sel.isCollapsed) return
@@ -2016,6 +2053,30 @@ function WysiwygEditor({
         .huntr-wysiwyg hr { border: none; border-top: 1px solid var(--border); margin: 1.3em 0; }
         .huntr-wysiwyg:focus-visible { outline: 1px solid var(--scarlet); outline-offset: -1px; }
 
+        .huntr-wysiwyg .huntr-variable {
+          display: inline-flex; align-items: center; gap: 4px;
+          vertical-align: baseline;
+          padding: 1px 9px 2px;
+          background: color-mix(in srgb, var(--scarlet) 16%, transparent);
+          color: var(--scarlet);
+          border: 1px solid color-mix(in srgb, var(--scarlet) 38%, transparent);
+          border-radius: 999px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.78em; font-weight: 700;
+          letter-spacing: 0.3px; text-transform: uppercase;
+          user-select: all; cursor: default;
+          white-space: nowrap;
+        }
+        .huntr-wysiwyg .huntr-variable::before {
+          content: '✦'; font-size: 10px; opacity: 0.9;
+        }
+        .huntr-wysiwyg h1 .huntr-variable,
+        .huntr-wysiwyg h2 .huntr-variable,
+        .huntr-wysiwyg h3 .huntr-variable {
+          font-size: 0.56em;
+          padding: 2px 10px 3px;
+        }
+
         .huntr-tb-btn:hover { background: var(--bg-tertiary) !important; color: var(--text-primary) !important; }
       `}</style>
 
@@ -2127,6 +2188,19 @@ function WysiwygEditor({
 
         {/* Insert */}
         <div style={tbGroup}>
+          <button className="huntr-tb-btn"
+            title="Titre dynamique — lié au résultat de recherche (insère {{TITRE}})"
+            onMouseDown={e => e.preventDefault()}
+            onClick={insertTitleVariable}
+            style={{
+              ...tbBtn(false),
+              width: 'auto', padding: '0 8px', gap: 4,
+              color: 'var(--scarlet)', fontSize: 10.5, fontWeight: 700,
+              letterSpacing: 0.3, textTransform: 'uppercase' as const,
+              display: 'flex', alignItems: 'center',
+            }}>
+            <Sparkles size={12} /> Titre
+          </button>
           <button className="huntr-tb-btn" title="Lien (⌘K)" onMouseDown={e => e.preventDefault()}
             onClick={openLink} style={tbBtn(false)}><Link2 size={13} /></button>
           <button className="huntr-tb-btn" title="Tableau" onMouseDown={e => e.preventDefault()}

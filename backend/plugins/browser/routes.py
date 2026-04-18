@@ -15,6 +15,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, desc
 import json
+import re
 import time
 import logging
 
@@ -292,11 +293,163 @@ def _blocks_to_template(blocks: list) -> str:
     return "\n\n".join(parts).strip()
 
 
-def _resolve_format_to_template(raw: str) -> str:
-    """Parse le custom_format stocke (JSON blocks ou Markdown brut legacy).
+def _md_to_marker_template(md: str) -> str:
+    """Convert raw Markdown (from the WYSIWYG editor) into a marker template.
 
-    - Si c'est un tableau JSON -> on le convertit en template Markdown balise.
-    - Sinon on retourne la chaine telle quelle (retrocompat).
+    Le LLM suit mieux une structure explicite {{...}} qu'un Markdown avec des
+    hints en texte libre (certains modeles recopient les hints au lieu de les
+    substituer). On transforme donc chaque bloc en marqueur cible :
+    - Lignes `#`, `##`, `###` : gardees telles quelles (TITRES FIGES).
+      Le marqueur `{{TITRE}}` a l'interieur est conserve -> le LLM le
+      remplace par un titre d'une seule phrase reformulant la question.
+    - Paragraphes : deviennent `{{CONTENU: <texte original comme hint>}}`.
+    - Listes a puces : `{{LISTE À PUCES: <items joints par " / ">}}`.
+    - Listes numerotees : `{{LISTE NUMÉROTÉE: <items>}}`.
+    - Tableaux : conserve l'en-tete + separateur, chaque ligne de donnees
+      devient une ligne de `{{cellule}}`, suivie de `{{TABLEAU: ...}}`.
+    - Code fences, blockquotes, hr : gardes verbatim.
+    """
+    md = (md or "").replace("\r\n", "\n")
+    if not md.strip():
+        return ""
+
+    lines = md.split("\n")
+    out: list[str] = []
+    paragraph: list[str] = []
+    bullets: list[str] = []
+    numbered = False
+
+    marker_only_re = re.compile(r"^\{\{[A-ZÉÀÂÊÈËÎÏÔÙÛÜÇ ]+(?::[^}]*)?\}\}$")
+
+    def flush_para() -> None:
+        nonlocal paragraph
+        if not paragraph:
+            return
+        hint = " ".join(x.strip() for x in paragraph if x.strip()).strip()
+        if hint:
+            if marker_only_re.match(hint):
+                out.append(hint)
+            else:
+                out.append(f"{{{{CONTENU: {hint}}}}}")
+        paragraph = []
+
+    def flush_bullets() -> None:
+        nonlocal bullets, numbered
+        if not bullets:
+            return
+        tag = "LISTE NUMÉROTÉE" if numbered else "LISTE À PUCES"
+        hint = " / ".join(x.strip() for x in bullets if x.strip())
+        out.append(f"{{{{{tag}: {hint}}}}}")
+        bullets = []
+        numbered = False
+
+    i = 0
+    n = len(lines)
+    while i < n:
+        raw_line = lines[i]
+        line = raw_line.strip()
+
+        # Code fence
+        if line.startswith("```"):
+            flush_para(); flush_bullets()
+            code = [raw_line]
+            i += 1
+            while i < n and not lines[i].strip().startswith("```"):
+                code.append(lines[i])
+                i += 1
+            if i < n:
+                code.append(lines[i])
+                i += 1
+            out.append("\n".join(code))
+            continue
+
+        # Heading (kept verbatim — {{TITRE}} passes through)
+        if re.match(r"^#{1,3}\s+\S", line):
+            flush_para(); flush_bullets()
+            out.append(line)
+            i += 1
+            continue
+
+        # Horizontal rule
+        if re.fullmatch(r"[-_*]{3,}", line):
+            flush_para(); flush_bullets()
+            out.append("---")
+            i += 1
+            continue
+
+        # Blockquote
+        if line.startswith(">"):
+            flush_para(); flush_bullets()
+            quote = []
+            while i < n and lines[i].strip().startswith(">"):
+                quote.append(lines[i].rstrip())
+                i += 1
+            out.append("\n".join(quote))
+            continue
+
+        # Table
+        if line.startswith("|") and line.endswith("|"):
+            flush_para(); flush_bullets()
+            tbl = []
+            while i < n and lines[i].strip().startswith("|") and lines[i].strip().endswith("|"):
+                tbl.append(lines[i].rstrip())
+                i += 1
+            if len(tbl) >= 2:
+                header = tbl[0]
+                sep = tbl[1]
+                cols = [c.strip() for c in header.strip().strip("|").split("|")]
+                ncols = max(1, len(cols))
+                placeholder = "| " + " | ".join(["{{cellule}}"] * ncols) + " |"
+                data_rows = tbl[2:]
+                row_count = max(3, len(data_rows)) if data_rows else 3
+                body = "\n".join([placeholder] * row_count)
+                out.append(f"{header}\n{sep}\n{body}")
+                out.append("{{TABLEAU: remplace chaque cellule par la donnee synthetisee, ajoute ou enleve des lignes selon les sources}}")
+            else:
+                out.extend(tbl)
+            continue
+
+        # Bullet list item
+        mb = re.match(r"^[-*]\s+(.*)$", line)
+        if mb:
+            flush_para()
+            if numbered and bullets:
+                flush_bullets()
+            numbered = False
+            bullets.append(mb.group(1))
+            i += 1
+            continue
+
+        # Numbered list item
+        mn = re.match(r"^\d+\.\s+(.*)$", line)
+        if mn:
+            flush_para()
+            if not numbered and bullets:
+                flush_bullets()
+            numbered = True
+            bullets.append(mn.group(1))
+            i += 1
+            continue
+
+        # Blank line separates blocks
+        if not line:
+            flush_para(); flush_bullets()
+            i += 1
+            continue
+
+        paragraph.append(line)
+        i += 1
+
+    flush_para(); flush_bullets()
+    return "\n\n".join(out).strip()
+
+
+def _resolve_format_to_template(raw: str) -> str:
+    """Parse le custom_format stocke (JSON blocks, Markdown WYSIWYG, ou legacy).
+
+    - Tableau JSON (ancien block editor) -> _blocks_to_template
+    - Sinon (Markdown brut du WYSIWYG) -> _md_to_marker_template
+    Dans tous les cas on retourne un template a MARQUEURS, chemin unique.
     """
     raw = (raw or "").strip()
     if not raw:
@@ -308,96 +461,54 @@ def _resolve_format_to_template(raw: str) -> str:
                 return _blocks_to_template(blocks)
         except (json.JSONDecodeError, ValueError):
             pass
-    return raw
+    return _md_to_marker_template(raw)
 
 
 def get_system_prompt(topic: str, custom_format: str | None = None) -> str:
     """Build the HuntR pro system prompt.
 
     Si `custom_format` est fourni (préférence utilisateur ou override ponctuel),
-    il remplace le squelette imposé par défaut (# Titre / ## Aspect x3 /
-    ## Conclusion). Les regles globales (citation inline, reformulation,
-    utilisation de toutes les sources) sont toujours appliquees.
+    il remplace le squelette imposé par défaut. Les regles globales (citation
+    inline, reformulation, utilisation de toutes les sources) restent appliquees.
 
-    Deux branches distinctes selon la forme du template :
-    - Si le template contient des marqueurs `{{...}}` (issus de l'ancien
-      block-editor) : prompt a marqueurs (remplir chaque `{{CONTENU}}`, etc.).
-    - Sinon (Markdown brut issu du nouvel editeur WYSIWYG) : prompt "mirror"
-      qui demande au LLM de reproduire la structure exacte en remplacant le
-      contenu textuel de chaque bloc par la synthese.
+    Le template recu ici est TOUJOURS au format marker (normalise par
+    _resolve_format_to_template en amont : JSON blocks et Markdown WYSIWYG
+    convergent tous les deux vers la meme forme a marqueurs `{{...}}`).
     """
     custom = (custom_format or "").strip()
     if not custom:
         return TOPIC_PROMPTS.get(topic, SYSTEM_PROMPT_WEB)
 
     lead = _TOPIC_LEADS.get(topic, _TOPIC_LEADS["web"])
-    has_markers = "{{" in custom and "}}" in custom
-
-    if has_markers:
-        override_block = (
-            "=== TEMPLATE DE REPONSE (blocs avec marqueurs) — OBLIGATOIRE ET STRICT ===\n\n"
-            "L'utilisateur a construit un MODELE DE REPONSE par blocs. Ton unique role "
-            "est de REPRODUIRE ce modele a l'identique en remplissant les marqueurs de "
-            "contenu. TU N'AS AUCUNE LIBERTE SUR LA STRUCTURE.\n\n"
-            "MODELE A REPRODUIRE (squelette Markdown) :\n"
-            "```\n"
-            f"{custom}\n"
-            "```\n\n"
-            "INTERPRETATION DES MARQUEURS :\n"
-            "- `{{CONTENU: <hint>}}`             -> remplace par un paragraphe en prose qui respecte le hint (langue + citations [n])\n"
-            "- `{{LISTE À PUCES: <hint>}}`       -> remplace par une vraie liste Markdown a puces (`- item`) selon le hint\n"
-            "- `{{LISTE NUMÉROTÉE: <hint>}}`     -> remplace par une liste numerotee (`1. item`, `2. item`...) selon le hint\n"
-            "- `{{TABLEAU: <hint> ...}}`         -> remplis le tableau fourni juste au-dessus (meme nombre de colonnes), ajoute ou enleve des lignes selon le hint, remplace chaque `{{cellule}}` par la donnee synthetisee\n"
-            "- Les lignes `# Titre`, `## Section`, `### Sous-section` sont les titres EXACTS que tu dois reproduire tels quels (sans les modifier)\n\n"
-            "REGLES STRICTES :\n"
-            "1. Suis le modele ligne par ligne, dans l'ORDRE. Ne reordonne rien.\n"
-            "2. Ne SUPPRIME aucun bloc / titre / marqueur present dans le modele.\n"
-            "3. N'AJOUTE aucun bloc / titre en dehors du modele.\n"
-            "4. Remplace CHAQUE `{{...}}` par du contenu synthetise — laisser un marqueur non substitue est une erreur.\n"
-            "5. Chaque phrase que tu produis doit citer au moins une source sous la forme exacte `[1]`, `[2]`, etc. (crochets droits + chiffre) pour que les vignettes cliquables s'affichent.\n"
-            "6. Utilise au moins une fois chaque source disponible.\n"
-            "7. Reformule entierement, ne copie jamais un passage source tel quel.\n"
-        )
-    else:
-        override_block = (
-            "=== TEMPLATE DE REPONSE (Markdown WYSIWYG) — OBLIGATOIRE ET STRICT ===\n\n"
-            "L'utilisateur a redige un MODELE MARKDOWN que tu dois reproduire A LA LETTRE. "
-            "Ton unique role est de synthetiser les passages fournis en remplissant chaque bloc "
-            "du modele par la synthese correspondante — la STRUCTURE (ordre, types de blocs, "
-            "nombre de blocs, titres) n'est PAS negociable.\n\n"
-            "MODELE A RESPECTER (entre triple backticks) :\n"
-            "```\n"
-            f"{custom}\n"
-            "```\n\n"
-            "INTERPRETATION DU MODELE :\n"
-            "- Les lignes commencant par `#`, `##`, `###` sont les TITRES FIGES : recopie-les "
-            "EXACTEMENT comme dans le modele (meme texte, meme ordre, meme niveau — ne les "
-            "traduis pas, ne les renumerote pas, ne les supprime pas, n'en ajoute pas).\n"
-            "- Les PARAGRAPHES du modele sont des HINTS qui decrivent ce que tu dois ecrire a "
-            "cet endroit (sujet, longueur, ton). Tu les REMPLACES par ta synthese — tu ne les "
-            "recopies pas tels quels.\n"
-            "- Les LISTES (`- item` ou `1. item`) du modele : conserve le TYPE (puces / "
-            "numerotee) et le nombre approximatif d'items indique par le hint, mais remplace "
-            "chaque item par ta synthese.\n"
-            "- Les TABLEAUX Markdown du modele : conserve l'en-tete exact (meme colonnes), "
-            "remplace les lignes de contenu par ta synthese (tu peux ajouter ou retirer des "
-            "lignes selon les donnees disponibles).\n"
-            "- Les BLOCS DE CODE et CITATIONS (`>` ) : conserve leur type, remplace leur "
-            "contenu par ta synthese si pertinent, sinon laisse-les tels quels.\n\n"
-            "REGLES STRICTES :\n"
-            "1. Respecte la STRUCTURE du modele ligne par ligne, dans l'ORDRE.\n"
-            "2. Le TEXTE descriptif du modele (hints) ne doit PAS apparaitre dans ta reponse "
-            "finale — tu le remplaces par du contenu synthetise.\n"
-            "3. N'AJOUTE aucun titre / bloc / section qui n'existe pas dans le modele.\n"
-            "4. Ne SUPPRIME aucun titre / bloc / section du modele.\n"
-            "5. Chaque affirmation doit citer au moins une source sous la forme EXACTE `[1]`, "
-            "`[2]`, etc. (crochets droits + chiffre, pas de variante) DANS la phrase — ces "
-            "citations deviennent des vignettes cliquables cote UI.\n"
-            "6. Utilise AU MOINS UNE FOIS chaque source fournie (il y en a jusqu'a 10).\n"
-            "7. Reformule entierement les passages — ne copie JAMAIS un passage source tel "
-            "quel.\n"
-            "8. Reponds dans la MEME LANGUE que la question de l'utilisateur.\n"
-        )
+    override_block = (
+        "=== TEMPLATE DE REPONSE — OBLIGATOIRE ET STRICT ===\n\n"
+        "L'utilisateur a defini un MODELE DE REPONSE. Ton unique role est de "
+        "REPRODUIRE ce modele a l'identique en remplissant chaque marqueur par "
+        "du contenu synthetise a partir des passages. TU N'AS AUCUNE LIBERTE "
+        "SUR LA STRUCTURE.\n\n"
+        "MODELE A REPRODUIRE (squelette Markdown) :\n"
+        "```\n"
+        f"{custom}\n"
+        "```\n\n"
+        "INTERPRETATION DES MARQUEURS :\n"
+        "- `{{TITRE}}`                       -> remplace par UN titre d'une seule phrase qui reformule la question de l'utilisateur en affirmation claire (sans les crochets, sans balise)\n"
+        "- `{{CONTENU: <hint>}}`             -> remplace par un paragraphe en prose qui respecte le hint (sujet, longueur indicative, citations [n] DANS les phrases)\n"
+        "- `{{LISTE À PUCES: <hint>}}`       -> remplace par une vraie liste Markdown a puces (`- item`) — chaque item est synthetise, pas recopie du hint\n"
+        "- `{{LISTE NUMÉROTÉE: <hint>}}`     -> remplace par une liste numerotee (`1. item`, `2. item`...) selon le hint\n"
+        "- `{{TABLEAU: <hint>}}`             -> remplis le tableau fourni juste au-dessus (meme nombre de colonnes), remplace chaque `{{cellule}}` par la donnee synthetisee, ajoute ou enleve des lignes si necessaire\n"
+        "- `{{cellule}}`                     -> donnee synthetisee (un mot, un chiffre, une courte phrase selon la colonne)\n"
+        "- Les lignes `# Titre`, `## Section`, `### Sous-section` SANS marqueur dedans sont des titres FIGES : recopie-les EXACTEMENT (meme texte, meme ordre, meme niveau)\n\n"
+        "REGLES STRICTES :\n"
+        "1. Suis le modele ligne par ligne, dans l'ORDRE. Ne reordonne rien.\n"
+        "2. Ne SUPPRIME aucun bloc / titre / marqueur present dans le modele.\n"
+        "3. N'AJOUTE aucun bloc / titre / section en dehors du modele.\n"
+        "4. Remplace CHAQUE `{{...}}` par du contenu synthetise — aucun marqueur ne doit subsister dans la reponse finale.\n"
+        "5. Le TEXTE des hints (ce qui est apres `:` dans un marqueur) ne doit PAS apparaitre tel quel dans ta reponse — c'est une instruction pour toi, pas du contenu a copier.\n"
+        "6. Chaque affirmation doit citer au moins une source sous la forme EXACTE `[1]`, `[2]`, etc. (crochets droits + chiffre, pas de variante) DANS la phrase — ces citations deviennent des vignettes cliquables cote UI.\n"
+        "7. Utilise AU MOINS UNE FOIS chaque source fournie.\n"
+        "8. Reformule entierement les passages — ne copie JAMAIS un passage source tel quel.\n"
+        "9. Reponds dans la MEME LANGUE que la question de l'utilisateur.\n"
+    )
     return f"{lead}\n\n{override_block}\n\n{_BASE_RULES}"
 
 
@@ -706,40 +817,23 @@ async def search_stream(req: SearchRequest, request: Request,
 
             context = _build_llm_context(results)
             if resolved_format:
-                has_markers = "{{" in resolved_format and "}}" in resolved_format
                 n = min(len(results), 10)
-                if has_markers:
-                    user_content = (
-                        f"QUESTION : {query}\n\n"
-                        f"PASSAGES WEB (numérotés [1] à [{n}]) :\n\n"
-                        f"{context}\n\n"
-                        f"---\n"
-                        f"REPRODUIS EXACTEMENT le template defini dans le system prompt.\n"
-                        f"- Recopie les lignes `#`, `##`, `###` telles quelles (titres figés)\n"
-                        f"- Substitue chaque marqueur `{{{{CONTENU: ...}}}}`, `{{{{LISTE À PUCES: ...}}}}`, "
-                        f"`{{{{LISTE NUMÉROTÉE: ...}}}}`, `{{{{TABLEAU: ...}}}}` et chaque `{{{{cellule}}}}` "
-                        f"par du contenu synthetise — aucun marqueur ne doit rester dans la reponse finale\n"
-                        f"- Cite chaque affirmation avec `[1]`, `[2]`, … (format EXACT)\n"
-                        f"- Utilise au moins une fois chaque source ({n} au total)\n"
-                        f"- Reformule, ne copie jamais un passage tel quel"
-                    )
-                else:
-                    user_content = (
-                        f"QUESTION : {query}\n\n"
-                        f"PASSAGES WEB (numérotés [1] à [{n}]) :\n\n"
-                        f"{context}\n\n"
-                        f"---\n"
-                        f"REPRODUIS LE MODELE MARKDOWN du system prompt A LA LETTRE :\n"
-                        f"- Recopie chaque `# Titre`, `## Section`, `### Sous-section` mot pour mot\n"
-                        f"- Remplace le texte de chaque paragraphe / liste / tableau par TA SYNTHESE "
-                        f"des passages (les hints du modele ne doivent PAS apparaitre dans ta reponse)\n"
-                        f"- Conserve le TYPE de chaque bloc : paragraphe reste paragraphe, liste reste "
-                        f"liste (meme type puces ou numerotee), tableau reste tableau avec les memes colonnes\n"
-                        f"- N'AJOUTE aucun titre ou section en dehors du modele\n"
-                        f"- Cite chaque affirmation avec `[1]`, `[2]`, … (format EXACT, crochets droits + chiffre)\n"
-                        f"- Utilise au moins une fois chaque source ({n} au total)\n"
-                        f"- Reformule, ne copie jamais un passage tel quel"
-                    )
+                user_content = (
+                    f"QUESTION DE L'UTILISATEUR : {query}\n\n"
+                    f"PASSAGES WEB (numérotés [1] à [{n}]) :\n\n"
+                    f"{context}\n\n"
+                    f"---\n"
+                    f"REPRODUIS EXACTEMENT le template defini dans le system prompt.\n"
+                    f"- Recopie chaque `#`, `##`, `###` (hors marqueurs) mot pour mot\n"
+                    f"- Remplace `{{{{TITRE}}}}` par un titre d'UNE SEULE PHRASE reformulant la question ci-dessus en affirmation\n"
+                    f"- Substitue chaque `{{{{CONTENU: ...}}}}`, `{{{{LISTE À PUCES: ...}}}}`, "
+                    f"`{{{{LISTE NUMÉROTÉE: ...}}}}`, `{{{{TABLEAU: ...}}}}` et `{{{{cellule}}}}` "
+                    f"par du contenu synthetise — AUCUN marqueur ne doit rester dans la reponse finale\n"
+                    f"- Les hints (texte apres `:` dans un marqueur) sont des INSTRUCTIONS pour toi, PAS du contenu a copier\n"
+                    f"- Cite chaque affirmation avec `[1]`, `[2]`, … (format EXACT, crochets droits + chiffre)\n"
+                    f"- Utilise au moins une fois chaque source ({n} au total)\n"
+                    f"- Reformule, ne copie jamais un passage tel quel"
+                )
             else:
                 user_content = (
                     f"QUESTION : {query}\n\n"
@@ -762,17 +856,14 @@ async def search_stream(req: SearchRequest, request: Request,
                 ChatMessage(role="system", content=system_prompt),
                 ChatMessage(role="user", content=user_content),
             ]
-            fmt_mode = "none"
-            if resolved_format:
-                fmt_mode = "markers" if ("{{" in resolved_format and "}}" in resolved_format) else "markdown"
             logger.info(
                 f"[HuntR] Pro synth: topic={topic} "
-                f"custom_format={'YES (' + str(len(resolved_format)) + ' chars, mode=' + fmt_mode + ')' if resolved_format else 'NO (default skeleton)'} "
+                f"raw_len={len(resolved_format_raw)} normalized_len={len(resolved_format)} "
                 f"system_prompt_len={len(system_prompt)}"
             )
             if resolved_format:
-                preview = resolved_format[:240].replace("\n", " ⏎ ")
-                logger.info(f"[HuntR] Template preview: {preview}{'…' if len(resolved_format) > 240 else ''}")
+                preview = resolved_format[:320].replace("\n", " ⏎ ")
+                logger.info(f"[HuntR] Normalized template: {preview}{'…' if len(resolved_format) > 320 else ''}")
 
             llm_ok = False
             answer = ""
