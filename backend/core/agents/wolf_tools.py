@@ -1287,7 +1287,7 @@ TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
 
     # ── Gateway web : pré-fetch le contenu AVANT d'envoyer au sous-agent ──
     from backend.core.gateway import WebGateway, detect_web_refusal, extract_original_query
-    from backend.api.routes import _parse_text_tool_calls
+    from backend.core.api.chat import _parse_text_tool_calls
 
     gw = WebGateway()
     gw_result = await gw.process_message(task)
