@@ -641,15 +641,10 @@ async def search_stream(req: SearchRequest, request: Request,
 
     # ── Resolve per-user resources BEFORE the stream ─────────────────
     tavily = await _resolve_tavily(uid, session)
-    # Resolve the effective custom format: request override > user preference.
-    # `resolved_format` can be JSON-encoded blocks (from the block editor) or
-    # raw Markdown (legacy) — we normalize it to a Markdown template here so
-    # the rest of the code + the LLM see a single consistent format.
-    resolved_format_raw = (req.custom_format or "").strip()
-    if not resolved_format_raw:
-        us = await get_user_settings(uid, session)
-        resolved_format_raw = ((us.huntr_config or {}).get("custom_format") or "").strip()
-    resolved_format = _resolve_format_to_template(resolved_format_raw)
+    # Template universel pour tous les utilisateurs en mode Pro : H1 + 3 H2 +
+    # Conclusion (defini dans _BASE_STRUCTURE). On ignore volontairement
+    # `req.custom_format` et la pref DB pour garantir une sortie previsible
+    # quel que soit le LLM choisi.
     llm_provider = None
     llm_model = ""
     llm_error = None
@@ -675,7 +670,7 @@ async def search_stream(req: SearchRequest, request: Request,
     cache_key = None
     cached_payload = None
     if req.pro_search and topic != "news":
-        cache_key = tavily_cache.make_key(uid, req.query, "pro", req.max_results, topic, resolved_format_raw)
+        cache_key = tavily_cache.make_key(uid, req.query, "pro", req.max_results, topic)
         cached_payload = tavily_cache.get(cache_key)
 
     async def _stream():
@@ -816,54 +811,31 @@ async def search_stream(req: SearchRequest, request: Request,
             })
 
             context = _build_llm_context(results)
-            if resolved_format:
-                n = min(len(results), 10)
-                user_content = (
-                    f"QUESTION DE L'UTILISATEUR : {query}\n\n"
-                    f"PASSAGES WEB (numérotés [1] à [{n}]) :\n\n"
-                    f"{context}\n\n"
-                    f"---\n"
-                    f"REPRODUIS EXACTEMENT le template defini dans le system prompt.\n"
-                    f"- Recopie chaque `#`, `##`, `###` (hors marqueurs) mot pour mot\n"
-                    f"- Remplace `{{{{TITRE}}}}` par un titre d'UNE SEULE PHRASE reformulant la question ci-dessus en affirmation\n"
-                    f"- Substitue chaque `{{{{CONTENU: ...}}}}`, `{{{{LISTE À PUCES: ...}}}}`, "
-                    f"`{{{{LISTE NUMÉROTÉE: ...}}}}`, `{{{{TABLEAU: ...}}}}` et `{{{{cellule}}}}` "
-                    f"par du contenu synthetise — AUCUN marqueur ne doit rester dans la reponse finale\n"
-                    f"- Les hints (texte apres `:` dans un marqueur) sont des INSTRUCTIONS pour toi, PAS du contenu a copier\n"
-                    f"- Cite chaque affirmation avec `[1]`, `[2]`, … (format EXACT, crochets droits + chiffre)\n"
-                    f"- Utilise au moins une fois chaque source ({n} au total)\n"
-                    f"- Reformule, ne copie jamais un passage tel quel"
-                )
-            else:
-                user_content = (
-                    f"QUESTION : {query}\n\n"
-                    f"PASSAGES WEB (numérotés [1] à [{min(len(results), 10)}]) :\n\n"
-                    f"{context}\n\n"
-                    f"---\n"
-                    f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots).\n\n"
-                    f"FORMAT OBLIGATOIRE — suis ce squelette exact :\n"
-                    f"  1. Un `# Titre principal` (en une phrase)\n"
-                    f"  2. `## Aspect 1` + paragraphe de 5-8 phrases\n"
-                    f"  3. `## Aspect 2` + paragraphe de 5-8 phrases\n"
-                    f"  4. `## Aspect 3` + paragraphe de 5-8 phrases\n"
-                    f"  5. `## Conclusion` + paragraphe de 3-5 phrases\n\n"
-                    f"AUCUNE liste à puces. AUCUNE liste numérotée. Uniquement de la prose.\n"
-                    f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
-                    f"Exploite TOUS les passages — chaque source citée au moins une fois."
-                )
-            system_prompt = get_system_prompt(topic, resolved_format)
+            n = min(len(results), 10)
+            user_content = (
+                f"QUESTION : {query}\n\n"
+                f"PASSAGES WEB (numérotés [1] à [{n}]) :\n\n"
+                f"{context}\n\n"
+                f"---\n"
+                f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots).\n\n"
+                f"FORMAT OBLIGATOIRE — suis ce squelette exact :\n"
+                f"  1. Un `# Titre principal` (en une phrase)\n"
+                f"  2. `## Aspect 1` + paragraphe de 5-8 phrases\n"
+                f"  3. `## Aspect 2` + paragraphe de 5-8 phrases\n"
+                f"  4. `## Aspect 3` + paragraphe de 5-8 phrases\n"
+                f"  5. `## Conclusion` + paragraphe de 3-5 phrases\n\n"
+                f"AUCUNE liste à puces. AUCUNE liste numérotée. Uniquement de la prose.\n"
+                f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
+                f"Exploite TOUS les passages — chaque source citée au moins une fois."
+            )
+            system_prompt = get_system_prompt(topic)
             messages = [
                 ChatMessage(role="system", content=system_prompt),
                 ChatMessage(role="user", content=user_content),
             ]
             logger.info(
-                f"[HuntR] Pro synth: topic={topic} "
-                f"raw_len={len(resolved_format_raw)} normalized_len={len(resolved_format)} "
-                f"system_prompt_len={len(system_prompt)}"
+                f"[HuntR] Pro synth: topic={topic} system_prompt_len={len(system_prompt)}"
             )
-            if resolved_format:
-                preview = resolved_format[:320].replace("\n", " ⏎ ")
-                logger.info(f"[HuntR] Normalized template: {preview}{'…' if len(resolved_format) > 320 else ''}")
 
             llm_ok = False
             answer = ""
