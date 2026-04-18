@@ -263,11 +263,18 @@ def get_system_prompt(topic: str, custom_format: str | None = None) -> str:
 
     lead = _TOPIC_LEADS.get(topic, _TOPIC_LEADS["web"])
     override_block = (
-        "STRUCTURE IMPOSEE PAR L'UTILISATEUR — respecte-la a la lettre :\n\n"
-        f"{custom}\n\n"
-        "Suis exactement les consignes de format ci-dessus. Si elles entrent "
-        "en conflit avec une structure par defaut, les consignes utilisateur "
-        "priment."
+        "=== FORMAT DE REPONSE — OBLIGATOIRE ET PRIORITAIRE ===\n\n"
+        "L'utilisateur a defini un format de reponse personnalise. Tu DOIS le "
+        "respecter a la lettre. Ce format REMPLACE toute structure par defaut "
+        "(pas de squelette H1/3xH2/Conclusion impose) et PRIME sur tes habitudes.\n\n"
+        "INSTRUCTIONS UTILISATEUR :\n"
+        "---\n"
+        f"{custom}\n"
+        "---\n\n"
+        "Applique ces instructions telles quelles. Ne rajoute AUCUNE section qui "
+        "n'y figure pas. Ne supprime AUCUNE section demandee. Si les instructions "
+        "sont courtes ou ambigues, interprete-les au plus proche tout en citant "
+        "les sources [1], [2] dans chaque phrase."
     )
     return f"{lead}\n\n{override_block}\n\n{_BASE_RULES}"
 
@@ -600,10 +607,16 @@ async def search_stream(req: SearchRequest, request: Request,
                     f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
                     f"Exploite TOUS les passages — chaque source citée au moins une fois."
                 )
+            system_prompt = get_system_prompt(topic, resolved_format)
             messages = [
-                ChatMessage(role="system", content=get_system_prompt(topic, resolved_format)),
+                ChatMessage(role="system", content=system_prompt),
                 ChatMessage(role="user", content=user_content),
             ]
+            logger.info(
+                f"[HuntR] Pro synth: topic={topic} "
+                f"custom_format={'YES (' + str(len(resolved_format)) + ' chars)' if resolved_format else 'NO (default skeleton)'} "
+                f"system_prompt_len={len(system_prompt)}"
+            )
 
             llm_ok = False
             answer = ""

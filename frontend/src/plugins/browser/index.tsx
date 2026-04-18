@@ -291,14 +291,14 @@ export default function HuntRPlugin() {
       .catch(() => {})
   }, [])
 
-  const saveCustomFormat = useCallback(async () => {
+  const persistFormat = useCallback(async (raw: string) => {
     setSavingFormat(true)
     setFormatFlash(null)
     try {
       const resp = await fetch(`${API}/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ custom_format: formatEditor.trim() }),
+        body: JSON.stringify({ custom_format: raw.trim() }),
       })
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
@@ -312,7 +312,10 @@ export default function HuntRPlugin() {
       setSavingFormat(false)
       setTimeout(() => setFormatFlash(null), 2500)
     }
-  }, [formatEditor])
+  }, [])
+
+  const saveCustomFormat = useCallback(() => persistFormat(formatEditor), [persistFormat, formatEditor])
+  const resetCustomFormat = useCallback(() => persistFormat(''), [persistFormat])
 
   // ── Reload history when filter changes ────────────────────────────
   useEffect(() => { refreshHistory() }, [refreshHistory])
@@ -679,30 +682,6 @@ export default function HuntRPlugin() {
                   Pro
                 </button>
 
-                {/* Custom format editor toggle (pro uniquement) */}
-                {proSearch && (
-                  <button
-                    onClick={() => { setFormatEditor(customFormat); setShowFormatEditor(v => !v) }}
-                    title="Personnaliser la structure de la réponse (par-utilisateur, persistante)"
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 5,
-                      padding: '11px 12px', borderRadius: 10, fontSize: 12, fontWeight: 600,
-                      background: customFormat
-                        ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
-                        : 'var(--bg-secondary)',
-                      border: customFormat
-                        ? '1px solid var(--scarlet)'
-                        : '1px solid var(--border)',
-                      color: customFormat ? 'var(--scarlet)' : 'var(--text-muted)',
-                      cursor: 'pointer',
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Sliders size={12} />
-                    Format
-                  </button>
-                )}
-
                 {/* Search button */}
                 <PrimaryButton
                   onClick={() => doSearch()}
@@ -716,10 +695,11 @@ export default function HuntRPlugin() {
                 </PrimaryButton>
               </div>
 
-              {/* Topic segmented control */}
+              {/* Topic segmented control + Format toggle (pro only) */}
               <div style={{
                 display: 'flex', gap: 6, marginTop: 10, width: '100%',
                 maxWidth: !hasResults ? 640 : undefined, flexWrap: 'wrap',
+                alignItems: 'center',
               }}>
                 {TOPICS.map(t => {
                   const active = topic === t.id
@@ -745,6 +725,36 @@ export default function HuntRPlugin() {
                     </button>
                   )
                 })}
+                {proSearch && (
+                  <button
+                    onClick={() => { setFormatEditor(customFormat); setShowFormatEditor(v => !v) }}
+                    title={customFormat
+                      ? 'Format personnalisé actif — cliquer pour modifier'
+                      : 'Personnaliser la structure de la réponse Pro'}
+                    style={{
+                      marginLeft: 'auto',
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      padding: '7px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                      background: customFormat
+                        ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
+                        : 'var(--bg-secondary)',
+                      border: customFormat
+                        ? '1px solid var(--scarlet)'
+                        : '1px solid var(--border)',
+                      color: customFormat ? 'var(--scarlet)' : 'var(--text-muted)',
+                      cursor: 'pointer', transition: 'all 0.15s',
+                    }}
+                  >
+                    <Sliders size={12} />
+                    Format
+                    {customFormat && (
+                      <span style={{
+                        fontSize: 9, padding: '1px 6px', borderRadius: 999,
+                        background: 'var(--scarlet)', color: '#fff', fontWeight: 700,
+                      }}>ON</span>
+                    )}
+                  </button>
+                )}
               </div>
 
               {/* Format editor panel (pro uniquement, toggle via bouton Format) */}
@@ -783,18 +793,22 @@ export default function HuntRPlugin() {
                   <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
                     <PrimaryButton
                       onClick={saveCustomFormat}
-                      disabled={savingFormat || formatEditor === customFormat}
+                      disabled={savingFormat || formatEditor.trim() === customFormat.trim()}
                       icon={savingFormat ? <Loader2 size={12} style={{ animation: 'huntr-spin 1s linear infinite' }} /> : <Save size={12} />}
                     >
                       {formatFlash === 'ok' ? 'Sauvegardé' : 'Appliquer'}
                     </PrimaryButton>
                     {customFormat && (
                       <SecondaryButton
-                        onClick={() => { setFormatEditor(''); }}
+                        onClick={resetCustomFormat}
+                        disabled={savingFormat}
                       >
-                        Effacer
+                        Réinitialiser
                       </SecondaryButton>
                     )}
+                    <SecondaryButton onClick={() => setShowFormatEditor(false)}>
+                      Réduire
+                    </SecondaryButton>
                     {formatFlash === 'err' && (
                       <span style={{ fontSize: 11, color: 'var(--accent-danger, #dc2626)' }}>Échec sauvegarde</span>
                     )}
