@@ -9,7 +9,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useStore } from '@core/stores/appStore'
 import { PrimaryButton, SecondaryButton } from '@core/components/ui'
-import { ArrowRight, Loader2, Clock, Download, Plus, Sliders, X, Save } from 'lucide-react'
+import {
+  ArrowRight, Loader2, Clock, Download, Plus, Sliders, X, Save,
+  Heading1, Heading2, Heading3, Pilcrow, List, ListOrdered, Table as TableIcon,
+  ArrowUp, ArrowDown, Trash2, GripVertical,
+} from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -78,19 +82,63 @@ interface UserCapabilities {
 
 const API = '/api/plugins/browser'
 
-const DEFAULT_FORMAT_TEMPLATE = `# [Titre principal en une phrase]
+// ── Block-based WYSIWYG template model ──────────────────────────────────
+type FormatBlockType = 'h1' | 'h2' | 'h3' | 'paragraph' | 'bullets' | 'numbered' | 'table'
 
-## [Aspect 1 — sous-titre descriptif]
-Paragraphe de 5 à 8 phrases, chaque affirmation citée [1][2] dans le texte.
+interface FormatBlock {
+  id: string
+  type: FormatBlockType
+  text: string
+  columns?: string[]
+}
 
-## [Aspect 2 — sous-titre descriptif]
-Paragraphe détaillé sur un second angle [3][4].
+const BLOCK_TYPE_META: Record<FormatBlockType, { label: string; short: string }> = {
+  h1:        { label: 'Titre',        short: 'H1' },
+  h2:        { label: 'Section',      short: 'H2' },
+  h3:        { label: 'Sous-section', short: 'H3' },
+  paragraph: { label: 'Paragraphe',   short: 'P'  },
+  bullets:   { label: 'Liste',        short: '•'  },
+  numbered:  { label: 'Liste num.',   short: '1.' },
+  table:     { label: 'Tableau',      short: '▦'  },
+}
 
-## [Aspect 3 — sous-titre descriptif]
-Paragraphe sur un troisième angle, exemples et implications [5].
+const genBlockId = () => 'b_' + Math.random().toString(36).slice(2, 10)
 
-## Conclusion
-Synthèse finale de 3 à 5 phrases [1][2][3].`
+const DEFAULT_BLOCKS: FormatBlock[] = [
+  { id: genBlockId(), type: 'h1', text: 'Titre principal de la réponse (1 phrase)' },
+  { id: genBlockId(), type: 'h2', text: 'Contexte' },
+  { id: genBlockId(), type: 'paragraph', text: '5 à 8 phrases qui posent le sujet, citations [1][2] dans le texte' },
+  { id: genBlockId(), type: 'h2', text: 'Analyse' },
+  { id: genBlockId(), type: 'paragraph', text: '5 à 8 phrases détaillant les enjeux, citations [3][4]' },
+  { id: genBlockId(), type: 'h2', text: 'Conclusion' },
+  { id: genBlockId(), type: 'paragraph', text: '3 à 5 phrases de synthèse' },
+]
+
+function parseBlocks(raw: string): FormatBlock[] {
+  if (!raw || !raw.trim()) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      const allowed: FormatBlockType[] = ['h1', 'h2', 'h3', 'paragraph', 'bullets', 'numbered', 'table']
+      return parsed
+        .filter((b: any) => b && allowed.includes(b.type))
+        .map((b: any) => ({
+          id: typeof b.id === 'string' ? b.id : genBlockId(),
+          type: b.type as FormatBlockType,
+          text: typeof b.text === 'string' ? b.text : '',
+          columns: Array.isArray(b.columns) ? b.columns.map((c: any) => String(c)) : undefined,
+        }))
+    }
+  } catch { /* fallthrough */ }
+  return []
+}
+
+function serializeBlocks(blocks: FormatBlock[]): string {
+  if (!blocks.length) return ''
+  return JSON.stringify(blocks.map(b => ({
+    type: b.type, text: b.text, ...(b.columns ? { columns: b.columns } : {}),
+  })))
+}
 
 // Citations factices pour la preview WYSIWYG — le rendu exact que verra
 // l'utilisateur une fois la réponse générée (vignettes [1]…[5] cliquables).
@@ -280,10 +328,12 @@ export default function HuntRPlugin() {
   const [showHistory, setShowHistory] = useState(false)
   const [favoritesOnly, setFavoritesOnly] = useState(false)
   const [activeHistoryId, setActiveHistoryId] = useState<number | null>(null)
-  // Per-user custom response format (pro mode) — stored server-side in
-  // user_settings.huntr_config.custom_format. Empty string = default structure.
+  // Per-user custom response format (pro mode) — stored server-side as a
+  // JSON-serialized block list in user_settings.huntr_config.custom_format.
+  // customFormat = canonical storage string (JSON of blocks, or '' when empty)
+  // formatBlocks = in-memory edition state, synced from customFormat on load
   const [customFormat, setCustomFormat] = useState('')
-  const [formatEditor, setFormatEditor] = useState('')
+  const [formatBlocks, setFormatBlocks] = useState<FormatBlock[]>([])
   const [showFormatEditor, setShowFormatEditor] = useState(false)
   const [savingFormat, setSavingFormat] = useState(false)
   const [formatFlash, setFormatFlash] = useState<'ok' | 'err' | null>(null)
@@ -310,7 +360,7 @@ export default function HuntRPlugin() {
       .then(d => {
         const fmt = (d?.custom_format || '') as string
         setCustomFormat(fmt)
-        setFormatEditor(fmt)
+        setFormatBlocks(parseBlocks(fmt))
       })
       .catch(() => {})
   }, [])
@@ -322,13 +372,13 @@ export default function HuntRPlugin() {
       const resp = await fetch(`${API}/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ custom_format: raw.trim() }),
+        body: JSON.stringify({ custom_format: raw }),
       })
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
       const fmt = (data?.custom_format || '') as string
       setCustomFormat(fmt)
-      setFormatEditor(fmt)
+      setFormatBlocks(parseBlocks(fmt))
       setFormatFlash('ok')
     } catch {
       setFormatFlash('err')
@@ -338,8 +388,35 @@ export default function HuntRPlugin() {
     }
   }, [])
 
-  const saveCustomFormat = useCallback(() => persistFormat(formatEditor), [persistFormat, formatEditor])
-  const resetCustomFormat = useCallback(() => persistFormat(''), [persistFormat])
+  const saveCustomFormat = useCallback(() => persistFormat(serializeBlocks(formatBlocks)), [persistFormat, formatBlocks])
+  const resetCustomFormat = useCallback(() => { setFormatBlocks([]); return persistFormat('') }, [persistFormat])
+
+  // Block edit helpers
+  const addBlock = useCallback((type: FormatBlockType) => {
+    setFormatBlocks(b => [...b, {
+      id: genBlockId(),
+      type,
+      text: '',
+      ...(type === 'table' ? { columns: ['Colonne 1', 'Colonne 2', 'Colonne 3'] } : {}),
+    }])
+  }, [])
+  const updateBlock = useCallback((id: string, patch: Partial<FormatBlock>) => {
+    setFormatBlocks(b => b.map(x => x.id === id ? { ...x, ...patch } : x))
+  }, [])
+  const moveBlock = useCallback((id: string, dir: 1 | -1) => {
+    setFormatBlocks(b => {
+      const idx = b.findIndex(x => x.id === id)
+      if (idx < 0) return b
+      const target = idx + dir
+      if (target < 0 || target >= b.length) return b
+      const next = [...b]
+      ;[next[idx], next[target]] = [next[target], next[idx]]
+      return next
+    })
+  }, [])
+  const deleteBlock = useCallback((id: string) => {
+    setFormatBlocks(b => b.filter(x => x.id !== id))
+  }, [])
 
   // ── Reload history when filter changes ────────────────────────────
   useEffect(() => { refreshHistory() }, [refreshHistory])
@@ -751,7 +828,7 @@ export default function HuntRPlugin() {
                 })}
                 {proSearch && (
                   <button
-                    onClick={() => { setFormatEditor(customFormat); setShowFormatEditor(v => !v) }}
+                    onClick={() => setShowFormatEditor(v => !v)}
                     title={customFormat
                       ? 'Format personnalisé actif — cliquer pour modifier'
                       : 'Personnaliser la structure de la réponse Pro'}
@@ -781,116 +858,24 @@ export default function HuntRPlugin() {
                 )}
               </div>
 
-              {/* Format editor panel WYSIWYG (pro uniquement) */}
+              {/* Format editor panel — block-based template builder */}
               {proSearch && showFormatEditor && (
-                <div style={{
-                  marginTop: 10, width: '100%',
-                  maxWidth: !hasResults ? 960 : undefined,
-                  padding: 14, borderRadius: 10, background: 'var(--bg-secondary)',
-                  border: '1px solid var(--border)',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <Sliders size={13} /> Modèle de réponse (WYSIWYG)
-                    </div>
-                    <button onClick={() => setShowFormatEditor(false)}
-                      style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
-                      <X size={14} />
-                    </button>
-                  </div>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px', lineHeight: 1.5 }}>
-                    Écris ton modèle de réponse en Markdown dans l'éditeur — le LLM reproduira cette structure à l'identique
-                    en remplaçant les zones de contenu par la synthèse des sources. Les citations <code style={{ fontSize: 10, padding: '1px 4px', background: 'var(--bg-tertiary)', borderRadius: 3, color: 'var(--scarlet)' }}>[1]</code>
-                    <code style={{ fontSize: 10, padding: '1px 4px', background: 'var(--bg-tertiary)', borderRadius: 3, color: 'var(--scarlet)', marginLeft: 3 }}>[2]</code>…
-                    seront rendues en vignettes cliquables. Laisse vide pour revenir au format par défaut.
-                  </p>
-
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-                    gap: 10,
-                  }}>
-                    {/* Editor */}
-                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                        Éditeur Markdown
-                      </div>
-                      <textarea
-                        value={formatEditor}
-                        onChange={e => setFormatEditor(e.target.value)}
-                        placeholder={DEFAULT_FORMAT_TEMPLATE}
-                        rows={14}
-                        maxLength={4000}
-                        spellCheck={false}
-                        style={{
-                          width: '100%', padding: 10, borderRadius: 8,
-                          border: '1px solid var(--border)', background: 'var(--bg-primary)',
-                          color: 'var(--text-primary)', fontSize: 12,
-                          fontFamily: 'JetBrains Mono, ui-monospace, monospace',
-                          resize: 'vertical', outline: 'none', lineHeight: 1.5,
-                          minHeight: 260,
-                        }}
-                      />
-                    </div>
-
-                    {/* Live preview */}
-                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', justifyContent: 'space-between' }}>
-                        <span>Aperçu (rendu final)</span>
-                        <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
-                          citations factices
-                        </span>
-                      </div>
-                      <div style={{
-                        padding: '10px 14px', borderRadius: 8, minHeight: 260,
-                        maxHeight: 360, overflowY: 'auto',
-                        border: '1px solid var(--border)', background: 'var(--bg-primary)',
-                      }}>
-                        {formatEditor.trim() ? (
-                          <MarkdownRenderer text={formatEditor} citations={SAMPLE_CITATIONS} />
-                        ) : (
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                            L'aperçu apparaîtra ici dès que tu commenceras à écrire le modèle.
-                            Laisse vide pour utiliser le format par défaut (# Titre / ## Aspects / ## Conclusion).
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <PrimaryButton
-                      onClick={saveCustomFormat}
-                      disabled={savingFormat || formatEditor.trim() === customFormat.trim()}
-                      icon={savingFormat ? <Loader2 size={12} style={{ animation: 'huntr-spin 1s linear infinite' }} /> : <Save size={12} />}
-                    >
-                      {formatFlash === 'ok' ? 'Sauvegardé' : 'Appliquer'}
-                    </PrimaryButton>
-                    <SecondaryButton
-                      onClick={() => setFormatEditor(DEFAULT_FORMAT_TEMPLATE)}
-                      disabled={savingFormat}
-                    >
-                      Charger exemple
-                    </SecondaryButton>
-                    {customFormat && (
-                      <SecondaryButton
-                        onClick={resetCustomFormat}
-                        disabled={savingFormat}
-                      >
-                        Réinitialiser
-                      </SecondaryButton>
-                    )}
-                    <SecondaryButton onClick={() => setShowFormatEditor(false)}>
-                      Réduire
-                    </SecondaryButton>
-                    {formatFlash === 'err' && (
-                      <span style={{ fontSize: 11, color: 'var(--accent-danger, #dc2626)' }}>Échec sauvegarde</span>
-                    )}
-                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>
-                      {formatEditor.length} / 4000
-                    </span>
-                  </div>
-                </div>
+                <FormatBlocksEditor
+                  blocks={formatBlocks}
+                  onAdd={addBlock}
+                  onUpdate={updateBlock}
+                  onMove={moveBlock}
+                  onDelete={deleteBlock}
+                  onLoadExample={() => setFormatBlocks(DEFAULT_BLOCKS.map(b => ({ ...b, id: genBlockId() })))}
+                  onSave={saveCustomFormat}
+                  onReset={resetCustomFormat}
+                  onClose={() => setShowFormatEditor(false)}
+                  saving={savingFormat}
+                  flash={formatFlash}
+                  isDirty={serializeBlocks(formatBlocks) !== customFormat}
+                  hasSavedFormat={!!customFormat}
+                  hasResults={!!hasResults}
+                />
               )}
 
               {/* Suggestions (idle) */}
@@ -1626,4 +1611,306 @@ function inlineParse(
 
   if (lastIndex < text.length) parts.push(text.slice(lastIndex))
   return parts.length > 0 ? parts : [text]
+}
+
+
+// ── Format blocks editor (block-based WYSIWYG) ────────────────────────────
+
+interface FormatBlocksEditorProps {
+  blocks: FormatBlock[]
+  onAdd: (type: FormatBlockType) => void
+  onUpdate: (id: string, patch: Partial<FormatBlock>) => void
+  onMove: (id: string, dir: 1 | -1) => void
+  onDelete: (id: string) => void
+  onLoadExample: () => void
+  onSave: () => void
+  onReset: () => void
+  onClose: () => void
+  saving: boolean
+  flash: 'ok' | 'err' | null
+  isDirty: boolean
+  hasSavedFormat: boolean
+  hasResults: boolean
+}
+
+function FormatBlocksEditor({
+  blocks, onAdd, onUpdate, onMove, onDelete,
+  onLoadExample, onSave, onReset, onClose,
+  saving, flash, isDirty, hasSavedFormat, hasResults,
+}: FormatBlocksEditorProps) {
+  const addButtons: { type: FormatBlockType; label: string; icon: JSX.Element }[] = [
+    { type: 'h1',        label: 'Titre',        icon: <Heading1 size={13} /> },
+    { type: 'h2',        label: 'Section',      icon: <Heading2 size={13} /> },
+    { type: 'h3',        label: 'Sous-section', icon: <Heading3 size={13} /> },
+    { type: 'paragraph', label: 'Paragraphe',   icon: <Pilcrow size={13} /> },
+    { type: 'bullets',   label: 'Liste',        icon: <List size={13} /> },
+    { type: 'numbered',  label: 'Liste num.',   icon: <ListOrdered size={13} /> },
+    { type: 'table',     label: 'Tableau',      icon: <TableIcon size={13} /> },
+  ]
+
+  return (
+    <div style={{
+      marginTop: 10, width: '100%',
+      maxWidth: !hasResults ? 780 : undefined,
+      padding: 14, borderRadius: 10, background: 'var(--bg-secondary)',
+      border: '1px solid var(--border)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Sliders size={13} /> Modèle de réponse — éditeur par blocs
+        </div>
+        <button onClick={onClose}
+          style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
+          <X size={14} />
+        </button>
+      </div>
+
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px', lineHeight: 1.5 }}>
+        Compose ton modèle avec des blocs (titres, paragraphes, listes, tableaux).
+        Le LLM reproduira cette structure à l'identique en remplaçant les hints par la synthèse des sources.
+        Les citations apparaissent en vignettes <code style={{ fontSize: 10, padding: '1px 4px', background: 'var(--bg-tertiary)', borderRadius: 3, color: 'var(--scarlet)' }}>[1]</code>
+        <code style={{ fontSize: 10, padding: '1px 4px', background: 'var(--bg-tertiary)', borderRadius: 3, color: 'var(--scarlet)', marginLeft: 3 }}>[2]</code>.
+      </p>
+
+      {/* Add block toolbar */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5, alignSelf: 'center', marginRight: 4 }}>
+          Ajouter :
+        </span>
+        {addButtons.map(b => (
+          <button
+            key={b.type}
+            onClick={() => onAdd(b.type)}
+            title={`Ajouter un bloc ${b.label}`}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '5px 9px', borderRadius: 6, fontSize: 11, fontWeight: 500,
+              background: 'var(--bg-primary)', border: '1px solid var(--border)',
+              color: 'var(--text-secondary)', cursor: 'pointer',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--scarlet)'; e.currentTarget.style.color = 'var(--scarlet)' }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
+          >
+            {b.icon}
+            {b.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Block list */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {blocks.length === 0 ? (
+          <div style={{
+            padding: 24, textAlign: 'center', borderRadius: 8,
+            border: '1px dashed var(--border)', color: 'var(--text-muted)', fontSize: 12,
+          }}>
+            Aucun bloc. Ajoute des blocs avec la barre ci-dessus ou{' '}
+            <button onClick={onLoadExample}
+              style={{ background: 'none', border: 'none', color: 'var(--scarlet)', cursor: 'pointer', textDecoration: 'underline', padding: 0, font: 'inherit' }}>
+              charge un exemple
+            </button>
+            . Sans bloc, la structure par défaut (# Titre / ## 3 aspects / ## Conclusion) est appliquée.
+          </div>
+        ) : (
+          blocks.map((b, i) => (
+            <FormatBlockRow
+              key={b.id}
+              block={b}
+              isFirst={i === 0}
+              isLast={i === blocks.length - 1}
+              onUpdate={patch => onUpdate(b.id, patch)}
+              onMoveUp={() => onMove(b.id, -1)}
+              onMoveDown={() => onMove(b.id, 1)}
+              onDelete={() => onDelete(b.id)}
+            />
+          ))
+        )}
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <PrimaryButton
+          onClick={onSave}
+          disabled={saving || !isDirty}
+          icon={saving ? <Loader2 size={12} style={{ animation: 'huntr-spin 1s linear infinite' }} /> : <Save size={12} />}
+        >
+          {flash === 'ok' ? 'Sauvegardé' : 'Appliquer'}
+        </PrimaryButton>
+        <SecondaryButton onClick={onLoadExample} disabled={saving}>
+          Charger exemple
+        </SecondaryButton>
+        {hasSavedFormat && (
+          <SecondaryButton onClick={onReset} disabled={saving}>
+            Réinitialiser
+          </SecondaryButton>
+        )}
+        <SecondaryButton onClick={onClose}>
+          Réduire
+        </SecondaryButton>
+        {flash === 'err' && (
+          <span style={{ fontSize: 11, color: 'var(--accent-danger, #dc2626)' }}>Échec sauvegarde</span>
+        )}
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>
+          {blocks.length} bloc{blocks.length > 1 ? 's' : ''}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function FormatBlockRow({ block, isFirst, isLast, onUpdate, onMoveUp, onMoveDown, onDelete }: {
+  block: FormatBlock
+  isFirst: boolean
+  isLast: boolean
+  onUpdate: (patch: Partial<FormatBlock>) => void
+  onMoveUp: () => void
+  onMoveDown: () => void
+  onDelete: () => void
+}) {
+  const meta = BLOCK_TYPE_META[block.type]
+  const isTitle = block.type === 'h1' || block.type === 'h2' || block.type === 'h3'
+  const placeholder = isTitle
+    ? 'Titre de la section…'
+    : block.type === 'bullets' || block.type === 'numbered'
+      ? 'Décris le contenu de la liste (3-5 items, sujet, citations…)'
+      : block.type === 'table'
+        ? 'Décris le contenu du tableau (nb lignes, sujet de chaque ligne…)'
+        : 'Décris ce que le LLM doit rédiger ici (ex. « 5 phrases sur l\'origine du sujet, citations [1][2] »)'
+
+  const typeBadgeColor = isTitle ? 'var(--scarlet)' : 'var(--text-muted)'
+
+  const h1Style = { fontSize: 15, fontWeight: 800 }
+  const h2Style = { fontSize: 14, fontWeight: 700 }
+  const h3Style = { fontSize: 13, fontWeight: 600 }
+  const textStyle = block.type === 'h1' ? h1Style : block.type === 'h2' ? h2Style : block.type === 'h3' ? h3Style : { fontSize: 12, fontWeight: 400 }
+
+  return (
+    <div style={{
+      display: 'flex', gap: 8, alignItems: 'stretch',
+      padding: '8px 10px', borderRadius: 8,
+      background: 'var(--bg-primary)', border: '1px solid var(--border)',
+    }}>
+      {/* Type badge + grip */}
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+        minWidth: 36, paddingTop: 2,
+      }}>
+        <div style={{
+          fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+          background: isTitle ? 'color-mix(in srgb, var(--scarlet) 15%, transparent)' : 'var(--bg-tertiary)',
+          color: typeBadgeColor, minWidth: 22, textAlign: 'center',
+        }}>
+          {meta.short}
+        </div>
+        <GripVertical size={11} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
+      </div>
+
+      {/* Text input (stacked with table cols editor when type=table) */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+        <input
+          type="text"
+          value={block.text}
+          onChange={e => onUpdate({ text: e.target.value })}
+          placeholder={placeholder}
+          style={{
+            width: '100%', padding: '6px 8px', borderRadius: 6,
+            border: '1px solid var(--border)', background: 'var(--bg-secondary)',
+            color: 'var(--text-primary)', outline: 'none',
+            ...textStyle,
+            fontFamily: 'inherit',
+          }}
+          onFocus={e => e.currentTarget.style.borderColor = 'var(--scarlet)'}
+          onBlur={e => e.currentTarget.style.borderColor = 'var(--border)'}
+        />
+        {block.type === 'table' && (
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {(block.columns || []).map((col, idx) => (
+              <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <input
+                  type="text"
+                  value={col}
+                  onChange={e => {
+                    const next = [...(block.columns || [])]
+                    next[idx] = e.target.value
+                    onUpdate({ columns: next })
+                  }}
+                  placeholder={`Col ${idx + 1}`}
+                  style={{
+                    width: 110, padding: '3px 6px', borderRadius: 4, fontSize: 11,
+                    border: '1px solid var(--border)', background: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)', outline: 'none',
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const next = [...(block.columns || [])]
+                    next.splice(idx, 1)
+                    onUpdate({ columns: next.length ? next : ['Colonne 1'] })
+                  }}
+                  title="Supprimer colonne"
+                  style={{
+                    background: 'none', border: 'none', color: 'var(--text-muted)',
+                    cursor: 'pointer', padding: '2px 4px', fontSize: 12, lineHeight: 1,
+                  }}
+                >×</button>
+              </div>
+            ))}
+            <button
+              onClick={() => onUpdate({ columns: [...(block.columns || []), `Colonne ${(block.columns?.length || 0) + 1}`] })}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 3,
+                padding: '3px 8px', borderRadius: 4, fontSize: 10,
+                background: 'var(--bg-secondary)', border: '1px dashed var(--border)',
+                color: 'var(--text-muted)', cursor: 'pointer',
+              }}
+            >
+              <Plus size={10} /> colonne
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Controls */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <button
+          onClick={onMoveUp}
+          disabled={isFirst}
+          title="Monter"
+          style={{
+            background: 'transparent', border: 'none',
+            color: isFirst ? 'var(--text-muted)' : 'var(--text-secondary)',
+            opacity: isFirst ? 0.3 : 1,
+            cursor: isFirst ? 'not-allowed' : 'pointer', padding: 2,
+          }}
+        >
+          <ArrowUp size={12} />
+        </button>
+        <button
+          onClick={onMoveDown}
+          disabled={isLast}
+          title="Descendre"
+          style={{
+            background: 'transparent', border: 'none',
+            color: isLast ? 'var(--text-muted)' : 'var(--text-secondary)',
+            opacity: isLast ? 0.3 : 1,
+            cursor: isLast ? 'not-allowed' : 'pointer', padding: 2,
+          }}
+        >
+          <ArrowDown size={12} />
+        </button>
+        <button
+          onClick={onDelete}
+          title="Supprimer"
+          style={{
+            background: 'transparent', border: 'none', color: 'var(--text-muted)',
+            cursor: 'pointer', padding: 2,
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = 'var(--scarlet)'}
+          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+    </div>
+  )
 }
