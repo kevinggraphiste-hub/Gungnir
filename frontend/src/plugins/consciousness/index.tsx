@@ -14,8 +14,10 @@ import {
   BarChart3, Layers, MessageSquare, Radio, Database, Search, Plug, Save
 } from 'lucide-react'
 import InfoButton from '@core/components/InfoButton'
+import manifest from './manifest.json'
 
 const API = '/api/plugins/consciousness'
+const PLUGIN_VERSION = (manifest as { version?: string }).version || '?'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -291,7 +293,7 @@ export default function ConsciousnessPage() {
                     background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
                     color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
                     border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
-                  }}>v3.0.1</span>
+                  }}>v{PLUGIN_VERSION}</span>
               </div>
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                 Architecture comportementale — {data.enabled ? `Niveau ${LEVEL_LABELS[data.level]?.label || data.level}` : 'Désactivée'}

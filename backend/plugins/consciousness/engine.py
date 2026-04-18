@@ -272,6 +272,10 @@ class ConsciousnessEngine:
         self._challenger_log: dict = {"findings": []}
         self._working_memory: dict = {"items": [], "max_items": 20}
         self._vector_memory = None  # ConsciousnessVectorMemory, initialized lazily
+        # Guard so we attempt the lazy auto-init only once per instance lifetime
+        # (reset whenever init_vector_memory() is called explicitly so config
+        # changes can still re-trigger a fresh connection).
+        self._vector_autoinit_done = False
         # Serialize async mutations (vector writes, flush_all) to avoid
         # interleaved writes and race conditions across concurrent requests.
         self._async_lock = asyncio.Lock()
@@ -330,10 +334,32 @@ class ConsciousnessEngine:
         """Access vector memory (lazy init)."""
         return self._vector_memory
 
+    async def ensure_vector_ready(self) -> None:
+        """Best-effort lazy auto-init so vector memory survives backend restarts.
+
+        On a fresh ConsciousnessEngine (first request after a redeploy or a
+        hard refresh of a page whose tab had previously hit /vector/init),
+        self._vector_memory is None. Users expect the connection to come back
+        on its own rather than having to click "Initialiser" again. We attempt
+        an init exactly once per instance lifetime; if the user has no Qdrant
+        configured, auto-detect gracefully returns without provider and no
+        further attempts are made.
+        """
+        if self._vector_memory is not None or self._vector_autoinit_done:
+            return
+        self._vector_autoinit_done = True
+        try:
+            await self.init_vector_memory()
+        except Exception as e:
+            logger.debug(f"Lazy vector init failed for user {self.user_id}: {e}")
+
     async def init_vector_memory(self) -> bool:
         """Initialize vector memory from config. Call after startup or config change.
         Auto-detects Qdrant from global/user service config if not explicitly set."""
         from .vector_store import ConsciousnessVectorMemory
+        # Explicit init: let ensure_vector_ready() try again on next request if
+        # this attempt leaves us without a connection.
+        self._vector_autoinit_done = True
         vm_config = dict(self._config.get("vector_memory", {}))
 
         # Auto-detect: if vector_provider is "none", try to pull Qdrant strictly
@@ -391,6 +417,7 @@ class ConsciousnessEngine:
 
     async def get_vector_status(self) -> dict:
         """Get vector memory status for dashboard."""
+        await self.ensure_vector_ready()
         if self._vector_memory:
             return await self._vector_memory.get_status()
         vm_config = self._config.get("vector_memory", {})
@@ -1077,10 +1104,27 @@ class ConsciousnessManager:
         self._instances: dict[int, ConsciousnessEngine] = {}
 
     def get(self, user_id: int) -> ConsciousnessEngine:
-        """Get or create a ConsciousnessEngine for the given user."""
+        """Get or create a ConsciousnessEngine for the given user.
+
+        On first creation, schedule a best-effort background vector-memory
+        auto-init so the Qdrant connection is restored after a backend
+        restart / hard refresh without the user having to click "Initialiser"
+        again.
+        """
         if user_id not in self._instances:
-            self._instances[user_id] = ConsciousnessEngine(user_id)
+            engine = ConsciousnessEngine(user_id)
+            self._instances[user_id] = engine
             logger.info(f"Consciousness instance created for user {user_id}")
+            # Fire-and-forget autoinit (needs a running event loop).
+            try:
+                loop = asyncio.get_running_loop()
+                ctx = contextvars.copy_context()
+                ctx.run(current_user_id.set, user_id)
+                loop.create_task(engine.ensure_vector_ready(), context=ctx)
+            except RuntimeError:
+                # No running loop (e.g. during synchronous bootstrapping):
+                # the next HTTP route through get_vector_status() will run it.
+                pass
         return self._instances[user_id]
 
     def evict(self, user_id: int):

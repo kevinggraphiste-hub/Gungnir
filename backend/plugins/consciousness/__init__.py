@@ -332,11 +332,47 @@ async def _consciousness_loop():
             await asyncio.sleep(5)
 
 
+async def _warm_vector_memories() -> None:
+    """On boot, pre-instantiate every enabled user's engine so the fire-and-
+    forget vector auto-init runs before the user's first page request.
+
+    Without this, a hard refresh made right after a backend restart would land
+    on a cold engine where _vector_memory is None until the first tick (up to
+    60s later) or until the user clicks "Initialiser" again.
+    """
+    if not CONSCIOUSNESS_USERS_DIR.exists():
+        return
+    from backend.plugins.consciousness.engine import consciousness_manager
+    for user_dir in CONSCIOUSNESS_USERS_DIR.iterdir():
+        if not user_dir.is_dir():
+            continue
+        try:
+            user_id = int(user_dir.name)
+        except ValueError:
+            continue
+        config_file = user_dir / "config.json"
+        if not config_file.exists():
+            continue
+        try:
+            cfg = json.loads(config_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not cfg.get("enabled"):
+            continue
+        # Creating the engine schedules the vector autoinit in the background.
+        try:
+            consciousness_manager.get(user_id)
+        except Exception as e:
+            logger.warning(f"Warmup failed for user {user_id}: {e}")
+
+
 async def on_startup(app: Any = None):
     global _daemon_task
     if _daemon_task and not _daemon_task.done():
         return
     _daemon_task = asyncio.create_task(_consciousness_loop())
+    # Warm enabled users so Qdrant reconnects itself after a redeploy.
+    asyncio.create_task(_warm_vector_memories())
 
 
 async def on_shutdown(*args, **kwargs):
