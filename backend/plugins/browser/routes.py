@@ -263,18 +263,22 @@ def get_system_prompt(topic: str, custom_format: str | None = None) -> str:
 
     lead = _TOPIC_LEADS.get(topic, _TOPIC_LEADS["web"])
     override_block = (
-        "=== FORMAT DE REPONSE — OBLIGATOIRE ET PRIORITAIRE ===\n\n"
-        "L'utilisateur a defini un format de reponse personnalise. Tu DOIS le "
-        "respecter a la lettre. Ce format REMPLACE toute structure par defaut "
-        "(pas de squelette H1/3xH2/Conclusion impose) et PRIME sur tes habitudes.\n\n"
-        "INSTRUCTIONS UTILISATEUR :\n"
-        "---\n"
+        "=== TEMPLATE DE REPONSE (WYSIWYG) — OBLIGATOIRE ===\n\n"
+        "L'utilisateur a defini un MODELE DE REPONSE. Ton travail est de REPRODUIRE "
+        "ce modele EXACTEMENT, en remplacant les zones de contenu par une synthese "
+        "des sources. Aucune liberte creative sur la structure.\n\n"
+        "MODELE A REPRODUIRE :\n"
+        "```\n"
         f"{custom}\n"
-        "---\n\n"
-        "Applique ces instructions telles quelles. Ne rajoute AUCUNE section qui "
-        "n'y figure pas. Ne supprime AUCUNE section demandee. Si les instructions "
-        "sont courtes ou ambigues, interprete-les au plus proche tout en citant "
-        "les sources [1], [2] dans chaque phrase."
+        "```\n\n"
+        "REGLES D'APPLICATION DU MODELE :\n"
+        "1. Reproduis les TITRES, SOUS-TITRES, TABLEAUX, LISTES exactement comme dans le modele — meme hierarchie Markdown (`#`, `##`, `###`), meme ordre, memes elements\n"
+        "2. Remplace les placeholders (crochets `[...]`, `[titre]`, `[contenu]`, etc.) ou zones de texte generiques par la synthese des sources\n"
+        "3. Ne SUPPRIME aucune section presente dans le modele\n"
+        "4. N'AJOUTE aucune section hors du modele\n"
+        "5. Si le modele contient des tableaux Markdown `| col | col |`, remplis-les avec les donnees des sources\n"
+        "6. Chaque affirmation cite sa source `[1]`, `[2]`, etc. DANS la phrase — non-negociable, meme si le modele ne l'indique pas explicitement\n"
+        "7. Le rendu final sera parse en Markdown puis affiche : les citations `[n]` seront transformees en mini-vignettes cliquables — garde-les sous cette forme EXACTE\n"
     )
     return f"{lead}\n\n{override_block}\n\n{_BASE_RULES}"
 
@@ -582,13 +586,16 @@ async def search_stream(req: SearchRequest, request: Request,
             if resolved_format:
                 user_content = (
                     f"QUESTION : {query}\n\n"
-                    f"PASSAGES WEB (numérotés [1] à {min(len(results), 10)}) :\n\n"
+                    f"PASSAGES WEB (numérotés [1] à [{min(len(results), 10)}]) :\n\n"
                     f"{context}\n\n"
                     f"---\n"
-                    f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots), "
-                    f"en suivant STRICTEMENT le format impose dans les consignes systeme.\n"
-                    f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
-                    f"Exploite TOUS les passages — chaque source citée au moins une fois."
+                    f"REPRODUIS EXACTEMENT LE TEMPLATE DEFINI DANS LE SYSTEM PROMPT.\n"
+                    f"- Copie tous les titres, sous-titres, tableaux, listes du modele a l'identique\n"
+                    f"- Remplace les zones de contenu / placeholders par la synthese des sources\n"
+                    f"- Chaque phrase doit citer sa source avec `[1]`, `[2]`, etc. (format EXACT, "
+                    f"crochets carres + chiffre) pour que les citations soient rendues en vignettes\n"
+                    f"- Reformule, ne copie jamais un passage tel quel\n"
+                    f"- Utilise au moins une fois chaque source disponible ({min(len(results), 10)} au total)"
                 )
             else:
                 user_content = (

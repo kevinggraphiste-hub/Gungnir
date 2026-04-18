@@ -78,6 +78,30 @@ interface UserCapabilities {
 
 const API = '/api/plugins/browser'
 
+const DEFAULT_FORMAT_TEMPLATE = `# [Titre principal en une phrase]
+
+## [Aspect 1 — sous-titre descriptif]
+Paragraphe de 5 à 8 phrases, chaque affirmation citée [1][2] dans le texte.
+
+## [Aspect 2 — sous-titre descriptif]
+Paragraphe détaillé sur un second angle [3][4].
+
+## [Aspect 3 — sous-titre descriptif]
+Paragraphe sur un troisième angle, exemples et implications [5].
+
+## Conclusion
+Synthèse finale de 3 à 5 phrases [1][2][3].`
+
+// Citations factices pour la preview WYSIWYG — le rendu exact que verra
+// l'utilisateur une fois la réponse générée (vignettes [1]…[5] cliquables).
+const SAMPLE_CITATIONS: Citation[] = [
+  { index: 1, url: 'https://example.com/source-1', title: 'Source 1 — exemple',    snippet: 'Aperçu de la source 1 tel qu\'il apparaîtra au survol.' },
+  { index: 2, url: 'https://example.com/source-2', title: 'Source 2 — exemple',    snippet: 'Aperçu de la source 2 avec un extrait de contenu représentatif.' },
+  { index: 3, url: 'https://example.com/source-3', title: 'Source 3 — exemple',    snippet: 'Aperçu de la source 3.' },
+  { index: 4, url: 'https://example.com/source-4', title: 'Source 4 — exemple',    snippet: 'Aperçu de la source 4.' },
+  { index: 5, url: 'https://example.com/source-5', title: 'Source 5 — exemple',    snippet: 'Aperçu de la source 5.' },
+]
+
 const SUGGESTIONS = [
   "Quelles sont les dernières avancées en IA ?",
   "Compare Python vs Rust pour le backend",
@@ -757,40 +781,84 @@ export default function HuntRPlugin() {
                 )}
               </div>
 
-              {/* Format editor panel (pro uniquement, toggle via bouton Format) */}
+              {/* Format editor panel WYSIWYG (pro uniquement) */}
               {proSearch && showFormatEditor && (
                 <div style={{
-                  marginTop: 10, width: '100%', maxWidth: !hasResults ? 640 : undefined,
-                  padding: 12, borderRadius: 10, background: 'var(--bg-secondary)',
+                  marginTop: 10, width: '100%',
+                  maxWidth: !hasResults ? 960 : undefined,
+                  padding: 14, borderRadius: 10, background: 'var(--bg-secondary)',
                   border: '1px solid var(--border)',
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                      Format de réponse personnalisé
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Sliders size={13} /> Modèle de réponse (WYSIWYG)
                     </div>
                     <button onClick={() => setShowFormatEditor(false)}
                       style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
                       <X size={14} />
                     </button>
                   </div>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 8px' }}>
-                    Décris le squelette Markdown voulu. Laisse vide pour revenir au format par défaut
-                    (# Titre / ## Aspect 1-3 / ## Conclusion). Appliqué à toutes tes futures recherches Pro.
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px', lineHeight: 1.5 }}>
+                    Écris ton modèle de réponse en Markdown dans l'éditeur — le LLM reproduira cette structure à l'identique
+                    en remplaçant les zones de contenu par la synthèse des sources. Les citations <code style={{ fontSize: 10, padding: '1px 4px', background: 'var(--bg-tertiary)', borderRadius: 3, color: 'var(--scarlet)' }}>[1]</code>
+                    <code style={{ fontSize: 10, padding: '1px 4px', background: 'var(--bg-tertiary)', borderRadius: 3, color: 'var(--scarlet)', marginLeft: 3 }}>[2]</code>…
+                    seront rendues en vignettes cliquables. Laisse vide pour revenir au format par défaut.
                   </p>
-                  <textarea
-                    value={formatEditor}
-                    onChange={e => setFormatEditor(e.target.value)}
-                    placeholder={'Ex:\n# Titre\n## Paragraphe 1\n## Paragraphe 2\n## Paragraphe 3\n## Paragraphe 4\n\nOu : Sous forme de tableau à 3 colonnes : sujet / analyse / source.'}
-                    rows={7}
-                    maxLength={4000}
-                    style={{
-                      width: '100%', padding: 10, borderRadius: 8,
-                      border: '1px solid var(--border)', background: 'var(--bg-primary)',
-                      color: 'var(--text-primary)', fontSize: 12, fontFamily: 'inherit',
-                      resize: 'vertical', outline: 'none',
-                    }}
-                  />
-                  <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+                    gap: 10,
+                  }}>
+                    {/* Editor */}
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Éditeur Markdown
+                      </div>
+                      <textarea
+                        value={formatEditor}
+                        onChange={e => setFormatEditor(e.target.value)}
+                        placeholder={DEFAULT_FORMAT_TEMPLATE}
+                        rows={14}
+                        maxLength={4000}
+                        spellCheck={false}
+                        style={{
+                          width: '100%', padding: 10, borderRadius: 8,
+                          border: '1px solid var(--border)', background: 'var(--bg-primary)',
+                          color: 'var(--text-primary)', fontSize: 12,
+                          fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+                          resize: 'vertical', outline: 'none', lineHeight: 1.5,
+                          minHeight: 260,
+                        }}
+                      />
+                    </div>
+
+                    {/* Live preview */}
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Aperçu (rendu final)</span>
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
+                          citations factices
+                        </span>
+                      </div>
+                      <div style={{
+                        padding: '10px 14px', borderRadius: 8, minHeight: 260,
+                        maxHeight: 360, overflowY: 'auto',
+                        border: '1px solid var(--border)', background: 'var(--bg-primary)',
+                      }}>
+                        {formatEditor.trim() ? (
+                          <MarkdownRenderer text={formatEditor} citations={SAMPLE_CITATIONS} />
+                        ) : (
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                            L'aperçu apparaîtra ici dès que tu commenceras à écrire le modèle.
+                            Laisse vide pour utiliser le format par défaut (# Titre / ## Aspects / ## Conclusion).
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                     <PrimaryButton
                       onClick={saveCustomFormat}
                       disabled={savingFormat || formatEditor.trim() === customFormat.trim()}
@@ -798,6 +866,12 @@ export default function HuntRPlugin() {
                     >
                       {formatFlash === 'ok' ? 'Sauvegardé' : 'Appliquer'}
                     </PrimaryButton>
+                    <SecondaryButton
+                      onClick={() => setFormatEditor(DEFAULT_FORMAT_TEMPLATE)}
+                      disabled={savingFormat}
+                    >
+                      Charger exemple
+                    </SecondaryButton>
                     {customFormat && (
                       <SecondaryButton
                         onClick={resetCustomFormat}
@@ -1458,6 +1532,48 @@ function MarkdownRenderer({ text, citations, onCiteClick }: {
         }}>
           {codeLines.join('\n')}
         </pre>
+      )
+    } else if (/^\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+      // Markdown table : header row + separator row + body rows
+      const parseCells = (row: string) => row.replace(/^\||\|$/g, '').split('|').map(c => c.trim())
+      const headerCells = parseCells(line)
+      i += 2 // skip header + separator
+      const bodyRows: string[][] = []
+      while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) {
+        bodyRows.push(parseCells(lines[i]))
+        i++
+      }
+      i-- // rewind — main loop will i++ next
+      elements.push(
+        <div key={key++} style={{ overflowX: 'auto', margin: '10px 0' }}>
+          <table style={{
+            width: '100%', borderCollapse: 'collapse', fontSize: 12,
+            border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden',
+          }}>
+            <thead style={{ background: 'var(--bg-tertiary)' }}>
+              <tr>
+                {headerCells.map((h, hi) => (
+                  <th key={hi} style={{
+                    padding: '8px 10px', textAlign: 'left', fontWeight: 700,
+                    color: 'var(--text-primary)', borderBottom: '1px solid var(--border)',
+                  }}>{parse(h)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {bodyRows.map((row, ri) => (
+                <tr key={ri} style={{ borderTop: ri === 0 ? 'none' : '1px solid var(--border)' }}>
+                  {row.map((c, ci) => (
+                    <td key={ci} style={{
+                      padding: '8px 10px', color: 'var(--text-secondary)',
+                      verticalAlign: 'top', lineHeight: 1.5,
+                    }}>{parse(c)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )
     } else if (!line.trim()) {
       elements.push(<div key={key++} style={{ height: 6 }} />)
