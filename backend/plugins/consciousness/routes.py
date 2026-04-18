@@ -271,6 +271,20 @@ async def add_finding(req: FindingRequest, request: Request):
     return {"ok": True}
 
 
+@router.post("/challenger/audit-now")
+async def challenger_audit_now(request: Request):
+    """Run one Challenger audit pass on demand for the current user."""
+    uid = getattr(request.state, "user_id", None) or 0
+    if not uid:
+        return {"ok": False, "error": "Auth required"}
+    try:
+        from . import _challenger_for_user
+        count = await _challenger_for_user(uid, force=True)
+        return {"ok": True, "new_findings": int(count)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 # ── Simulation ──────────────────────────────────────────────────────────────
 
 @router.get("/simulation")

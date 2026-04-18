@@ -371,7 +371,7 @@ export default function ConsciousnessPage() {
 
         {tab === 'reward' && <RewardTab data={data} />}
 
-        {tab === 'challenger' && <ChallengerTab data={data} />}
+        {tab === 'challenger' && <ChallengerTab data={data} refresh={fetchData} />}
 
         {tab === 'simulation' && <SimulationTab data={data} />}
 
@@ -852,7 +852,43 @@ function RewardTab({ data }: any) {
 
 // ── Challenger Tab ────────────────────────────────────────────────────────────
 
-function ChallengerTab({ data }: any) {
+function ChallengerTab({ data, refresh }: any) {
+  const ch = data.config?.challenger || {}
+  const auto = ch.auto_audit || {}
+  const [running, setRunning] = useState(false)
+  const [msg, setMsg] = useState<string>('')
+  const [saving, setSaving] = useState(false)
+
+  const patchChallenger = async (updates: any) => {
+    setSaving(true)
+    try {
+      await fetch(`${API}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: { challenger: updates } })
+      })
+      await refresh?.()
+    } finally { setSaving(false) }
+  }
+
+  const auditNow = async () => {
+    setRunning(true); setMsg('')
+    try {
+      const res = await fetch(`${API}/challenger/audit-now`, { method: 'POST' })
+      const j = await res.json()
+      if (j.ok) {
+        setMsg(j.new_findings > 0
+          ? `${j.new_findings} nouvelle(s) découverte(s)`
+          : 'Aucune nouvelle découverte')
+        await refresh?.()
+      } else {
+        setMsg(`Erreur : ${j.error || 'inconnue'}`)
+      }
+    } catch (e: any) {
+      setMsg(`Erreur : ${e?.message || 'réseau'}`)
+    } finally { setRunning(false) }
+  }
+
   return (
     <div className="space-y-4">
       {/* Intro */}
@@ -865,6 +901,62 @@ function ChallengerTab({ data }: any) {
           <br /><br />
           Le but : empêcher l'agent de s'installer dans des biais ou des erreurs répétées.
         </InfoButton>
+      </div>
+
+      {/* Paramètres */}
+      <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+        <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Paramètres</div>
+
+        <label className="flex items-center justify-between text-xs">
+          <span>Challenger actif</span>
+          <input type="checkbox" checked={!!ch.enabled} disabled={saving}
+            onChange={e => patchChallenger({ enabled: e.target.checked })} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs">
+          <span>Audit automatique</span>
+          <input type="checkbox" checked={!!auto.enabled} disabled={saving || !ch.enabled}
+            onChange={e => patchChallenger({ auto_audit: { ...auto, enabled: e.target.checked } })} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Intervalle (min)</span>
+          <input type="number" min={5} max={1440} value={auto.interval_minutes ?? 60}
+            disabled={saving || !auto.enabled}
+            onChange={e => patchChallenger({ auto_audit: { ...auto, interval_minutes: Math.max(5, Number(e.target.value) || 60) } })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Découvertes max / passage</span>
+          <input type="number" min={1} max={10} value={auto.max_new_findings_per_run ?? 3}
+            disabled={saving || !auto.enabled}
+            onChange={e => patchChallenger({ auto_audit: { ...auto, max_new_findings_per_run: Math.max(1, Number(e.target.value) || 3) } })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Seuil de sévérité loggé</span>
+          <select value={ch.severity_floor || 'low'} disabled={saving || !ch.enabled}
+            onChange={e => patchChallenger({ severity_floor: e.target.value })}
+            className="px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+            <option value="low">low et +</option>
+            <option value="medium">medium et +</option>
+            <option value="high">high uniquement</option>
+          </select>
+        </label>
+
+        <div className="pt-2 flex items-center gap-2">
+          <button onClick={auditNow} disabled={running || !ch.enabled}
+            className="px-3 py-1.5 rounded text-xs font-semibold"
+            style={{ background: 'var(--accent-primary)', color: 'white', opacity: running || !ch.enabled ? 0.5 : 1, cursor: running || !ch.enabled ? 'not-allowed' : 'pointer' }}>
+            {running ? 'Audit en cours…' : 'Lancer un audit maintenant'}
+          </button>
+          {msg && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{msg}</span>}
+        </div>
       </div>
       {/* Critical Alerts */}
       {data.critical_findings?.length > 0 && (

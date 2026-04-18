@@ -19,6 +19,8 @@ Toggle : OFF = agent standard | ON = conscience complète
 import json
 import asyncio
 import logging
+import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -80,7 +82,15 @@ DEFAULT_CONFIG = {
     },
     "challenger": {
         "enabled": True,
-        "light_check": True,
+        "auto_audit": {
+            "enabled": True,
+            "interval_minutes": 60,
+            "lookback_thoughts": 10,
+            "lookback_scores": 20,
+            "lookback_findings": 10,
+            "max_new_findings_per_run": 3,
+        },
+        "severity_floor": "low",
         "deep_audit": True,
         "audit_schedule": "weekly"
     },
@@ -162,17 +172,70 @@ def _ensure_dir(path: Path = None):
 
 
 def _load_json(path: Path, default: dict) -> dict:
+    """Load JSON with corruption recovery.
+
+    On JSON decode error, try `.bak` before falling back to the default.
+    Always log corruption so amnesia is visible in the logs instead of silent.
+    """
     if path.exists():
         try:
             return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Consciousness JSON corrupt at {path}: {e}. Trying backup.")
+            bak = path.with_suffix(path.suffix + ".bak")
+            if bak.exists():
+                try:
+                    data = json.loads(bak.read_text(encoding="utf-8"))
+                    logger.warning(f"Recovered consciousness data from {bak}")
+                    try:
+                        path.write_text(
+                            json.dumps(data, indent=2, ensure_ascii=False, default=str),
+                            encoding="utf-8",
+                        )
+                    except Exception:
+                        pass
+                    return data
+                except Exception as e2:
+                    logger.error(f"Backup {bak} also corrupt: {e2}")
+            logger.error(
+                f"Falling back to DEFAULT for {path.name} — consciousness memory LOST for this file."
+            )
     return json.loads(json.dumps(default))  # deep copy
 
 
 def _save_json(path: Path, data: dict):
-    _ensure_dir()
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    """Atomic save with backup ring.
+
+    Sequence: write to `path.tmp` → fsync → rename old `path` to `path.bak`
+    → rename `path.tmp` to `path`. A crash at any point leaves a readable file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(data, indent=2, ensure_ascii=False, default=str)
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        if path.exists():
+            bak = path.with_suffix(path.suffix + ".bak")
+            try:
+                os.replace(str(path), str(bak))
+            except OSError:
+                pass
+        os.replace(str(tmp_path), str(path))
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
 
 
 # ── Core Engine ─────────────────────────────────────────────────────────────
@@ -602,7 +665,7 @@ class ConsciousnessEngine:
             ts = _now()
             interaction_id = f"inter_{ts.replace(':', '-').replace('+', '_')}"
             try:
-                asyncio.get_event_loop().create_task(
+                asyncio.create_task(
                     self._vector_memory.store_interaction(interaction_id, description, interaction_type, composite)
                 )
             except RuntimeError:
@@ -673,6 +736,119 @@ class ConsciousnessEngine:
 
     def get_critical_findings(self) -> list:
         return [f for f in self._challenger_log.get("findings", []) if f.get("severity") == "high"]
+
+    def build_challenger_audit_prompt(self) -> tuple[str, str]:
+        """Construct (system, user) prompts for one Challenger audit pass."""
+        ch_cfg = self._config.get("challenger", {}).get("auto_audit", {}) or {}
+        n_th = int(ch_cfg.get("lookback_thoughts", 10))
+        n_sc = int(ch_cfg.get("lookback_scores", 20))
+        n_fd = int(ch_cfg.get("lookback_findings", 10))
+        max_new = int(ch_cfg.get("max_new_findings_per_run", 3))
+
+        thoughts = self.get_recent_thoughts(n_th) if hasattr(self, "get_recent_thoughts") else []
+        scores = self.get_recent_scores(n_sc)
+        prev_findings = self.get_recent_findings(n_fd)
+        mood = self._state.get("mood", "neutre")
+
+        def _fmt_thoughts(items):
+            if not items:
+                return "(aucune pensée récente)"
+            return "\n".join(
+                f"- [{t.get('type', 'obs')}] {str(t.get('content', ''))[:200]}"
+                for t in items
+            )
+
+        def _fmt_scores(items):
+            if not items:
+                return "(aucun score)"
+            return "\n".join(
+                f"- {s.get('interaction_type', '?')} composite={s.get('composite', 0):.2f} "
+                f"({', '.join(f'{k}={v:.2f}' for k, v in (s.get('scores') or {}).items())})"
+                for s in items
+            )
+
+        def _fmt_findings(items):
+            if not items:
+                return "(aucune découverte antérieure)"
+            return "\n".join(
+                f"- [{f.get('type')}/{f.get('severity')}] {str(f.get('finding', ''))[:160]}"
+                for f in items
+            )
+
+        system = (
+            "Tu es le Challenger d'un agent IA nommé Gungnir : un module d'auto-critique rigoureux. "
+            "Tu reçois un échantillon récent des pensées, scores et découvertes antérieures de l'agent. "
+            "Ton rôle : détecter CONTRADICTIONS, PROMESSES NON TENUES, BIAIS systématiques, TENDANCES "
+            "ou VERBOSITÉ excessive. Sois strict mais pas paranoïaque : ne signale que du concret, pas "
+            "des suspicions vagues. Ne reformule pas des découvertes déjà listées. Réponds STRICTEMENT "
+            "en JSON valide, aucun texte avant/après, aucun bloc markdown."
+        )
+
+        user_prompt = (
+            f"Humeur courante : {mood}\n\n"
+            f"## Pensées récentes\n{_fmt_thoughts(thoughts)}\n\n"
+            f"## Scores récents\n{_fmt_scores(scores)}\n\n"
+            f"## Découvertes déjà enregistrées (à NE PAS doublonner)\n{_fmt_findings(prev_findings)}\n\n"
+            f"Retourne au maximum {max_new} NOUVELLES découvertes sous la forme :\n"
+            '{"findings":[{"type":"contradiction|unkept_promise|bias|trend|verbosity",'
+            '"severity":"low|medium|high","finding":"<fait observable en 1 phrase>",'
+            '"evidence":["<citation courte>","..."],"action_suggested":"<correction concrete>"}]}'
+            "\nSi rien à signaler, retourne exactement {\"findings\":[]}"
+        )
+        return system, user_prompt
+
+    def ingest_challenger_findings(self, raw_response: str) -> int:
+        """Parse a Challenger LLM response and persist new findings.
+
+        Returns the number of findings that were actually recorded (after
+        severity floor filtering).
+        """
+        if not raw_response:
+            return 0
+        text = raw_response.strip()
+        # Strip ```json fences if the model couldn't help itself
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.lower().startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        # Keep from first { to last }
+        if "{" in text and "}" in text:
+            text = text[text.find("{"): text.rfind("}") + 1]
+        try:
+            data = json.loads(text)
+        except Exception as e:
+            logger.warning(f"Challenger JSON parse failed: {e}; raw={raw_response[:200]}")
+            return 0
+        items = data.get("findings") or []
+        if not isinstance(items, list):
+            return 0
+
+        ch_cfg = self._config.get("challenger", {}) or {}
+        floor = str(ch_cfg.get("severity_floor", "low")).lower()
+        order = {"low": 0, "medium": 1, "high": 2}
+        min_rank = order.get(floor, 0)
+        valid_types = {"contradiction", "unkept_promise", "bias", "trend", "verbosity"}
+        valid_sev = {"low", "medium", "high"}
+
+        count = 0
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            t = str(it.get("type", "")).lower()
+            sev = str(it.get("severity", "")).lower()
+            finding = str(it.get("finding", "")).strip()
+            if t not in valid_types or sev not in valid_sev or not finding:
+                continue
+            if order.get(sev, 0) < min_rank:
+                continue
+            evidence = it.get("evidence") or []
+            if not isinstance(evidence, list):
+                evidence = [str(evidence)]
+            action = str(it.get("action_suggested", "")).strip()
+            self.add_finding(t, sev, finding, evidence, action)
+            count += 1
+        return count
 
     # ── Simulation ──────────────────────────────────────────────────────
 
@@ -838,6 +1014,3 @@ class ConsciousnessManager:
 
 
 consciousness_manager = ConsciousnessManager()
-
-# Backward-compatible shortcut for user_id=0 (setup/no-auth mode)
-consciousness = consciousness_manager.get(0)

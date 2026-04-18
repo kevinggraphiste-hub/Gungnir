@@ -21,6 +21,7 @@ DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 CONSCIOUSNESS_USERS_DIR = DATA_DIR / "consciousness" / "users"
 TICK_INTERVAL_SECONDS = 60
 DEFAULT_THINK_INTERVAL_MINUTES = 10
+DEFAULT_CHALLENGER_INTERVAL_MINUTES = 60
 
 _daemon_task: asyncio.Task | None = None
 
@@ -124,6 +125,51 @@ async def _think_for_user(user_id: int):
         logger.exception(f"add_thought failed for user {user_id}: {e}")
 
 
+async def _challenger_for_user(user_id: int, force: bool = False) -> int:
+    """Run one Challenger auto-audit pass for a single user.
+
+    Returns the number of new findings recorded (0 when disabled or skipped).
+    When `force` is True, skip the interval check (manual trigger).
+    """
+    from backend.plugins.consciousness.engine import consciousness_manager
+    from backend.core.services.llm_invoker import invoke_llm_for_user
+
+    engine = consciousness_manager.get(user_id)
+    if not engine.enabled:
+        return 0
+
+    ch_cfg = (engine.config or {}).get("challenger", {}) or {}
+    if not ch_cfg.get("enabled", False):
+        return 0
+    auto = ch_cfg.get("auto_audit", {}) or {}
+    if not force and not auto.get("enabled", False):
+        return 0
+
+    if not force:
+        interval_minutes = int(auto.get("interval_minutes", DEFAULT_CHALLENGER_INTERVAL_MINUTES))
+        last_audit = _parse_iso((engine.state or {}).get("last_challenger"))
+        now = _now()
+        if last_audit is not None:
+            elapsed = (now - last_audit).total_seconds() / 60
+            if elapsed < interval_minutes:
+                return 0
+
+    system_prompt, user_prompt = engine.build_challenger_audit_prompt()
+
+    logger.info(f"Challenger audit tick for user {user_id}")
+    result = await invoke_llm_for_user(user_id, user_prompt, system_prompt=system_prompt)
+
+    if not result.get("ok"):
+        logger.warning(f"Challenger audit LLM failed for user {user_id}: {result.get('error')}")
+        return 0
+
+    try:
+        return engine.ingest_challenger_findings(result.get("content") or "")
+    except Exception as e:
+        logger.exception(f"ingest_challenger_findings crashed for user {user_id}: {e}")
+        return 0
+
+
 async def _tick_once():
     """Scan all users with consciousness directories and run their think pass."""
     if not CONSCIOUSNESS_USERS_DIR.exists():
@@ -139,21 +185,31 @@ async def _tick_once():
 
         # Quick pre-check from config file to avoid instantiating engines
         # for users who have conscience disabled.
+        think_on = False
+        challenger_on = False
         config_file = user_dir / "config.json"
         if config_file.exists():
             try:
                 cfg = json.loads(config_file.read_text(encoding="utf-8"))
                 if not cfg.get("enabled"):
                     continue
-                if not cfg.get("background_think", {}).get("enabled"):
-                    continue
+                think_on = bool(cfg.get("background_think", {}).get("enabled"))
+                ch = cfg.get("challenger", {}) or {}
+                challenger_on = bool(ch.get("enabled") and (ch.get("auto_audit") or {}).get("enabled"))
             except Exception:
                 continue
 
-        try:
-            await _think_for_user(user_id)
-        except Exception as e:
-            logger.exception(f"Think pass crashed for user {user_id}: {e}")
+        if think_on:
+            try:
+                await _think_for_user(user_id)
+            except Exception as e:
+                logger.exception(f"Think pass crashed for user {user_id}: {e}")
+
+        if challenger_on:
+            try:
+                await _challenger_for_user(user_id)
+            except Exception as e:
+                logger.exception(f"Challenger pass crashed for user {user_id}: {e}")
 
 
 async def _consciousness_loop():
