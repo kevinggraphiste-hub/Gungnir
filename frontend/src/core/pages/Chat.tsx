@@ -477,6 +477,7 @@ export default function Chat() {
   const [allSkills, setAllSkills] = useState<any[]>([])
   const [activeSkill, setActiveSkill] = useState<string | null>(null)
   const [favoriteSkills, setFavoriteSkills] = useState<any[]>([])
+  const [showSkillsBar, setShowSkillsBar] = useState(false)
 
   // Welcome onboarding
   const [onboardingState, setOnboardingState] = useState<{
@@ -1173,6 +1174,7 @@ export default function Chat() {
 
   const formatModelName = (modelId: string) => { if (!modelId) return '—'; const parts = modelId.split('/'); return parts[parts.length - 1] || modelId }
   const formatCost = (cost: number) => `$${cost.toFixed(4)}`
+  const sessionTokens = messages.reduce((acc, m: any) => acc + (m.tokens_input || 0) + (m.tokens_output || 0), 0)
   const filteredConversations = conversations.filter(c => {
     if (!(c.title || '').toLowerCase().includes(searchQuery.toLowerCase())) return false
     if (folderFilter === 'all') return true
@@ -1632,47 +1634,19 @@ export default function Chat() {
                 </div>
               )}
 
-              <div className={`flex flex-col gap-1 max-w-[70%] w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                {(() => {
-                  // Tokens : assistant → tokens_output propres ; user → tokens_input
-                  // de la bulle assistant qui suit (c'est ce que le prompt a consommé).
-                  let headerTokens: number | undefined
-                  if (msg.role === 'assistant') {
-                    headerTokens = (msg as any).tokens_output
-                  } else {
-                    const next = messages[msgIdx + 1]
-                    if (next && next.role === 'assistant') headerTokens = (next as any).tokens_input
-                  }
-                  const nameGroup = (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
-                        {msg.role === 'user' ? (currentUser?.display_name || t('common.user')) : formatModelName((msg as any).model || selectedModel)}
-                      </span>
-                      {msg.role === 'assistant' && (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
-                          style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 15%, transparent)' }}>
-                          {(msg as any).provider || selectedProvider}
-                        </span>
-                      )}
-                    </div>
-                  )
-                  const hasTokens = typeof headerTokens === 'number' && headerTokens > 0
-                  return (
-                    <div className="flex items-center gap-2 w-full">
-                      {msg.role === 'user' ? (
-                        <>
-                          {hasTokens && <TokenBadge tokens={headerTokens as number} />}
-                          <div className="ml-auto">{nameGroup}</div>
-                        </>
-                      ) : (
-                        <>
-                          {nameGroup}
-                          {hasTokens && <div className="ml-auto"><TokenBadge tokens={headerTokens as number} /></div>}
-                        </>
-                      )}
-                    </div>
-                  )
-                })()}
+              <div className={`flex flex-col gap-1 max-w-[70%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                {/* Pseudo + badge provider (pas de compteur tokens ici — il est accolé à la bulle plus bas) */}
+                <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                  <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                    {msg.role === 'user' ? (currentUser?.display_name || t('common.user')) : formatModelName((msg as any).model || selectedModel)}
+                  </span>
+                  {msg.role === 'assistant' && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
+                      style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 15%, transparent)' }}>
+                      {(msg as any).provider || selectedProvider}
+                    </span>
+                  )}
+                </div>
 
                 {msg.role === 'assistant' && (msg as any).tool_events?.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mb-1">
@@ -1689,27 +1663,49 @@ export default function Chat() {
                   </div>
                 )}
 
-                <div className={`group relative rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
-                  style={msg.role === 'assistant' ? {
-                    background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 4%, transparent), color-mix(in srgb, var(--ember) 2%, transparent))',
-                    border: '1px solid color-mix(in srgb, var(--scarlet) 10%, transparent)', color: 'var(--text-primary)',
-                  } : { background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
-                  {/* Bouton de copie flottant (sticky en haut, apparait au survol) */}
-                  <FloatingCopyButton
-                    content={msg.content.replace(/\n\[Image jointe\]/g, '')}
-                    side={msg.role === 'user' ? 'left' : 'right'}
-                  />
-                  {/* Images jointes */}
-                  {msg.images && msg.images.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mb-2">
-                      {msg.images.map((img: string, i: number) => (
-                        <img key={i} src={img} alt={`Image ${i + 1}`} className="max-h-48 rounded-lg border border-[var(--border)] cursor-pointer hover:opacity-80 transition-opacity"
-                          onClick={() => window.open(img, '_blank')} />
-                      ))}
+                {(() => {
+                  // Tokens : assistant → tokens_output propres ; user → tokens_input
+                  // de la bulle assistant qui suit (c'est ce que le prompt a consommé).
+                  let headerTokens: number | undefined
+                  if (msg.role === 'assistant') {
+                    headerTokens = (msg as any).tokens_output
+                  } else {
+                    const next = messages[msgIdx + 1]
+                    if (next && next.role === 'assistant') headerTokens = (next as any).tokens_input
+                  }
+                  const hasTokens = typeof headerTokens === 'number' && headerTokens > 0
+                  const bubble = (
+                    <div className={`group relative rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+                      style={msg.role === 'assistant' ? {
+                        background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 4%, transparent), color-mix(in srgb, var(--ember) 2%, transparent))',
+                        border: '1px solid color-mix(in srgb, var(--scarlet) 10%, transparent)', color: 'var(--text-primary)',
+                      } : { background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                      <FloatingCopyButton
+                        content={msg.content.replace(/\n\[Image jointe\]/g, '')}
+                        side={msg.role === 'user' ? 'left' : 'right'}
+                      />
+                      {msg.images && msg.images.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {msg.images.map((img: string, i: number) => (
+                            <img key={i} src={img} alt={`Image ${i + 1}`} className="max-h-48 rounded-lg border border-[var(--border)] cursor-pointer hover:opacity-80 transition-opacity"
+                              onClick={() => window.open(img, '_blank')} />
+                          ))}
+                        </div>
+                      )}
+                      <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
                     </div>
-                  )}
-                  <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
-                </div>
+                  )
+                  return (
+                    <div className={`flex items-start gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                      {bubble}
+                      {hasTokens && (
+                        <div className="pt-1 flex-shrink-0">
+                          <TokenBadge tokens={headerTokens as number} />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
                 {/* Barre d'actions (copie + régénération + 👍/👎) */}
                 {msg.content && (
                   <MessageActions
@@ -1743,14 +1739,45 @@ export default function Chat() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input area */}
+        {/* Input area — nouvelle boîte unifiée (header + textarea + footer) */}
         <div className="px-5 py-4" style={{ background: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)', display: activeAutomataTaskId ? 'none' : undefined }}>
-          <div className="flex items-end gap-3 max-w-4xl mx-auto">
+          <div className="max-w-4xl mx-auto">
+            {/* Aperçu fichiers joints (au-dessus de la boîte) */}
+            {attachedFiles.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {attachedFiles.map((f, i) => (
+                  <div key={i} className="relative group rounded-lg overflow-hidden border border-[var(--border)]"
+                    style={{ background: 'var(--bg-secondary)' }}>
+                    {f.preview ? (
+                      <img src={f.preview} alt={f.name} className="h-16 w-16 object-cover" />
+                    ) : (
+                      <div className="h-16 w-16 flex items-center justify-center">
+                        <FileText className="w-5 h-5" style={{ color: 'var(--text-muted)' }} />
+                      </div>
+                    )}
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5">
+                      <span className="text-[8px] text-white truncate block">{f.name}</span>
+                    </div>
+                    <button onClick={() => removeAttachment(i)}
+                      className="absolute top-0 right-0 p-0.5 bg-black/60 rounded-bl opacity-0 group-hover:opacity-100 transition-opacity">
+                      <X className="w-3 h-3 text-white" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Boîte de saisie */}
+            <div className="rounded-2xl"
+              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+
+              {/* Row 1 — model selector + fichier + skill actif + tokens session */}
+              <div className="flex items-center gap-1.5 px-2 pt-2">
             <div className="relative">
               <button onClick={() => setShowModelMenu(!showModelMenu)}
-                className="flex items-center gap-1.5 px-3 rounded-xl text-xs transition-colors whitespace-nowrap"
-                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)', height: '44px' }}>
-                <AgentIcon size={12} /><span>{formatModelName(selectedModel)}</span>
+                className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors whitespace-nowrap"
+                style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                <AgentIcon size={11} /><span>{formatModelName(selectedModel)}</span>
                 <ChevronDown className={`w-3 h-3 transition-transform ${showModelMenu ? 'rotate-180' : ''}`} />
               </button>
               {showModelMenu && (
@@ -1824,127 +1851,171 @@ export default function Chat() {
               )}
             </div>
 
-            {/* Bouton fichier */}
-            <input ref={fileInputRef} type="file" multiple accept="image/*,.txt,.md,.json,.csv,.xml,.html,.py,.js,.ts,.tsx,.jsx,.css,.yaml,.yml,.log,.sql,.sh,.bat" className="hidden"
-              onChange={handleFileSelect} />
-            <button onClick={() => fileInputRef.current?.click()}
-              className="flex items-center justify-center rounded-xl transition-colors flex-shrink-0"
-              style={{ width: '44px', height: '44px', background: attachedFiles.length > 0 ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'var(--bg-secondary)', border: `1px solid ${attachedFiles.length > 0 ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border)'}`, color: attachedFiles.length > 0 ? 'var(--accent-primary)' : 'var(--text-muted)' }}
-              title={t('chat.attachFile')}>
-              <Paperclip className="w-4 h-4" />
-            </button>
+                {/* Fichier joint — petit bouton icône */}
+                <input ref={fileInputRef} type="file" multiple accept="image/*,.txt,.md,.json,.csv,.xml,.html,.py,.js,.ts,.tsx,.jsx,.css,.yaml,.yml,.log,.sql,.sh,.bat" className="hidden"
+                  onChange={handleFileSelect} />
+                <button onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center justify-center rounded-lg transition-colors"
+                  style={{ width: '26px', height: '26px', background: attachedFiles.length > 0 ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'transparent', border: `1px solid ${attachedFiles.length > 0 ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border)'}`, color: attachedFiles.length > 0 ? 'var(--accent-primary)' : 'var(--text-muted)' }}
+                  title={t('chat.attachFile')}>
+                  <Paperclip className="w-3 h-3" />
+                </button>
 
-            <div className="flex-1 relative">
-              {/* Aperçu fichiers joints */}
-              {attachedFiles.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {attachedFiles.map((f, i) => (
-                    <div key={i} className="relative group rounded-lg overflow-hidden border border-[var(--border)]"
-                      style={{ background: 'var(--bg-secondary)' }}>
-                      {f.preview ? (
-                        <img src={f.preview} alt={f.name} className="h-16 w-16 object-cover" />
-                      ) : (
-                        <div className="h-16 w-16 flex items-center justify-center">
-                          <FileText className="w-5 h-5" style={{ color: 'var(--text-muted)' }} />
-                        </div>
-                      )}
-                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5">
-                        <span className="text-[8px] text-white truncate block">{f.name}</span>
-                      </div>
-                      <button onClick={() => removeAttachment(i)}
-                        className="absolute top-0 right-0 p-0.5 bg-black/60 rounded-bl opacity-0 group-hover:opacity-100 transition-opacity">
-                        <X className="w-3 h-3 text-white" />
-                      </button>
-                    </div>
-                  ))}
+                {/* Skill actif — chip avec × pour désactiver */}
+                {activeSkill && (
+                  <div className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px]"
+                    style={{
+                      background: 'color-mix(in srgb, var(--accent-tertiary) 18%, transparent)',
+                      border: '1px solid color-mix(in srgb, var(--accent-tertiary) 40%, transparent)',
+                      color: 'var(--accent-tertiary)',
+                    }}
+                    title={`Skill actif : ${activeSkill}`}>
+                    <Sparkles className="w-3 h-3" />
+                    <span className="truncate max-w-[120px]">{activeSkill.replace(/_/g, ' ')}</span>
+                    <button onClick={async () => { await api.clearActiveSkill(); setActiveSkill(null) }}
+                      className="hover:opacity-70 transition-opacity" title="Désactiver">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Tokens session — aligné à droite */}
+                {sessionTokens > 0 && (
+                  <div className="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[10px]"
+                    style={{ color: 'var(--text-muted)', background: 'transparent' }}
+                    title={`Tokens cumulés dans cette session : ${sessionTokens.toLocaleString()}`}>
+                    <Zap className="w-3 h-3" />
+                    <span>{sessionTokens.toLocaleString()} tok</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Row 2 — Textarea transparent à l'intérieur de la boîte */}
+              <div className="px-3 py-2">
+                <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+                  placeholder={t('chat.placeholder')} rows={1}
+                  className="w-full bg-transparent text-sm placeholder-[#555] outline-none resize-none"
+                  style={{ color: 'var(--text-primary)', minHeight: '36px', maxHeight: '200px' }}
+                  onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px' }} />
+              </div>
+
+              {/* Row 3 — Footer : Skills toggle / slash / mic / radio / Lancer */}
+              <div className="flex items-center gap-1.5 px-2 pb-2">
+                {/* Bouton Skills (toggle) */}
+                {allSkills.length > 0 && (
+                  <button onClick={() => setShowSkillsBar(!showSkillsBar)}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] transition-colors"
+                    style={{
+                      background: showSkillsBar ? 'color-mix(in srgb, var(--accent-tertiary) 18%, transparent)' : 'var(--bg-tertiary)',
+                      border: `1px solid ${showSkillsBar ? 'color-mix(in srgb, var(--accent-tertiary) 40%, transparent)' : 'var(--border)'}`,
+                      color: showSkillsBar ? 'var(--accent-tertiary)' : 'var(--text-secondary)',
+                    }}
+                    title="Afficher / masquer les skills">
+                    <Sparkles className="w-3 h-3" />
+                    <span>Skills</span>
+                  </button>
+                )}
+
+                {/* Hint raccourci / */}
+                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
+                  style={{ color: 'var(--text-muted)' }}
+                  title="Tape '/' pour ouvrir la palette">
+                  <span className="font-mono opacity-60">/</span>
                 </div>
-              )}
-              <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-                placeholder={t('chat.placeholder')} rows={1}
-                className="w-full rounded-xl px-4 py-3 pr-12 text-sm placeholder-[#555] outline-none resize-none transition-colors"
-                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', minHeight: '44px', maxHeight: '200px' }}
-                onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px' }} />
+
+                {/* Mic PTT */}
+                <button onClick={() => pttStatus === 'recording' ? stopPTT() : startPTT()}
+                  className="ml-auto flex items-center justify-center rounded-lg transition-colors"
+                  style={pttStatus === 'recording'
+                    ? { width: '30px', height: '30px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
+                    : { width: '30px', height: '30px', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+                  title={t('chat.speak')}>
+                  {pttStatus === 'recording' ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                </button>
+
+                {/* Voice modal (realtime) */}
+                <button onClick={() => setShowVoiceModal(true)} className="flex items-center justify-center rounded-lg transition-colors"
+                  style={showVoiceModal
+                    ? { width: '30px', height: '30px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
+                    : { width: '30px', height: '30px', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+                  title={t('chat.realtime')}>
+                  <Radio className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Bouton Lancer (envoyer) */}
+                <button onClick={handleSend} disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
+                  className="flex items-center gap-1.5 px-3 rounded-lg disabled:opacity-30 transition-all text-xs font-medium"
+                  style={{ height: '30px', background: (input.trim() || attachedFiles.length > 0) && !isLoading ? 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
+                  <Send className="w-3 h-3" />
+                  <span>Lancer</span>
+                </button>
+              </div>
             </div>
 
-            <button onClick={() => pttStatus === 'recording' ? stopPTT() : startPTT()}
-              className="flex items-center justify-center rounded-xl transition-colors"
-              style={pttStatus === 'recording'
-                ? { width: '44px', height: '44px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
-                : { width: '44px', height: '44px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
-              title={t('chat.speak')}>
-              {pttStatus === 'recording' ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-            </button>
+            {/* Info row sous la boîte */}
+            <div className="flex items-center justify-between mt-1.5 px-1 text-[10px]"
+              style={{ color: 'var(--text-muted)' }}>
+              <span>Gungnir peut exécuter des actions — vérifie les réponses critiques.</span>
+              <span>{allSkills.length} skill{allSkills.length > 1 ? 's' : ''}</span>
+            </div>
 
-            <button onClick={() => setShowVoiceModal(true)} className="flex items-center justify-center rounded-xl transition-colors"
-              style={showVoiceModal
-                ? { width: '44px', height: '44px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
-                : { width: '44px', height: '44px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
-              title={t('chat.realtime')}>
-              <Radio className="w-4 h-4" />
-            </button>
-
-            <button onClick={handleSend} disabled={(!input.trim() && attachedFiles.length === 0) || isLoading} className="flex items-center justify-center rounded-xl disabled:opacity-30 transition-all"
-              style={{ width: '44px', height: '44px', background: (input.trim() || attachedFiles.length > 0) && !isLoading ? 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
-              <Send className="w-4 h-4" />
-            </button>
+            {/* Skills bar repliable — ne s'affiche que si toggle activé */}
+            {showSkillsBar && allSkills.length > 0 && (() => {
+              const displaySkills = favoriteSkills.length > 0 ? favoriteSkills : allSkills.slice(0, 6)
+              return (
+                <div className="flex items-center gap-2 mt-2 overflow-x-auto">
+                  <Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--accent-tertiary)' }} />
+                  {displaySkills.map((skill: any, idx: number) => {
+                    const isActive = skill.name === activeSkill
+                    return (
+                      <div
+                        key={skill.name}
+                        draggable
+                        onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)) }}
+                        onDragEnter={(e) => e.preventDefault()}
+                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+                        onDrop={async (e) => {
+                          e.preventDefault()
+                          const fromIdx = Number(e.dataTransfer.getData('text/plain'))
+                          if (isNaN(fromIdx) || fromIdx === idx) return
+                          const reordered = [...allSkills]
+                          const fromSkill = displaySkills[fromIdx]
+                          const toSkill = displaySkills[idx]
+                          const realFrom = reordered.findIndex(s => s.name === fromSkill?.name)
+                          let realTo = reordered.findIndex(s => s.name === toSkill?.name)
+                          if (realFrom < 0 || realTo < 0 || realFrom === realTo) return
+                          const [moved] = reordered.splice(realFrom, 1)
+                          if (realFrom < realTo) realTo--
+                          reordered.splice(realTo, 0, moved)
+                          setAllSkills(reordered)
+                          setFavoriteSkills(reordered.filter((sk: any) => sk.is_favorite))
+                          await api.reorderSkills(reordered.map((sk: any) => sk.name))
+                        }}
+                        onClick={async () => {
+                          if (isActive) {
+                            await api.clearActiveSkill(); setActiveSkill(null)
+                          } else {
+                            await api.setActiveSkill(skill.name); setActiveSkill(skill.name)
+                          }
+                        }}
+                        role="button"
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] whitespace-nowrap transition-all hover:scale-105 cursor-grab active:cursor-grabbing select-none"
+                        style={{
+                          background: isActive ? 'color-mix(in srgb, var(--accent-tertiary) 18%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 10%, transparent)',
+                          border: `1px solid ${isActive ? 'color-mix(in srgb, var(--accent-tertiary) 40%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 20%, transparent)'}`,
+                          color: isActive ? 'var(--accent-tertiary)' : 'var(--text-secondary)',
+                        }}
+                        title={skill.description}
+                      >
+                        {skill.icon ? <span className="text-sm leading-none">{skill.icon}</span> : <Code className="w-3 h-3" style={{ color: isActive ? 'var(--accent-tertiary)' : 'var(--accent-primary)' }} />}
+                        {skill.name.replace(/_/g, ' ')}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
           </div>
-          {/* Skills bar — favorites first, or first 6 if no favorites */}
-          {allSkills.length > 0 && (() => {
-            const displaySkills = favoriteSkills.length > 0 ? favoriteSkills : allSkills.slice(0, 6)
-            return (
-              <div className="flex items-center gap-2 max-w-4xl mx-auto mt-2 overflow-x-auto">
-                <Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--accent-tertiary)' }} />
-                {displaySkills.map((skill: any, idx: number) => {
-                  const isActive = skill.name === activeSkill
-                  return (
-                    <div
-                      key={skill.name}
-                      draggable
-                      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)) }}
-                      onDragEnter={(e) => e.preventDefault()}
-                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
-                      onDrop={async (e) => {
-                        e.preventDefault()
-                        const fromIdx = Number(e.dataTransfer.getData('text/plain'))
-                        if (isNaN(fromIdx) || fromIdx === idx) return
-                        const reordered = [...allSkills]
-                        const fromSkill = displaySkills[fromIdx]
-                        const toSkill = displaySkills[idx]
-                        const realFrom = reordered.findIndex(s => s.name === fromSkill?.name)
-                        let realTo = reordered.findIndex(s => s.name === toSkill?.name)
-                        if (realFrom < 0 || realTo < 0 || realFrom === realTo) return
-                        const [moved] = reordered.splice(realFrom, 1)
-                        // After splice, indices shift if dragging forward
-                        if (realFrom < realTo) realTo--
-                        reordered.splice(realTo, 0, moved)
-                        setAllSkills(reordered)
-                        setFavoriteSkills(reordered.filter((sk: any) => sk.is_favorite))
-                        await api.reorderSkills(reordered.map((sk: any) => sk.name))
-                      }}
-                      onClick={async () => {
-                        if (isActive) {
-                          await api.clearActiveSkill(); setActiveSkill(null)
-                        } else {
-                          await api.setActiveSkill(skill.name); setActiveSkill(skill.name)
-                        }
-                      }}
-                      role="button"
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] whitespace-nowrap transition-all hover:scale-105 cursor-grab active:cursor-grabbing select-none"
-                      style={{
-                        background: isActive ? 'color-mix(in srgb, var(--accent-tertiary) 18%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 10%, transparent)',
-                        border: `1px solid ${isActive ? 'color-mix(in srgb, var(--accent-tertiary) 40%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 20%, transparent)'}`,
-                        color: isActive ? 'var(--accent-tertiary)' : 'var(--text-secondary)',
-                      }}
-                      title={skill.description}
-                    >
-                      {skill.icon ? <span className="text-sm leading-none">{skill.icon}</span> : <Code className="w-3 h-3" style={{ color: isActive ? 'var(--accent-tertiary)' : 'var(--accent-primary)' }} />}
-                      {skill.name.replace(/_/g, ' ')}
-                    </div>
-                  )
-                })}
-              </div>
-            )
-          })()}
         </div>
       </div>
 

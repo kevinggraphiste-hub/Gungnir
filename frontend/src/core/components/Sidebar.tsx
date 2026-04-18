@@ -85,8 +85,8 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 p-2 overflow-y-auto flex flex-col">
+      {/* Navigation — PLUGINS puis SYSTÈME à la suite */}
+      <nav className="flex-1 p-2 overflow-y-auto">
         {/* Section PLUGINS — compteur total à droite du titre */}
         <div>
           {!collapsed ? (
@@ -104,29 +104,19 @@ export default function Sidebar() {
                 key={item.path}
                 to={item.path}
                 className="nav-item"
-                title={item.version ? `${item.label} v${item.version}` : item.label}
+                title={item.label}
               >
                 <item.icon className="w-4 h-4 flex-shrink-0" />
                 {!collapsed && (
-                  <>
-                    <span className="text-[13px] font-medium flex-1">{item.label}</span>
-                    {item.version && (
-                      <span
-                        className="text-[9px] font-semibold uppercase"
-                        style={{ color: 'var(--text-muted)', opacity: 0.55 }}
-                      >
-                        v{item.version.split('.')[0]}
-                      </span>
-                    )}
-                  </>
+                  <span className="text-[13px] font-medium">{item.label}</span>
                 )}
               </NavLink>
             ))}
           </div>
         </div>
 
-        {/* Section SYSTÈME — Modèles / Analytics / Settings en bas */}
-        <div className="mt-auto pt-4">
+        {/* Section SYSTÈME — Modèles / Analytics / Settings, à la suite de PLUGINS */}
+        <div className="mt-4">
           {!collapsed ? (
             <div
               className="px-2 pb-1 text-[9px] font-bold uppercase tracking-[0.18em]"
