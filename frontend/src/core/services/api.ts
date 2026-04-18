@@ -10,6 +10,10 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   created_at: string
+  tokens_input?: number
+  tokens_output?: number
+  model?: string
+  provider?: string
 }
 
 interface Conversation {
@@ -741,6 +745,26 @@ export const api = {
 
   searchHealth: async () => {
     const response = await apiFetch(`${API_BASE}/search/health`)
+    return handleResponse(response)
+  },
+
+  // ── Consciousness (reward / relevance feedback) ───────────────────
+  scoreInteraction: async (data: {
+    interaction_type: string
+    scores: Record<string, number>
+    triggered_by?: string
+    description?: string
+  }) => {
+    const response = await apiFetch(`${API_BASE}/plugins/consciousness/reward/score`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        interaction_type: data.interaction_type,
+        scores: data.scores,
+        triggered_by: data.triggered_by || 'user',
+        description: data.description || '',
+      }),
+    })
     return handleResponse(response)
   },
 }

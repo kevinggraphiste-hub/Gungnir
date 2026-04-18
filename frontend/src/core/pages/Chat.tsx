@@ -10,7 +10,8 @@ import {
   Code, FileText, Globe, BarChart3, Radio,
   ChevronLeft, ChevronRight, Pencil, Check, X, Key,
   Paperclip, Image as ImageIcon, Copy, ListTodo, Folder, FolderMinus, GripVertical,
-  Calendar, Play, Pause, CheckCircle2, AlertCircle, Clock
+  Calendar, Play, Pause, CheckCircle2, AlertCircle, Clock,
+  RefreshCw, ThumbsUp, ThumbsDown, Zap
 } from 'lucide-react'
 import { SecondaryButton } from '../components/ui'
 import VoiceModal from '../components/VoiceModal'
@@ -92,6 +93,118 @@ function FloatingCopyButton({ content, side = 'right' }: { content: string; side
       >
         {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
       </button>
+    </div>
+  )
+}
+
+// Barre d'actions sous chaque bulle : tokens + copie + (assistant) régénération + 👍/👎
+// Les scores 👍/👎 sont envoyés au plugin Conscience pour auto-évaluer la pertinence des réponses.
+function MessageActions({
+  role,
+  content,
+  tokens,
+  onRegenerate,
+  canRegenerate,
+  onScore,
+}: {
+  role: 'user' | 'assistant'
+  content: string
+  tokens?: number
+  onRegenerate?: () => void
+  canRegenerate?: boolean
+  onScore?: (value: 'up' | 'down') => void
+}) {
+  const [copied, setCopied] = useState(false)
+  const [scored, setScored] = useState<null | 'up' | 'down'>(null)
+  const [scoreBusy, setScoreBusy] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch { /* ignore */ }
+  }
+  const handleScore = async (val: 'up' | 'down') => {
+    if (!onScore || scoreBusy) return
+    setScoreBusy(true)
+    try { await onScore(val); setScored(val) }
+    finally { setScoreBusy(false) }
+  }
+
+  const baseBtn = 'flex items-center justify-center rounded-md transition-all hover:opacity-100 opacity-70'
+  const btnStyle = {
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    border: '1px solid var(--border-subtle)',
+    width: 24,
+    height: 24,
+  } as React.CSSProperties
+
+  return (
+    <div className={`flex items-center gap-1.5 mt-1 ${role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+      {typeof tokens === 'number' && tokens > 0 && (
+        <span
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
+          style={{
+            color: 'var(--text-muted)',
+            background: 'color-mix(in srgb, var(--accent-tertiary, var(--scarlet)) 6%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--accent-tertiary, var(--scarlet)) 15%, transparent)',
+          }}
+          title={`${tokens} tokens`}
+        >
+          <Zap className="w-2.5 h-2.5" />
+          <span>{tokens > 999 ? `${(tokens / 1000).toFixed(1)}K` : tokens}</span>
+        </span>
+      )}
+      <button
+        onClick={handleCopy}
+        className={baseBtn}
+        style={{ ...btnStyle, color: copied ? 'var(--accent-success)' : 'var(--text-muted)' }}
+        title={copied ? 'Copié !' : 'Copier'}
+      >
+        {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      </button>
+      {role === 'assistant' && canRegenerate && onRegenerate && (
+        <button
+          onClick={onRegenerate}
+          className={baseBtn}
+          style={btnStyle}
+          title="Régénérer la réponse"
+        >
+          <RefreshCw className="w-3 h-3" />
+        </button>
+      )}
+      {role === 'assistant' && onScore && (
+        <>
+          <button
+            onClick={() => handleScore('up')}
+            disabled={scoreBusy}
+            className={baseBtn}
+            style={{
+              ...btnStyle,
+              color: scored === 'up' ? 'var(--accent-success)' : 'var(--text-muted)',
+              background: scored === 'up' ? 'color-mix(in srgb, var(--accent-success) 15%, transparent)' : 'transparent',
+            }}
+            title="Réponse pertinente"
+          >
+            <ThumbsUp className="w-3 h-3" />
+          </button>
+          <button
+            onClick={() => handleScore('down')}
+            disabled={scoreBusy}
+            className={baseBtn}
+            style={{
+              ...btnStyle,
+              color: scored === 'down' ? 'var(--accent-primary)' : 'var(--text-muted)',
+              background: scored === 'down' ? 'color-mix(in srgb, var(--scarlet) 15%, transparent)' : 'transparent',
+            }}
+            title="Réponse hors-sujet"
+          >
+            <ThumbsDown className="w-3 h-3" />
+          </button>
+        </>
+      )}
     </div>
   )
 }
@@ -969,6 +1082,89 @@ export default function Chat() {
     setLoadingConvoId(null)
   }
 
+  // Relance une réponse en recyclant la bulle assistant cliquée : trouve le
+  // message utilisateur qui la précède, vide le contenu de l'assistant, et
+  // streame la nouvelle réponse dedans.
+  const regenerateResponse = async (assistantMsgId: number) => {
+    if (isLoading) return
+    const msgs = useStore.getState().messages
+    const idx = msgs.findIndex(m => m.id === assistantMsgId)
+    if (idx <= 0) return
+    // Remonte jusqu'au dernier message user avant cet assistant
+    let userIdx = -1
+    for (let i = idx - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user') { userIdx = i; break }
+    }
+    if (userIdx === -1) return
+    const userMsg = msgs[userIdx]
+    const convoId = currentConversation
+    if (!convoId) return
+
+    // Vide la bulle assistant en place
+    const setMessagesFn = useStore.getState().setMessages
+    setMessagesFn(msgs.map(m => m.id === assistantMsgId ? { ...m, content: '', tokens_input: undefined, tokens_output: undefined } : m))
+    setLoading(true)
+    setLoadingConvoId(convoId)
+
+    let streamedSoFar = ''
+    try {
+      const response = await api.chat(
+        convoId,
+        {
+          message: userMsg.content,
+          provider: selectedProvider,
+          model: selectedModel,
+          ...(userMsg.images && userMsg.images.length > 0 ? { images: userMsg.images } : {}),
+        },
+        {
+          onToken: (chunk: string) => {
+            if (useStore.getState().currentConversation !== convoId) return
+            if (streamedSoFar.length === 0) useStore.getState().setLoadingConvoId(null)
+            streamedSoFar += chunk
+            const current = useStore.getState().messages
+            setMessagesFn(current.map(m => m.id === assistantMsgId ? { ...m, content: streamedSoFar } : m))
+          },
+        },
+      )
+      const stillOnSameConvo = useStore.getState().currentConversation === convoId
+      if (stillOnSameConvo) {
+        const current = useStore.getState().messages
+        if (response.error) {
+          setMessagesFn(current.map(m => m.id === assistantMsgId
+            ? { ...m, content: `[Erreur: ${response.error}]` }
+            : m))
+        } else {
+          setMessagesFn(current.map(m => m.id === assistantMsgId
+            ? {
+                ...m,
+                content: response.content ?? streamedSoFar,
+                model: response.model, provider: response.provider,
+                tokens_input: response.tokens_input, tokens_output: response.tokens_output,
+              }
+            : m))
+        }
+      }
+    } catch (err) { console.error('Regenerate error:', err) }
+    setLoading(false)
+    setLoadingConvoId(null)
+  }
+
+  // Envoie un feedback 👍/👎 au plugin Conscience pour alimenter le système
+  // de scoring (relevance) de l'agent — base future de l'auto-évaluation.
+  const scoreResponse = async (assistantMsgId: number, value: 'up' | 'down') => {
+    try {
+      const score = value === 'up' ? 1.0 : 0.0
+      await api.scoreInteraction({
+        interaction_type: 'chat_response',
+        scores: { relevance: score },
+        triggered_by: 'user',
+        description: `Chat msg #${assistantMsgId} — ${value === 'up' ? 'pertinent' : 'hors-sujet'}`,
+      })
+    } catch (err) {
+      console.error('Score error:', err)
+    }
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
@@ -1418,7 +1614,7 @@ export default function Chat() {
             </div>
           )}
 
-          {messages.map((msg) => (
+          {messages.map((msg, msgIdx) => (
             <div key={msg.id} className={`flex gap-3 animate-fade-in ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
               {msg.role === 'assistant' ? (
                 <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
@@ -1483,6 +1679,30 @@ export default function Chat() {
                   )}
                   <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
                 </div>
+                {/* Barre d'actions (tokens + copie + regénération/feedback) */}
+                {msg.content && (() => {
+                  // Tokens : assistant → tokens_output propres ; user → tokens_input
+                  // de la bulle assistant qui suit (c'est ce que le prompt a consommé).
+                  let tokenCount: number | undefined
+                  if (msg.role === 'assistant') {
+                    tokenCount = (msg as any).tokens_output
+                  } else {
+                    const next = messages[msgIdx + 1]
+                    if (next && next.role === 'assistant') {
+                      tokenCount = (next as any).tokens_input
+                    }
+                  }
+                  return (
+                    <MessageActions
+                      role={msg.role as 'user' | 'assistant'}
+                      content={msg.content.replace(/\n\[Image jointe\]/g, '')}
+                      tokens={tokenCount}
+                      onRegenerate={() => regenerateResponse(msg.id)}
+                      canRegenerate={!isLoading}
+                      onScore={msg.role === 'assistant' ? (v) => scoreResponse(msg.id, v) : undefined}
+                    />
+                  )
+                })()}
               </div>
             </div>
           ))}
