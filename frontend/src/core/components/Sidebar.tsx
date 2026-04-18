@@ -28,13 +28,14 @@ export default function Sidebar() {
   const plugins = usePluginStore((s) => s.plugins)
   const onLogout = useStore((s) => s.onLogout)
 
-  // Core items (hardcoded) — affichés dans la section "core"
-  const CORE_ITEMS = [
+  // Items core hardcodés — toujours en tête de la section PLUGINS
+  type NavItem = { path: string; icon: any; label: string; version?: string }
+  const CORE_ITEMS: NavItem[] = [
     { path: '/', icon: MessageSquare, label: t('nav.chat') },
     { path: '/agent', icon: Bot, label: t('nav.agent') },
   ]
 
-  // Plugin nav items triés par sidebar_position (seulement ceux activés)
+  // Plugins activés, triés par sidebar_position
   const enabledPlugins = plugins
     .filter((p) => p.enabled)
     .sort((a, b) => a.sidebar_position - b.sidebar_position)
@@ -46,34 +47,21 @@ export default function Sidebar() {
     version: p.version,
   })
 
-  // Répartition par section (fallback "tools" si le manifest n'en déclare pas)
-  const pluginsBySection: Record<string, ReturnType<typeof toItem>[]> = {}
-  for (const p of enabledPlugins) {
-    const section = p.sidebar_section || 'tools'
-    if (!pluginsBySection[section]) pluginsBySection[section] = []
-    pluginsBySection[section].push(toItem(p))
-  }
+  // Ces plugins atterrissent en bas dans la section SYSTÈME (guide de modèles,
+  // analytics) — le reste (HuntR, Voice, Conscience, Code, Scheduler, Channels,
+  // Webhooks, …) va dans la grande section PLUGINS.
+  const SYSTEM_PLUGINS = new Set(['model_guide', 'analytics'])
 
-  // Ordre d'affichage des sections + libellés
-  const SECTION_ORDER: Array<{ key: string; label: string }> = [
-    { key: 'core', label: 'Essentiels' },
-    { key: 'tools', label: 'Outils' },
-    { key: 'integrations', label: 'Intégrations' },
-  ]
+  const pluginItems = enabledPlugins
+    .filter((p) => !SYSTEM_PLUGINS.has(p.name))
+    .map(toItem)
 
-  // Section "core" : on injecte les items hardcodés devant les plugins "core"
-  const coreSection = [...CORE_ITEMS, ...(pluginsBySection['core'] || [])]
-  const groups: Array<{ key: string; label: string; items: Array<{ path: string; icon: any; label: string; version?: string }> }> = []
-  for (const s of SECTION_ORDER) {
-    const items = s.key === 'core' ? coreSection : (pluginsBySection[s.key] || [])
-    if (items.length > 0) groups.push({ key: s.key, label: s.label, items })
-  }
-  // Toute section déclarée qui ne fait pas partie de l'ordre connu — on la pousse à la fin
-  for (const key of Object.keys(pluginsBySection)) {
-    if (!SECTION_ORDER.find(s => s.key === key)) {
-      groups.push({ key, label: key.charAt(0).toUpperCase() + key.slice(1), items: pluginsBySection[key] })
-    }
-  }
+  const systemPlugins = enabledPlugins
+    .filter((p) => SYSTEM_PLUGINS.has(p.name))
+    .map(toItem)
+
+  const pluginsList = [...CORE_ITEMS, ...pluginItems]
+  const systemList = [...systemPlugins, { path: '/settings', icon: Settings2, label: t('nav.settings') }]
 
   return (
     <aside
@@ -98,46 +86,75 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-2 overflow-y-auto">
-        {groups.map((group, gi) => (
-          <div key={group.key} className={gi > 0 ? 'mt-3' : ''}>
-            {!collapsed && (
-              <div
-                className="px-2 pb-1 text-[9px] font-bold uppercase tracking-widest"
-                style={{ color: 'var(--text-muted)', opacity: 0.75 }}
-              >
-                {group.label}
-              </div>
-            )}
-            {collapsed && gi > 0 && (
-              <div
-                className="mx-2 my-1.5"
-                style={{ borderTop: '1px solid var(--border-subtle)', opacity: 0.6 }}
-              />
-            )}
-            <div className="space-y-0.5">
-              {group.items.map((item) => (
-                <NavLink
-                  key={item.path}
-                  to={item.path}
-                  className="nav-item"
-                  title={item.version ? `${item.label} v${item.version}` : item.label}
-                >
-                  <item.icon className="w-4 h-4 flex-shrink-0" />
-                  {!collapsed && (
-                    <span className="text-[13px] font-medium">{item.label}</span>
-                  )}
-                </NavLink>
-              ))}
+      <nav className="flex-1 p-2 overflow-y-auto flex flex-col">
+        {/* Section PLUGINS — compteur total à droite du titre */}
+        <div>
+          {!collapsed ? (
+            <div
+              className="px-2 pb-1 flex items-center justify-between text-[9px] font-bold uppercase tracking-[0.18em]"
+              style={{ color: 'var(--text-muted)', opacity: 0.75 }}
+            >
+              <span>Plugins</span>
+              <span style={{ opacity: 0.7 }}>/ {pluginsList.length}</span>
             </div>
+          ) : null}
+          <div className="space-y-0.5">
+            {pluginsList.map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className="nav-item"
+                title={item.version ? `${item.label} v${item.version}` : item.label}
+              >
+                <item.icon className="w-4 h-4 flex-shrink-0" />
+                {!collapsed && (
+                  <>
+                    <span className="text-[13px] font-medium flex-1">{item.label}</span>
+                    {item.version && (
+                      <span
+                        className="text-[9px] font-semibold uppercase"
+                        style={{ color: 'var(--text-muted)', opacity: 0.55 }}
+                      >
+                        v{item.version.split('.')[0]}
+                      </span>
+                    )}
+                  </>
+                )}
+              </NavLink>
+            ))}
           </div>
-        ))}
-        {/* Paramètres isolé en bas de la navigation principale */}
-        <div className="mt-3 pt-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-          <NavLink to="/settings" className="nav-item" title={t('nav.settings')}>
-            <Settings2 className="w-4 h-4 flex-shrink-0" />
-            {!collapsed && <span className="text-[13px] font-medium">{t('nav.settings')}</span>}
-          </NavLink>
+        </div>
+
+        {/* Section SYSTÈME — Modèles / Analytics / Settings en bas */}
+        <div className="mt-auto pt-4">
+          {!collapsed ? (
+            <div
+              className="px-2 pb-1 text-[9px] font-bold uppercase tracking-[0.18em]"
+              style={{ color: 'var(--text-muted)', opacity: 0.75 }}
+            >
+              Système
+            </div>
+          ) : (
+            <div
+              className="mx-2 mb-1"
+              style={{ borderTop: '1px solid var(--border-subtle)', opacity: 0.6 }}
+            />
+          )}
+          <div className="space-y-0.5">
+            {systemList.map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className="nav-item"
+                title={item.label}
+              >
+                <item.icon className="w-4 h-4 flex-shrink-0" />
+                {!collapsed && (
+                  <span className="text-[13px] font-medium">{item.label}</span>
+                )}
+              </NavLink>
+            ))}
+          </div>
         </div>
       </nav>
 

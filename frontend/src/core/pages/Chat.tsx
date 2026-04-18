@@ -97,19 +97,35 @@ function FloatingCopyButton({ content, side = 'right' }: { content: string; side
   )
 }
 
-// Barre d'actions sous chaque bulle : tokens + copie + (assistant) régénération + 👍/👎
+// Pastille tokens — affichée dans l'en-tête de la bulle, côté opposé au pseudo.
+function TokenBadge({ tokens }: { tokens: number }) {
+  return (
+    <span
+      className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
+      style={{
+        color: 'var(--text-muted)',
+        background: 'color-mix(in srgb, var(--accent-tertiary, var(--scarlet)) 6%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--accent-tertiary, var(--scarlet)) 15%, transparent)',
+      }}
+      title={`${tokens} tokens`}
+    >
+      <Zap className="w-2.5 h-2.5" />
+      <span>{tokens > 999 ? `${(tokens / 1000).toFixed(1)}K` : tokens}</span>
+    </span>
+  )
+}
+
+// Barre d'actions sous chaque bulle : copie + (assistant) régénération + 👍/👎
 // Les scores 👍/👎 sont envoyés au plugin Conscience pour auto-évaluer la pertinence des réponses.
 function MessageActions({
   role,
   content,
-  tokens,
   onRegenerate,
   canRegenerate,
   onScore,
 }: {
   role: 'user' | 'assistant'
   content: string
-  tokens?: number
   onRegenerate?: () => void
   canRegenerate?: boolean
   onScore?: (value: 'up' | 'down') => void
@@ -143,20 +159,6 @@ function MessageActions({
 
   return (
     <div className={`flex items-center gap-1.5 mt-1 ${role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-      {typeof tokens === 'number' && tokens > 0 && (
-        <span
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
-          style={{
-            color: 'var(--text-muted)',
-            background: 'color-mix(in srgb, var(--accent-tertiary, var(--scarlet)) 6%, transparent)',
-            border: '1px solid color-mix(in srgb, var(--accent-tertiary, var(--scarlet)) 15%, transparent)',
-          }}
-          title={`${tokens} tokens`}
-        >
-          <Zap className="w-2.5 h-2.5" />
-          <span>{tokens > 999 ? `${(tokens / 1000).toFixed(1)}K` : tokens}</span>
-        </span>
-      )}
       <button
         onClick={handleCopy}
         className={baseBtn}
@@ -1630,18 +1632,47 @@ export default function Chat() {
                 </div>
               )}
 
-              <div className={`flex flex-col gap-1 max-w-[70%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                  <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
-                    {msg.role === 'user' ? (currentUser?.display_name || t('common.user')) : formatModelName((msg as any).model || selectedModel)}
-                  </span>
-                  {msg.role === 'assistant' && (
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
-                      style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 15%, transparent)' }}>
-                      {(msg as any).provider || selectedProvider}
-                    </span>
-                  )}
-                </div>
+              <div className={`flex flex-col gap-1 max-w-[70%] w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                {(() => {
+                  // Tokens : assistant → tokens_output propres ; user → tokens_input
+                  // de la bulle assistant qui suit (c'est ce que le prompt a consommé).
+                  let headerTokens: number | undefined
+                  if (msg.role === 'assistant') {
+                    headerTokens = (msg as any).tokens_output
+                  } else {
+                    const next = messages[msgIdx + 1]
+                    if (next && next.role === 'assistant') headerTokens = (next as any).tokens_input
+                  }
+                  const nameGroup = (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                        {msg.role === 'user' ? (currentUser?.display_name || t('common.user')) : formatModelName((msg as any).model || selectedModel)}
+                      </span>
+                      {msg.role === 'assistant' && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
+                          style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 15%, transparent)' }}>
+                          {(msg as any).provider || selectedProvider}
+                        </span>
+                      )}
+                    </div>
+                  )
+                  const hasTokens = typeof headerTokens === 'number' && headerTokens > 0
+                  return (
+                    <div className="flex items-center gap-2 w-full">
+                      {msg.role === 'user' ? (
+                        <>
+                          {hasTokens && <TokenBadge tokens={headerTokens as number} />}
+                          <div className="ml-auto">{nameGroup}</div>
+                        </>
+                      ) : (
+                        <>
+                          {nameGroup}
+                          {hasTokens && <div className="ml-auto"><TokenBadge tokens={headerTokens as number} /></div>}
+                        </>
+                      )}
+                    </div>
+                  )
+                })()}
 
                 {msg.role === 'assistant' && (msg as any).tool_events?.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mb-1">
@@ -1679,30 +1710,16 @@ export default function Chat() {
                   )}
                   <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
                 </div>
-                {/* Barre d'actions (tokens + copie + regénération/feedback) */}
-                {msg.content && (() => {
-                  // Tokens : assistant → tokens_output propres ; user → tokens_input
-                  // de la bulle assistant qui suit (c'est ce que le prompt a consommé).
-                  let tokenCount: number | undefined
-                  if (msg.role === 'assistant') {
-                    tokenCount = (msg as any).tokens_output
-                  } else {
-                    const next = messages[msgIdx + 1]
-                    if (next && next.role === 'assistant') {
-                      tokenCount = (next as any).tokens_input
-                    }
-                  }
-                  return (
-                    <MessageActions
-                      role={msg.role as 'user' | 'assistant'}
-                      content={msg.content.replace(/\n\[Image jointe\]/g, '')}
-                      tokens={tokenCount}
-                      onRegenerate={() => regenerateResponse(msg.id)}
-                      canRegenerate={!isLoading}
-                      onScore={msg.role === 'assistant' ? (v) => scoreResponse(msg.id, v) : undefined}
-                    />
-                  )
-                })()}
+                {/* Barre d'actions (copie + régénération + 👍/👎) */}
+                {msg.content && (
+                  <MessageActions
+                    role={msg.role as 'user' | 'assistant'}
+                    content={msg.content.replace(/\n\[Image jointe\]/g, '')}
+                    onRegenerate={() => regenerateResponse(msg.id)}
+                    canRegenerate={!isLoading}
+                    onScore={msg.role === 'assistant' ? (v) => scoreResponse(msg.id, v) : undefined}
+                  />
+                )}
               </div>
             </div>
           ))}
