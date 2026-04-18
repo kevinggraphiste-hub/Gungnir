@@ -240,7 +240,7 @@ WOLF_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "subagent_invoke",
-            "description": "Délègue une tâche à un sous-agent spécialisé. Le sous-agent utilise son propre modèle/provider configuré et retourne son résultat.",
+            "description": "Délègue une tâche à un sous-agent spécialisé. Le sous-agent utilise son propre modèle/provider configuré et retourne son résultat. Alias : subagent_run.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -3096,6 +3096,7 @@ WOLF_EXECUTORS: dict[str, Any] = {
     "subagent_delete":       _subagent_delete,
     "subagent_list":         _subagent_list,
     "subagent_invoke":       _subagent_invoke,
+    "subagent_run":          _subagent_invoke,  # alias anti-hallucination LLM
     "kb_write":              _kb_write,
     "kb_read":               _kb_read,
     "kb_list":               _kb_list,
@@ -3155,6 +3156,7 @@ WOLF_EXECUTORS: dict[str, Any] = {
 # Outils en lecture seule (autorisés même en mode restreint)
 READ_ONLY_TOOLS = {
     "skill_list", "kb_read", "kb_list", "soul_read", "subagent_list", "subagent_invoke",
+    "subagent_run",
     "web_fetch", "web_crawl",
     "browser_navigate", "browser_get_text", "browser_screenshot", "browser_evaluate",
     "browser_click", "browser_type", "browser_close",

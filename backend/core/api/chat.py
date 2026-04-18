@@ -197,8 +197,12 @@ _RESTRAINED_INTENT_MAP = {
 }
 
 # Outils toujours autorisés en mode restreint (lecture pure, sans effet de bord)
+# subagent_invoke y figure : c'est une orchestration décidée par le LLM, les
+# sous-agents ayant déjà été créés explicitement par l'utilisateur.
 _RESTRAINED_ALWAYS_ALLOWED = {
-    "skill_list", "kb_read", "kb_list", "soul_read", "subagent_list", "schedule_list",
+    "skill_list", "kb_read", "kb_list", "soul_read", "subagent_list", "subagent_invoke",
+    "subagent_run",
+    "schedule_list",
 }
 
 
@@ -1006,7 +1010,7 @@ Format exact (le systeme detecte et execute automatiquement) :
 **Web :** web_fetch(url,extract), web_search(query,num_results), web_crawl(url,max_pages,same_domain)
 **Skills :** skill_create, skill_update, skill_delete, skill_list
 **Personnalites :** personality_create, personality_update, personality_set_active, personality_delete
-**Sous-agents :** subagent_create, subagent_invoke, subagent_list, subagent_update, subagent_delete
+**Sous-agents :** subagent_create, subagent_invoke (alias: subagent_run) pour lancer un sous-agent, subagent_list, subagent_update, subagent_delete
 **KB :** kb_write(filename,content), kb_read(filename), kb_list
 **Browser :** browser_navigate, browser_get_text, browser_click, browser_type, browser_screenshot, browser_evaluate, browser_get_links, browser_crawl, browser_close
 **Identite :** soul_read, soul_write(content)
