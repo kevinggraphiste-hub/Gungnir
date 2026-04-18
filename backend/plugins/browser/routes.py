@@ -318,36 +318,86 @@ def get_system_prompt(topic: str, custom_format: str | None = None) -> str:
     il remplace le squelette imposé par défaut (# Titre / ## Aspect x3 /
     ## Conclusion). Les regles globales (citation inline, reformulation,
     utilisation de toutes les sources) sont toujours appliquees.
+
+    Deux branches distinctes selon la forme du template :
+    - Si le template contient des marqueurs `{{...}}` (issus de l'ancien
+      block-editor) : prompt a marqueurs (remplir chaque `{{CONTENU}}`, etc.).
+    - Sinon (Markdown brut issu du nouvel editeur WYSIWYG) : prompt "mirror"
+      qui demande au LLM de reproduire la structure exacte en remplacant le
+      contenu textuel de chaque bloc par la synthese.
     """
     custom = (custom_format or "").strip()
     if not custom:
         return TOPIC_PROMPTS.get(topic, SYSTEM_PROMPT_WEB)
 
     lead = _TOPIC_LEADS.get(topic, _TOPIC_LEADS["web"])
-    override_block = (
-        "=== TEMPLATE DE REPONSE (WYSIWYG) — OBLIGATOIRE ET STRICT ===\n\n"
-        "L'utilisateur a construit un MODELE DE REPONSE par blocs. Ton unique role "
-        "est de REPRODUIRE ce modele a l'identique en remplissant les marqueurs de "
-        "contenu. TU N'AS AUCUNE LIBERTE SUR LA STRUCTURE.\n\n"
-        "MODELE A REPRODUIRE (squelette Markdown) :\n"
-        "```\n"
-        f"{custom}\n"
-        "```\n\n"
-        "INTERPRETATION DES MARQUEURS :\n"
-        "- `{{CONTENU: <hint>}}`             -> remplace par un paragraphe en prose qui respecte le hint (langue + citations [n])\n"
-        "- `{{LISTE À PUCES: <hint>}}`       -> remplace par une vraie liste Markdown a puces (`- item`) selon le hint\n"
-        "- `{{LISTE NUMÉROTÉE: <hint>}}`     -> remplace par une liste numerotee (`1. item`, `2. item`...) selon le hint\n"
-        "- `{{TABLEAU: <hint> ...}}`         -> remplis le tableau fourni juste au-dessus (meme nombre de colonnes), ajoute ou enleve des lignes selon le hint, remplace chaque `{{cellule}}` par la donnee synthetisee\n"
-        "- Les lignes `# Titre`, `## Section`, `### Sous-section` sont les titres EXACTS que tu dois reproduire tels quels (sans les modifier)\n\n"
-        "REGLES STRICTES :\n"
-        "1. Suis le modele ligne par ligne, dans l'ORDRE. Ne reordonne rien.\n"
-        "2. Ne SUPPRIME aucun bloc / titre / marqueur present dans le modele.\n"
-        "3. N'AJOUTE aucun bloc / titre en dehors du modele.\n"
-        "4. Remplace CHAQUE `{{...}}` par du contenu synthetise — laisser un marqueur non substitue est une erreur.\n"
-        "5. Chaque phrase que tu produis doit citer au moins une source sous la forme exacte `[1]`, `[2]`, etc. (crochets droits + chiffre) pour que les vignettes cliquables s'affichent.\n"
-        "6. Utilise au moins une fois chaque source disponible.\n"
-        "7. Reformule entierement, ne copie jamais un passage source tel quel.\n"
-    )
+    has_markers = "{{" in custom and "}}" in custom
+
+    if has_markers:
+        override_block = (
+            "=== TEMPLATE DE REPONSE (blocs avec marqueurs) — OBLIGATOIRE ET STRICT ===\n\n"
+            "L'utilisateur a construit un MODELE DE REPONSE par blocs. Ton unique role "
+            "est de REPRODUIRE ce modele a l'identique en remplissant les marqueurs de "
+            "contenu. TU N'AS AUCUNE LIBERTE SUR LA STRUCTURE.\n\n"
+            "MODELE A REPRODUIRE (squelette Markdown) :\n"
+            "```\n"
+            f"{custom}\n"
+            "```\n\n"
+            "INTERPRETATION DES MARQUEURS :\n"
+            "- `{{CONTENU: <hint>}}`             -> remplace par un paragraphe en prose qui respecte le hint (langue + citations [n])\n"
+            "- `{{LISTE À PUCES: <hint>}}`       -> remplace par une vraie liste Markdown a puces (`- item`) selon le hint\n"
+            "- `{{LISTE NUMÉROTÉE: <hint>}}`     -> remplace par une liste numerotee (`1. item`, `2. item`...) selon le hint\n"
+            "- `{{TABLEAU: <hint> ...}}`         -> remplis le tableau fourni juste au-dessus (meme nombre de colonnes), ajoute ou enleve des lignes selon le hint, remplace chaque `{{cellule}}` par la donnee synthetisee\n"
+            "- Les lignes `# Titre`, `## Section`, `### Sous-section` sont les titres EXACTS que tu dois reproduire tels quels (sans les modifier)\n\n"
+            "REGLES STRICTES :\n"
+            "1. Suis le modele ligne par ligne, dans l'ORDRE. Ne reordonne rien.\n"
+            "2. Ne SUPPRIME aucun bloc / titre / marqueur present dans le modele.\n"
+            "3. N'AJOUTE aucun bloc / titre en dehors du modele.\n"
+            "4. Remplace CHAQUE `{{...}}` par du contenu synthetise — laisser un marqueur non substitue est une erreur.\n"
+            "5. Chaque phrase que tu produis doit citer au moins une source sous la forme exacte `[1]`, `[2]`, etc. (crochets droits + chiffre) pour que les vignettes cliquables s'affichent.\n"
+            "6. Utilise au moins une fois chaque source disponible.\n"
+            "7. Reformule entierement, ne copie jamais un passage source tel quel.\n"
+        )
+    else:
+        override_block = (
+            "=== TEMPLATE DE REPONSE (Markdown WYSIWYG) — OBLIGATOIRE ET STRICT ===\n\n"
+            "L'utilisateur a redige un MODELE MARKDOWN que tu dois reproduire A LA LETTRE. "
+            "Ton unique role est de synthetiser les passages fournis en remplissant chaque bloc "
+            "du modele par la synthese correspondante — la STRUCTURE (ordre, types de blocs, "
+            "nombre de blocs, titres) n'est PAS negociable.\n\n"
+            "MODELE A RESPECTER (entre triple backticks) :\n"
+            "```\n"
+            f"{custom}\n"
+            "```\n\n"
+            "INTERPRETATION DU MODELE :\n"
+            "- Les lignes commencant par `#`, `##`, `###` sont les TITRES FIGES : recopie-les "
+            "EXACTEMENT comme dans le modele (meme texte, meme ordre, meme niveau — ne les "
+            "traduis pas, ne les renumerote pas, ne les supprime pas, n'en ajoute pas).\n"
+            "- Les PARAGRAPHES du modele sont des HINTS qui decrivent ce que tu dois ecrire a "
+            "cet endroit (sujet, longueur, ton). Tu les REMPLACES par ta synthese — tu ne les "
+            "recopies pas tels quels.\n"
+            "- Les LISTES (`- item` ou `1. item`) du modele : conserve le TYPE (puces / "
+            "numerotee) et le nombre approximatif d'items indique par le hint, mais remplace "
+            "chaque item par ta synthese.\n"
+            "- Les TABLEAUX Markdown du modele : conserve l'en-tete exact (meme colonnes), "
+            "remplace les lignes de contenu par ta synthese (tu peux ajouter ou retirer des "
+            "lignes selon les donnees disponibles).\n"
+            "- Les BLOCS DE CODE et CITATIONS (`>` ) : conserve leur type, remplace leur "
+            "contenu par ta synthese si pertinent, sinon laisse-les tels quels.\n\n"
+            "REGLES STRICTES :\n"
+            "1. Respecte la STRUCTURE du modele ligne par ligne, dans l'ORDRE.\n"
+            "2. Le TEXTE descriptif du modele (hints) ne doit PAS apparaitre dans ta reponse "
+            "finale — tu le remplaces par du contenu synthetise.\n"
+            "3. N'AJOUTE aucun titre / bloc / section qui n'existe pas dans le modele.\n"
+            "4. Ne SUPPRIME aucun titre / bloc / section du modele.\n"
+            "5. Chaque affirmation doit citer au moins une source sous la forme EXACTE `[1]`, "
+            "`[2]`, etc. (crochets droits + chiffre, pas de variante) DANS la phrase — ces "
+            "citations deviennent des vignettes cliquables cote UI.\n"
+            "6. Utilise AU MOINS UNE FOIS chaque source fournie (il y en a jusqu'a 10).\n"
+            "7. Reformule entierement les passages — ne copie JAMAIS un passage source tel "
+            "quel.\n"
+            "8. Reponds dans la MEME LANGUE que la question de l'utilisateur.\n"
+        )
     return f"{lead}\n\n{override_block}\n\n{_BASE_RULES}"
 
 
@@ -656,21 +706,40 @@ async def search_stream(req: SearchRequest, request: Request,
 
             context = _build_llm_context(results)
             if resolved_format:
-                user_content = (
-                    f"QUESTION : {query}\n\n"
-                    f"PASSAGES WEB (numérotés [1] à [{min(len(results), 10)}]) :\n\n"
-                    f"{context}\n\n"
-                    f"---\n"
-                    f"REPRODUIS EXACTEMENT le template defini dans le system prompt.\n"
-                    f"- Recopie les lignes `#`, `##`, `###` telles quelles (titres figés)\n"
-                    f"- Substitue chaque marqueur `{{{{CONTENU: ...}}}}`, `{{{{LISTE À PUCES: ...}}}}`, "
-                    f"`{{{{LISTE NUMÉROTÉE: ...}}}}`, `{{{{TABLEAU: ...}}}}` et chaque `{{{{cellule}}}}` "
-                    f"par du contenu synthetise — aucun marqueur ne doit rester dans la reponse finale\n"
-                    f"- Cite chaque affirmation avec `[1]`, `[2]`, … (format EXACT) pour que les "
-                    f"vignettes cliquables s'affichent correctement\n"
-                    f"- Utilise au moins une fois chaque source ({min(len(results), 10)} au total)\n"
-                    f"- Reformule, ne copie jamais un passage tel quel"
-                )
+                has_markers = "{{" in resolved_format and "}}" in resolved_format
+                n = min(len(results), 10)
+                if has_markers:
+                    user_content = (
+                        f"QUESTION : {query}\n\n"
+                        f"PASSAGES WEB (numérotés [1] à [{n}]) :\n\n"
+                        f"{context}\n\n"
+                        f"---\n"
+                        f"REPRODUIS EXACTEMENT le template defini dans le system prompt.\n"
+                        f"- Recopie les lignes `#`, `##`, `###` telles quelles (titres figés)\n"
+                        f"- Substitue chaque marqueur `{{{{CONTENU: ...}}}}`, `{{{{LISTE À PUCES: ...}}}}`, "
+                        f"`{{{{LISTE NUMÉROTÉE: ...}}}}`, `{{{{TABLEAU: ...}}}}` et chaque `{{{{cellule}}}}` "
+                        f"par du contenu synthetise — aucun marqueur ne doit rester dans la reponse finale\n"
+                        f"- Cite chaque affirmation avec `[1]`, `[2]`, … (format EXACT)\n"
+                        f"- Utilise au moins une fois chaque source ({n} au total)\n"
+                        f"- Reformule, ne copie jamais un passage tel quel"
+                    )
+                else:
+                    user_content = (
+                        f"QUESTION : {query}\n\n"
+                        f"PASSAGES WEB (numérotés [1] à [{n}]) :\n\n"
+                        f"{context}\n\n"
+                        f"---\n"
+                        f"REPRODUIS LE MODELE MARKDOWN du system prompt A LA LETTRE :\n"
+                        f"- Recopie chaque `# Titre`, `## Section`, `### Sous-section` mot pour mot\n"
+                        f"- Remplace le texte de chaque paragraphe / liste / tableau par TA SYNTHESE "
+                        f"des passages (les hints du modele ne doivent PAS apparaitre dans ta reponse)\n"
+                        f"- Conserve le TYPE de chaque bloc : paragraphe reste paragraphe, liste reste "
+                        f"liste (meme type puces ou numerotee), tableau reste tableau avec les memes colonnes\n"
+                        f"- N'AJOUTE aucun titre ou section en dehors du modele\n"
+                        f"- Cite chaque affirmation avec `[1]`, `[2]`, … (format EXACT, crochets droits + chiffre)\n"
+                        f"- Utilise au moins une fois chaque source ({n} au total)\n"
+                        f"- Reformule, ne copie jamais un passage tel quel"
+                    )
             else:
                 user_content = (
                     f"QUESTION : {query}\n\n"
@@ -693,11 +762,17 @@ async def search_stream(req: SearchRequest, request: Request,
                 ChatMessage(role="system", content=system_prompt),
                 ChatMessage(role="user", content=user_content),
             ]
+            fmt_mode = "none"
+            if resolved_format:
+                fmt_mode = "markers" if ("{{" in resolved_format and "}}" in resolved_format) else "markdown"
             logger.info(
                 f"[HuntR] Pro synth: topic={topic} "
-                f"custom_format={'YES (' + str(len(resolved_format)) + ' chars)' if resolved_format else 'NO (default skeleton)'} "
+                f"custom_format={'YES (' + str(len(resolved_format)) + ' chars, mode=' + fmt_mode + ')' if resolved_format else 'NO (default skeleton)'} "
                 f"system_prompt_len={len(system_prompt)}"
             )
+            if resolved_format:
+                preview = resolved_format[:240].replace("\n", " ⏎ ")
+                logger.info(f"[HuntR] Template preview: {preview}{'…' if len(resolved_format) > 240 else ''}")
 
             llm_ok = False
             answer = ""
