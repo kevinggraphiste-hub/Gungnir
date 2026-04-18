@@ -152,6 +152,12 @@ class UserSettings(Base):
     #         "agent_id": str, "language": "fr"}, "openai": {...}, ...}
     # API keys are encrypted with Settings.encrypt_value before persistence.
     voice_config = Column(JSON, default=dict)
+    # Per-user HuntR preferences (custom response format override, etc.).
+    # Shape: {"custom_format": "Texte libre décrivant le squelette Markdown attendu"}
+    # Si custom_format est présent, il remplace le _BASE_STRUCTURE dans le system
+    # prompt pro — c'est LA manière correcte de changer le format par-user, pas
+    # l'édition du code.
+    huntr_config = Column(JSON, default=dict)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="settings")
@@ -320,6 +326,7 @@ async def init_db(engine):
         ("ALTER TABLE user_settings ADD COLUMN language VARCHAR(10) DEFAULT 'fr'", "language -> user_settings"),
         ("ALTER TABLE huntr_searches ADD COLUMN topic VARCHAR(20) DEFAULT 'web'", "topic -> huntr_searches"),
         ("ALTER TABLE user_settings ADD COLUMN voice_config JSONB DEFAULT '{}'::jsonb", "voice_config -> user_settings"),
+        ("ALTER TABLE user_settings ADD COLUMN huntr_config JSONB DEFAULT '{}'::jsonb", "huntr_config -> user_settings"),
     ]
     for sql, label in migrations:
         try:

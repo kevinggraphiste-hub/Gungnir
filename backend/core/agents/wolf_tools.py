@@ -512,17 +512,56 @@ WOLF_TOOL_SCHEMAS = [
                 "(arXiv, PubMed, HAL, Nature…), 'code' (GitHub, StackOverflow, docs officielles).\n"
                 "Choisis le topic selon la requête : actu chaude → 'news', papier/recherche → 'academic', "
                 "question dev/bug/API → 'code', sinon 'web'. Préfère huntr_search à web_search quand tu veux "
-                "une réponse rédigée et sourcée plutôt qu'une simple liste de liens."
+                "une réponse rédigée et sourcée plutôt qu'une simple liste de liens.\n"
+                "Le paramètre 'custom_format' permet de surcharger PONCTUELLEMENT la structure par défaut "
+                "pour cette recherche (ex: 'en 4 paragraphes', 'sous forme de tableau'). Pour une préférence "
+                "PERSISTANTE à travers toutes les futures recherches de l'utilisateur, utilise plutôt "
+                "l'outil `huntr_set_format`."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query":       {"type": "string", "description": "Question ou requête à rechercher"},
-                    "pro_search":  {"type": "boolean", "description": "true = Tavily + synthèse LLM, false = DDG + liste (défaut: false)", "default": False},
-                    "topic":       {"type": "string", "enum": ["web", "news", "academic", "code"], "description": "Type de recherche (défaut: web)", "default": "web"},
-                    "max_results": {"type": "integer", "description": "Nombre max de sources (1-20, défaut: 10)", "default": 10},
+                    "query":         {"type": "string", "description": "Question ou requête à rechercher"},
+                    "pro_search":    {"type": "boolean", "description": "true = Tavily + synthèse LLM, false = DDG + liste (défaut: false)", "default": False},
+                    "topic":         {"type": "string", "enum": ["web", "news", "academic", "code"], "description": "Type de recherche (défaut: web)", "default": "web"},
+                    "max_results":   {"type": "integer", "description": "Nombre max de sources (1-20, défaut: 10)", "default": 10},
+                    "custom_format": {"type": "string", "description": "Override ponctuel du format de réponse (pro uniquement). Texte libre décrivant le squelette Markdown attendu."},
                 },
                 "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "huntr_set_format",
+            "description": (
+                "Définit (ou efface) le format de réponse personnalisé pour les recherches HuntR pro "
+                "de l'utilisateur courant, de manière PERSISTANTE. Toutes les futures recherches pro "
+                "utiliseront ce squelette à la place du format par défaut (# Titre / ## Aspect 1-3 / "
+                "## Conclusion).\n\n"
+                "RÈGLE STRICTE — utilise CET OUTIL pour changer le format, JAMAIS l'édition du code :\n"
+                "- N'édite PAS `backend/plugins/browser/routes.py` ni aucun autre fichier pour modifier "
+                "le prompt HuntR. Le code source est global, partagé entre tous les utilisateurs, et "
+                "réinitialisé à chaque `git pull` sur le serveur.\n"
+                "- Les préférences de format sont PAR-UTILISATEUR et stockées en DB (user_settings."
+                "huntr_config). Cet outil est la seule voie correcte pour les modifier.\n"
+                "- Pour revenir au format par défaut, appelle avec custom_format=\"\" (chaîne vide)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "custom_format": {
+                        "type": "string",
+                        "description": (
+                            "Texte libre décrivant le squelette Markdown attendu. Exemples :\n"
+                            "- '# Titre\\n## Paragraphe 1\\n## Paragraphe 2\\n## Paragraphe 3\\n## Paragraphe 4'\n"
+                            "- 'Réponse sous forme de tableau Markdown à 3 colonnes : sujet, analyse, source'\n"
+                            "- '' (chaîne vide) pour revenir au format par défaut"
+                        ),
+                    },
+                },
+                "required": ["custom_format"]
             }
         }
     },
@@ -1144,7 +1183,7 @@ def _get_tools_for_agent(agent_tools: list[str] | None) -> list[dict]:
         return [s for s in WOLF_TOOL_SCHEMAS if s["function"]["name"] in name_set]
     # Par défaut : outils web + KB + communication inter-agents
     web_tool_names = {
-        "web_fetch", "web_search", "huntr_search", "web_crawl",
+        "web_fetch", "web_search", "huntr_search", "huntr_set_format", "web_crawl",
         "browser_navigate", "browser_goto", "browser_get_text", "browser_get_html",
         "browser_click", "browser_type", "browser_press_key", "browser_scroll",
         "browser_screenshot", "browser_evaluate", "browser_close", "browser_list_pages",
@@ -1612,8 +1651,47 @@ async def _web_search(query: str, num_results: int = 10) -> dict:
     return result  # Retourner l'erreur originale
 
 
+async def _huntr_set_format(custom_format: str = "") -> dict:
+    """Set or clear the per-user HuntR custom response format preference.
+
+    This is the CORRECT way to override the pro-mode response structure for a
+    single user — never edit the routes.py source to change the prompt, since
+    that affects every user and is reset on the next deploy.
+    """
+    uid = get_user_context()
+    if not uid or uid <= 0:
+        return {"ok": False, "error": "huntr_set_format requires an authenticated user context"}
+
+    from backend.core.db.engine import async_session
+    from backend.core.api.auth_helpers import get_user_settings
+    from backend.plugins.browser.cache import tavily_cache
+    from sqlalchemy.orm.attributes import flag_modified
+
+    fmt = (custom_format or "").strip()
+    if len(fmt) > 4000:
+        return {"ok": False, "error": "custom_format trop long (max 4000 caractères)"}
+
+    async with async_session() as session:
+        us = await get_user_settings(uid, session)
+        cfg = dict(us.huntr_config or {})
+        if fmt:
+            cfg["custom_format"] = fmt
+        else:
+            cfg.pop("custom_format", None)
+        us.huntr_config = cfg
+        flag_modified(us, "huntr_config")
+        await session.commit()
+
+    tavily_cache.invalidate_user(uid)
+    return {
+        "ok": True,
+        "custom_format": fmt,
+        "message": "Format personnalisé appliqué" if fmt else "Format par défaut restauré",
+    }
+
+
 async def _huntr_search(query: str, pro_search: bool = False, topic: str = "web",
-                        max_results: int = 10) -> dict:
+                        max_results: int = 10, custom_format: str | None = None) -> dict:
     """HuntR search (per-user) : réponse structurée + citations. Non-streaming pour l'agent.
 
     En mode Pro, réutilise la clé Tavily + le provider LLM actif de l'utilisateur
@@ -1627,6 +1705,7 @@ async def _huntr_search(query: str, pro_search: bool = False, topic: str = "web"
 
     from backend.core.db.engine import async_session
     from backend.core.db.models import HuntRSearch
+    from backend.core.api.auth_helpers import get_user_settings
     from backend.plugins.browser.search_providers import DDGProvider, VALID_TOPICS
     from backend.plugins.browser.cache import tavily_cache
     from backend.plugins.browser.routes import (
@@ -1647,9 +1726,14 @@ async def _huntr_search(query: str, pro_search: bool = False, topic: str = "web"
     t0 = _time.time()
 
     async with async_session() as session:
+        # Resolve effective custom_format: request override > user prefs.
+        resolved_format = (custom_format or "").strip()
+        if not resolved_format and pro_search:
+            us = await get_user_settings(uid, session)
+            resolved_format = ((us.huntr_config or {}).get("custom_format") or "").strip()
         # Cache (Pro only, jamais pour news)
         cache_key = (
-            tavily_cache.make_key(uid, query, "pro", max_results, topic)
+            tavily_cache.make_key(uid, query, "pro", max_results, topic, resolved_format)
             if pro_search and topic != "news" else None
         )
         if cache_key:
@@ -1721,12 +1805,12 @@ async def _huntr_search(query: str, pro_search: bool = False, topic: str = "web"
         context = _build_llm_context(results)
 
         messages = [
-            ChatMessage(role="system", content=get_system_prompt(topic)),
+            ChatMessage(role="system", content=get_system_prompt(topic, resolved_format)),
             ChatMessage(
                 role="user",
                 content=(
                     f"QUESTION ({topic_label}) : {query}\n\nPASSAGES WEB :\n\n{context}\n\n"
-                    f"Rédige une réponse structurée selon le format demandé pour le mode {topic_label}, "
+                    f"Rédige une réponse structurée selon le format imposé dans les consignes système, "
                     f"cite [1], [2]... DANS les phrases."
                 ),
             ),
@@ -1734,7 +1818,7 @@ async def _huntr_search(query: str, pro_search: bool = False, topic: str = "web"
 
         answer = ""
         try:
-            async for token in llm_provider.chat_stream(messages, llm_model, max_tokens=4096):
+            async for token in llm_provider.chat_stream(messages, llm_model, max_tokens=4096, temperature=0.3):
                 answer += token
         except Exception as e:
             return {"ok": False, "error": f"LLM synthesis failed: {e}"}
@@ -3031,6 +3115,7 @@ WOLF_EXECUTORS: dict[str, Any] = {
     # Nouveaux outils web
     "web_search":                 _web_search,
     "huntr_search":               _huntr_search,
+    "huntr_set_format":           _huntr_set_format,
     "browser_goto":               _browser_goto,
     "browser_get_html":           _browser_get_html,
     "browser_wait_for_selector":  _browser_wait_for_selector,

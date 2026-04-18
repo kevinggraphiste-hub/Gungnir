@@ -21,9 +21,17 @@ class TavilyCache:
 
     @staticmethod
     def make_key(user_id: int, query: str, mode: str, max_results: int,
-                 topic: str = "web") -> str:
+                 topic: str = "web", custom_format: str = "") -> str:
         q = (query or "").strip().lower()
-        return f"{user_id}|{mode}|{topic}|{max_results}|{q}"
+        # Hash the custom format so cache entries with different structures
+        # don't collide (a user switching from "3 aspects" to "4 paragraphes"
+        # must get a fresh synthesis, not the previously cached one).
+        if custom_format:
+            import hashlib
+            fmt_hash = hashlib.sha1(custom_format.strip().encode("utf-8")).hexdigest()[:10]
+        else:
+            fmt_hash = "_"
+        return f"{user_id}|{mode}|{topic}|{max_results}|{fmt_hash}|{q}"
 
     def get(self, key: str) -> dict | None:
         with self._lock:

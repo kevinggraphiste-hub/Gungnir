@@ -9,7 +9,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useStore } from '@core/stores/appStore'
 import { PrimaryButton, SecondaryButton } from '@core/components/ui'
-import { ArrowRight, Loader2, Clock, Download, Plus } from 'lucide-react'
+import { ArrowRight, Loader2, Clock, Download, Plus, Sliders, X, Save } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -256,6 +256,13 @@ export default function HuntRPlugin() {
   const [showHistory, setShowHistory] = useState(false)
   const [favoritesOnly, setFavoritesOnly] = useState(false)
   const [activeHistoryId, setActiveHistoryId] = useState<number | null>(null)
+  // Per-user custom response format (pro mode) — stored server-side in
+  // user_settings.huntr_config.custom_format. Empty string = default structure.
+  const [customFormat, setCustomFormat] = useState('')
+  const [formatEditor, setFormatEditor] = useState('')
+  const [showFormatEditor, setShowFormatEditor] = useState(false)
+  const [savingFormat, setSavingFormat] = useState(false)
+  const [formatFlash, setFormatFlash] = useState<'ok' | 'err' | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -274,7 +281,38 @@ export default function HuntRPlugin() {
       .then(r => r.json())
       .then(d => setCaps(d))
       .catch(() => {})
+    fetch(`${API}/preferences`)
+      .then(r => r.json())
+      .then(d => {
+        const fmt = (d?.custom_format || '') as string
+        setCustomFormat(fmt)
+        setFormatEditor(fmt)
+      })
+      .catch(() => {})
   }, [])
+
+  const saveCustomFormat = useCallback(async () => {
+    setSavingFormat(true)
+    setFormatFlash(null)
+    try {
+      const resp = await fetch(`${API}/preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ custom_format: formatEditor.trim() }),
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data = await resp.json()
+      const fmt = (data?.custom_format || '') as string
+      setCustomFormat(fmt)
+      setFormatEditor(fmt)
+      setFormatFlash('ok')
+    } catch {
+      setFormatFlash('err')
+    } finally {
+      setSavingFormat(false)
+      setTimeout(() => setFormatFlash(null), 2500)
+    }
+  }, [formatEditor])
 
   // ── Reload history when filter changes ────────────────────────────
   useEffect(() => { refreshHistory() }, [refreshHistory])
@@ -332,6 +370,9 @@ export default function HuntRPlugin() {
           max_results: 10,
           provider: selectedProvider,
           model: selectedModel,
+          // Leave custom_format undefined when empty so backend falls back
+          // to the persisted user preference (huntr_config.custom_format).
+          ...(customFormat.trim() ? { custom_format: customFormat.trim() } : {}),
         }),
         signal: controller.signal,
       })
@@ -428,7 +469,7 @@ export default function HuntRPlugin() {
       setSearching(false)
       setStatus('')
     }
-  }, [query, proSearch, topic, selectedProvider, selectedModel, refreshHistory])
+  }, [query, proSearch, topic, selectedProvider, selectedModel, customFormat, refreshHistory])
 
   const handleClear = () => {
     setResult(null)
@@ -638,6 +679,30 @@ export default function HuntRPlugin() {
                   Pro
                 </button>
 
+                {/* Custom format editor toggle (pro uniquement) */}
+                {proSearch && (
+                  <button
+                    onClick={() => { setFormatEditor(customFormat); setShowFormatEditor(v => !v) }}
+                    title="Personnaliser la structure de la réponse (par-utilisateur, persistante)"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 5,
+                      padding: '11px 12px', borderRadius: 10, fontSize: 12, fontWeight: 600,
+                      background: customFormat
+                        ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
+                        : 'var(--bg-secondary)',
+                      border: customFormat
+                        ? '1px solid var(--scarlet)'
+                        : '1px solid var(--border)',
+                      color: customFormat ? 'var(--scarlet)' : 'var(--text-muted)',
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Sliders size={12} />
+                    Format
+                  </button>
+                )}
+
                 {/* Search button */}
                 <PrimaryButton
                   onClick={() => doSearch()}
@@ -681,6 +746,64 @@ export default function HuntRPlugin() {
                   )
                 })}
               </div>
+
+              {/* Format editor panel (pro uniquement, toggle via bouton Format) */}
+              {proSearch && showFormatEditor && (
+                <div style={{
+                  marginTop: 10, width: '100%', maxWidth: !hasResults ? 640 : undefined,
+                  padding: 12, borderRadius: 10, background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border)',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Format de réponse personnalisé
+                    </div>
+                    <button onClick={() => setShowFormatEditor(false)}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 8px' }}>
+                    Décris le squelette Markdown voulu. Laisse vide pour revenir au format par défaut
+                    (# Titre / ## Aspect 1-3 / ## Conclusion). Appliqué à toutes tes futures recherches Pro.
+                  </p>
+                  <textarea
+                    value={formatEditor}
+                    onChange={e => setFormatEditor(e.target.value)}
+                    placeholder={'Ex:\n# Titre\n## Paragraphe 1\n## Paragraphe 2\n## Paragraphe 3\n## Paragraphe 4\n\nOu : Sous forme de tableau à 3 colonnes : sujet / analyse / source.'}
+                    rows={7}
+                    maxLength={4000}
+                    style={{
+                      width: '100%', padding: 10, borderRadius: 8,
+                      border: '1px solid var(--border)', background: 'var(--bg-primary)',
+                      color: 'var(--text-primary)', fontSize: 12, fontFamily: 'inherit',
+                      resize: 'vertical', outline: 'none',
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+                    <PrimaryButton
+                      onClick={saveCustomFormat}
+                      disabled={savingFormat || formatEditor === customFormat}
+                      icon={savingFormat ? <Loader2 size={12} style={{ animation: 'huntr-spin 1s linear infinite' }} /> : <Save size={12} />}
+                    >
+                      {formatFlash === 'ok' ? 'Sauvegardé' : 'Appliquer'}
+                    </PrimaryButton>
+                    {customFormat && (
+                      <SecondaryButton
+                        onClick={() => { setFormatEditor(''); }}
+                      >
+                        Effacer
+                      </SecondaryButton>
+                    )}
+                    {formatFlash === 'err' && (
+                      <span style={{ fontSize: 11, color: 'var(--accent-danger, #dc2626)' }}>Échec sauvegarde</span>
+                    )}
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>
+                      {formatEditor.length} / 4000
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Suggestions (idle) */}
               {!hasResults && (

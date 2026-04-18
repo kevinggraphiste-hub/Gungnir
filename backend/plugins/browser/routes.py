@@ -46,6 +46,10 @@ class SearchRequest(BaseModel):
     # les desyncs avec user_settings en DB.
     provider: Optional[str] = None
     model: Optional[str] = None
+    # Override ponctuel du format de reponse (pro uniquement). Si absent,
+    # on retombe sur user.huntr_config.custom_format, puis sur le squelette
+    # par defaut (# Titre / ## Aspects / ## Conclusion).
+    custom_format: Optional[str] = None
 
     def safe_topic(self) -> str:
         return self.topic if self.topic in VALID_TOPICS else "web"
@@ -234,12 +238,38 @@ TOPIC_PROMPTS = {
     "code": SYSTEM_PROMPT_CODE,
 }
 
+_TOPIC_LEADS = {
+    "web": "Tu es HuntR (mode Web), un assistant de recherche web généraliste. Tu transformes des passages web bruts en une réponse reformulée, structurée et sourcée.",
+    "news": "Tu es HuntR (mode Actualités). Tu synthétises des articles de presse récents en une réponse chronologique, factuelle et sourcée.",
+    "academic": "Tu es HuntR (mode Académique). Tu synthétises des publications scientifiques et documents de recherche avec rigueur et neutralité.",
+    "code": "Tu es HuntR (mode Code/Dev). Tu synthétises des ressources techniques (docs, GitHub, StackOverflow) pour répondre à une question de développement.",
+}
+
 # Backward-compat alias (imported by wolf_tools)
 SYSTEM_PROMPT = SYSTEM_PROMPT_WEB
 
 
-def get_system_prompt(topic: str) -> str:
-    return TOPIC_PROMPTS.get(topic, SYSTEM_PROMPT_WEB)
+def get_system_prompt(topic: str, custom_format: str | None = None) -> str:
+    """Build the HuntR pro system prompt.
+
+    Si `custom_format` est fourni (préférence utilisateur ou override ponctuel),
+    il remplace le squelette imposé par défaut (# Titre / ## Aspect x3 /
+    ## Conclusion). Les regles globales (citation inline, reformulation,
+    utilisation de toutes les sources) sont toujours appliquees.
+    """
+    custom = (custom_format or "").strip()
+    if not custom:
+        return TOPIC_PROMPTS.get(topic, SYSTEM_PROMPT_WEB)
+
+    lead = _TOPIC_LEADS.get(topic, _TOPIC_LEADS["web"])
+    override_block = (
+        "STRUCTURE IMPOSEE PAR L'UTILISATEUR — respecte-la a la lettre :\n\n"
+        f"{custom}\n\n"
+        "Suis exactement les consignes de format ci-dessus. Si elles entrent "
+        "en conflit avec une structure par defaut, les consignes utilisateur "
+        "priment."
+    )
+    return f"{lead}\n\n{override_block}\n\n{_BASE_RULES}"
 
 
 TOPIC_LABELS = {
@@ -371,6 +401,11 @@ async def search_stream(req: SearchRequest, request: Request,
 
     # ── Resolve per-user resources BEFORE the stream ─────────────────
     tavily = await _resolve_tavily(uid, session)
+    # Resolve the effective custom format: request override > user preference.
+    resolved_format = (req.custom_format or "").strip()
+    if not resolved_format:
+        us = await get_user_settings(uid, session)
+        resolved_format = ((us.huntr_config or {}).get("custom_format") or "").strip()
     llm_provider = None
     llm_model = ""
     llm_error = None
@@ -396,7 +431,7 @@ async def search_stream(req: SearchRequest, request: Request,
     cache_key = None
     cached_payload = None
     if req.pro_search and topic != "news":
-        cache_key = tavily_cache.make_key(uid, req.query, "pro", req.max_results, topic)
+        cache_key = tavily_cache.make_key(uid, req.query, "pro", req.max_results, topic, resolved_format)
         cached_payload = tavily_cache.get(cache_key)
 
     async def _stream():
@@ -537,27 +572,37 @@ async def search_stream(req: SearchRequest, request: Request,
             })
 
             context = _build_llm_context(results)
+            if resolved_format:
+                user_content = (
+                    f"QUESTION : {query}\n\n"
+                    f"PASSAGES WEB (numérotés [1] à {min(len(results), 10)}) :\n\n"
+                    f"{context}\n\n"
+                    f"---\n"
+                    f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots), "
+                    f"en suivant STRICTEMENT le format impose dans les consignes systeme.\n"
+                    f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
+                    f"Exploite TOUS les passages — chaque source citée au moins une fois."
+                )
+            else:
+                user_content = (
+                    f"QUESTION : {query}\n\n"
+                    f"PASSAGES WEB (numérotés [1] à [{min(len(results), 10)}]) :\n\n"
+                    f"{context}\n\n"
+                    f"---\n"
+                    f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots).\n\n"
+                    f"FORMAT OBLIGATOIRE — suis ce squelette exact :\n"
+                    f"  1. Un `# Titre principal` (en une phrase)\n"
+                    f"  2. `## Aspect 1` + paragraphe de 5-8 phrases\n"
+                    f"  3. `## Aspect 2` + paragraphe de 5-8 phrases\n"
+                    f"  4. `## Aspect 3` + paragraphe de 5-8 phrases\n"
+                    f"  5. `## Conclusion` + paragraphe de 3-5 phrases\n\n"
+                    f"AUCUNE liste à puces. AUCUNE liste numérotée. Uniquement de la prose.\n"
+                    f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
+                    f"Exploite TOUS les passages — chaque source citée au moins une fois."
+                )
             messages = [
-                ChatMessage(role="system", content=get_system_prompt(topic)),
-                ChatMessage(
-                    role="user",
-                    content=(
-                        f"QUESTION : {query}\n\n"
-                        f"PASSAGES WEB (numérotés [1] à [{min(len(results), 10)}]) :\n\n"
-                        f"{context}\n\n"
-                        f"---\n"
-                        f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots).\n\n"
-                        f"FORMAT OBLIGATOIRE — suis ce squelette exact :\n"
-                        f"  1. Un `# Titre principal` (en une phrase)\n"
-                        f"  2. `## Aspect 1` + paragraphe de 5-8 phrases\n"
-                        f"  3. `## Aspect 2` + paragraphe de 5-8 phrases\n"
-                        f"  4. `## Aspect 3` + paragraphe de 5-8 phrases\n"
-                        f"  5. `## Conclusion` + paragraphe de 3-5 phrases\n\n"
-                        f"AUCUNE liste à puces. AUCUNE liste numérotée. Uniquement de la prose.\n"
-                        f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
-                        f"Exploite TOUS les passages — chaque source citée au moins une fois."
-                    ),
-                ),
+                ChatMessage(role="system", content=get_system_prompt(topic, resolved_format)),
+                ChatMessage(role="user", content=user_content),
             ]
 
             llm_ok = False
@@ -630,6 +675,50 @@ async def search_stream(req: SearchRequest, request: Request,
 @router.get("/health")
 async def health():
     return {"plugin": "huntr", "status": "ok", "version": "3.1.0"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# User preferences — custom response format (per-user, persistent)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class HuntRPreferences(BaseModel):
+    custom_format: Optional[str] = None  # None ou "" = reset au format par defaut
+
+
+_MAX_CUSTOM_FORMAT_LEN = 4000
+
+
+@router.get("/preferences")
+async def get_preferences(request: Request, session: AsyncSession = Depends(get_session)):
+    uid = _uid(request)
+    us = await get_user_settings(uid, session)
+    cfg = us.huntr_config or {}
+    return {
+        "custom_format": cfg.get("custom_format", "") or "",
+    }
+
+
+@router.put("/preferences")
+async def put_preferences(prefs: HuntRPreferences, request: Request,
+                          session: AsyncSession = Depends(get_session)):
+    uid = _uid(request)
+    us = await get_user_settings(uid, session)
+    cfg = dict(us.huntr_config or {})
+    fmt = (prefs.custom_format or "").strip()
+    if len(fmt) > _MAX_CUSTOM_FORMAT_LEN:
+        raise HTTPException(status_code=400, detail=f"custom_format trop long (max {_MAX_CUSTOM_FORMAT_LEN} caractères)")
+    if fmt:
+        cfg["custom_format"] = fmt
+    else:
+        cfg.pop("custom_format", None)
+    us.huntr_config = cfg
+    # JSON Column mutation → flag the attribute so SQLAlchemy persists the change.
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(us, "huntr_config")
+    await session.commit()
+    # Invalidate user's cached Pro answers since the structure likely changed.
+    tavily_cache.invalidate_user(uid)
+    return {"ok": True, "custom_format": cfg.get("custom_format", "") or ""}
 
 
 @router.get("/history")
