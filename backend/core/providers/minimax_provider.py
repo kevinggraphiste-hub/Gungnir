@@ -31,6 +31,7 @@ class MiniMaxProvider(LLMProvider):
             "model": model,
             "messages": [m.to_openai_format() for m in messages],
             "stream": False,
+            **kwargs,
         }
         resp = await self.client.post("/chat/completions", json=payload)
         resp.raise_for_status()
@@ -53,6 +54,7 @@ class MiniMaxProvider(LLMProvider):
             "model": model,
             "messages": [m.to_openai_format() for m in messages],
             "stream": True,
+            **kwargs,
         }
         async with self.client.stream("POST", "/chat/completions", json=payload) as resp:
             resp.raise_for_status()

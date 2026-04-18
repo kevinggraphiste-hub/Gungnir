@@ -79,6 +79,8 @@ class AnthropicProvider(LLMProvider):
             "messages": chat_msgs,
             "max_tokens": kwargs.get("max_tokens", 4096),
         }
+        if "temperature" in kwargs:
+            create_params["temperature"] = kwargs["temperature"]
 
         # Support des tools (function calling)
         raw_tools = kwargs.get("tools")
@@ -150,12 +152,15 @@ class AnthropicProvider(LLMProvider):
             else:
                 chat_msgs.append({"role": m.role, "content": m.content})
 
-        async with self.client.messages.stream(
-            model=model,
-            system=system_msg or anthropic.NOT_GIVEN,
-            messages=chat_msgs,
-            max_tokens=kwargs.get("max_tokens", 4096),
-        ) as stream:
+        stream_params: dict = {
+            "model": model,
+            "system": system_msg or anthropic.NOT_GIVEN,
+            "messages": chat_msgs,
+            "max_tokens": kwargs.get("max_tokens", 4096),
+        }
+        if "temperature" in kwargs:
+            stream_params["temperature"] = kwargs["temperature"]
+        async with self.client.messages.stream(**stream_params) as stream:
             async for text in stream.text_stream:
                 yield text
 

@@ -564,7 +564,12 @@ async def search_stream(req: SearchRequest, request: Request,
             answer = ""
             try:
                 logger.info(f"[HuntR] Streaming LLM: provider={type(llm_provider).__name__}, model={llm_model}")
-                async for token in llm_provider.chat_stream(messages, llm_model, max_tokens=4096):
+                # temperature=0.3 pour minimiser la variance entre modèles et forcer
+                # le respect de la structure imposée par le system prompt — chaque
+                # utilisateur obtient le même format indépendamment du LLM choisi.
+                async for token in llm_provider.chat_stream(
+                    messages, llm_model, max_tokens=4096, temperature=0.3
+                ):
                     answer += token
                     yield _sse("chunk", {"token": token})
                 logger.info(f"[HuntR] LLM stream done: {len(answer)} chars")

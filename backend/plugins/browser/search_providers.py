@@ -5,10 +5,18 @@ Two providers, same interface:
   - DDGProvider    : free, no API key. Supports topic=web|news|academic|code.
   - TavilyProvider : per-user API key. Supports topic via Tavily params.
 """
+import html
 import logging
 from dataclasses import dataclass
 
 logger = logging.getLogger("gungnir.plugins.huntr")
+
+
+def _clean(text: str) -> str:
+    """Decode HTML entities (&#x27; &amp; &quot; …) returned by DDG/Tavily."""
+    if not text:
+        return ""
+    return html.unescape(text)
 
 
 # ── Topic presets ───────────────────────────────────────────────────────────
@@ -97,9 +105,9 @@ class DDGProvider:
                 if not url:
                     continue
                 results.append(SearchResult(
-                    title=r.get("title", ""),
+                    title=_clean(r.get("title", "")),
                     url=url,
-                    snippet=(r.get("snippet", "") or r.get("body", ""))[:500],
+                    snippet=_clean((r.get("snippet", "") or r.get("body", ""))[:500]),
                     content="",
                     source="duckduckgo",
                 ))
@@ -137,9 +145,9 @@ class DDGProvider:
                 if source_name:
                     snippet_prefix += f"{source_name} — "
                 results.append(SearchResult(
-                    title=title,
+                    title=_clean(title),
                     url=url,
-                    snippet=(snippet_prefix + body)[:500],
+                    snippet=_clean((snippet_prefix + body)[:500]),
                     content="",
                     source="duckduckgo",
                 ))
@@ -209,10 +217,10 @@ class TavilyProvider:
                     prefix = f"[{pd}] "
                 content = r.get("content", "") or ""
                 results.append(SearchResult(
-                    title=r.get("title", ""),
+                    title=_clean(r.get("title", "")),
                     url=url,
-                    snippet=(prefix + content)[:500],
-                    content=prefix + content,
+                    snippet=_clean((prefix + content)[:500]),
+                    content=_clean(prefix + content),
                     source="tavily",
                 ))
             logger.info(f"[HuntR][Tavily {topic}] {len(results)} results for: {query[:60]}")

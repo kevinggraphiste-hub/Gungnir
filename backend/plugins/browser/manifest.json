@@ -1,7 +1,7 @@
 {
   "name": "browser",
   "display_name": "HuntR",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "icon": "Globe",
   "route": "/browser",
   "sidebar_position": 1,
