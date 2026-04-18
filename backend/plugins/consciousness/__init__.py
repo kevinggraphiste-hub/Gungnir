@@ -242,3 +242,10 @@ async def on_shutdown(*args, **kwargs):
         except (asyncio.CancelledError, Exception):
             pass
         _daemon_task = None
+    # Final flush so no in-memory mutation is lost on clean shutdown.
+    try:
+        from backend.plugins.consciousness.engine import consciousness_manager
+        n = await consciousness_manager.flush_all()
+        logger.info(f"Consciousness shutdown: flushed {n} instance(s)")
+    except Exception as e:
+        logger.exception(f"Consciousness shutdown flush failed: {e}")

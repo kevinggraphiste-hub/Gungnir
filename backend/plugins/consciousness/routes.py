@@ -8,14 +8,23 @@ Chaque utilisateur a sa propre instance de conscience.
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from typing import Optional
-from .engine import consciousness_manager, ConsciousnessEngine
+from .engine import consciousness_manager, ConsciousnessEngine, current_user_id
 
 router = APIRouter()
 
 
 def _get_consciousness(request: Request) -> ConsciousnessEngine:
-    """Get the consciousness instance for the current user."""
+    """Get the consciousness instance for the current user.
+
+    Also pins the user id into the `current_user_id` ContextVar so that any
+    async task spawned from this request (vector writes, background jobs)
+    can recover the owner via contextvars.copy_context().
+    """
     uid = getattr(request.state, "user_id", None) or 0
+    try:
+        current_user_id.set(int(uid))
+    except Exception:
+        pass
     return consciousness_manager.get(uid)
 
 

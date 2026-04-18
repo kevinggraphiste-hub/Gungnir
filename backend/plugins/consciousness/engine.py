@@ -18,6 +18,7 @@ Toggle : OFF = agent standard | ON = conscience complète
 
 import json
 import asyncio
+import contextvars
 import logging
 import os
 import tempfile
@@ -25,6 +26,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel
+
+# Per-request user id propagated to async tasks spawned from request handlers.
+# Set by the auth middleware (see backend/core/main.py) and copied via
+# contextvars.copy_context() when we spawn background tasks.
+current_user_id: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "gungnir_current_user_id", default=0
+)
 
 logger = logging.getLogger("gungnir.consciousness")
 
@@ -255,6 +263,9 @@ class ConsciousnessEngine:
         self._challenger_log: dict = {"findings": []}
         self._working_memory: dict = {"items": [], "max_items": 20}
         self._vector_memory = None  # ConsciousnessVectorMemory, initialized lazily
+        # Serialize async mutations (vector writes, flush_all) to avoid
+        # interleaved writes and race conditions across concurrent requests.
+        self._async_lock = asyncio.Lock()
         self._load_all()
 
     # ── Persistence ─────────────────────────────────────────────────────
@@ -665,9 +676,19 @@ class ConsciousnessEngine:
             ts = _now()
             interaction_id = f"inter_{ts.replace(':', '-').replace('+', '_')}"
             try:
-                asyncio.create_task(
-                    self._vector_memory.store_interaction(interaction_id, description, interaction_type, composite)
-                )
+                ctx = contextvars.copy_context()
+                ctx.run(current_user_id.set, self.user_id)
+                async def _run_store():
+                    try:
+                        async with self._async_lock:
+                            await self._vector_memory.store_interaction(
+                                interaction_id, description, interaction_type, composite
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"store_interaction failed for user {self.user_id}: {e}"
+                        )
+                asyncio.create_task(_run_store(), context=ctx)
             except RuntimeError:
                 pass
 
@@ -748,7 +769,12 @@ class ConsciousnessEngine:
         thoughts = self.get_recent_thoughts(n_th) if hasattr(self, "get_recent_thoughts") else []
         scores = self.get_recent_scores(n_sc)
         prev_findings = self.get_recent_findings(n_fd)
+        working_memory = self.get_working_memory() if hasattr(self, "get_working_memory") else []
+        active_questions = self._state.get("active_questions", []) or []
+        impulse_history = ((self._state.get("volition") or {}).get("impulse_history") or [])[-10:]
+        pending_impulse = (self._state.get("volition") or {}).get("pending_impulse")
         mood = self._state.get("mood", "neutre")
+        urgencies = self.calculate_urgencies()
 
         def _fmt_thoughts(items):
             if not items:
@@ -764,6 +790,7 @@ class ConsciousnessEngine:
             return "\n".join(
                 f"- {s.get('interaction_type', '?')} composite={s.get('composite', 0):.2f} "
                 f"({', '.join(f'{k}={v:.2f}' for k, v in (s.get('scores') or {}).items())})"
+                f" — {str(s.get('description', ''))[:120]}"
                 for s in items
             )
 
@@ -775,19 +802,62 @@ class ConsciousnessEngine:
                 for f in items
             )
 
+        def _fmt_memory(items):
+            if not items:
+                return "(mémoire de travail vide)"
+            return "\n".join(
+                f"- {it.get('key')}: {str(it.get('value', ''))[:160]}"
+                for it in items[-10:]
+            )
+
+        def _fmt_questions(items):
+            if not items:
+                return "(aucune question ouverte)"
+            return "\n".join(f"- {q}" for q in items[-10:])
+
+        def _fmt_impulses(items, pending):
+            lines = []
+            for imp in items:
+                lines.append(
+                    f"- [{imp.get('need', '?')}] {str(imp.get('action', ''))[:140]} "
+                    f"(urgence={imp.get('urgency', 0):.2f}, décision={imp.get('decision', '?')})"
+                )
+            if pending:
+                lines.append(
+                    f"- [EN ATTENTE] [{pending.get('need')}] {str(pending.get('action', ''))[:140]} "
+                    f"(urgence={pending.get('urgency', 0):.2f})"
+                )
+            return "\n".join(lines) if lines else "(aucune impulsion récente)"
+
+        def _fmt_urgencies(u):
+            if not u:
+                return "(pas de besoins calculés)"
+            return "\n".join(
+                f"- {name}: priorité={d.get('priority')} urgence={d.get('urgency'):.2f} score={d.get('score'):.2f}"
+                for name, d in list(u.items())[:5]
+            )
+
         system = (
             "Tu es le Challenger d'un agent IA nommé Gungnir : un module d'auto-critique rigoureux. "
-            "Tu reçois un échantillon récent des pensées, scores et découvertes antérieures de l'agent. "
-            "Ton rôle : détecter CONTRADICTIONS, PROMESSES NON TENUES, BIAIS systématiques, TENDANCES "
-            "ou VERBOSITÉ excessive. Sois strict mais pas paranoïaque : ne signale que du concret, pas "
-            "des suspicions vagues. Ne reformule pas des découvertes déjà listées. Réponds STRICTEMENT "
-            "en JSON valide, aucun texte avant/après, aucun bloc markdown."
+            "Tu reçois un échantillon récent des pensées, scores, découvertes antérieures, mémoire "
+            "de travail, questions ouvertes, impulsions passées et besoins de volition. "
+            "Ton rôle : détecter CONTRADICTIONS (entre pensées ou entre pensées et actions), "
+            "PROMESSES NON TENUES (questions ouvertes depuis trop longtemps, impulsions différées "
+            "sans suivi), BIAIS systématiques (dimensions de score toujours faibles), TENDANCES "
+            "(dégradation progressive des scores, humeur bloquée) ou VERBOSITÉ (pensées redondantes). "
+            "Sois strict mais pas paranoïaque : ne signale que du concret, pas des suspicions vagues. "
+            "Ne reformule pas des découvertes déjà listées. Réponds STRICTEMENT en JSON valide, "
+            "aucun texte avant/après, aucun bloc markdown."
         )
 
         user_prompt = (
             f"Humeur courante : {mood}\n\n"
+            f"## Besoins (volition)\n{_fmt_urgencies(urgencies)}\n\n"
             f"## Pensées récentes\n{_fmt_thoughts(thoughts)}\n\n"
-            f"## Scores récents\n{_fmt_scores(scores)}\n\n"
+            f"## Scores récents (avec description si dispo)\n{_fmt_scores(scores)}\n\n"
+            f"## Mémoire de travail\n{_fmt_memory(working_memory)}\n\n"
+            f"## Questions ouvertes\n{_fmt_questions(active_questions)}\n\n"
+            f"## Impulsions récentes\n{_fmt_impulses(impulse_history, pending_impulse)}\n\n"
             f"## Découvertes déjà enregistrées (à NE PAS doublonner)\n{_fmt_findings(prev_findings)}\n\n"
             f"Retourne au maximum {max_new} NOUVELLES découvertes sous la forme :\n"
             '{"findings":[{"type":"contradiction|unkept_promise|bias|trend|verbosity",'
@@ -1005,9 +1075,38 @@ class ConsciousnessManager:
         return self._instances[user_id]
 
     def evict(self, user_id: int):
-        """Remove a user's instance from cache (e.g. after reset)."""
+        """Remove a user's instance from cache (e.g. after reset/restore).
+
+        Callers that want to preserve in-memory mutations should call
+        `flush(user_id)` first. The two existing call sites (backup restore,
+        user deletion) deliberately discard, so no implicit flush here.
+        """
         if user_id in self._instances:
             del self._instances[user_id]
+
+    def flush(self, user_id: int) -> bool:
+        """Persist a user's in-memory state to disk. No-op if not loaded."""
+        eng = self._instances.get(user_id)
+        if not eng:
+            return False
+        try:
+            eng.save_all()
+            return True
+        except Exception as e:
+            logger.exception(f"flush failed for user {user_id}: {e}")
+            return False
+
+    async def flush_all(self) -> int:
+        """Flush every live instance to disk. Returns the count flushed."""
+        n = 0
+        for uid, eng in list(self._instances.items()):
+            try:
+                async with eng._async_lock:
+                    eng.save_all()
+                n += 1
+            except Exception as e:
+                logger.exception(f"flush_all: failed for user {uid}: {e}")
+        return n
 
     def active_count(self) -> int:
         return len(self._instances)
