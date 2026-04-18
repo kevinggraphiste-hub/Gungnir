@@ -860,11 +860,15 @@ function ChallengerTab({ data, refresh }: any) {
   const [msg, setMsg] = useState<string>('')
   const [saving, setSaving] = useState(false)
   const [llmOptions, setLlmOptions] = useState<any>(null)
+  const [modelCatalog, setModelCatalog] = useState<any>(null)
 
   useEffect(() => {
     let cancelled = false
     fetch(`${API}/challenger/llm-options`).then(r => r.json()).then(j => {
       if (!cancelled) setLlmOptions(j)
+    }).catch(() => {})
+    fetch(`/api/plugins/model_guide/catalog`).then(r => r.json()).then(j => {
+      if (!cancelled) setModelCatalog(j)
     }).catch(() => {})
     return () => { cancelled = true }
   }, [refresh])
@@ -1059,20 +1063,41 @@ function ChallengerTab({ data, refresh }: any) {
           </div>
         )}
 
-        {llm.mode === 'custom' && (
-          <div className="flex gap-2 flex-wrap items-center">
-            <input type="text" value={llm.provider || ''} placeholder="Provider (ex: anthropic)"
-              onChange={e => patchChallenger({ llm: { ...llm, provider: e.target.value } })}
-              disabled={saving || !ch.enabled}
-              className="px-2 py-1 rounded text-xs"
-              style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', width: 180 }} />
-            <input type="text" value={llm.model || ''} placeholder="Modèle (ex: claude-haiku-4-5)"
-              onChange={e => patchChallenger({ llm: { ...llm, model: e.target.value } })}
-              disabled={saving || !ch.enabled}
-              className="px-2 py-1 rounded text-xs"
-              style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', flex: 1, minWidth: 220 }} />
-          </div>
-        )}
+        {llm.mode === 'custom' && (() => {
+          const configuredProviders: string[] = modelCatalog
+            ? Object.keys(modelCatalog).filter(p => modelCatalog[p]?.has_api_key)
+            : []
+          const currentProvider = llm.provider || configuredProviders[0] || ''
+          const providerModels: any[] = (modelCatalog?.[currentProvider]?.models) || []
+          return (
+            <div className="flex gap-2 flex-wrap items-center">
+              <select
+                value={currentProvider}
+                disabled={saving || !ch.enabled || configuredProviders.length === 0}
+                onChange={e => patchChallenger({ llm: { ...llm, provider: e.target.value, model: '' } })}
+                className="px-2 py-1 rounded text-xs"
+                style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', minWidth: 180 }}>
+                {configuredProviders.length === 0 && <option value="">(aucun provider configuré)</option>}
+                {configuredProviders.map(p => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <select
+                value={llm.model || ''}
+                disabled={saving || !ch.enabled || providerModels.length === 0}
+                onChange={e => patchChallenger({ llm: { ...llm, provider: currentProvider, model: e.target.value } })}
+                className="px-2 py-1 rounded text-xs"
+                style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', flex: 1, minWidth: 260 }}>
+                <option value="">(choisir un modèle)</option>
+                {providerModels.map((m: any) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name || m.id}{m.pricing?.tier && m.pricing.tier !== 'unknown' ? ` · ${m.pricing.tier}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )
+        })()}
 
         {llmOptions && llmOptions.configured_providers?.length > 0 && (
           <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
