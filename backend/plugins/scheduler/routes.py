@@ -100,14 +100,39 @@ async def list_tasks(request: Request):
     }
 
 
+def _validate_cron(expr: str) -> None:
+    """Raise HTTPException(400) if the cron expression is not parseable.
+
+    Standard cron is 5 fields (min hour dom month dow). Anything else (including
+    the 7-field form with seconds+command appended) is rejected so we never
+    accept a value the daemon can't schedule.
+    """
+    try:
+        from croniter import croniter  # type: ignore
+    except ImportError:
+        return  # If croniter isn't installed the daemon skips crons anyway.
+    parts = (expr or "").split()
+    if len(parts) != 5:
+        raise HTTPException(
+            400,
+            f"cron_expression invalide: 5 champs attendus (min h jour mois dow), reçu {len(parts)}",
+        )
+    try:
+        croniter(expr)
+    except Exception as e:
+        raise HTTPException(400, f"cron_expression invalide: {e}")
+
+
 @router.post("/tasks")
 async def create_task(body: TaskCreate, request: Request):
     """Create a new scheduled task for the current user."""
     import uuid
     if body.task_type not in ("cron", "interval", "run_at"):
         raise HTTPException(400, f"task_type invalide: {body.task_type}")
-    if body.task_type == "cron" and not body.cron_expression:
-        raise HTTPException(400, "cron_expression requis pour task_type=cron")
+    if body.task_type == "cron":
+        if not body.cron_expression:
+            raise HTTPException(400, "cron_expression requis pour task_type=cron")
+        _validate_cron(body.cron_expression)
     if body.task_type == "interval" and not (body.interval_seconds and body.interval_seconds > 0):
         raise HTTPException(400, "interval_seconds > 0 requis pour task_type=interval")
     if body.task_type == "run_at" and not body.run_at:
@@ -150,7 +175,14 @@ async def update_task(task_id: str, update: TaskUpdate, request: Request):
     for i, t in enumerate(data["tasks"]):
         if t["id"] == task_id:
             updates = update.model_dump(exclude_none=True)
-            data["tasks"][i] = {**t, **updates, "updated_at": datetime.now().isoformat()}
+            merged = {**t, **updates}
+            # Revalidate the cron expression when the task is (or remains) a cron.
+            if merged.get("task_type") == "cron":
+                expr = merged.get("cron_expression") or ""
+                if not expr:
+                    raise HTTPException(400, "cron_expression requis pour task_type=cron")
+                _validate_cron(expr)
+            data["tasks"][i] = {**merged, "updated_at": datetime.now().isoformat()}
             _save_data(data, data_file)
             logger.info(f"Task updated: {task_id}")
             return data["tasks"][i]

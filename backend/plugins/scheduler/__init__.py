@@ -73,10 +73,15 @@ def _save_user_tasks(data: dict, tasks_file: Path):
     )
 
 
-def _is_task_due(task: dict, now: datetime) -> bool:
-    """Decide if a task should run now, given its type and last_run."""
+def _is_task_due(task: dict, now: datetime) -> tuple[bool, bool]:
+    """Decide if a task should run now.
+
+    Returns (due, mutated) where ``mutated`` is True when the task dict was
+    edited (e.g. auto-disabled because its cron expression no longer parses)
+    so the caller can persist the change.
+    """
     if not task.get("enabled"):
-        return False
+        return False, False
 
     task_type = task.get("task_type")
     last_run = _parse_iso(task.get("last_run"))
@@ -85,37 +90,54 @@ def _is_task_due(task: dict, now: datetime) -> bool:
     if task_type == "interval":
         interval = task.get("interval_seconds")
         if not isinstance(interval, int) or interval <= 0:
-            return False
+            return False, False
         if last_run is None:
-            return True
-        return (now - last_run).total_seconds() >= interval
+            return True, False
+        return (now - last_run).total_seconds() >= interval, False
 
     if task_type == "cron":
         if not _croniter_available:
-            return False
-        expr = task.get("cron_expression")
-        if not expr:
-            return False
+            return False, False
+        expr = task.get("cron_expression") or ""
+        parts = expr.split()
+        if not expr or len(parts) != 5:
+            # Auto-disable tasks that would otherwise spam warnings forever.
+            logger.warning(
+                f"Auto-disabling task '{task.get('name')}' ({task.get('id')}): "
+                f"cron expression '{expr}' has {len(parts)} fields, expected 5"
+            )
+            task["enabled"] = False
+            task["last_status"] = "cron_invalid"
+            task["last_error"] = f"cron expression invalide ({len(parts)} champs, 5 attendus)"
+            task["updated_at"] = now.isoformat()
+            return False, True
         try:
             anchor = last_run or created_at
             itr = croniter(expr, anchor)
             next_fire = itr.get_next(datetime)
             if next_fire.tzinfo is None:
                 next_fire = next_fire.replace(tzinfo=timezone.utc)
-            return next_fire <= now
+            return next_fire <= now, False
         except Exception as e:
-            logger.warning(f"Invalid cron expression '{expr}': {e}")
-            return False
+            logger.warning(
+                f"Auto-disabling task '{task.get('name')}' ({task.get('id')}): "
+                f"invalid cron expression '{expr}': {e}"
+            )
+            task["enabled"] = False
+            task["last_status"] = "cron_invalid"
+            task["last_error"] = f"cron expression invalide: {str(e)[:200]}"
+            task["updated_at"] = now.isoformat()
+            return False, True
 
     if task_type == "run_at":
         if last_run is not None:
-            return False  # run_at is one-shot
+            return False, False  # run_at is one-shot
         target = _parse_iso(task.get("run_at"))
         if not target:
-            return False
-        return now >= target
+            return False, False
+        return now >= target, False
 
-    return False
+    return False, False
 
 
 async def _execute_task(user_id: int, task: dict) -> dict:
@@ -260,7 +282,10 @@ async def _tick_once():
 
         dirty = False
         for task in tasks:
-            if not _is_task_due(task, now):
+            due, mutated = _is_task_due(task, now)
+            if mutated:
+                dirty = True
+            if not due:
                 continue
 
             logger.info(f"Running task '{task.get('name')}' for user {user_id}")

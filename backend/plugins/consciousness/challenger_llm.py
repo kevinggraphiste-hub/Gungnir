@@ -82,6 +82,26 @@ AUTO_PICK_ORDER: list[tuple[str, str]] = [
 ]
 
 
+async def pick_fallback_llm(user_id: int) -> tuple[Optional[str], Optional[str]]:
+    """Pick (provider, model) from the user's configured providers.
+
+    Used as a background-task fallback when the user's active provider has no
+    API key: walks AUTO_PICK_ORDER and returns the first match so daemons
+    (background think, Challenger, automata) can still do useful work.
+    Returns (None, None) when the user has no provider configured at all.
+    """
+    configured = set(await list_configured_providers(user_id))
+    if not configured:
+        return None, None
+    for provider, model in AUTO_PICK_ORDER:
+        if provider in configured:
+            return provider, model
+    # Configured but none match curated defaults: pick any and let the
+    # provider module fall back to its own default_model.
+    any_provider = next(iter(configured))
+    return any_provider, None
+
+
 async def list_configured_providers(user_id: int) -> list[str]:
     """Return the list of provider names configured for this user."""
     if not user_id:
