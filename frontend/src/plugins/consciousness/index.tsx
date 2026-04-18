@@ -855,9 +855,19 @@ function RewardTab({ data }: any) {
 function ChallengerTab({ data, refresh }: any) {
   const ch = data.config?.challenger || {}
   const auto = ch.auto_audit || {}
+  const llm = ch.llm || { mode: 'default', provider: '', model: '' }
   const [running, setRunning] = useState(false)
   const [msg, setMsg] = useState<string>('')
   const [saving, setSaving] = useState(false)
+  const [llmOptions, setLlmOptions] = useState<any>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${API}/challenger/llm-options`).then(r => r.json()).then(j => {
+      if (!cancelled) setLlmOptions(j)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [refresh])
 
   const patchChallenger = async (updates: any) => {
     setSaving(true)
@@ -869,6 +879,14 @@ function ChallengerTab({ data, refresh }: any) {
       })
       await refresh?.()
     } finally { setSaving(false) }
+  }
+
+  const selectPreset = (preset: any) => {
+    patchChallenger({ llm: { mode: 'preset', provider: preset.provider, model: preset.model } })
+  }
+
+  const setLlmMode = (mode: 'default' | 'auto' | 'preset' | 'custom') => {
+    patchChallenger({ llm: { ...llm, mode } })
   }
 
   const auditNow = async () => {
@@ -957,6 +975,110 @@ function ChallengerTab({ data, refresh }: any) {
           </button>
           {msg && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{msg}</span>}
         </div>
+      </div>
+
+      {/* Modèle LLM du Challenger */}
+      <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+          <span>Modèle LLM du Challenger</span>
+          <InfoButton>
+            Le Challenger audite la conscience avec un LLM. Pour éviter qu'il s'auto-complaise, utiliser un modèle <em>différent</em> de l'agent principal est souvent plus efficace.
+            <br /><br />
+            <strong>Modes :</strong>
+            <br />• <strong>Défaut</strong> : réutilise le modèle de chat principal (pas d'effort supplémentaire).
+            <br />• <strong>Auto</strong> : Gungnir choisit le meilleur modèle low-cost parmi <em>tes</em> providers configurés.
+            <br />• <strong>Préréglage</strong> : un modèle curé (2 gratuits, 2 modérés, 1 élevé). Certains préréglages nécessitent un provider spécifique.
+            <br />• <strong>Personnalisé</strong> : tu choisis librement provider + nom du modèle.
+          </InfoButton>
+        </div>
+
+        <div className="rounded-lg p-2 text-[11px]" style={{ background: 'color-mix(in srgb, var(--accent-primary) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent)', color: 'var(--text-secondary)' }}>
+          ⚠️ Les préréglages dépendent des providers que tu as connectés. Si aucun préréglage n'est dispo, passe en mode <strong>Auto</strong> ou <strong>Défaut</strong> — le Challenger retombera sur un modèle à faible coût compatible avec ta config.
+        </div>
+
+        <div className="flex gap-2 flex-wrap">
+          {(['default', 'auto', 'preset', 'custom'] as const).map(m => (
+            <button key={m} onClick={() => setLlmMode(m)} disabled={saving || !ch.enabled}
+              className="px-3 py-1 rounded text-xs font-medium"
+              style={{
+                background: (llm.mode || 'default') === m ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                color: (llm.mode || 'default') === m ? 'white' : 'var(--text-primary)',
+                border: '1px solid var(--border)',
+                opacity: saving || !ch.enabled ? 0.5 : 1,
+                cursor: saving || !ch.enabled ? 'not-allowed' : 'pointer',
+              }}>
+              {m === 'default' ? 'Défaut' : m === 'auto' ? 'Auto' : m === 'preset' ? 'Préréglage' : 'Personnalisé'}
+            </button>
+          ))}
+        </div>
+
+        {llm.mode === 'auto' && llmOptions && (
+          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            {llmOptions.auto_pick
+              ? <>Modèle qui sera utilisé : <strong style={{ color: 'var(--text-primary)' }}>{llmOptions.auto_pick.provider} / {llmOptions.auto_pick.model}</strong></>
+              : <>Aucun provider configuré — le Challenger retombera sur le modèle de chat par défaut.</>
+            }
+          </div>
+        )}
+
+        {llm.mode === 'preset' && llmOptions && (
+          <div className="space-y-2">
+            {(['free', 'mid', 'high'] as const).map(tier => {
+              const items = (llmOptions.presets || []).filter((p: any) => p.tier === tier)
+              if (!items.length) return null
+              const tierLabel = tier === 'free' ? '🆓 Gratuit / faible coût' : tier === 'mid' ? '💰 Coût modéré' : '💎 Coût élevé'
+              return (
+                <div key={tier}>
+                  <div className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>{tierLabel}</div>
+                  <div className="flex gap-2 flex-wrap">
+                    {items.map((p: any) => {
+                      const selected = llm.provider === p.provider && llm.model === p.model
+                      return (
+                        <button key={p.id} onClick={() => selectPreset(p)} disabled={saving || !p.available}
+                          title={p.available ? p.note : `Nécessite le provider ${p.provider}`}
+                          className="px-3 py-1.5 rounded text-xs flex flex-col items-start"
+                          style={{
+                            background: selected ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                            color: selected ? 'white' : (p.available ? 'var(--text-primary)' : 'var(--text-muted)'),
+                            border: '1px solid var(--border)',
+                            opacity: p.available ? 1 : 0.45,
+                            cursor: p.available ? 'pointer' : 'not-allowed',
+                            minWidth: 160,
+                          }}>
+                          <span className="font-semibold">{p.label}</span>
+                          <span className="text-[10px] opacity-80">
+                            {p.provider} · {p.available ? 'Dispo' : `Nécessite ${p.provider}`}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {llm.mode === 'custom' && (
+          <div className="flex gap-2 flex-wrap items-center">
+            <input type="text" value={llm.provider || ''} placeholder="Provider (ex: anthropic)"
+              onChange={e => patchChallenger({ llm: { ...llm, provider: e.target.value } })}
+              disabled={saving || !ch.enabled}
+              className="px-2 py-1 rounded text-xs"
+              style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', width: 180 }} />
+            <input type="text" value={llm.model || ''} placeholder="Modèle (ex: claude-haiku-4-5)"
+              onChange={e => patchChallenger({ llm: { ...llm, model: e.target.value } })}
+              disabled={saving || !ch.enabled}
+              className="px-2 py-1 rounded text-xs"
+              style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', flex: 1, minWidth: 220 }} />
+          </div>
+        )}
+
+        {llmOptions && llmOptions.configured_providers?.length > 0 && (
+          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            Providers détectés : {llmOptions.configured_providers.join(', ')}
+          </div>
+        )}
       </div>
       {/* Critical Alerts */}
       {data.critical_findings?.length > 0 && (

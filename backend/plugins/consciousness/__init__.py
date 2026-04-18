@@ -156,8 +156,21 @@ async def _challenger_for_user(user_id: int, force: bool = False) -> int:
 
     system_prompt, user_prompt = engine.build_challenger_audit_prompt()
 
-    logger.info(f"Challenger audit tick for user {user_id}")
-    result = await invoke_llm_for_user(user_id, user_prompt, system_prompt=system_prompt)
+    # Resolve the Challenger LLM: auto-pick / preset / custom / default.
+    from backend.plugins.consciousness.challenger_llm import resolve_challenger_llm
+    ch_provider, ch_model = await resolve_challenger_llm(user_id, ch_cfg)
+
+    logger.info(
+        f"Challenger audit tick for user {user_id} "
+        f"(provider={ch_provider or 'default'}, model={ch_model or 'default'})"
+    )
+    result = await invoke_llm_for_user(
+        user_id,
+        user_prompt,
+        system_prompt=system_prompt,
+        provider=ch_provider,
+        model=ch_model,
+    )
 
     if not result.get("ok"):
         logger.warning(f"Challenger audit LLM failed for user {user_id}: {result.get('error')}")

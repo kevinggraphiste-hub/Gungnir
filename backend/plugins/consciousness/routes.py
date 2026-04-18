@@ -294,6 +294,18 @@ async def challenger_audit_now(request: Request):
         return {"ok": False, "error": str(e)[:300]}
 
 
+@router.get("/challenger/llm-options")
+async def challenger_llm_options(request: Request):
+    """Return the LLM picker payload for the Challenger settings UI.
+
+    Includes the curated presets, which providers the user has configured,
+    the auto-pick recommendation, and the current selection.
+    """
+    c = _get_consciousness(request)
+    from .challenger_llm import build_llm_options
+    return await build_llm_options(c.user_id, c.config.get("challenger", {}))
+
+
 # ── Simulation ──────────────────────────────────────────────────────────────
 
 @router.get("/simulation")

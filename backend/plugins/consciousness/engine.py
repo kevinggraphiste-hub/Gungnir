@@ -100,7 +100,16 @@ DEFAULT_CONFIG = {
         },
         "severity_floor": "low",
         "deep_audit": True,
-        "audit_schedule": "weekly"
+        "audit_schedule": "weekly",
+        "llm": {
+            # mode: "auto" | "preset" | "custom" | "default"
+            # - default: use the user's main chat model (legacy)
+            # - auto: pick the best low-cost model among configured providers
+            # - preset / custom: use the explicit provider+model below
+            "mode": "auto",
+            "provider": "",
+            "model": "",
+        }
     },
     "simulation": {
         "enabled": True,
