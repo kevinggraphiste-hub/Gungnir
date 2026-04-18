@@ -19,7 +19,7 @@ interface Props {
 }
 
 export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }: Props) {
-  const { selectedProvider, selectedModel } = useStore()
+  const { selectedProvider, selectedModel, setSelectedProvider, setSelectedModel } = useStore()
   const [providers, setProviders] = useState<Provider[]>([])
   const [saving, setSaving] = useState<string | null>(null)
   const [showKey, setShowKey] = useState<Record<string, boolean>>({})
@@ -91,6 +91,12 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
       await api.saveProvider(providerName, data)
       const newConfig = await api.getConfig()
       onConfigUpdate(newConfig)
+      // Sauvegarde = le provider + modèle choisis deviennent l'actif global
+      // (sinon le paramètre "par défaut" côté modale n'était jamais appliqué).
+      if (prov.default_model) {
+        setSelectedProvider(providerName)
+        setSelectedModel(prov.default_model)
+      }
       setMessage({ type: 'ok', text: `${providerName} sauvegardé` })
       setTimeout(() => setMessage(null), 2000)
     } catch (err: any) {
@@ -120,6 +126,10 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
       await api.saveProvider(name, { enabled: true, api_key: newProvider.api_key.trim() })
       const newConfig = await api.getConfig()
       onConfigUpdate(newConfig)
+      // Ajouter un provider = le choisir comme actif, avec son default_model.
+      const defaultModel = newConfig?.providers?.[name]?.default_model
+      setSelectedProvider(name)
+      if (defaultModel) setSelectedModel(defaultModel)
       setNewProvider({ name: '', api_key: '' })
       setShowAddForm(false)
       setMessage({ type: 'ok', text: `${name} ajouté` })

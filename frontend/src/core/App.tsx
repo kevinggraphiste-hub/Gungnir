@@ -168,10 +168,10 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
       <main className="flex-1 h-screen overflow-hidden flex flex-col">
         <Suspense fallback={<PluginLoading />}>
           <Routes>
-            {/* Core routes — always present */}
-            <Route path="/" element={<Chat />} />
-            <Route path="/agent" element={<AgentSettings />} />
-            <Route path="/settings" element={<Settings />} />
+            {/* Core routes — always present, wrapped in ErrorBoundary to prevent blank page crashes */}
+            <Route path="/" element={<PluginErrorBoundary pluginName="Chat"><Chat /></PluginErrorBoundary>} />
+            <Route path="/agent" element={<PluginErrorBoundary pluginName="Agent"><AgentSettings /></PluginErrorBoundary>} />
+            <Route path="/settings" element={<PluginErrorBoundary pluginName="Paramètres"><Settings /></PluginErrorBoundary>} />
 
             {/* Plugin routes — dynamic, lazy-loaded, error-isolated */}
             {plugins

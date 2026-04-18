@@ -174,7 +174,10 @@ export default function AgentSettings() {
 
   // Favoris modèles (partagé avec Chat via localStorage)
   const [favoriteModels, setFavoriteModels] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('gungnir_favorite_models') || '[]') } catch { return [] }
+    try {
+      const raw = JSON.parse(localStorage.getItem('gungnir_favorite_models') || '[]')
+      return Array.isArray(raw) ? raw.filter(x => typeof x === 'string' && x.includes('::')) : []
+    } catch { return [] }
   })
   const toggleFavorite = (provider: string, model: string) => {
     const key = `${provider}::${model}`
@@ -225,13 +228,14 @@ export default function AgentSettings() {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, models]) => ({
       name,
-      models: [...models].sort((a, b) => a.localeCompare(b)),
+      models: Array.isArray(models) ? [...models].filter(m => typeof m === 'string').sort((a, b) => a.localeCompare(b)) : [],
       defaultModel: (config?.providers?.[name] as any)?.default_model as string | undefined,
     }))
+    .filter(p => p.models.length > 0)
 
   // Liste plate de tous les modèles (provider:model) pour la config active
   const allModels = enabledProviders.flatMap(p =>
-    p.models.map(m => ({ provider: p.name, model: m, label: `${p.name} / ${m.split('/').pop()}` }))
+    p.models.map(m => ({ provider: p.name, model: m, label: `${p.name} / ${m.split('/').pop() || m}` }))
   ).filter(x => !modelSearch.trim() || x.label.toLowerCase().includes(modelSearch.toLowerCase()))
 
   const handleSaveModel = async () => {
@@ -692,7 +696,9 @@ export default function AgentSettings() {
                       </div>
                       <div className="space-y-1">
                         {favoriteModels.map(fav => {
+                          if (typeof fav !== 'string' || !fav.includes('::')) return null
                           const [prov, mod] = fav.split('::')
+                          if (!prov || !mod) return null
                           const isSelected = selectedModel === mod && selectedProvider === prov
                           return (
                             <button key={fav}
@@ -705,7 +711,7 @@ export default function AgentSettings() {
                               <div className="flex items-center gap-3 min-w-0">
                                 <Star className="w-3.5 h-3.5 flex-shrink-0 fill-current" style={{ color: 'var(--accent-tertiary)' }}
                                   onClick={e => { e.stopPropagation(); toggleFavorite(prov, mod) }} />
-                                <span className="text-sm truncate">{mod.split('/').pop()}</span>
+                                <span className="text-sm truncate">{mod.split('/').pop() || mod}</span>
                                 <span className="text-[10px] capitalize" style={{ color: 'var(--text-muted)' }}>{prov}</span>
                               </div>
                               {isSelected && <Check className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--accent-primary)' }} />}

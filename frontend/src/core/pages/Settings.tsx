@@ -88,7 +88,7 @@ const DEFAULT_HB_CONFIG = {
 
 export default function Settings() {
   const { t, i18n } = useTranslation()
-  const { config, setConfig, agentName, setAgentName, selectedProvider, selectedModel } = useStore()
+  const { config, setConfig, agentName, setAgentName, selectedProvider, selectedModel, setSelectedProvider, setSelectedModel } = useStore()
   const [activeTab, setActiveTab] = useState(() => {
     // Support ?tab=providers deep-linking (used by the onboarding welcome card)
     try {
@@ -261,7 +261,16 @@ export default function Settings() {
   const handleSaveProvider = async (provider: string) => {
     const cfg = providerConfigs[provider]; if (!cfg) return
     setIsSaving(true)
-    try { await api.saveProvider(provider, cfg); const newConfig = await api.getConfig(); setConfig(newConfig) }
+    try {
+      await api.saveProvider(provider, cfg)
+      const newConfig = await api.getConfig()
+      setConfig(newConfig)
+      // Sauvegarde = adopte ce provider+modèle comme actif global.
+      if (cfg.default_model) {
+        setSelectedProvider(provider)
+        setSelectedModel(cfg.default_model)
+      }
+    }
     catch (err) { console.error('Save provider error:', err) }
     setIsSaving(false)
   }
