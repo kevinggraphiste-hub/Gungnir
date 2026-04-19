@@ -375,7 +375,7 @@ export default function ConsciousnessPage() {
 
         {tab === 'challenger' && <ChallengerTab data={data} refresh={fetchData} />}
 
-        {tab === 'simulation' && <SimulationTab data={data} />}
+        {tab === 'simulation' && <SimulationTab data={data} refresh={fetchData} />}
 
         {tab === 'vector' && <VectorTab />}
 
@@ -1168,13 +1168,52 @@ function FindingCard({ finding }: { finding: Finding }) {
 
 // ── Simulation Tab ───────────────────────────────────────────────────────────
 
-function SimulationTab({ data }: any) {
+function SimulationTab({ data, refresh }: any) {
+  const [generating, setGenerating] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const generateNow = async () => {
+    setGenerating(true); setMsg('')
+    try {
+      const res = await fetch(`${API}/simulation/generate`, { method: 'POST' })
+      const j = await res.json()
+      if (j.ok) {
+        setMsg(j.added > 0 ? `${j.added} scénario(s) généré(s)` : 'Aucun scénario généré')
+        await refresh?.()
+      } else {
+        setMsg(`Erreur : ${j.error || 'inconnue'}`)
+      }
+    } catch (e: any) {
+      setMsg(`Erreur : ${e?.message || 'réseau'}`)
+    } finally { setGenerating(false) }
+  }
+
+  const simCfg = data?.config?.simulation || {}
+  const autoEnabled = !!simCfg.enabled
+  const intervalMin = simCfg.interval_minutes ?? 30
+
   return (
     <div className="space-y-4">
       <div className="rounded-xl p-4" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
-        <div className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
-          Simulations actives ({data.active_simulations?.length || 0})
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+            Simulations actives ({data.active_simulations?.length || 0})
+          </div>
+          <button
+            onClick={generateNow}
+            disabled={generating}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-opacity disabled:opacity-50"
+            style={{ background: 'var(--accent-primary)', color: '#fff' }}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            {generating ? 'Génération…' : 'Générer des scénarios'}
+          </button>
         </div>
+        {msg && (
+          <div className="text-[11px] mb-3 px-2 py-1.5 rounded" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}>
+            {msg}
+          </div>
+        )}
         <div className="space-y-2">
           {(data.active_simulations || []).map((sim: Simulation, i: number) => (
             <div key={i} className="px-3 py-3 rounded-lg" style={{ background: 'var(--bg-tertiary)' }}>
@@ -1215,7 +1254,11 @@ function SimulationTab({ data }: any) {
           <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Comment ça marche</div>
         </div>
         <div className="text-xs space-y-1.5" style={{ color: 'var(--text-secondary)' }}>
-          <p>À chaque heartbeat, la conscience génère 2-3 scénarios probables pour les prochaines heures.</p>
+          {autoEnabled ? (
+            <p>Génération automatique activée — un LLM produit 2-3 scénarios probables toutes les <strong>{intervalMin} min</strong>.</p>
+          ) : (
+            <p>Génération automatique désactivée. Active-la dans la config <code>simulation.enabled</code>, ou clique sur <strong>Générer des scénarios</strong> ci-dessus pour un passage manuel.</p>
+          )}
           <p>Ce n'est pas de la prédiction — c'est de la <strong>préparation</strong>. Comme imaginer sa journée avant de se lever.</p>
           <p>Si un scénario se matérialise, la réponse préparée est utilisée pour accélérer le traitement.</p>
         </div>

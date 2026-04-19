@@ -22,6 +22,7 @@ CONSCIOUSNESS_USERS_DIR = DATA_DIR / "consciousness" / "users"
 TICK_INTERVAL_SECONDS = 60
 DEFAULT_THINK_INTERVAL_MINUTES = 10
 DEFAULT_CHALLENGER_INTERVAL_MINUTES = 60
+DEFAULT_SIMULATION_INTERVAL_MINUTES = 30
 
 # When an LLM invocation fails because no API key is configured, backoff before
 # retrying so the logs don't spam every tick until the user sets a provider.
@@ -298,6 +299,176 @@ async def _challenger_for_user(user_id: int, force: bool = False) -> int:
         return 0
 
 
+def _build_simulation_prompt(engine) -> tuple[str, str]:
+    """Construit le prompt d'anticipation : 2-3 scénarios probables à partir
+    de l'état courant (mood + needs + pensées récentes + working memory)."""
+    state = engine.state or {}
+    config = engine.config or {}
+    max_scenarios = int((config.get("simulation", {}) or {}).get("max_scenarios", 3))
+
+    mood = state.get("mood", "neutre")
+    recent_thoughts = engine.get_recent_thoughts(limit=5) if hasattr(engine, "get_recent_thoughts") else []
+    working_items = engine.get_working_memory() if hasattr(engine, "get_working_memory") else []
+    needs = (state.get("volition", {}) or {}).get("needs", []) or []
+
+    thoughts_block = "\n".join(
+        f"- [{t.get('type', 'obs')}] {t.get('content', '')[:180]}"
+        for t in recent_thoughts
+    ) or "(aucune pensée récente)"
+    memory_block = "\n".join(
+        f"- {i.get('key')}: {str(i.get('value'))[:180]}"
+        for i in working_items[:5]
+    ) or "(mémoire de travail vide)"
+    needs_block = "\n".join(
+        f"- {n.get('name','?')} (urgence {n.get('urgency', 0):.2f})"
+        for n in needs[:5]
+    ) or "(aucun besoin actif)"
+
+    system = (
+        "Tu es le module d'anticipation d'un assistant personnel nommé Gungnir. "
+        "Ton rôle : imaginer des scénarios proches (heures/jours) qui ont une vraie "
+        "probabilité de se matérialiser à partir de l'état courant, et préparer une "
+        "réponse utile pour chacun. Sois concret, pas vague. Pas de futur lointain "
+        "ni de philosophie — des événements actionnables."
+    )
+    user_prompt = (
+        f"Humeur actuelle : {mood}\n\n"
+        f"## Pensées récentes\n{thoughts_block}\n\n"
+        f"## Mémoire de travail\n{memory_block}\n\n"
+        f"## Besoins actifs\n{needs_block}\n\n"
+        f"Génère EXACTEMENT {max_scenarios} scénarios. Réponds STRICTEMENT en JSON "
+        "valide, un tableau de cet objet :\n"
+        "[{\"scenario\": \"...\", \"probability\": 0.0-1.0, \"prepared_response\": \"...\", \"trigger\": \"...\"}]\n"
+        "Pas de texte hors JSON, pas de bloc markdown."
+    )
+    return system, user_prompt
+
+
+def _parse_simulation_scenarios(raw: str) -> list[dict]:
+    """Extrait un tableau JSON de scénarios depuis la réponse du LLM. Tolère
+    les blocs markdown ```json ... ``` et les préambules textuels courts."""
+    if not raw:
+        return []
+    text = raw.strip()
+    # Strip fences markdown éventuels
+    if text.startswith("```"):
+        lines = text.splitlines()
+        lines = lines[1:] if lines else []
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    # Si le LLM a préfixé avec un commentaire, on cherche le premier [
+    if not text.startswith("["):
+        idx = text.find("[")
+        if idx > 0:
+            text = text[idx:]
+    try:
+        data = json.loads(text)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        scenario = str(item.get("scenario") or "").strip()
+        if not scenario:
+            continue
+        try:
+            proba = float(item.get("probability", 0.5))
+        except Exception:
+            proba = 0.5
+        proba = max(0.0, min(1.0, proba))
+        out.append({
+            "scenario": scenario[:500],
+            "probability": proba,
+            "prepared_response": str(item.get("prepared_response") or "").strip()[:800],
+            "trigger": str(item.get("trigger") or "").strip()[:200],
+        })
+    return out
+
+
+async def _simulate_for_user(user_id: int, force: bool = False) -> int:
+    """Génère des simulations (scénarios anticipés) pour un user.
+
+    Returns le nombre de scénarios ajoutés. Respecte l'intervalle, la config
+    `simulation.enabled`, et le no-key cooldown partagé avec background_think.
+    """
+    from backend.plugins.consciousness.engine import consciousness_manager
+    from backend.core.services.llm_invoker import invoke_llm_for_user
+
+    engine = consciousness_manager.get(user_id)
+    if not engine.enabled:
+        return 0
+
+    sim_cfg = (engine.config or {}).get("simulation", {}) or {}
+    if not sim_cfg.get("enabled", False):
+        return 0
+
+    now = _now()
+    if not force:
+        interval_minutes = int(sim_cfg.get("interval_minutes", DEFAULT_SIMULATION_INTERVAL_MINUTES))
+        last_sim = _parse_iso((engine.state or {}).get("last_simulation"))
+        if last_sim is not None:
+            elapsed = (now - last_sim).total_seconds() / 60
+            if elapsed < interval_minutes:
+                return 0
+
+        # Réutilise le cooldown no-key du background_think (même cause = pas de provider)
+        cooldown_until = _parse_iso((engine.state or {}).get("background_think_cooldown_until"))
+        if cooldown_until and now < cooldown_until:
+            return 0
+
+    system_prompt, user_prompt = _build_simulation_prompt(engine)
+
+    logger.info(f"Simulation tick for user {user_id}")
+    result = await invoke_llm_for_user(user_id, user_prompt, system_prompt=system_prompt)
+
+    # Fallback no-key → tenter un autre provider configuré
+    if not result.get("ok") and _is_no_key_error(result.get("error") or ""):
+        from backend.plugins.consciousness.challenger_llm import pick_fallback_llm
+        fb_provider, fb_model = await pick_fallback_llm(user_id)
+        if fb_provider:
+            result = await invoke_llm_for_user(
+                user_id, user_prompt, system_prompt=system_prompt,
+                provider=fb_provider, model=fb_model,
+            )
+
+    if not result.get("ok"):
+        err = result.get("error") or ""
+        if _is_no_key_error(err) and not force:
+            until = now + timedelta(minutes=NO_KEY_COOLDOWN_MINUTES)
+            engine.state["background_think_cooldown_until"] = until.isoformat()
+            try:
+                engine.save_state()
+            except Exception:
+                pass
+        logger.warning(f"Simulation failed for user {user_id}: {err}")
+        return 0
+
+    scenarios = _parse_simulation_scenarios(result.get("content") or "")
+    if not scenarios:
+        logger.warning(f"Simulation parse empty for user {user_id} (raw: {(result.get('content') or '')[:200]!r})")
+        return 0
+
+    added = 0
+    for s in scenarios:
+        try:
+            engine.add_simulation(
+                scenario=s["scenario"],
+                probability=s["probability"],
+                prepared_response=s["prepared_response"],
+                trigger=s["trigger"],
+            )
+            added += 1
+        except Exception as e:
+            logger.exception(f"add_simulation failed for user {user_id}: {e}")
+
+    logger.info(f"Simulation tick for user {user_id}: +{added} scénarios")
+    return added
+
+
 async def _tick_once():
     """Scan all users with consciousness directories and run their think pass."""
     if not CONSCIOUSNESS_USERS_DIR.exists():
@@ -315,6 +486,7 @@ async def _tick_once():
         # for users who have conscience disabled.
         think_on = False
         challenger_on = False
+        simulation_on = False
         config_file = user_dir / "config.json"
         if config_file.exists():
             try:
@@ -324,6 +496,7 @@ async def _tick_once():
                 think_on = bool(cfg.get("background_think", {}).get("enabled"))
                 ch = cfg.get("challenger", {}) or {}
                 challenger_on = bool(ch.get("enabled") and (ch.get("auto_audit") or {}).get("enabled"))
+                simulation_on = bool((cfg.get("simulation", {}) or {}).get("enabled"))
             except Exception:
                 continue
 
@@ -338,6 +511,12 @@ async def _tick_once():
                 await _challenger_for_user(user_id)
             except Exception as e:
                 logger.exception(f"Challenger pass crashed for user {user_id}: {e}")
+
+        if simulation_on:
+            try:
+                await _simulate_for_user(user_id)
+            except Exception as e:
+                logger.exception(f"Simulation pass crashed for user {user_id}: {e}")
 
 
 async def _consciousness_loop():

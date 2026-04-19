@@ -13,6 +13,23 @@ from .engine import consciousness_manager, ConsciousnessEngine, current_user_id
 router = APIRouter()
 
 
+def _require_uid(request: Request) -> int:
+    """Extrait user_id depuis le middleware d'auth, ou lève 401.
+
+    Sans ce garde, un appel non authentifié retombait sur user_id=0 et
+    écrivait dans un répertoire partagé /data/consciousness/users/0/ —
+    fuite de données entre users et contournement de l'auth."""
+    from fastapi import HTTPException
+    uid = getattr(request.state, "user_id", None)
+    try:
+        uid_int = int(uid) if uid is not None else 0
+    except (TypeError, ValueError):
+        uid_int = 0
+    if uid_int <= 0:
+        raise HTTPException(status_code=401, detail="Authentification requise.")
+    return uid_int
+
+
 def _get_consciousness(request: Request) -> ConsciousnessEngine:
     """Get the consciousness instance for the current user.
 
@@ -20,9 +37,9 @@ def _get_consciousness(request: Request) -> ConsciousnessEngine:
     async task spawned from this request (vector writes, background jobs)
     can recover the owner via contextvars.copy_context().
     """
-    uid = getattr(request.state, "user_id", None) or 0
+    uid = _require_uid(request)
     try:
-        current_user_id.set(int(uid))
+        current_user_id.set(uid)
     except Exception:
         pass
     return consciousness_manager.get(uid)
@@ -283,9 +300,7 @@ async def add_finding(req: FindingRequest, request: Request):
 @router.post("/challenger/audit-now")
 async def challenger_audit_now(request: Request):
     """Run one Challenger audit pass on demand for the current user."""
-    uid = getattr(request.state, "user_id", None) or 0
-    if not uid:
-        return {"ok": False, "error": "Auth required"}
+    uid = _require_uid(request)
     try:
         from . import _challenger_for_user
         count = await _challenger_for_user(uid, force=True)
@@ -316,6 +331,21 @@ async def get_simulations(request: Request):
 async def add_simulation(req: SimulationRequest, request: Request):
     _get_consciousness(request).add_simulation(req.scenario, req.probability, req.prepared_response, req.trigger)
     return {"ok": True}
+
+
+@router.post("/simulation/generate")
+async def simulation_generate_now(request: Request):
+    """Force la génération immédiate de scénarios par le LLM.
+
+    Ignore l'intervalle (utile depuis l'UI pour ne pas attendre le tick).
+    Retourne le nombre de scénarios effectivement ajoutés."""
+    uid = _require_uid(request)
+    try:
+        from . import _simulate_for_user
+        count = await _simulate_for_user(uid, force=True)
+        return {"ok": True, "added": int(count)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
 
 
 # ── System Prompt ───────────────────────────────────────────────────────────
