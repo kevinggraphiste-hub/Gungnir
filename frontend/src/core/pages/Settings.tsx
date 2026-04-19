@@ -912,9 +912,9 @@ export default function Settings() {
                   <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3"><Type className="w-4 h-4" />Police</label>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {[
-                      { id: 'inter', label: 'Inter', desc: 'Police par défaut, lisible.', preview: 'Aa Bb Cc 012' },
-                      { id: 'atkinson', label: 'Atkinson Hyperlegible', desc: 'Conçue pour la basse vision.', preview: 'Aa Bb Cc 012' },
-                      { id: 'opendyslexic', label: 'OpenDyslexic', desc: 'Aide à réduire les inversions de lettres.', preview: 'Aa Bb Cc 012' },
+                      { id: 'inter', label: 'Inter', desc: 'Police par défaut, lisible.', preview: 'obdpqg Il1O0' },
+                      { id: 'atkinson', label: 'Atkinson Hyperlegible', desc: 'Conçue pour la basse vision.', preview: 'obdpqg Il1O0' },
+                      { id: 'opendyslexic', label: 'OpenDyslexic', desc: 'Aide à réduire les inversions de lettres.', preview: 'obdpqg Il1O0' },
                     ].map(opt => {
                       const selected = uiPrefs.font_family === opt.id
                       return (
