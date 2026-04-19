@@ -98,8 +98,7 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
         } catch { /* ignore */ }
       }
     }
-    const savedSize = localStorage.getItem('gungnir_fontsize')
-    if (savedSize) document.documentElement.setAttribute('data-fontsize', savedSize)
+    // La taille de police est désormais gérée par useUIPreferences (persisté par user)
   }, [])
 
   // Load config + plugins on mount
@@ -230,7 +229,7 @@ export default function App() {
     const userKeys = [
       'gungnir_current_user', 'gungnir_favorite_models', 'gungnir_chat_sidebar',
       'gungnir_titles_generated', 'gungnir_provider', 'gungnir_model',
-      'gungnir_agent_name', 'gungnir_theme', 'gungnir_fontsize', 'gungnir_custom_theme',
+      'gungnir_agent_name', 'gungnir_theme', 'gungnir_fontsize', 'gungnir_custom_theme', 'gungnir_ui_prefs',
     ]
     userKeys.forEach(k => localStorage.removeItem(k))
     setAuthState('needs_login')

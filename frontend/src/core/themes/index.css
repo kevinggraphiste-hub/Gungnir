@@ -168,11 +168,6 @@
   --shadow-glow: 0 0 40px rgba(220, 38, 38, 0.15);
 }
 
-/* ── Taille de texte (ancien système, conservé pour compat) ── */
-[data-fontsize="sm"] { font-size: 13px; }
-[data-fontsize="md"] { font-size: 15px; }
-[data-fontsize="lg"] { font-size: 17px; }
-
 /* ── Accessibilité typographique ──────────────────
    Variables pilotées par data-* sur <html>, écrites par useUIPreferences. */
 :root {

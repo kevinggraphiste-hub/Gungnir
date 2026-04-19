@@ -6,7 +6,7 @@ import {
   Settings as SettingsIcon, Globe, Palette, Key, Mic, RefreshCw,
   HeartPulse, HardDrive, Download, Upload, Trash2, CheckCircle, AlertCircle, Type, User,
   Server, Database, Cloud, MessageSquare, GitBranch, Zap, Search as SearchIcon, Loader2, Plus,
-  Stethoscope, Pipette, Eye
+  Stethoscope, Pipette
 } from 'lucide-react'
 import InfoButton from '../components/InfoButton'
 import { PageHeader } from '../components/ui'
@@ -170,9 +170,8 @@ export default function Settings() {
   const [backupLoading, setBackupLoading] = useState(false)
   const [backupMsg, setBackupMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
-  // Theme & Font size
+  // Theme (la taille de police est gérée par useUIPreferences, pas ici)
   const [currentTheme, setCurrentTheme] = useState(() => localStorage.getItem('gungnir_theme') || 'dark-scarlet')
-  const [currentFontSize, setCurrentFontSize] = useState(() => localStorage.getItem('gungnir_fontsize') || 'md')
 
   const applyTheme = (theme: string) => {
     // Nettoyer les CSS variables custom inline (sinon elles écrasent le nouveau thème)
@@ -181,12 +180,6 @@ export default function Settings() {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem('gungnir_theme', theme)
     setCurrentTheme(theme)
-  }
-
-  const applyFontSize = (size: string) => {
-    document.documentElement.setAttribute('data-fontsize', size)
-    localStorage.setItem('gungnir_fontsize', size)
-    setCurrentFontSize(size)
   }
 
   // Apply saved theme/font on mount
@@ -212,8 +205,6 @@ export default function Settings() {
         } catch { /* ignore */ }
       }
     }
-    const savedSize = localStorage.getItem('gungnir_fontsize')
-    if (savedSize) document.documentElement.setAttribute('data-fontsize', savedSize)
   }, [])
 
   useEffect(() => {
@@ -669,7 +660,6 @@ export default function Settings() {
 
   const tabs = [
     { id: 'general', label: t('settings.general'), icon: SettingsIcon },
-    { id: 'accessibility', label: 'Accessibilité', icon: Eye },
     { id: 'providers', label: t('settings.providers'), icon: Key },
     { id: 'voice', label: t('settings.voice'), icon: Mic },
     { id: 'services', label: t('settings.services'), icon: Server },
@@ -908,27 +898,138 @@ export default function Settings() {
                 )
               })()}
 
-              {/* Font size */}
-              <div>
-                <label className="flex items-center gap-3 text-[var(--text-secondary)] mb-3"><Type className="w-4 h-4" />{t('settings.fontSize')}</label>
-                <div className="flex gap-3">
-                  {[
-                    { id: 'sm', label: t('settings.fontSmall'), sample: 'A', size: '11px' },
-                    { id: 'md', label: t('settings.fontNormal'), sample: 'A', size: '14px' },
-                    { id: 'lg', label: t('settings.fontLarge'), sample: 'A', size: '17px' },
-                  ].map(fs => (
-                    <button key={fs.id} onClick={() => applyFontSize(fs.id)}
-                      className={`flex-1 flex flex-col items-center gap-1.5 px-4 py-3 rounded-lg border transition-all ${
-                        currentFontSize === fs.id
-                          ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 text-[var(--text-primary)]'
-                          : 'border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:border-[var(--text-muted)]'
-                      }`}>
-                      <span style={{ fontSize: fs.size }} className="font-bold">{fs.sample}</span>
-                      <span className="text-[11px]">{fs.label}</span>
-                    </button>
-                  ))}
+              {/* Typographie & accessibilité (persisté par user via /api/config/user/ui) */}
+              <div className="pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Typographie & accessibilité</h3>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                    Ces préférences sont enregistrées par utilisateur et s'appliquent immédiatement.
+                  </p>
+                </div>
+
+                {/* Famille de police */}
+                <div className="mb-6">
+                  <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3"><Type className="w-4 h-4" />Police</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {[
+                      { id: 'inter', label: 'Inter', desc: 'Police par défaut, lisible.', preview: 'Aa Bb Cc 012' },
+                      { id: 'atkinson', label: 'Atkinson Hyperlegible', desc: 'Conçue pour la basse vision.', preview: 'Aa Bb Cc 012' },
+                      { id: 'opendyslexic', label: 'OpenDyslexic', desc: 'Aide à réduire les inversions de lettres.', preview: 'Aa Bb Cc 012' },
+                    ].map(opt => {
+                      const selected = uiPrefs.font_family === opt.id
+                      return (
+                        <button key={opt.id} onClick={() => updateUIPrefs({ font_family: opt.id as any })}
+                          className="flex flex-col items-start gap-2 px-4 py-3 rounded-lg border transition-all text-left"
+                          style={{
+                            borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
+                            background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
+                          }}>
+                          <div
+                            className="text-base"
+                            style={{
+                              color: 'var(--text-primary)',
+                              fontFamily:
+                                opt.id === 'opendyslexic' ? "'OpenDyslexic', sans-serif" :
+                                opt.id === 'atkinson' ? "'Atkinson Hyperlegible', sans-serif" :
+                                "'Inter', sans-serif",
+                            }}>
+                            {opt.preview}
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold" style={{ color: selected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{opt.label}</div>
+                            <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{opt.desc}</div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Style sérif / sans-sérif — uniquement pertinent pour Inter */}
+                <div className="mb-6">
+                  <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Style</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { id: 'sans', label: 'Sans empattement', desc: 'Neutre, moderne.' },
+                      { id: 'serif', label: 'Avec empattement', desc: 'Classique, plus littéraire.' },
+                    ].map(opt => {
+                      const selected = uiPrefs.font_style === opt.id
+                      const disabled = uiPrefs.font_family !== 'inter'
+                      return (
+                        <button key={opt.id} onClick={() => !disabled && updateUIPrefs({ font_style: opt.id as any })}
+                          disabled={disabled}
+                          className="flex flex-col items-start gap-1 px-4 py-3 rounded-lg border transition-all text-left disabled:opacity-40 disabled:cursor-not-allowed"
+                          style={{
+                            borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
+                            background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
+                          }}>
+                          <div className="text-sm font-semibold" style={{ color: selected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{opt.label}</div>
+                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{opt.desc}</div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {uiPrefs.font_family !== 'inter' && (
+                    <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>
+                      Ce réglage ne s'applique qu'à la police Inter.
+                    </p>
+                  )}
+                </div>
+
+                {/* Taille */}
+                <div className="mb-6">
+                  <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Taille du texte</label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { id: 'small', label: 'Petite' },
+                      { id: 'normal', label: 'Normale' },
+                      { id: 'large', label: 'Grande' },
+                    ].map(opt => {
+                      const selected = uiPrefs.font_size === opt.id
+                      return (
+                        <button key={opt.id} onClick={() => updateUIPrefs({ font_size: opt.id as any })}
+                          className="px-4 py-3 rounded-lg border transition-all text-center"
+                          style={{
+                            borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
+                            background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
+                            color: selected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                            fontSize: opt.id === 'small' ? 13 : opt.id === 'large' ? 17 : 15,
+                          }}>
+                          {opt.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Interligne */}
+                <div>
+                  <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Interligne</label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { id: 'tight', label: 'Serré', lh: 1.35 },
+                      { id: 'normal', label: 'Normal', lh: 1.55 },
+                      { id: 'loose', label: 'Aéré', lh: 1.8 },
+                    ].map(opt => {
+                      const selected = uiPrefs.line_spacing === opt.id
+                      return (
+                        <button key={opt.id} onClick={() => updateUIPrefs({ line_spacing: opt.id as any })}
+                          className="px-4 py-3 rounded-lg border transition-all text-left"
+                          style={{
+                            borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
+                            background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
+                          }}>
+                          <div className="text-sm font-semibold mb-1" style={{ color: selected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{opt.label}</div>
+                          <div className="text-[11px]" style={{ color: 'var(--text-muted)', lineHeight: opt.lh }}>
+                            Deux lignes d'aperçu<br />pour jauger l'interligne.
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
               </div>
+
               <div>
                 <label className="flex items-center gap-3 text-[var(--text-secondary)] mb-3"><RefreshCw className="w-4 h-4" />{t('settings.updates')}</label>
                 <div className="space-y-3">
@@ -939,140 +1040,6 @@ export default function Settings() {
                     <input type="checkbox" className="w-4 h-4 rounded bg-[var(--bg-primary)] border-[var(--border)] accent-red-600" />
                     <span className="text-[var(--text-secondary)]">{t('settings.autoUpdate')}</span>
                   </label>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* -- Accessibilité --------------------------------------------- */}
-          {activeTab === 'accessibility' && (
-            <div className="space-y-8">
-              <div>
-                <h3 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Accessibilité & typographie</h3>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  Ces préférences sont enregistrées par utilisateur et s'appliquent immédiatement à toute l'interface.
-                </p>
-              </div>
-
-              {/* Famille de police */}
-              <div>
-                <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3"><Type className="w-4 h-4" />Police</label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    { id: 'inter', label: 'Inter', desc: 'Police par défaut, lisible.', preview: 'Aa Bb Cc 012' },
-                    { id: 'atkinson', label: 'Atkinson Hyperlegible', desc: 'Conçue pour la basse vision.', preview: 'Aa Bb Cc 012' },
-                    { id: 'opendyslexic', label: 'OpenDyslexic', desc: 'Aide à réduire les inversions de lettres.', preview: 'Aa Bb Cc 012' },
-                  ].map(opt => {
-                    const selected = uiPrefs.font_family === opt.id
-                    return (
-                      <button key={opt.id} onClick={() => updateUIPrefs({ font_family: opt.id as any })}
-                        className="flex flex-col items-start gap-2 px-4 py-3 rounded-lg border transition-all text-left"
-                        style={{
-                          borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
-                          background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
-                        }}>
-                        <div
-                          className="text-base"
-                          style={{
-                            color: 'var(--text-primary)',
-                            fontFamily:
-                              opt.id === 'opendyslexic' ? "'OpenDyslexic', sans-serif" :
-                              opt.id === 'atkinson' ? "'Atkinson Hyperlegible', sans-serif" :
-                              "'Inter', sans-serif",
-                          }}>
-                          {opt.preview}
-                        </div>
-                        <div>
-                          <div className="text-sm font-semibold" style={{ color: selected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{opt.label}</div>
-                          <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{opt.desc}</div>
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Style sérif / sans-sérif — uniquement pertinent pour Inter */}
-              <div>
-                <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Style</label>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { id: 'sans', label: 'Sans empattement', desc: 'Neutre, moderne.' },
-                    { id: 'serif', label: 'Avec empattement', desc: 'Classique, plus littéraire.' },
-                  ].map(opt => {
-                    const selected = uiPrefs.font_style === opt.id
-                    const disabled = uiPrefs.font_family !== 'inter'
-                    return (
-                      <button key={opt.id} onClick={() => !disabled && updateUIPrefs({ font_style: opt.id as any })}
-                        disabled={disabled}
-                        className="flex flex-col items-start gap-1 px-4 py-3 rounded-lg border transition-all text-left disabled:opacity-40 disabled:cursor-not-allowed"
-                        style={{
-                          borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
-                          background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
-                        }}>
-                        <div className="text-sm font-semibold" style={{ color: selected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{opt.label}</div>
-                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{opt.desc}</div>
-                      </button>
-                    )
-                  })}
-                </div>
-                {uiPrefs.font_family !== 'inter' && (
-                  <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>
-                    Ce réglage ne s'applique qu'à la police Inter.
-                  </p>
-                )}
-              </div>
-
-              {/* Taille */}
-              <div>
-                <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Taille du texte</label>
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { id: 'small', label: 'Petite' },
-                    { id: 'normal', label: 'Normale' },
-                    { id: 'large', label: 'Grande' },
-                  ].map(opt => {
-                    const selected = uiPrefs.font_size === opt.id
-                    return (
-                      <button key={opt.id} onClick={() => updateUIPrefs({ font_size: opt.id as any })}
-                        className="px-4 py-3 rounded-lg border transition-all text-center"
-                        style={{
-                          borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
-                          background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
-                          color: selected ? 'var(--text-primary)' : 'var(--text-secondary)',
-                          fontSize: opt.id === 'small' ? 13 : opt.id === 'large' ? 17 : 15,
-                        }}>
-                        {opt.label}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Interligne */}
-              <div>
-                <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Interligne</label>
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { id: 'tight', label: 'Serré', lh: 1.35 },
-                    { id: 'normal', label: 'Normal', lh: 1.55 },
-                    { id: 'loose', label: 'Aéré', lh: 1.8 },
-                  ].map(opt => {
-                    const selected = uiPrefs.line_spacing === opt.id
-                    return (
-                      <button key={opt.id} onClick={() => updateUIPrefs({ line_spacing: opt.id as any })}
-                        className="px-4 py-3 rounded-lg border transition-all text-left"
-                        style={{
-                          borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
-                          background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
-                        }}>
-                        <div className="text-sm font-semibold mb-1" style={{ color: selected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{opt.label}</div>
-                        <div className="text-[11px]" style={{ color: 'var(--text-muted)', lineHeight: opt.lh }}>
-                          Deux lignes d'aperçu<br />pour jauger l'interligne.
-                        </div>
-                      </button>
-                    )
-                  })}
                 </div>
               </div>
             </div>
