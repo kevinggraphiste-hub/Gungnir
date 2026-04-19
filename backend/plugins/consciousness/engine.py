@@ -82,6 +82,14 @@ DEFAULT_CONFIG = {
             "enabled": False,
             "check_interval_minutes": 15,
         },
+        # Decay naturel : les bumps (score pressure, trigger_need, auto-impulses)
+        # font grimper state.urgency. Sans décroissance, tout sature à 1.0.
+        # Chaque tick, on interpole vers baseline avec half_life_hours.
+        "natural_decay": {
+            "enabled": True,
+            "half_life_hours": 12,
+            "baseline": 0.1,
+        },
         "needs": {
             "survival": {"priority": 5, "decay_rate": 0.05, "triggers": ["backup_failed", "error_in_logs", "disk_low"]},
             "integrity": {"priority": 4, "decay_rate": 0.10, "triggers": ["promise_unkept", "journal_missed", "bias_detected"]},
@@ -138,7 +146,16 @@ DEFAULT_CONFIG = {
     "working_memory": {
         "enabled": True,
         "max_items": 20,
-        "ttl_hours": 24
+        "ttl_hours": 24,
+        # Consolidation : périodiquement, un LLM résume la working memory +
+        # pensées + scores en un paragraphe cohérent, stocké en vector memory
+        # comme trace long-terme. N'efface pas la working memory — le TTL
+        # s'en charge naturellement. Opt-in dépend de reward + vector ready.
+        "consolidation": {
+            "enabled": True,
+            "interval_hours": 12,
+            "min_items": 3,
+        },
     },
     "vector_memory": {
         "vector_provider": "none",
@@ -617,6 +634,73 @@ class ConsciousnessEngine:
         self._state["mood"] = new_mood
         self.save_state()
         return new_mood
+
+    def apply_natural_decay(self) -> bool:
+        """Décroissance exponentielle de state.urgency vers baseline.
+
+        Appelé à chaque tick (local, pas de LLM). Complémentaire à
+        calculate_urgencies qui, elle, modélise la croissance temps-depuis-
+        fulfillment sans toucher au state. Ici on annule progressivement les
+        bumps accumulés (score pressure, trigger_need, impulse residuals) pour
+        que les urgences redescendent quand plus rien ne les alimente.
+
+        Retourne True si au moins un besoin a été modifié.
+        """
+        vol_cfg = self._config.get("volition", {}) or {}
+        decay_cfg = vol_cfg.get("natural_decay", {}) or {}
+        if not decay_cfg.get("enabled", True):
+            return False
+
+        try:
+            half_life = float(decay_cfg.get("half_life_hours", 12))
+        except (TypeError, ValueError):
+            half_life = 12.0
+        if half_life <= 0:
+            return False
+        try:
+            baseline = float(decay_cfg.get("baseline", 0.1))
+        except (TypeError, ValueError):
+            baseline = 0.1
+        baseline = max(0.0, min(1.0, baseline))
+
+        now = datetime.now(timezone.utc)
+        last = self._state.get("last_urgency_decay")
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                hours = (now - last_dt).total_seconds() / 3600
+            except Exception:
+                hours = 0.0
+        else:
+            hours = 0.0
+
+        # Ne pas bouger pour une micro-durée (évite la lenteur numérique
+        # cumulée + réduit les writes inutiles).
+        if hours < (1.0 / 60):
+            return False
+
+        # Interpolation exponentielle : u(t+Δ) = baseline + (u-baseline) * 0.5^(Δ/half_life)
+        decay_factor = 0.5 ** (hours / half_life)
+        needs = self._state.get("volition", {}).get("needs", {})
+        changed = False
+        for _, need in needs.items():
+            u = float(need.get("urgency", 0.0))
+            if u <= baseline:
+                continue
+            new_u = baseline + (u - baseline) * decay_factor
+            if abs(new_u - u) >= 0.002:
+                need["urgency"] = round(new_u, 3)
+                changed = True
+
+        self._state["last_urgency_decay"] = _now()
+        if changed:
+            self.save_state()
+        else:
+            # On persiste quand même le timestamp pour que le prochain tick ne
+            # recompute pas depuis très longtemps (sinon la première valeur
+            # réelle ferait un saut brutal).
+            self.save_state()
+        return changed
 
     def apply_score_pressure_to_volition(self) -> Optional[str]:
         """Pousse un besoin quand la moyenne récente est basse.

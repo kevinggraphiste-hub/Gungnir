@@ -24,6 +24,7 @@ DEFAULT_THINK_INTERVAL_MINUTES = 10
 DEFAULT_CHALLENGER_INTERVAL_MINUTES = 60
 DEFAULT_SIMULATION_INTERVAL_MINUTES = 30
 DEFAULT_IMPULSE_CHECK_INTERVAL_MINUTES = 15
+DEFAULT_CONSOLIDATION_INTERVAL_HOURS = 12
 
 # When an LLM invocation fails because no API key is configured, backoff before
 # retrying so the logs don't spam every tick until the user sets a provider.
@@ -742,6 +743,172 @@ async def _impulse_for_user(user_id: int, force: bool = False) -> int:
     return 1
 
 
+def _build_consolidation_prompt(engine, items: list) -> tuple[str, str]:
+    """Prompt LLM : résumé cohérent de working memory + pensées + scores."""
+    recent_thoughts = engine.get_recent_thoughts(8) if hasattr(engine, "get_recent_thoughts") else []
+    score_summary = engine.get_score_summary() if hasattr(engine, "get_score_summary") else {}
+    state = engine.state or {}
+    mood = state.get("mood", "neutre")
+
+    items_block = "\n".join(
+        f"- [{i.get('category', 'context')}] {i.get('key', '')} : {str(i.get('value',''))[:240]}"
+        for i in items
+    ) or "(vide)"
+
+    thoughts_block = "\n".join(
+        f"- [{t.get('type','obs')}] {str(t.get('content',''))[:200]}"
+        for t in recent_thoughts
+    ) or "(aucune)"
+
+    scores_txt = "(aucun retour encore)"
+    if int(score_summary.get("count") or 0) > 0:
+        scores_txt = (
+            f"moyenne {float(score_summary.get('average') or 0):.2f}, "
+            f"tendance {score_summary.get('trend','stable')}"
+        )
+
+    system = (
+        "Tu es le module de consolidation mémoire de Gungnir. Ton rôle : "
+        "prendre les fragments de mémoire de travail + pensées récentes + "
+        "signaux de feedback, et produire UN paragraphe cohérent (4-8 phrases) "
+        "qui dégage les patterns, insights, conclusions de cette période. "
+        "Pas de liste à puces, pas de méta-commentaire, pas de préambule. "
+        "Écris au présent, à la première personne (le point de vue de Gungnir)."
+    )
+
+    user = (
+        f"Humeur : {mood}\n"
+        f"Retour utilisateur : {scores_txt}\n\n"
+        f"## Mémoire de travail\n{items_block}\n\n"
+        f"## Pensées récentes\n{thoughts_block}\n\n"
+        "Consolide tout ça en un paragraphe narratif qui capte ce que je "
+        "devrais retenir de cette période à long-terme. Concentre-toi sur "
+        "ce qui est non-trivial : patterns, tensions, orientations, "
+        "décisions implicites. Ignore ce qui est purement contextuel."
+    )
+    return system, user
+
+
+async def _consolidate_for_user(user_id: int, force: bool = False) -> bool:
+    """Consolide working memory + pensées en une entrée vector long-terme.
+
+    Retourne True si une consolidation a été effectivement stockée.
+    Respecte l'intervalle (défaut 12h), le cooldown no-key, et la
+    disponibilité de la vector memory (pas de fallback local — le but
+    est justement le long terme).
+    """
+    from backend.plugins.consciousness.engine import consciousness_manager
+    from backend.core.services.llm_invoker import invoke_llm_for_user
+
+    engine = consciousness_manager.get(user_id)
+    if not engine.enabled:
+        return False
+
+    wm_cfg = (engine.config or {}).get("working_memory", {}) or {}
+    cons_cfg = wm_cfg.get("consolidation", {}) or {}
+    if not cons_cfg.get("enabled", True):
+        return False
+
+    # Vector memory obligatoire — sinon on écrirait dans le vide.
+    try:
+        await engine.ensure_vector_ready()
+    except Exception as e:
+        logger.debug(f"Consolidation: vector memory not ready for user {user_id}: {e}")
+        return False
+    if not getattr(engine, "vector_memory", None):
+        return False
+
+    now = _now()
+    if not force:
+        interval_hours = float(cons_cfg.get("interval_hours", DEFAULT_CONSOLIDATION_INTERVAL_HOURS))
+        last_cons = _parse_iso((engine.state or {}).get("last_consolidation"))
+        if last_cons is not None:
+            elapsed_h = (now - last_cons).total_seconds() / 3600
+            if elapsed_h < interval_hours:
+                return False
+
+        # Cooldown no-key partagé
+        cooldown_until = _parse_iso((engine.state or {}).get("background_think_cooldown_until"))
+        if cooldown_until and now < cooldown_until:
+            return False
+
+    # get_working_memory filtre le TTL mais ne persiste pas — on le fait ici
+    # pour garder le disque propre et éviter que les items expirés ré-apparaissent.
+    items = engine.get_working_memory()
+    min_items = int(cons_cfg.get("min_items", 3))
+    if len(items) < min_items:
+        # Pas assez de matière, on reporte à la prochaine fois — mais on
+        # persiste le timestamp pour éviter de re-tenter à chaque tick.
+        if force:
+            logger.info(f"Consolidation forced for user {user_id} but only {len(items)} items (min {min_items})")
+        return False
+    try:
+        engine.save_all()
+    except Exception:
+        pass
+
+    system_prompt, user_prompt = _build_consolidation_prompt(engine, items)
+
+    logger.info(f"Consolidation tick for user {user_id} ({len(items)} items)")
+    result = await invoke_llm_for_user(user_id, user_prompt, system_prompt=system_prompt)
+
+    if not result.get("ok") and _is_no_key_error(result.get("error") or ""):
+        from backend.plugins.consciousness.challenger_llm import pick_fallback_llm
+        fb_provider, fb_model = await pick_fallback_llm(user_id)
+        if fb_provider:
+            result = await invoke_llm_for_user(
+                user_id, user_prompt, system_prompt=system_prompt,
+                provider=fb_provider, model=fb_model,
+            )
+
+    if not result.get("ok"):
+        err = result.get("error") or ""
+        if _is_no_key_error(err) and not force:
+            until = now + timedelta(minutes=NO_KEY_COOLDOWN_MINUTES)
+            engine.state["background_think_cooldown_until"] = until.isoformat()
+            try:
+                engine.save_state()
+            except Exception:
+                pass
+        logger.warning(f"Consolidation failed for user {user_id}: {err}")
+        return False
+
+    content = (result.get("content") or "").strip()
+    if not content:
+        logger.warning(f"Consolidation empty for user {user_id}")
+        return False
+
+    # Stockage en vector memory avec catégorie 'consolidation' pour pouvoir
+    # requêter spécifiquement la trace long-terme plus tard.
+    memory_id = f"consolidation_{now.strftime('%Y%m%d%H%M%S')}"
+    try:
+        ok = await engine.vector_memory.store_memory(
+            memory_id=memory_id,
+            content=content,
+            category="consolidation",
+            key=f"consolidation_{now.strftime('%Y-%m-%d')}",
+        )
+    except Exception as e:
+        logger.exception(f"Consolidation vector store failed for user {user_id}: {e}")
+        return False
+
+    if not ok:
+        logger.warning(f"Consolidation vector store returned False for user {user_id}")
+        return False
+
+    engine.state["last_consolidation"] = now.isoformat()
+    # Compteur stats pour l'UI
+    stats = engine.state.get("stats", {})
+    stats["consolidations"] = stats.get("consolidations", 0) + 1
+    try:
+        engine.save_state()
+    except Exception:
+        pass
+
+    logger.info(f"Consolidation stored for user {user_id} (id={memory_id})")
+    return True
+
+
 def _apply_score_conditioning(user_id: int) -> None:
     """Applique mood auto + pression volition depuis les scores du user.
 
@@ -761,6 +928,10 @@ def _apply_score_conditioning(user_id: int) -> None:
     pressed = engine.apply_score_pressure_to_volition()
     if pressed:
         logger.info(f"Score pressure applied on need '{pressed}' for user {user_id}")
+
+    # Décroissance naturelle : rééquilibre les bumps (pressure, triggers,
+    # résidus d'impulses) pour que les urgences redescendent sans intervention.
+    engine.apply_natural_decay()
 
 
 async def _tick_once():
@@ -782,6 +953,7 @@ async def _tick_once():
         challenger_on = False
         simulation_on = False
         impulse_on = False
+        consolidation_on = False
         config_file = user_dir / "config.json"
         if config_file.exists():
             try:
@@ -794,6 +966,8 @@ async def _tick_once():
                 simulation_on = bool((cfg.get("simulation", {}) or {}).get("enabled"))
                 vol = cfg.get("volition", {}) or {}
                 impulse_on = bool((vol.get("auto_impulses") or {}).get("enabled"))
+                wm = cfg.get("working_memory", {}) or {}
+                consolidation_on = bool((wm.get("consolidation") or {}).get("enabled", True))
             except Exception:
                 continue
 
@@ -820,6 +994,12 @@ async def _tick_once():
                 await _impulse_for_user(user_id)
             except Exception as e:
                 logger.exception(f"Impulse pass crashed for user {user_id}: {e}")
+
+        if consolidation_on:
+            try:
+                await _consolidate_for_user(user_id)
+            except Exception as e:
+                logger.exception(f"Consolidation pass crashed for user {user_id}: {e}")
 
         # Conditionnement local (mood + volition) depuis les scores 👍/👎.
         # Aucun appel LLM, donc pas de gate no-key : on tourne toujours si

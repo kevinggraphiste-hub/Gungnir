@@ -277,6 +277,18 @@ async def clear_working_memory(request: Request):
     return {"ok": True}
 
 
+@router.post("/memory/consolidate-now")
+async def consolidate_now(request: Request):
+    """Force une consolidation mémoire immédiate (ignore interval)."""
+    uid = _require_uid(request)
+    try:
+        from . import _consolidate_for_user
+        ok = await _consolidate_for_user(uid, force=True)
+        return {"ok": True, "consolidated": bool(ok)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 # ── Reward ──────────────────────────────────────────────────────────────────
 
 @router.get("/reward")
