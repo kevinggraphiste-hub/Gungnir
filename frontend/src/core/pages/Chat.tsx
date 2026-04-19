@@ -491,11 +491,20 @@ export default function Chat() {
   // File/image attachments
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; type: string; dataUrl: string; preview?: string }[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  const dragCounterRef = useRef(0)
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files) return
+  const ACCEPTED_EXTENSIONS = ['txt','md','json','csv','xml','html','py','js','ts','tsx','jsx','css','yaml','yml','log','sql','sh','bat']
+
+  const isAcceptedFile = (file: File) => {
+    if (file.type.startsWith('image/')) return true
+    const ext = file.name.split('.').pop()?.toLowerCase() || ''
+    return ACCEPTED_EXTENSIONS.includes(ext)
+  }
+
+  const processFiles = (files: FileList | File[]) => {
     Array.from(files).forEach(file => {
+      if (!isAcceptedFile(file)) return
       const reader = new FileReader()
       reader.onload = () => {
         const dataUrl = reader.result as string
@@ -508,7 +517,55 @@ export default function Chat() {
       }
       reader.readAsDataURL(file)
     })
+  }
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+    processFiles(files)
     e.target.value = ''
+  }
+
+  const hasFiles = (e: React.DragEvent) => {
+    const types = e.dataTransfer?.types
+    if (!types) return false
+    for (let i = 0; i < types.length; i++) {
+      if (types[i] === 'Files') return true
+    }
+    return false
+  }
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current += 1
+    setIsDraggingFiles(true)
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1)
+    if (dragCounterRef.current === 0) setIsDraggingFiles(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current = 0
+    setIsDraggingFiles(false)
+    const files = e.dataTransfer?.files
+    if (files && files.length > 0) processFiles(files)
   }
 
   const removeAttachment = (idx: number) => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))
@@ -1740,7 +1797,21 @@ export default function Chat() {
         </div>
 
         {/* Input area — nouvelle boîte unifiée (header + textarea + footer) */}
-        <div className="px-5 py-4" style={{ background: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)', display: activeAutomataTaskId ? 'none' : undefined }}>
+        <div className="px-5 py-4 relative" style={{ background: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)', display: activeAutomataTaskId ? 'none' : undefined }}
+          onDragEnter={handleDragEnter} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
+          {isDraggingFiles && (
+            <div className="absolute inset-2 rounded-2xl flex items-center justify-center pointer-events-none z-10"
+              style={{
+                background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)',
+                border: '2px dashed var(--accent-primary)',
+                color: 'var(--accent-primary)',
+              }}>
+              <div className="flex flex-col items-center gap-2">
+                <Paperclip className="w-6 h-6" />
+                <span className="text-sm font-medium">Déposez vos fichiers ici</span>
+              </div>
+            </div>
+          )}
           <div className="max-w-4xl mx-auto">
             {/* Aperçu fichiers joints (au-dessus de la boîte) */}
             {attachedFiles.length > 0 && (
