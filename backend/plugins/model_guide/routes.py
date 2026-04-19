@@ -263,12 +263,20 @@ async def get_catalog(request: Request, session: AsyncSession = Depends(get_sess
             logger.warning(f"Model catalog: user settings lookup failed: {e}")
 
     def _user_key_for(pname: str) -> tuple[str | None, str | None]:
-        """Return (api_key, base_url) for the current user, or (None, None)."""
+        """Return (api_key, base_url) for the current user, or (None, None).
+
+        Un provider compte comme configuré s'il a SOIT une api_key SOIT un
+        base_url (cas d'Ollama qui tourne en local sans clé, ou d'un proxy
+        auto-hébergé). Sans ça, le catalogue masquait Ollama partout alors
+        qu'il était bien réglé dans les provider keys utilisateur.
+        """
         if user_settings_row is None:
             return None, None
-        decoded = get_user_provider_key(user_settings_row, pname)
-        if decoded and decoded.get("api_key"):
-            return decoded["api_key"], decoded.get("base_url")
+        decoded = get_user_provider_key(user_settings_row, pname) or {}
+        api_key = decoded.get("api_key") or None
+        base_url = decoded.get("base_url") or None
+        if api_key or base_url:
+            return api_key, base_url
         return None, None
 
     for provider_name, provider_config in settings.providers.items():
@@ -327,18 +335,19 @@ async def get_catalog(request: Request, session: AsyncSession = Depends(get_sess
             catalog[provider_name] = {
                 "provider": provider_name,
                 "enabled": True,
-                "has_api_key": bool(_uapi_key),
+                "has_api_key": bool(_uapi_key or _ubase_url),
                 "default_model": provider_config.default_model,
                 "model_count": len(enriched),
                 "models": sorted(enriched, key=lambda x: x["name"].lower()),
             }
         else:
-            # Non-OpenRouter: try dynamic listing with the user's own key first
+            # Non-OpenRouter: try dynamic listing with the user's own key first.
+            # Ollama est keyless : un base_url suffit à autoriser le listing.
             dynamic_models = []
-            if _uapi_key:
+            if _uapi_key or _ubase_url:
                 try:
                     _bu = _ubase_url or provider_config.base_url
-                    provider = get_provider(provider_name, _uapi_key, _bu)
+                    provider = get_provider(provider_name, _uapi_key or "", _bu)
                     dynamic_models = await provider.list_models()
                 except Exception as e:
                     logger.warning(f"Dynamic model listing failed for {provider_name}: {e}")
@@ -391,7 +400,7 @@ async def get_catalog(request: Request, session: AsyncSession = Depends(get_sess
             catalog[provider_name] = {
                 "provider": provider_name,
                 "enabled": True,
-                "has_api_key": bool(_uapi_key),
+                "has_api_key": bool(_uapi_key or _ubase_url),
                 "default_model": provider_config.default_model,
                 "model_count": len(enriched),
                 "models": sorted(enriched, key=lambda x: x["name"].lower()),
