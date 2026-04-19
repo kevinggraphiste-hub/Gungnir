@@ -102,6 +102,9 @@ async def _describe_images_for_blind_model(
     user_message: str,
     settings,
     user_settings=None,
+    session=None,
+    convo_id: int | None = None,
+    user_id: int | None = None,
 ) -> str:
     """Utilise un modèle multimodal disponible pour décrire les images en texte.
 
@@ -144,6 +147,21 @@ async def _describe_images_for_blind_model(
                 images=images,
             )
             resp = await provider.chat([desc_msg], fallback_model)
+            # Trace le coût du fallback vision pour que l'analytics capte
+            # cet appel caché (sinon invisible dans le tableau de bord).
+            if session is not None and convo_id is not None:
+                try:
+                    from backend.core.cost.manager import get_cost_manager
+                    await get_cost_manager().record_message_cost(
+                        session,
+                        convo_id,
+                        resp.model or fallback_model,
+                        resp.tokens_input or 0,
+                        resp.tokens_output or 0,
+                        user_id=user_id,
+                    )
+                except Exception as _vc_err:
+                    print(f"[Wolf] Vision fallback cost recording skipped: {_vc_err}")
             return resp.content
         except Exception as e:
             print(f"[Wolf] Vision fallback with {prov_name} failed: {e}")
@@ -834,7 +852,9 @@ async def _chat_impl(
             except Exception:
                 _caller_user_settings = None
         description = await _describe_images_for_blind_model(
-            user_images, message, settings, user_settings=_caller_user_settings
+            user_images, message, settings,
+            user_settings=_caller_user_settings,
+            session=session, convo_id=convo_id, user_id=user_id,
         )
         message = f"{message}\n\n[Description des images jointes par un modèle vision :\n{description}]"
         user_images = []  # Ne pas envoyer les images au modèle non-vision
@@ -1246,6 +1266,23 @@ Tu operes en mode **demande**. Comportement :
                     chosen_model,
                 )
 
+            # Trace le coût de CE round (sinon seul le round final serait
+            # enregistré et les rounds intermédiaires tool-calling disparaîtraient
+            # des analytics).
+            if response is not None:
+                try:
+                    from backend.core.cost.manager import get_cost_manager
+                    await get_cost_manager().record_message_cost(
+                        session,
+                        convo_id,
+                        response.model or chosen_model,
+                        response.tokens_input or 0,
+                        response.tokens_output or 0,
+                        user_id=_current_uid or None,
+                    )
+                except Exception as _round_err:
+                    print(f"[Wolf] Round cost recording skipped: {_round_err}")
+
             # Si le gateway a deja tout gere, on sort au premier tour
             if _gateway_handled and _round == 0 and response and response.content:
                 if not detect_web_refusal(response.content):
@@ -1411,19 +1448,9 @@ Tu operes en mode **demande**. Comportement :
 
         await session.commit()
 
-        try:
-            from backend.core.cost.manager import get_cost_manager
-            cost_manager = get_cost_manager()
-            await cost_manager.record_message_cost(
-                session,
-                convo_id,
-                response.model,
-                response.tokens_input,
-                response.tokens_output,
-                user_id=_current_uid or None,
-            )
-        except Exception as _cost_err:
-            print(f"[Wolf] Cost recording skipped: {_cost_err}")
+        # Note: le coût est déjà enregistré tour par tour dans la boucle
+        # tool-calling ci-dessus ; pas d'enregistrement final séparé ici pour
+        # éviter un double comptage du dernier round.
 
         if conv_result:
             await session.refresh(conv_result)

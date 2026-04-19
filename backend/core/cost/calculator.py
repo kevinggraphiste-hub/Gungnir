@@ -70,6 +70,7 @@ MODEL_PRICING = {
     "mistralai/mixtral-8x7b-instruct": {"input": 0.24, "output": 0.24},
     # ── Xiaomi ────────────────────────────────────────────────────────────────
     "xiaomi/mimo-v2-pro": {"input": 0.1, "output": 0.3},
+    "xiaomi/mimo-v2-omni": {"input": 0.2, "output": 0.6},
     # ── Qwen ──────────────────────────────────────────────────────────────────
     "qwen/qwen-2.5-72b-instruct": {"input": 0.4, "output": 0.4},
     "qwen/qwen-2.5-coder-32b-instruct": {"input": 0.2, "output": 0.2},
@@ -121,7 +122,10 @@ def extract_model_from_response(response_model: str) -> str:
 
     # Fuzzy matching — ordered from specific to general
     patterns = [
-        # Xiaomi
+        # Xiaomi (specific first — omni supporte la vision, pro non)
+        ("mimo-v2-omni", "xiaomi/mimo-v2-omni"),
+        ("mimo-omni", "xiaomi/mimo-v2-omni"),
+        ("mimo-v2-pro", "xiaomi/mimo-v2-pro"),
         ("mimo", "xiaomi/mimo-v2-pro"),
         # Anthropic (specific first)
         ("claude-opus-4", "anthropic/claude-opus-4-6"),
