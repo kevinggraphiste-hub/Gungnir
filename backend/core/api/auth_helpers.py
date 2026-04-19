@@ -2,14 +2,40 @@
 Gungnir — Auth helpers for per-user isolation
 Provides utilities to get current user, their API keys, and enforce ownership.
 """
+import logging
+
 from fastapi import Request, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from backend.core.db.models import User, UserSettings, Conversation
 from backend.core.db.engine import get_session
 from backend.core.config.settings import encrypt_value, decrypt_value
+
+logger = logging.getLogger("gungnir.auth_helpers")
+
+
+async def open_mode_fallback_user_id(session: AsyncSession) -> int | None:
+    """Return user #1 ONLY if it's the single user in the DB.
+
+    Used by legacy open/setup-mode endpoints that need to behave as if the
+    lone admin was calling. Returns None as soon as a second user exists, so
+    unauthenticated calls can no longer read or write credentials belonging
+    to the first user (cross-user leak prevention).
+    """
+    count_row = await session.execute(select(func.count()).select_from(User))
+    user_count = count_row.scalar() or 0
+    if user_count != 1:
+        if user_count > 1:
+            logger.warning(
+                "Refused open-mode fallback to user #1: %d users in DB (auth required)",
+                user_count,
+            )
+        return None
+    row = await session.execute(select(User).order_by(User.id).limit(1))
+    user = row.scalar()
+    return user.id if user else None
 
 
 async def get_current_user_id(request: Request) -> int | None:

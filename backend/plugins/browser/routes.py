@@ -25,6 +25,7 @@ from backend.core.db.engine import get_session
 from backend.core.db.models import HuntRSearch
 from backend.core.api.auth_helpers import (
     get_user_settings, get_user_provider_key, get_user_service_key,
+    open_mode_fallback_user_id,
 )
 
 from .search_providers import DDGProvider, TavilyProvider, SearchResult, VALID_TOPICS
@@ -58,8 +59,15 @@ class SearchRequest(BaseModel):
 
 # ── Per-user helpers ─────────────────────────────────────────────────────
 
-def _uid(request: Request) -> int:
-    return getattr(request.state, "user_id", None) or 1
+async def _uid(request: Request, session: AsyncSession) -> int:
+    """Return the caller's user_id. In open mode we only fall back to user #1
+    if it's the SOLE user in the DB — otherwise we refuse to resolve (returns
+    0) to prevent cross-user leakage of API keys/services."""
+    uid = getattr(request.state, "user_id", None)
+    if uid:
+        return uid
+    fallback = await open_mode_fallback_user_id(session)
+    return fallback or 0
 
 
 async def _resolve_tavily(user_id: int, session: AsyncSession) -> TavilyProvider | None:
@@ -636,7 +644,9 @@ async def _save_to_history(
 @router.post("/search/stream")
 async def search_stream(req: SearchRequest, request: Request,
                         session: AsyncSession = Depends(get_session)):
-    uid = _uid(request)
+    uid = await _uid(request, session)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise."}, status_code=401)
     topic = req.safe_topic()
 
     # ── Resolve per-user resources BEFORE the stream ─────────────────
@@ -922,7 +932,9 @@ _MAX_CUSTOM_FORMAT_LEN = 4000
 
 @router.get("/preferences")
 async def get_preferences(request: Request, session: AsyncSession = Depends(get_session)):
-    uid = _uid(request)
+    uid = await _uid(request, session)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise."}, status_code=401)
     us = await get_user_settings(uid, session)
     cfg = us.huntr_config or {}
     return {
@@ -933,7 +945,9 @@ async def get_preferences(request: Request, session: AsyncSession = Depends(get_
 @router.put("/preferences")
 async def put_preferences(prefs: HuntRPreferences, request: Request,
                           session: AsyncSession = Depends(get_session)):
-    uid = _uid(request)
+    uid = await _uid(request, session)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise."}, status_code=401)
     us = await get_user_settings(uid, session)
     cfg = dict(us.huntr_config or {})
     fmt = (prefs.custom_format or "").strip()
@@ -956,7 +970,9 @@ async def put_preferences(prefs: HuntRPreferences, request: Request,
 @router.get("/history")
 async def get_history(request: Request, limit: int = 30, favorites_only: bool = False,
                       session: AsyncSession = Depends(get_session)):
-    uid = _uid(request)
+    uid = await _uid(request, session)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise."}, status_code=401)
     stmt = select(HuntRSearch).where(HuntRSearch.user_id == uid)
     if favorites_only:
         stmt = stmt.where(HuntRSearch.is_favorite == True)
@@ -970,7 +986,9 @@ async def get_history(request: Request, limit: int = 30, favorites_only: bool = 
 async def clear_history(request: Request, keep_favorites: bool = True,
                         session: AsyncSession = Depends(get_session)):
     """Clear the user's history. By default keeps favorites."""
-    uid = _uid(request)
+    uid = await _uid(request, session)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise."}, status_code=401)
     stmt = delete(HuntRSearch).where(HuntRSearch.user_id == uid)
     if keep_favorites:
         stmt = stmt.where(HuntRSearch.is_favorite == False)
@@ -982,7 +1000,9 @@ async def clear_history(request: Request, keep_favorites: bool = True,
 @router.delete("/history/{entry_id}")
 async def delete_entry(entry_id: int, request: Request,
                        session: AsyncSession = Depends(get_session)):
-    uid = _uid(request)
+    uid = await _uid(request, session)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise."}, status_code=401)
     row = await session.get(HuntRSearch, entry_id)
     if not row or row.user_id != uid:
         raise HTTPException(status_code=404, detail="Entrée introuvable")
@@ -994,7 +1014,9 @@ async def delete_entry(entry_id: int, request: Request,
 @router.post("/history/{entry_id}/favorite")
 async def favorite_entry(entry_id: int, request: Request,
                          session: AsyncSession = Depends(get_session)):
-    uid = _uid(request)
+    uid = await _uid(request, session)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise."}, status_code=401)
     row = await session.get(HuntRSearch, entry_id)
     if not row or row.user_id != uid:
         raise HTTPException(status_code=404, detail="Entrée introuvable")
@@ -1006,7 +1028,9 @@ async def favorite_entry(entry_id: int, request: Request,
 @router.delete("/history/{entry_id}/favorite")
 async def unfavorite_entry(entry_id: int, request: Request,
                            session: AsyncSession = Depends(get_session)):
-    uid = _uid(request)
+    uid = await _uid(request, session)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise."}, status_code=401)
     row = await session.get(HuntRSearch, entry_id)
     if not row or row.user_id != uid:
         raise HTTPException(status_code=404, detail="Entrée introuvable")
@@ -1019,7 +1043,9 @@ async def unfavorite_entry(entry_id: int, request: Request,
 async def user_capabilities(request: Request,
                             session: AsyncSession = Depends(get_session)):
     """Check what the current user has configured (for frontend UI)."""
-    uid = _uid(request)
+    uid = await _uid(request, session)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise."}, status_code=401)
     us = await get_user_settings(uid, session)
 
     has_tavily = False

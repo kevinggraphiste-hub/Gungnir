@@ -7,7 +7,12 @@ from backend.core.providers import get_provider
 from backend.core.agents.mcp_client import mcp_manager
 from backend.core.db.engine import get_session
 from backend.core.db.models import MCPServerConfig as DBMCPServerConfig, User
-from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key, get_user_service_key
+from backend.core.api.auth_helpers import (
+    get_user_settings,
+    get_user_provider_key,
+    get_user_service_key,
+    open_mode_fallback_user_id,
+)
 from sqlalchemy import select, delete
 
 router = APIRouter()
@@ -121,14 +126,12 @@ async def configure_voice(
     mode the config is written to user #1 (admin)."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
-        first_user = await session.execute(select(User).order_by(User.id).limit(1))
-        fallback_user = first_user.scalar()
-        if fallback_user is None:
+        user_id = await open_mode_fallback_user_id(session)
+        if user_id is None:
             return JSONResponse(
-                {"error": "Créez un utilisateur avant de configurer la voix (POST /api/users)."},
-                status_code=400,
+                {"error": "Authentification requise pour configurer la voix."},
+                status_code=401,
             )
-        user_id = fallback_user.id
 
     user_settings = await get_user_settings(user_id, session)
     voice_config = dict(user_settings.voice_config or {})
@@ -181,11 +184,12 @@ async def delete_user_voice_config(
     """Remove the current user's voice config entry for a provider."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
-        first_user = await session.execute(select(User).order_by(User.id).limit(1))
-        fallback_user = first_user.scalar()
-        if fallback_user is None:
-            return {"ok": True}
-        user_id = fallback_user.id
+        user_id = await open_mode_fallback_user_id(session)
+        if user_id is None:
+            return JSONResponse(
+                {"error": "Authentification requise."},
+                status_code=401,
+            )
     user_settings = await get_user_settings(user_id, session)
     voice_config = dict(user_settings.voice_config or {})
     if voice_name in voice_config:
@@ -556,15 +560,12 @@ async def save_user_provider(provider_name: str, request: Request, session: Asyn
     body = await request.json()
 
     if not user_id:
-        # Open / setup mode: write to user #1 if it exists. Never to the global.
-        first_user = await session.execute(select(User).order_by(User.id).limit(1))
-        fallback_user = first_user.scalar()
-        if fallback_user is None:
+        user_id = await open_mode_fallback_user_id(session)
+        if user_id is None:
             return JSONResponse(
-                {"error": "Créez un utilisateur avant de configurer les clés API (POST /api/users)."},
-                status_code=400,
+                {"error": "Authentification requise pour configurer les clés API."},
+                status_code=401,
             )
-        user_id = fallback_user.id
 
     user_settings = await get_user_settings(user_id, session)
 
@@ -591,14 +592,15 @@ async def save_user_provider(provider_name: str, request: Request, session: Asyn
 
 @router.delete("/config/user/providers/{provider_name}")
 async def delete_user_provider(provider_name: str, request: Request, session: AsyncSession = Depends(get_session)):
-    """Remove a user's provider key. In open mode, targets user #1."""
+    """Remove a user's provider key."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
-        first_user = await session.execute(select(User).order_by(User.id).limit(1))
-        fallback_user = first_user.scalar()
-        if fallback_user is None:
-            return {"ok": True}
-        user_id = fallback_user.id
+        user_id = await open_mode_fallback_user_id(session)
+        if user_id is None:
+            return JSONResponse(
+                {"error": "Authentification requise."},
+                status_code=401,
+            )
     user_settings = await get_user_settings(user_id, session)
     provider_keys = dict(user_settings.provider_keys or {})
     if provider_name in provider_keys:
@@ -637,14 +639,12 @@ async def save_user_service(service_name: str, request: Request, session: AsyncS
     credentials are written to user #1 (admin) rather than the global store."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
-        first_user = await session.execute(select(User).order_by(User.id).limit(1))
-        fallback_user = first_user.scalar()
-        if fallback_user is None:
+        user_id = await open_mode_fallback_user_id(session)
+        if user_id is None:
             return JSONResponse(
-                {"error": "Créez un utilisateur avant de configurer un service (POST /api/users)."},
-                status_code=400,
+                {"error": "Authentification requise pour configurer un service."},
+                status_code=401,
             )
-        user_id = fallback_user.id
     body = await request.json()
     user_settings = await get_user_settings(user_id, session)
 
@@ -682,15 +682,15 @@ async def save_user_service(service_name: str, request: Request, session: AsyncS
 
 @router.delete("/config/user/services/{service_name}")
 async def delete_user_service(service_name: str, request: Request, session: AsyncSession = Depends(get_session)):
-    """Remove the current user's credentials for a service. In open mode,
-    targets user #1 (admin)."""
+    """Remove the current user's credentials for a service."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
-        first_user = await session.execute(select(User).order_by(User.id).limit(1))
-        fallback_user = first_user.scalar()
-        if fallback_user is None:
-            return {"ok": True}
-        user_id = fallback_user.id
+        user_id = await open_mode_fallback_user_id(session)
+        if user_id is None:
+            return JSONResponse(
+                {"error": "Authentification requise."},
+                status_code=401,
+            )
     user_settings = await get_user_settings(user_id, session)
     service_keys = dict(user_settings.service_keys or {})
     if service_name in service_keys:
@@ -734,15 +734,12 @@ async def save_user_app_settings(request: Request, session: AsyncSession = Depen
     UserSettings.agent_name."""
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
-        # Open/setup mode: persist to user #1 (admin) if they exist, else refuse.
-        first_user = await session.execute(select(User).order_by(User.id).limit(1))
-        fallback_user = first_user.scalar()
-        if fallback_user is None:
+        user_id = await open_mode_fallback_user_id(session)
+        if user_id is None:
             return JSONResponse(
-                {"error": "Créez un utilisateur avant de configurer les préférences (POST /api/users)."},
-                status_code=400,
+                {"error": "Authentification requise pour configurer les préférences."},
+                status_code=401,
             )
-        user_id = fallback_user.id
 
     body = await request.json()
     user_settings = await get_user_settings(user_id, session)

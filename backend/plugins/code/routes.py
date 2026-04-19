@@ -42,24 +42,20 @@ router = APIRouter(dependencies=[Depends(_inject_user_id)])
 
 
 async def _effective_user_id() -> int:
-    """Return the current user id, falling back to user #1 in open/setup mode.
-
-    Mirrors the behaviour of save_user_provider in config_routes.py so that
-    providers saved in open mode are visible back through the plugin's
-    /providers endpoint — otherwise a POST would store on user #1 while the
-    GET would return an empty list.
+    """Return the current user id. In open/setup mode (no auth active) we only
+    fall back to user #1 if they are the SOLE user in the DB — otherwise we
+    refuse to resolve an identity, to prevent cross-user leakage of provider
+    API keys, workspaces and service credentials when a second user exists.
     """
     uid = _current_user_id.get(0) or 0
     if uid > 0:
         return uid
     try:
         from backend.core.db.engine import async_session
-        from backend.core.db.models import User
-        from sqlalchemy import select
+        from backend.core.api.auth_helpers import open_mode_fallback_user_id
         async with async_session() as s:
-            result = await s.execute(select(User).order_by(User.id).limit(1))
-            fallback = result.scalar()
-            return fallback.id if fallback else 0
+            fallback_id = await open_mode_fallback_user_id(s)
+            return fallback_id or 0
     except Exception:
         return 0
 
