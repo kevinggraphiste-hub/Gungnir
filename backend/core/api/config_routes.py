@@ -782,6 +782,10 @@ _UI_DEFAULTS = {
     "font_style": "sans",         # sans | serif
     "font_size": "normal",        # small | normal | large
     "line_spacing": "normal",     # tight | normal | loose
+    "letter_spacing": "normal",   # normal | wide | wider
+    "word_spacing": "normal",     # normal | wide | wider
+    "reduced_motion": False,      # bool
+    "high_contrast": False,       # bool
 }
 
 _UI_ALLOWED = {
@@ -789,6 +793,10 @@ _UI_ALLOWED = {
     "font_style": {"sans", "serif"},
     "font_size": {"small", "normal", "large"},
     "line_spacing": {"tight", "normal", "loose"},
+    "letter_spacing": {"normal", "wide", "wider"},
+    "word_spacing": {"normal", "wide", "wider"},
+    "reduced_motion": {True, False},
+    "high_contrast": {True, False},
 }
 
 

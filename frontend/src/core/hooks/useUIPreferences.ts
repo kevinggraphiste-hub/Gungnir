@@ -18,6 +18,10 @@ export type UIPrefs = {
   font_style: 'sans' | 'serif'
   font_size: 'small' | 'normal' | 'large'
   line_spacing: 'tight' | 'normal' | 'loose'
+  letter_spacing: 'normal' | 'wide' | 'wider'
+  word_spacing: 'normal' | 'wide' | 'wider'
+  reduced_motion: boolean
+  high_contrast: boolean
 }
 
 export const DEFAULT_UI_PREFS: UIPrefs = {
@@ -25,6 +29,10 @@ export const DEFAULT_UI_PREFS: UIPrefs = {
   font_style: 'sans',
   font_size: 'normal',
   line_spacing: 'normal',
+  letter_spacing: 'normal',
+  word_spacing: 'normal',
+  reduced_motion: false,
+  high_contrast: false,
 }
 
 const STORAGE_KEY = 'gungnir_ui_prefs'
@@ -35,6 +43,12 @@ function applyToDOM(prefs: UIPrefs) {
   root.setAttribute('data-fontstyle', prefs.font_style)
   root.setAttribute('data-fontsize-pref', prefs.font_size)
   root.setAttribute('data-linespacing', prefs.line_spacing)
+  root.setAttribute('data-letterspacing', prefs.letter_spacing)
+  root.setAttribute('data-wordspacing', prefs.word_spacing)
+  if (prefs.reduced_motion) root.setAttribute('data-motion', 'reduced')
+  else root.removeAttribute('data-motion')
+  if (prefs.high_contrast) root.setAttribute('data-contrast', 'high')
+  else root.removeAttribute('data-contrast')
 }
 
 function readLocal(): UIPrefs {

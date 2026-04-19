@@ -174,6 +174,8 @@
   --app-font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --app-font-size: 15px;
   --app-line-height: 1.55;
+  --app-letter-spacing: 0;
+  --app-word-spacing: 0;
 }
 
 /* Police principale (avec empattement / sans / OpenDyslexic / Atkinson) */
@@ -200,6 +202,79 @@
 [data-linespacing="normal"] { --app-line-height: 1.55; }
 [data-linespacing="loose"]  { --app-line-height: 1.8; }
 
+/* Espacement des lettres */
+[data-letterspacing="normal"] { --app-letter-spacing: 0; }
+[data-letterspacing="wide"]   { --app-letter-spacing: 0.04em; }
+[data-letterspacing="wider"]  { --app-letter-spacing: 0.1em; }
+
+/* Espacement des mots */
+[data-wordspacing="normal"] { --app-word-spacing: 0; }
+[data-wordspacing="wide"]   { --app-word-spacing: 0.12em; }
+[data-wordspacing="wider"]  { --app-word-spacing: 0.25em; }
+
+/* ── Réduction des animations ──
+   Soit l'OS le demande, soit l'utilisateur l'a activé manuellement.
+   On écrase tout à 0.001ms (pas 0 pour garder les events 'animationend'). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+[data-motion="reduced"] *,
+[data-motion="reduced"] *::before,
+[data-motion="reduced"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ── Contraste élevé (orthogonal aux thèmes) ──
+   Override des variables de couleur pour pousser les extrêmes. */
+[data-contrast="high"] {
+  --text-primary: #ffffff;
+  --text-secondary: #e8e8e8;
+  --text-muted: #b8b8b8;
+  --border: #707070;
+  --border-subtle: #555555;
+  --bg-primary: #000000;
+  --bg-secondary: #070707;
+  --bg-tertiary: #0d0d0d;
+  --bg-card: #000000;
+  --bg-elevated: #141414;
+}
+[data-theme="light"][data-contrast="high"] {
+  --text-primary: #000000;
+  --text-secondary: #171717;
+  --text-muted: #2e2e2e;
+  --border: #404040;
+  --border-subtle: #6a6a6a;
+  --bg-primary: #ffffff;
+  --bg-secondary: #fafafa;
+  --bg-tertiary: #f2f2f2;
+  --bg-card: #ffffff;
+  --bg-elevated: #f5f5f5;
+}
+
+/* ── Focus clavier visible ──
+   :focus-visible ne se déclenche que sur navigation clavier — pas au clic
+   souris — donc invisible pour l'usage courant. */
+:focus { outline: none; }
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -213,6 +288,8 @@ body {
   font-family: var(--app-font-family);
   font-size: var(--app-font-size);
   line-height: var(--app-line-height);
+  letter-spacing: var(--app-letter-spacing);
+  word-spacing: var(--app-word-spacing);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

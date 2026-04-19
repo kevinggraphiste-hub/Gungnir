@@ -1028,6 +1028,89 @@ export default function Settings() {
                     })}
                   </div>
                 </div>
+
+                {/* Espacement des lettres */}
+                <div className="mb-6">
+                  <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Espacement des lettres</label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { id: 'normal', label: 'Normal', ls: '0' },
+                      { id: 'wide',   label: 'Large',  ls: '0.04em' },
+                      { id: 'wider',  label: 'Très large', ls: '0.1em' },
+                    ].map(opt => {
+                      const selected = uiPrefs.letter_spacing === opt.id
+                      return (
+                        <button key={opt.id} onClick={() => updateUIPrefs({ letter_spacing: opt.id as any })}
+                          className="px-4 py-3 rounded-lg border transition-all text-left"
+                          style={{
+                            borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
+                            background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
+                          }}>
+                          <div className="text-sm font-semibold mb-1" style={{ color: selected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{opt.label}</div>
+                          <div className="text-[12px]" style={{ color: 'var(--text-muted)', letterSpacing: opt.ls }}>
+                            Aperçu du texte
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Espacement des mots */}
+                <div className="mb-6">
+                  <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Espacement des mots</label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { id: 'normal', label: 'Normal', ws: '0' },
+                      { id: 'wide',   label: 'Large',  ws: '0.12em' },
+                      { id: 'wider',  label: 'Très large', ws: '0.25em' },
+                    ].map(opt => {
+                      const selected = uiPrefs.word_spacing === opt.id
+                      return (
+                        <button key={opt.id} onClick={() => updateUIPrefs({ word_spacing: opt.id as any })}
+                          className="px-4 py-3 rounded-lg border transition-all text-left"
+                          style={{
+                            borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
+                            background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
+                          }}>
+                          <div className="text-sm font-semibold mb-1" style={{ color: selected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{opt.label}</div>
+                          <div className="text-[12px]" style={{ color: 'var(--text-muted)', wordSpacing: opt.ws }}>
+                            Aperçu du texte ici
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Toggles confort */}
+                <div className="space-y-3">
+                  <label className="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
+                    <input type="checkbox"
+                      checked={uiPrefs.reduced_motion}
+                      onChange={e => updateUIPrefs({ reduced_motion: e.target.checked })}
+                      className="mt-0.5 w-4 h-4 rounded accent-red-600" />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Réduire les animations</div>
+                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        Désactive les transitions et effets de mouvement. S'active aussi automatiquement si le système le demande.
+                      </div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
+                    <input type="checkbox"
+                      checked={uiPrefs.high_contrast}
+                      onChange={e => updateUIPrefs({ high_contrast: e.target.checked })}
+                      className="mt-0.5 w-4 h-4 rounded accent-red-600" />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Contraste élevé</div>
+                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        Renforce les bordures et pousse le texte vers le blanc pur (ou noir pur en thème clair). Cumulable avec le thème actuel.
+                      </div>
+                    </div>
+                  </label>
+                </div>
               </div>
 
               <div>
