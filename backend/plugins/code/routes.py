@@ -1987,11 +1987,291 @@ def _estimate_tokens(text: str) -> int:
     return max(1, int(len(text) / 3.5))
 
 
+# ── Native tool-calling for /ai/chat (function calling) ──────────────────
+
+AI_CHAT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "create_folder",
+            "description": "Créer un dossier dans le workspace. Crée aussi les parents si besoin.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "Chemin relatif au workspace"}},
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_file",
+            "description": "Créer (ou écraser) un fichier texte avec le contenu fourni. Un snapshot est sauvegardé avant l'écrasement.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Chemin relatif au workspace"},
+                    "content": {"type": "string", "description": "Contenu complet du fichier"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "move_file",
+            "description": "Déplacer ou renommer un fichier/dossier.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "src": {"type": "string", "description": "Chemin source relatif au workspace"},
+                    "dst": {"type": "string", "description": "Chemin destination relatif au workspace"},
+                },
+                "required": ["src", "dst"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_file",
+            "description": "Supprimer un fichier ou un dossier (récursif pour les dossiers). Action irréversible — utiliser avec prudence.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Lire le contenu d'un fichier texte du workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "Lister le contenu d'un dossier du workspace. Retourne les fichiers et sous-dossiers.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "Chemin relatif, vide pour la racine"}},
+                "required": [],
+            },
+        },
+    },
+]
+
+
+async def _execute_ai_chat_tool(tool_name: str, args: dict) -> dict:
+    """Execute an AI chat tool inside the current user's workspace.
+
+    Uses _safe_path (which already scopes per-user via ContextVar) and
+    _versions_path for auto-snapshots. Returns a JSON-able dict with
+    ok/error/details fields so the LLM can adapt.
+    """
+    try:
+        if tool_name == "create_folder":
+            path = (args.get("path") or "").strip()
+            if not path:
+                return {"ok": False, "error": "path requis"}
+            target = _safe_path(path)
+            if target.exists():
+                return {"ok": False, "error": f"Le dossier '{path}' existe déjà"}
+            target.mkdir(parents=True, exist_ok=True)
+            logger.info(f"AI tool: folder created: {path}")
+            return {"ok": True, "path": path, "action": "folder_created"}
+
+        elif tool_name == "create_file":
+            path = (args.get("path") or "").strip()
+            content = args.get("content") or ""
+            if not path:
+                return {"ok": False, "error": "path requis"}
+            target = _safe_path(path)
+            if target.exists() and _is_text_file(target):
+                try:
+                    old = target.read_text(encoding="utf-8")
+                    if old:
+                        vdir = _versions_path(path)
+                        vdir.mkdir(parents=True, exist_ok=True)
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                        (vdir / f"{ts}.txt").write_text(old, encoding="utf-8")
+                        (vdir / f"{ts}.json").write_text(json.dumps({
+                            "timestamp": datetime.now().isoformat(),
+                            "label": "Avant écriture IA",
+                            "file_path": path,
+                            "lines": old.count("\n") + 1, "size": len(old),
+                        }, ensure_ascii=False), encoding="utf-8")
+                        # Enforce max 20 versions per file
+                        txts = sorted(vdir.glob("*.txt"))
+                        while len(txts) > 20:
+                            old_v = txts.pop(0)
+                            old_v.unlink(missing_ok=True)
+                            old_v.with_suffix(".json").unlink(missing_ok=True)
+                except Exception as e:
+                    logger.warning(f"AI tool snapshot failed for {path}: {e}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            logger.info(f"AI tool: file written: {path} ({len(content)} chars)")
+            return {"ok": True, "path": path, "size": len(content), "action": "file_created"}
+
+        elif tool_name == "move_file":
+            src_s = (args.get("src") or "").strip()
+            dst_s = (args.get("dst") or "").strip()
+            if not src_s or not dst_s:
+                return {"ok": False, "error": "src et dst requis"}
+            src = _safe_path(src_s)
+            dst = _safe_path(dst_s)
+            if not src.exists():
+                return {"ok": False, "error": f"Source introuvable: {src_s}"}
+            if dst.exists():
+                return {"ok": False, "error": f"Destination existe déjà: {dst_s}"}
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            src.rename(dst)
+            logger.info(f"AI tool: moved {src_s} -> {dst_s}")
+            return {"ok": True, "src": src_s, "dst": dst_s, "action": "file_moved"}
+
+        elif tool_name == "delete_file":
+            path = (args.get("path") or "").strip()
+            if not path:
+                return {"ok": False, "error": "path requis"}
+            target = _safe_path(path)
+            if not target.exists():
+                return {"ok": False, "error": f"Introuvable: {path}"}
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+            logger.info(f"AI tool: deleted {path}")
+            return {"ok": True, "path": path, "action": "deleted"}
+
+        elif tool_name == "read_file":
+            path = (args.get("path") or "").strip()
+            if not path:
+                return {"ok": False, "error": "path requis"}
+            target = _safe_path(path)
+            if not target.exists() or not target.is_file():
+                return {"ok": False, "error": f"Fichier introuvable: {path}"}
+            if not _is_text_file(target):
+                return {"ok": False, "error": "Fichier binaire — non lisible"}
+            content = target.read_text(encoding="utf-8")
+            capped = content[:8000]
+            truncated = len(content) > 8000
+            return {
+                "ok": True, "path": path,
+                "content": capped,
+                "truncated": truncated,
+                "size": len(content),
+                "lines": content.count("\n") + 1,
+            }
+
+        elif tool_name == "list_files":
+            path = (args.get("path") or "").strip()
+            base = _safe_path(path) if path else _workspace()
+            if not base.exists() or not base.is_dir():
+                return {"ok": False, "error": f"Dossier introuvable: {path or '(racine)'}"}
+            ws_root = _workspace().resolve()
+            items = []
+            for item in sorted(base.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+                if item.name.startswith(".") or item.name in ("node_modules", "__pycache__"):
+                    continue
+                rel = str(item.relative_to(ws_root)).replace("\\", "/")
+                items.append({
+                    "name": item.name,
+                    "path": rel,
+                    "type": "folder" if item.is_dir() else "file",
+                })
+            return {"ok": True, "path": path or "", "items": items}
+
+        else:
+            return {"ok": False, "error": f"Outil inconnu: {tool_name}"}
+
+    except HTTPException as he:
+        return {"ok": False, "error": he.detail}
+    except Exception as e:
+        logger.error(f"AI tool '{tool_name}' failed: {e}")
+        return {"ok": False, "error": str(e)[:200]}
+
+
+async def _run_ai_chat_tool_loop(provider, chosen_model, messages, max_rounds: int = 5):
+    """Native function-calling loop until the LLM stops requesting tools.
+
+    Returns (final_response, actions_log). If the provider has
+    supports_tools=False, runs a single plain chat call.
+    """
+    from backend.core.providers import ChatMessage
+    actions: list[dict] = []
+    response = None
+    tools_enabled = bool(getattr(provider, "supports_tools", False))
+
+    if not tools_enabled:
+        response = await provider.chat(messages, chosen_model)
+        return response, actions
+
+    for _round in range(max_rounds):
+        try:
+            response = await provider.chat(
+                messages, chosen_model,
+                tools=AI_CHAT_TOOLS, tool_choice="auto",
+            )
+        except Exception as tool_err:
+            logger.warning(f"Tool-calling failed, fallback to plain text: {tool_err}")
+            clean = [ChatMessage(role=m.role, content=m.content or "") for m in messages if m.role != "tool"]
+            response = await provider.chat(clean, chosen_model)
+            break
+
+        tcs = getattr(response, "tool_calls", None) or []
+        if not tcs:
+            break
+
+        messages.append(ChatMessage(
+            role="assistant",
+            content=response.content or "",
+            tool_calls=tcs,
+        ))
+
+        for tc in tcs:
+            fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+            tname = fn.get("name", "")
+            call_id = tc.get("id") or uuid.uuid4().hex[:8]
+            try:
+                raw_args = fn.get("arguments", "{}")
+                targs = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+            except Exception:
+                targs = {}
+
+            tresult = await _execute_ai_chat_tool(tname, targs)
+            actions.append({"tool": tname, "args": targs, "result": tresult})
+
+            messages.append(ChatMessage(
+                role="tool",
+                content=json.dumps(tresult, ensure_ascii=False),
+                tool_call_id=call_id,
+            ))
+
+    if response is not None and (getattr(response, "tool_calls", None) or []):
+        try:
+            response = await provider.chat(messages, chosen_model)
+        except Exception as final_err:
+            logger.warning(f"Final no-tools wrap failed: {final_err}")
+
+    return response, actions
+
+
 @router.post("/ai/chat")
 async def ai_code_chat(req: AIChatRequest):
     """
     Contextual AI coding chat with model switching and smart context reduction.
     Sends user message + optimized context + persona to the chosen LLM.
+    Supports native tool-calling: the AI can create/move/delete files & folders.
     """
     # Lazy imports to maintain plugin independence
     try:
@@ -2007,8 +2287,9 @@ async def ai_code_chat(req: AIChatRequest):
     ws = _workspace()
     system_parts = [
         f"Tu es l'assistant IA integre a SpearCode, l'IDE de Gungnir. Tu operes dans le workspace '{ws.name}' ({ws.resolve()}).",
-        "Tu as acces au systeme de fichiers : lecture, ecriture, creation, suppression de fichiers du workspace.",
-        "Tu peux executer des commandes shell dans le terminal integre.",
+        "Tu disposes d'outils natifs (function calling) pour agir sur le workspace : create_folder, create_file, move_file, delete_file, read_file, list_files.",
+        "IMPORTANT : tu ne peux PAS executer de commandes shell depuis ce chat. Pour creer/deplacer/supprimer des fichiers ou dossiers, tu DOIS appeler les outils ci-dessus — ne pretends jamais avoir effectue une action sans avoir appele l'outil correspondant.",
+        "Apres execution des outils, confirme a l'utilisateur ce qui a reellement ete fait (en t'appuyant uniquement sur les resultats retournes).",
         "Tu conserves le contexte de la conversation en cours (memoire de session).",
         "Reponds en francais, concis et technique. Code dans des blocs ```language.",
     ]
@@ -2095,11 +2376,12 @@ async def ai_code_chat(req: AIChatRequest):
     est_tokens = int(total_chars / 3.5)
 
     try:
-        response = await provider.chat(messages, chosen_model)
-        resp_text = response.content or ""
+        response, actions = await _run_ai_chat_tool_loop(provider, chosen_model, messages)
+        resp_text = (response.content or "") if response else ""
         return {
             "ok": True,
             "response": resp_text,
+            "actions": actions,
             "persona": persona["name"] if persona else None,
             "model": chosen_model,
             "token_estimate": {
@@ -2128,8 +2410,9 @@ async def _build_chat_context(req: AIChatRequest):
     ws = _workspace()
     system_parts = [
         f"Tu es l'assistant IA integre a SpearCode, l'IDE de Gungnir. Tu operes dans le workspace '{ws.name}' ({ws.resolve()}).",
-        "Tu as acces au systeme de fichiers : lecture, ecriture, creation, suppression de fichiers du workspace.",
-        "Tu peux executer des commandes shell dans le terminal integre.",
+        "Tu disposes d'outils natifs (function calling) pour agir sur le workspace : create_folder, create_file, move_file, delete_file, read_file, list_files.",
+        "IMPORTANT : tu ne peux PAS executer de commandes shell depuis ce chat. Pour creer/deplacer/supprimer des fichiers ou dossiers, tu DOIS appeler les outils ci-dessus — ne pretends jamais avoir effectue une action sans avoir appele l'outil correspondant.",
+        "Apres execution des outils, confirme a l'utilisateur ce qui a reellement ete fait (en t'appuyant uniquement sur les resultats retournes).",
         "Tu conserves le contexte de la conversation en cours (memoire de session).",
         "Reponds en francais, concis et technique. Code dans des blocs ```language.",
     ]
@@ -2193,8 +2476,12 @@ async def _build_chat_context(req: AIChatRequest):
 @router.post("/ai/chat/stream")
 async def ai_code_chat_stream(req: AIChatRequest):
     """
-    Streaming AI chat via Server-Sent Events.
-    Sends tokens one by one as they arrive from the LLM.
+    Streaming AI chat via Server-Sent Events with native tool-calling.
+
+    First runs the tool loop non-stream so actions (create_folder, create_file,
+    move_file, delete_file, read_file, list_files) really execute; emits an
+    `action` event per tool invocation. When the model stops calling tools,
+    streams the final answer back as `token` events.
     """
     try:
         provider, chosen_model, messages, persona = await _build_chat_context(req)
@@ -2204,9 +2491,10 @@ async def ai_code_chat_stream(req: AIChatRequest):
     if not provider:
         return {"ok": False, "error": "Aucun provider LLM configuré pour cet utilisateur"}
 
+    tools_enabled = bool(getattr(provider, "supports_tools", False))
+
     async def event_stream():
         try:
-            # Send metadata first
             meta = json.dumps({
                 "type": "meta",
                 "model": chosen_model,
@@ -2214,17 +2502,82 @@ async def ai_code_chat_stream(req: AIChatRequest):
             }, ensure_ascii=False)
             yield f"data: {meta}\n\n"
 
-            # Stream tokens
+            actions: list[dict] = []
             full_text = ""
-            async for chunk in provider.chat_stream(messages, chosen_model):
-                full_text += chunk
-                data = json.dumps({"type": "token", "content": chunk}, ensure_ascii=False)
-                yield f"data: {data}\n\n"
 
-            # Send done event with token estimate
+            if tools_enabled:
+                from backend.core.providers import ChatMessage
+                final_text_from_loop: Optional[str] = None
+                max_rounds = 5
+                for _round in range(max_rounds):
+                    try:
+                        response = await provider.chat(
+                            messages, chosen_model,
+                            tools=AI_CHAT_TOOLS, tool_choice="auto",
+                        )
+                    except Exception as tool_err:
+                        logger.warning(f"Stream tool-calling failed, fallback: {tool_err}")
+                        break
+
+                    tcs = getattr(response, "tool_calls", None) or []
+                    if not tcs:
+                        final_text_from_loop = response.content or ""
+                        break
+
+                    messages.append(ChatMessage(
+                        role="assistant",
+                        content=response.content or "",
+                        tool_calls=tcs,
+                    ))
+
+                    for tc in tcs:
+                        fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                        tname = fn.get("name", "")
+                        call_id = tc.get("id") or uuid.uuid4().hex[:8]
+                        try:
+                            raw_args = fn.get("arguments", "{}")
+                            targs = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+                        except Exception:
+                            targs = {}
+                        tresult = await _execute_ai_chat_tool(tname, targs)
+                        actions.append({"tool": tname, "args": targs, "result": tresult})
+
+                        act_evt = json.dumps({
+                            "type": "action",
+                            "tool": tname, "args": targs, "result": tresult,
+                        }, ensure_ascii=False)
+                        yield f"data: {act_evt}\n\n"
+
+                        messages.append(ChatMessage(
+                            role="tool",
+                            content=json.dumps(tresult, ensure_ascii=False),
+                            tool_call_id=call_id,
+                        ))
+
+                if final_text_from_loop is not None:
+                    # Already have final text — re-chunk it for progressive UI.
+                    full_text = final_text_from_loop
+                    CHUNK = 64
+                    for i in range(0, len(full_text), CHUNK):
+                        piece = full_text[i:i + CHUNK]
+                        data = json.dumps({"type": "token", "content": piece}, ensure_ascii=False)
+                        yield f"data: {data}\n\n"
+                else:
+                    # Loop bailed or hit max_rounds — stream a plain final.
+                    async for chunk in provider.chat_stream(messages, chosen_model):
+                        full_text += chunk
+                        data = json.dumps({"type": "token", "content": chunk}, ensure_ascii=False)
+                        yield f"data: {data}\n\n"
+            else:
+                async for chunk in provider.chat_stream(messages, chosen_model):
+                    full_text += chunk
+                    data = json.dumps({"type": "token", "content": chunk}, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
+
             done = json.dumps({
                 "type": "done",
                 "full_text": full_text,
+                "actions": actions,
                 "token_estimate": _estimate_tokens(full_text),
             }, ensure_ascii=False)
             yield f"data: {done}\n\n"

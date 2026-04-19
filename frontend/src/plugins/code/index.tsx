@@ -1702,6 +1702,7 @@ function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { filePath
       const decoder = new TextDecoder()
       let buffer = ''
       let fullText = ''
+      let actionsHeader = ''
       let totalTokens = 0
 
       while (true) {
@@ -1718,7 +1719,13 @@ function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { filePath
             const event = JSON.parse(line.slice(6))
             if (event.type === 'token') {
               fullText += event.content
-              setStreamingText(fullText)
+              setStreamingText(actionsHeader + fullText)
+              requestAnimationFrame(() => scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight))
+            } else if (event.type === 'action') {
+              const target = event.args?.path || event.args?.src || event.args?.dst || ''
+              const label = event.result?.ok ? 'OK' : `ERR: ${event.result?.error || 'echec'}`
+              actionsHeader += `• ${event.tool}${target ? ` (${target})` : ''} → ${label}\n`
+              setStreamingText(actionsHeader + fullText)
               requestAnimationFrame(() => scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight))
             } else if (event.type === 'done') {
               fullText = event.full_text || fullText
@@ -1729,6 +1736,7 @@ function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { filePath
           } catch { /* skip malformed */ }
         }
       }
+      if (actionsHeader) fullText = actionsHeader + (fullText ? '\n' + fullText : '')
 
       setStreamingText('')
       updateSession(s => ({
@@ -2426,6 +2434,7 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let fullText = ''
+      let actionsHeader = ''
       let buffer = ''
 
       while (true) {
@@ -2444,7 +2453,20 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
                 if (s.id !== activeSession) return s
                 const hist = [...s.history]
                 const last = hist[hist.length - 1]
-                if (last?.streaming) hist[hist.length - 1] = { ...last, result: { ...last.result, stdout: fullText } }
+                if (last?.streaming) hist[hist.length - 1] = { ...last, result: { ...last.result, stdout: actionsHeader + fullText } }
+                return { ...s, history: hist }
+              }))
+              autoScroll()
+            } else if (data.type === 'action') {
+              const args = data.args || {}
+              const target = args.path || args.src || args.dst || ''
+              const label = data.result?.ok ? 'OK' : `ERR: ${data.result?.error || 'echec'}`
+              actionsHeader += `• ${data.tool}${target ? ` (${target})` : ''} → ${label}\n`
+              setSessions(prev => prev.map(s => {
+                if (s.id !== activeSession) return s
+                const hist = [...s.history]
+                const last = hist[hist.length - 1]
+                if (last?.streaming) hist[hist.length - 1] = { ...last, result: { ...last.result, stdout: actionsHeader + fullText } }
                 return { ...s, history: hist }
               }))
               autoScroll()
@@ -2454,6 +2476,7 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
           } catch (e: any) { if (e.message && !e.message.includes('JSON')) throw e }
         }
       }
+      if (actionsHeader) fullText = actionsHeader + (fullText ? '\n' + fullText : '')
 
       const elapsed = (Date.now() - startTime) / 1000
       setSessions(prev => prev.map(s => {
@@ -2467,11 +2490,17 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
       if (e.name === 'AbortError') return
       // Fallback to non-streaming endpoint
       try {
-        const fallback = await apiFetch<{ ok: boolean; response?: string; error?: string }>('/ai/chat', {
+        const fallback = await apiFetch<{ ok: boolean; response?: string; error?: string; actions?: Array<{ tool: string; args: any; result: any }> }>('/ai/chat', {
           method: 'POST', body: JSON.stringify({ message: question, file_path: filePath || null, context_mode: 'smart', history: newAiHistory.slice(-16) }),
         })
+        const actionsHdr = (fallback?.actions || []).map(a => {
+          const t = a.args?.path || a.args?.src || a.args?.dst || ''
+          const lbl = a.result?.ok ? 'OK' : `ERR: ${a.result?.error || 'echec'}`
+          return `• ${a.tool}${t ? ` (${t})` : ''} → ${lbl}`
+        }).join('\n')
         const elapsed = (Date.now() - startTime) / 1000
-        const text = fallback?.ok ? fallback.response! : (fallback?.error || e.message || 'Erreur IA')
+        const body = fallback?.ok ? fallback.response! : (fallback?.error || e.message || 'Erreur IA')
+        const text = actionsHdr ? `${actionsHdr}\n\n${body}` : body
         setSessions(prev => prev.map(s => {
           if (s.id !== activeSession) return s
           const hist = [...s.history]
