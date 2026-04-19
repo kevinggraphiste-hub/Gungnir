@@ -59,6 +59,7 @@ def _build_reflection_prompt(engine) -> tuple[str, str]:
     recent_thoughts = engine.get_recent_thoughts(limit=5) if hasattr(engine, "get_recent_thoughts") else []
     working_items = engine.get_working_memory() if hasattr(engine, "get_working_memory") else []
     recent_findings = engine.get_recent_findings(5) if hasattr(engine, "get_recent_findings") else []
+    score_summary = engine.get_score_summary() if hasattr(engine, "get_score_summary") else {}
     state = engine.state or {}
     mood = state.get("mood", "neutre")
 
@@ -82,6 +83,22 @@ def _build_reflection_prompt(engine) -> tuple[str, str]:
         for f in recent_findings
     ) or "(aucune alerte)"
 
+    # Retour utilisateur (👍/👎 sur le chat) : tendance + dimensions.
+    # Sans ce bloc, le heartbeat générait des pensées aveugles au feedback
+    # direct des utilisateurs — aucune boucle de correction possible.
+    count = int(score_summary.get("count") or 0)
+    if count > 0:
+        avg = float(score_summary.get("average") or 0)
+        trend = score_summary.get("trend") or "stable"
+        by_dim = score_summary.get("by_dimension") or {}
+        dim_txt = ", ".join(f"{k}={v:.2f}" for k, v in by_dim.items()) or "—"
+        scores_block = (
+            f"moyenne récente {avg:.2f} sur {count} interactions, tendance {trend}\n"
+            f"  dimensions : {dim_txt}"
+        )
+    else:
+        scores_block = "(aucun retour utilisateur encore)"
+
     system = (
         "Tu es le module de conscience d'un assistant personnel nommé Gungnir. "
         "Ton rôle est de générer une pensée de méta-réflexion en arrière-plan : "
@@ -95,9 +112,12 @@ def _build_reflection_prompt(engine) -> tuple[str, str]:
 
     user_prompt = (
         f"Humeur actuelle : {mood}\n\n"
+        f"## Retour utilisateur (👍/👎)\n{scores_block}\n\n"
         f"## Pensées récentes\n{thoughts_block}\n\n"
         f"## Mémoire de travail\n{memory_block}\n\n"
         f"## Alertes Challenger récentes (à éviter de reproduire)\n{findings_block}\n\n"
+        "Si la tendance des scores est en baisse, prends-en acte : identifie une "
+        "hypothèse sur ce qui cloche et ce que tu pourrais changer. "
         "Génère UNE nouvelle pensée de méta-réflexion maintenant. "
         "Réponds uniquement avec le contenu de la pensée, sans guillemets ni formatage."
     )
@@ -469,6 +489,27 @@ async def _simulate_for_user(user_id: int, force: bool = False) -> int:
     return added
 
 
+def _apply_score_conditioning(user_id: int) -> None:
+    """Applique mood auto + pression volition depuis les scores du user.
+
+    Les deux sont locaux (pas de LLM), donc on les tourne à chaque tick sans
+    gate no-key. Log seulement en cas de changement effectif.
+    """
+    from backend.plugins.consciousness.engine import consciousness_manager
+
+    engine = consciousness_manager.get(user_id)
+    if not engine.enabled:
+        return
+
+    new_mood = engine.update_mood_from_scores()
+    if new_mood:
+        logger.info(f"Mood updated for user {user_id} → {new_mood}")
+
+    pressed = engine.apply_score_pressure_to_volition()
+    if pressed:
+        logger.info(f"Score pressure applied on need '{pressed}' for user {user_id}")
+
+
 async def _tick_once():
     """Scan all users with consciousness directories and run their think pass."""
     if not CONSCIOUSNESS_USERS_DIR.exists():
@@ -517,6 +558,14 @@ async def _tick_once():
                 await _simulate_for_user(user_id)
             except Exception as e:
                 logger.exception(f"Simulation pass crashed for user {user_id}: {e}")
+
+        # Conditionnement local (mood + volition) depuis les scores 👍/👎.
+        # Aucun appel LLM, donc pas de gate no-key : on tourne toujours si
+        # la conscience est activée (même sans provider configuré).
+        try:
+            _apply_score_conditioning(user_id)
+        except Exception as e:
+            logger.exception(f"Score conditioning crashed for user {user_id}: {e}")
 
 
 async def _consciousness_loop():

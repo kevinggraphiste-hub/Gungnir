@@ -86,7 +86,20 @@ DEFAULT_CONFIG = {
     "reward": {
         "enabled": True,
         "auto_score": True,
-        "dimensions": ["utility", "accuracy", "tone", "autonomy"]
+        "dimensions": ["utility", "accuracy", "tone", "autonomy"],
+        # Mood auto : fait évoluer state.mood à partir de la tendance des scores
+        # (👍/👎 chat + auto-scoring). Valeurs locales, aucun appel LLM.
+        "auto_mood": True,
+        # Pression volition : si la moyenne récente chute sous le seuil, on
+        # pousse l'urgence du besoin "integrity" pour que la conscience
+        # reconnaisse qu'il y a un problème de qualité à traiter.
+        "volition_pressure": {
+            "enabled": True,
+            "threshold": 0.45,
+            "min_interactions": 5,
+            "target_need": "integrity",
+            "bump": 0.15,
+        },
     },
     "challenger": {
         "enabled": True,
@@ -555,6 +568,94 @@ class ConsciousnessEngine:
             boost = 0.15
             needs[need_name]["urgency"] = min(1.0, round(needs[need_name].get("urgency", 0) + boost, 3))
             self.save_state()
+
+    # ── Score → Mood / Volition (conditionnement local, sans LLM) ──────
+
+    def update_mood_from_scores(self) -> Optional[str]:
+        """Fait évoluer le mood à partir de la tendance des scores 👍/👎.
+
+        Retourne le nouveau mood si changement, sinon None. Purement local :
+        on ne veut pas dépendre d'un LLM pour un signal déjà mesuré.
+        """
+        reward_cfg = self._config.get("reward", {}) or {}
+        if not reward_cfg.get("auto_mood", True):
+            return None
+
+        summary = self.get_score_summary()
+        count = int(summary.get("count") or 0)
+        if count < 3:
+            return None  # Pas assez de signal
+
+        avg = float(summary.get("average") or 0)
+        trend = summary.get("trend") or "stable"
+
+        # Mapping simple : on préfère un petit vocabulaire stable plutôt
+        # qu'un classement fin qui oscillerait au moindre vote.
+        if avg < 0.35:
+            new_mood = "frustré"
+        elif avg < 0.55:
+            new_mood = "prudent" if trend == "declining" else "concentré"
+        elif avg < 0.75:
+            new_mood = "neutre" if trend != "improving" else "confiant"
+        else:
+            new_mood = "content"
+
+        # Override : dégradation rapide → alerter explicitement
+        if trend == "declining" and avg < 0.6:
+            new_mood = "prudent"
+
+        current = self._state.get("mood", "neutre")
+        if new_mood == current:
+            return None
+        self._state["mood"] = new_mood
+        self.save_state()
+        return new_mood
+
+    def apply_score_pressure_to_volition(self) -> Optional[str]:
+        """Pousse un besoin quand la moyenne récente est basse.
+
+        Retourne le nom du besoin pressé si une pression a été appliquée.
+        Gardé local et idempotent (on ne bump qu'une fois par cooldown).
+        """
+        reward_cfg = (self._config.get("reward") or {}).get("volition_pressure") or {}
+        if not reward_cfg.get("enabled", True):
+            return None
+
+        threshold = float(reward_cfg.get("threshold", 0.45))
+        min_count = int(reward_cfg.get("min_interactions", 5))
+        target = reward_cfg.get("target_need", "integrity")
+        bump = float(reward_cfg.get("bump", 0.15))
+
+        summary = self.get_score_summary()
+        count = int(summary.get("count") or 0)
+        if count < min_count:
+            return None
+        avg = float(summary.get("average") or 0)
+        if avg >= threshold:
+            return None
+
+        needs = self._state.get("volition", {}).get("needs", {})
+        if target not in needs:
+            return None
+
+        # Cooldown : un seul bump par heure pour éviter qu'une session avec
+        # beaucoup de downvotes ne sature l'urgence à 1.0 en 2 ticks.
+        last_key = "last_score_pressure"
+        last = self._state.get(last_key)
+        now = datetime.now(timezone.utc)
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                if (now - last_dt).total_seconds() < 3600:
+                    return None
+            except Exception:
+                pass
+
+        current = float(needs[target].get("urgency", 0.0))
+        needs[target]["urgency"] = min(1.0, round(current + bump, 3))
+        self._state[last_key] = _now()
+        self.save_state()
+        return target
 
     # ── Impulse ─────────────────────────────────────────────────────────
 
