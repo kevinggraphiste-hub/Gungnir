@@ -162,8 +162,9 @@ def extract_model_from_response(response_model: str) -> str:
         ("gemini-2.0-flash", "google/gemini-2.0-flash"),
         ("gemini-1.5-pro", "google/gemini-1.5-pro"),
         ("gemini-1.5-flash", "google/gemini-1.5-flash"),
-        # MiniMax
-        ("minimax", "minimax/minimax-m2.7"),
+        # MiniMax (specific first — pas de catch générique qui lumperait tout)
+        ("minimax-m2.7", "minimax/minimax-m2.7"),
+        ("minimax-m2", "minimax/minimax-m2.7"),
         ("m2.7", "minimax/minimax-m2.7"),
         # DeepSeek
         ("deepseek-r1", "deepseek/deepseek-r1"),
@@ -195,12 +196,11 @@ def extract_model_from_response(response_model: str) -> str:
         if pattern in m:
             return name
 
-    # Last resort: keep as-is but try adding provider prefix
-    if "/" not in m:
-        # Try common provider guesses
-        if "mistral" in m:
-            return "ollama/mistral"
-
+    # Pas de match : on garde le nom brut. Analytics le regroupera sous son
+    # identifiant réel (pas de coût calculé si absent de MODEL_PRICING, mais
+    # le modèle reste visible dans le tableau de bord). On évite en particulier
+    # de remapper "mistral*" vers "ollama/mistral" — le trafic OpenRouter /
+    # Mistral Cloud serait comptabilisé comme du self-host gratuit, FAUX.
     return response_model
 
 
