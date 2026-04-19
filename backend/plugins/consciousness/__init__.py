@@ -23,6 +23,7 @@ TICK_INTERVAL_SECONDS = 60
 DEFAULT_THINK_INTERVAL_MINUTES = 10
 DEFAULT_CHALLENGER_INTERVAL_MINUTES = 60
 DEFAULT_SIMULATION_INTERVAL_MINUTES = 30
+DEFAULT_IMPULSE_CHECK_INTERVAL_MINUTES = 15
 
 # When an LLM invocation fails because no API key is configured, backoff before
 # retrying so the logs don't spam every tick until the user sets a provider.
@@ -489,6 +490,258 @@ async def _simulate_for_user(user_id: int, force: bool = False) -> int:
     return added
 
 
+def _in_quiet_hours(cfg: dict, now: datetime) -> bool:
+    """True si l'heure locale est dans la plage de silence de la volition.
+
+    quiet_hours = {start: 23, end: 7} signifie : on ne propose rien entre 23h
+    et 7h. On reste en UTC pour simplicité (la conscience n'a pas de timezone
+    utilisateur) — c'est une approximation volontairement grossière.
+    """
+    qh = (cfg.get("volition", {}) or {}).get("quiet_hours", {}) or {}
+    start = qh.get("start")
+    end = qh.get("end")
+    if start is None or end is None:
+        return False
+    try:
+        start = int(start); end = int(end)
+    except (TypeError, ValueError):
+        return False
+    h = now.hour
+    if start == end:
+        return False
+    if start < end:
+        return start <= h < end
+    # Fenêtre qui traverse minuit (ex: 23 → 7)
+    return h >= start or h < end
+
+
+def _build_impulse_prompt(engine, top_need: str, top_data: dict) -> tuple[str, str]:
+    """Prompt LLM pour générer UNE proposition d'action concrète pour un besoin."""
+    state = engine.state or {}
+    mood = state.get("mood", "neutre")
+    recent_thoughts = engine.get_recent_thoughts(5) if hasattr(engine, "get_recent_thoughts") else []
+    wm = engine.get_working_memory() if hasattr(engine, "get_working_memory") else []
+    history = (state.get("volition", {}) or {}).get("impulse_history", [])[-5:]
+    score_summary = engine.get_score_summary() if hasattr(engine, "get_score_summary") else {}
+
+    thoughts_block = "\n".join(
+        f"- [{t.get('type','obs')}] {str(t.get('content',''))[:180]}"
+        for t in recent_thoughts
+    ) or "(aucune)"
+
+    wm_block = "\n".join(
+        f"- {i.get('key')}: {str(i.get('value'))[:180]}"
+        for i in wm[:5]
+    ) or "(vide)"
+
+    history_block = "\n".join(
+        f"- [{h.get('need')}/{h.get('status')}] {str(h.get('action',''))[:160]}"
+        for h in history
+    ) or "(aucune impulsion récente)"
+
+    scores_txt = ""
+    if int(score_summary.get("count") or 0) > 0:
+        scores_txt = (
+            f"Retour utilisateur : moyenne {float(score_summary.get('average') or 0):.2f}, "
+            f"tendance {score_summary.get('trend','stable')}"
+        )
+
+    triggers = ", ".join(top_data.get("triggers", [])) or "(aucun)"
+
+    system = (
+        "Tu es le module de volition d'un assistant nommé Gungnir. Ton rôle : "
+        "transformer un besoin non satisfait en UNE action concrète, utile, "
+        "proposée à l'utilisateur — pas une introspection vague. "
+        "L'action doit être actionnable en une phrase, adaptée au contexte. "
+        "Ne propose jamais quelque chose qui vient d'être refusé ou déjà tenté "
+        "dans l'historique ci-dessous. Réponds en JSON strict."
+    )
+
+    user = (
+        f"Besoin le plus urgent : **{top_need}** (urgence {top_data.get('urgency', 0):.2f}, "
+        f"priorité {top_data.get('priority', 0)})\n"
+        f"Triggers associés : {triggers}\n"
+        f"Humeur actuelle : {mood}\n"
+        f"{scores_txt}\n\n"
+        f"## Pensées récentes\n{thoughts_block}\n\n"
+        f"## Mémoire de travail\n{wm_block}\n\n"
+        f"## Historique d'impulsions récentes (à ne pas répéter)\n{history_block}\n\n"
+        "Propose UNE action pour ce besoin, sous la forme JSON suivante, "
+        "sans texte autour, sans markdown :\n"
+        '{"action": "phrase d\'action courte et concrète", '
+        '"rationale": "pourquoi cette action maintenant, 1 phrase"}'
+    )
+    return system, user
+
+
+def _parse_impulse_action(raw: str) -> Optional[dict]:
+    """Parse la réponse LLM en {action, rationale}. None si invalide."""
+    if not raw:
+        return None
+    s = raw.strip()
+    # Tolère les fences markdown
+    if s.startswith("```"):
+        lines = s.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        s = "\n".join(lines).strip()
+    # Coupe un éventuel préambule avant la première {
+    start = s.find("{")
+    end = s.rfind("}")
+    if start < 0 or end < 0:
+        return None
+    try:
+        data = json.loads(s[start:end + 1])
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    action = str(data.get("action") or "").strip()
+    if not action:
+        return None
+    return {
+        "action": action[:400],
+        "rationale": str(data.get("rationale") or "").strip()[:400],
+    }
+
+
+async def _impulse_for_user(user_id: int, force: bool = False) -> int:
+    """Propose auto une impulsion si le top need dépasse impulse_threshold.
+
+    Returns 1 si une impulsion a été proposée, 0 sinon. Respecte quiet_hours,
+    le quota horaire, l'interval entre checks, et le cooldown no-key.
+    """
+    from backend.plugins.consciousness.engine import consciousness_manager
+    from backend.core.services.llm_invoker import invoke_llm_for_user
+
+    engine = consciousness_manager.get(user_id)
+    if not engine.enabled:
+        return 0
+
+    vol_cfg = (engine.config or {}).get("volition", {}) or {}
+    auto_cfg = vol_cfg.get("auto_impulses", {}) or {}
+    if not auto_cfg.get("enabled", False) and not force:
+        return 0
+
+    # Déjà une impulsion pending — on ne spamme pas.
+    if (engine.state.get("volition") or {}).get("pending_impulse"):
+        return 0
+
+    now = _now()
+    if not force:
+        # Respect quiet hours
+        if _in_quiet_hours(engine.config or {}, now):
+            return 0
+
+        # Interval entre deux tentatives (le LLM coûte, inutile d'appeler
+        # toutes les 60s juste pour vérifier le seuil).
+        check_interval = int(auto_cfg.get("check_interval_minutes", DEFAULT_IMPULSE_CHECK_INTERVAL_MINUTES))
+        last_check = _parse_iso((engine.state or {}).get("last_impulse_check"))
+        if last_check is not None:
+            elapsed = (now - last_check).total_seconds() / 60
+            if elapsed < check_interval:
+                return 0
+
+        # Cooldown no-key partagé
+        cooldown_until = _parse_iso((engine.state or {}).get("background_think_cooldown_until"))
+        if cooldown_until and now < cooldown_until:
+            return 0
+
+    # Check seuil
+    top = engine.get_top_need()
+    if not top:
+        return 0
+    top_name, top_data = top
+    threshold = float(vol_cfg.get("impulse_threshold", 0.6))
+    if float(top_data.get("urgency", 0)) < threshold:
+        # Pas au-dessus du seuil — on mémorise la tentative pour respecter
+        # l'intervalle sans pour autant bloquer une vraie proposition future.
+        engine.state["last_impulse_check"] = now.isoformat()
+        try:
+            engine.save_state()
+        except Exception:
+            pass
+        return 0
+
+    # Respect quota horaire : compter les impulsions proposées dans la
+    # dernière heure (pending_impulse actuel déjà bloqué plus haut + history).
+    max_per_hour = int(vol_cfg.get("max_impulses_per_hour", 3))
+    history = (engine.state.get("volition") or {}).get("impulse_history", [])
+    cutoff = now - timedelta(hours=1)
+    recent_count = 0
+    for h in history[-20:]:
+        try:
+            ts = datetime.fromisoformat((h.get("timestamp") or "").replace("Z", "+00:00"))
+            if ts >= cutoff:
+                recent_count += 1
+        except Exception:
+            continue
+    if recent_count >= max_per_hour:
+        engine.state["last_impulse_check"] = now.isoformat()
+        try:
+            engine.save_state()
+        except Exception:
+            pass
+        return 0
+
+    # OK : on appelle le LLM
+    system_prompt, user_prompt = _build_impulse_prompt(engine, top_name, top_data)
+    logger.info(f"Impulse tick for user {user_id} (need={top_name}, urgency={top_data.get('urgency', 0):.2f})")
+    result = await invoke_llm_for_user(user_id, user_prompt, system_prompt=system_prompt)
+
+    # Fallback no-key
+    if not result.get("ok") and _is_no_key_error(result.get("error") or ""):
+        from backend.plugins.consciousness.challenger_llm import pick_fallback_llm
+        fb_provider, fb_model = await pick_fallback_llm(user_id)
+        if fb_provider:
+            result = await invoke_llm_for_user(
+                user_id, user_prompt, system_prompt=system_prompt,
+                provider=fb_provider, model=fb_model,
+            )
+
+    engine.state["last_impulse_check"] = now.isoformat()
+
+    if not result.get("ok"):
+        err = result.get("error") or ""
+        if _is_no_key_error(err) and not force:
+            until = now + timedelta(minutes=NO_KEY_COOLDOWN_MINUTES)
+            engine.state["background_think_cooldown_until"] = until.isoformat()
+        try:
+            engine.save_state()
+        except Exception:
+            pass
+        logger.warning(f"Impulse generation failed for user {user_id}: {err}")
+        return 0
+
+    parsed = _parse_impulse_action(result.get("content") or "")
+    if not parsed:
+        logger.warning(f"Impulse parse empty for user {user_id} (raw: {(result.get('content') or '')[:200]!r})")
+        try:
+            engine.save_state()
+        except Exception:
+            pass
+        return 0
+
+    try:
+        engine.propose_impulse(
+            need=top_name,
+            action=parsed["action"],
+            urgency=float(top_data.get("urgency", 0)),
+        )
+        # Stats : propose_impulse ne les incrémentait pas — on le fait ici.
+        stats = engine.state.get("stats", {})
+        stats["impulses_proposed"] = stats.get("impulses_proposed", 0) + 1
+        engine.save_state()
+    except Exception as e:
+        logger.exception(f"propose_impulse failed for user {user_id}: {e}")
+        return 0
+
+    logger.info(f"Impulse proposed for user {user_id}: [{top_name}] {parsed['action'][:80]}")
+    return 1
+
+
 def _apply_score_conditioning(user_id: int) -> None:
     """Applique mood auto + pression volition depuis les scores du user.
 
@@ -528,6 +781,7 @@ async def _tick_once():
         think_on = False
         challenger_on = False
         simulation_on = False
+        impulse_on = False
         config_file = user_dir / "config.json"
         if config_file.exists():
             try:
@@ -538,6 +792,8 @@ async def _tick_once():
                 ch = cfg.get("challenger", {}) or {}
                 challenger_on = bool(ch.get("enabled") and (ch.get("auto_audit") or {}).get("enabled"))
                 simulation_on = bool((cfg.get("simulation", {}) or {}).get("enabled"))
+                vol = cfg.get("volition", {}) or {}
+                impulse_on = bool((vol.get("auto_impulses") or {}).get("enabled"))
             except Exception:
                 continue
 
@@ -558,6 +814,12 @@ async def _tick_once():
                 await _simulate_for_user(user_id)
             except Exception as e:
                 logger.exception(f"Simulation pass crashed for user {user_id}: {e}")
+
+        if impulse_on:
+            try:
+                await _impulse_for_user(user_id)
+            except Exception as e:
+                logger.exception(f"Impulse pass crashed for user {user_id}: {e}")
 
         # Conditionnement local (mood + volition) depuis les scores 👍/👎.
         # Aucun appel LLM, donc pas de gate no-key : on tourne toujours si

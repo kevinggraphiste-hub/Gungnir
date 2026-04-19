@@ -509,6 +509,87 @@ async def _auto_generate_title(convo_id: int, user_msg: str, assistant_msg: str,
         print(f"[Wolf] Auto-title failed for convo {convo_id}: {e}")
 
 
+async def _auto_score_response(user_id: int, user_msg: str, assistant_msg: str, convo_id: int):
+    """Scoring auto d'une réponse agent (fire-and-forget).
+
+    Utilise le LLM configuré par l'utilisateur pour noter la réponse sur les
+    dimensions configurées (par défaut : utility/accuracy/tone/autonomy), puis
+    persiste via engine.score_interaction(triggered_by='auto'). Les scores
+    alimentent le mood auto, la pression volition et le prompt de conscience.
+
+    Gated par conscience.enabled + reward.auto_score. Silencieux en cas
+    d'erreur (pas de provider configuré, parse JSON raté, etc.) — ce n'est
+    pas un chemin critique du chat.
+    """
+    if not user_id or not (assistant_msg or "").strip():
+        return
+    try:
+        from backend.plugins.consciousness.engine import consciousness_manager
+        from backend.core.services.llm_invoker import invoke_llm_for_user
+        import json as _json
+        import re as _re
+
+        engine = consciousness_manager.get(user_id)
+        if not engine.enabled:
+            return
+        reward_cfg = (engine.config or {}).get("reward", {}) or {}
+        if not reward_cfg.get("auto_score", True):
+            return
+        dimensions = reward_cfg.get("dimensions") or ["utility", "accuracy", "tone", "autonomy"]
+
+        dim_lines = "\n".join(f'  "{d}": <0.0 à 1.0>,' for d in dimensions)
+        system = (
+            "Tu es un évaluateur bref et juste de réponses d'assistant. Tu notes "
+            "chaque dimension entre 0.0 (médiocre) et 1.0 (excellent) avec un "
+            "biais léger vers la sévérité : 0.7 = bon, 0.85 = très bon, 0.95+ = "
+            "exceptionnel. Réponds en JSON strict, sans texte autour."
+        )
+        prompt = (
+            f"## Demande utilisateur\n{(user_msg or '')[:600]}\n\n"
+            f"## Réponse de l'assistant\n{(assistant_msg or '')[:2400]}\n\n"
+            "Évalue la réponse. Réponds UNIQUEMENT avec ce JSON :\n"
+            "{\n" + dim_lines + '\n  "feedback": "1 phrase courte sur ce qui pourrait s\'améliorer"\n}'
+        )
+
+        result = await invoke_llm_for_user(user_id, prompt, system_prompt=system)
+        if not result.get("ok"):
+            return
+        raw = (result.get("content") or "").strip()
+        if not raw:
+            return
+        # Tolère fences markdown et texte parasite
+        if raw.startswith("```"):
+            raw = _re.sub(r"^```[a-zA-Z]*\n?", "", raw)
+            raw = _re.sub(r"\n?```\s*$", "", raw)
+        start = raw.find("{"); end = raw.rfind("}")
+        if start < 0 or end < 0:
+            return
+        try:
+            data = _json.loads(raw[start:end + 1])
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+
+        scores = {}
+        for d in dimensions:
+            v = data.get(d)
+            if isinstance(v, (int, float)):
+                scores[d] = max(0.0, min(1.0, float(v)))
+        if not scores:
+            return
+
+        feedback = str(data.get("feedback") or "")[:200]
+        engine.score_interaction(
+            interaction_type="chat_response",
+            scores=scores,
+            triggered_by="auto",
+            description=f"Auto-score convo={convo_id} — {feedback}" if feedback else f"Auto-score convo={convo_id}",
+        )
+    except Exception as e:
+        print(f"[Wolf] Auto-score skipped: {e}")
+
+
 async def _do_presearch(query: str, tool_events: list) -> list[str]:
     """
     Execute une recherche web + fetch des top resultats.
@@ -1459,6 +1540,15 @@ Tu operes en mode **demande**. Comportement :
         if conv_result and conv_result.title in ("Nouvelle conversation", "Nouveau chat", "Suite de conversation", "", None):
             try:
                 asyncio.ensure_future(_auto_generate_title(convo_id, message, response.content or "", provider, chosen_model))
+            except Exception:
+                pass
+
+        # -- Auto-scoring : fait noter la réponse par un LLM léger pour
+        # alimenter le reward system de la conscience (fire-and-forget).
+        # Gating (conscience enabled + reward.auto_score) est interne.
+        if user_id and (response.content or "").strip():
+            try:
+                asyncio.ensure_future(_auto_score_response(int(user_id), message, response.content or "", convo_id))
             except Exception:
                 pass
 

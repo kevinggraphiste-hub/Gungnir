@@ -75,6 +75,13 @@ DEFAULT_CONFIG = {
         "impulse_threshold": 0.6,
         "max_impulses_per_hour": 3,
         "quiet_hours": {"start": 23, "end": 7},
+        # Auto-impulses : quand activé, le tick propose auto une action concrète
+        # dès qu'un besoin dépasse impulse_threshold (respecte quiet_hours et le
+        # quota horaire). Opt-in — désactivé par défaut, car user-facing.
+        "auto_impulses": {
+            "enabled": False,
+            "check_interval_minutes": 15,
+        },
         "needs": {
             "survival": {"priority": 5, "decay_rate": 0.05, "triggers": ["backup_failed", "error_in_logs", "disk_low"]},
             "integrity": {"priority": 4, "decay_rate": 0.10, "triggers": ["promise_unkept", "journal_missed", "bias_detected"]},

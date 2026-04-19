@@ -217,6 +217,18 @@ async def reset_volition(request: Request):
     return {"ok": True, "message": "Toutes les urgences remises à zéro"}
 
 
+@router.post("/volition/propose-now")
+async def volition_propose_now(request: Request):
+    """Force la génération immédiate d'une impulsion (ignore interval + seuil config)."""
+    uid = _require_uid(request)
+    try:
+        from . import _impulse_for_user
+        count = await _impulse_for_user(uid, force=True)
+        return {"ok": True, "proposed": int(count)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 # ── Impulse ─────────────────────────────────────────────────────────────────
 
 @router.post("/impulse/propose")
