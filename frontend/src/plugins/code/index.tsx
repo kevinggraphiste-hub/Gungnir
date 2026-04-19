@@ -2318,7 +2318,7 @@ function DL({ ln, text, t }: { ln: number; text: string; t?: '+' | '-' }) {
 
 const TERM_STORAGE_KEY = 'spearcode_terminal'
 
-function loadTermSessions(): { sessions: TermSession[]; active: string; cmdHistory: string[]; nextId: number } | null {
+function loadTermSessions(): { sessions: TermSession[]; active: string; cmdHistory: string[]; nextId: number; aiEnabled?: boolean } | null {
   try {
     const raw = localStorage.getItem(TERM_STORAGE_KEY)
     if (!raw) return null
@@ -2333,7 +2333,7 @@ function loadTermSessions(): { sessions: TermSession[]; active: string; cmdHisto
   } catch { return null }
 }
 
-function saveTermSessions(sessions: TermSession[], active: string, cmdHistory: string[], nextId: number) {
+function saveTermSessions(sessions: TermSession[], active: string, cmdHistory: string[], nextId: number, aiEnabled: boolean) {
   try {
     // Cap stored history to keep localStorage lean (last 50 entries per session, last 30 AI messages)
     const compact = sessions.map(s => ({
@@ -2341,7 +2341,7 @@ function saveTermSessions(sessions: TermSession[], active: string, cmdHistory: s
       history: s.history.slice(-50).map(h => ({ ...h, streaming: false })),
       aiHistory: s.aiHistory.slice(-30),
     }))
-    localStorage.setItem(TERM_STORAGE_KEY, JSON.stringify({ sessions: compact, active, cmdHistory: cmdHistory.slice(0, 50), nextId }))
+    localStorage.setItem(TERM_STORAGE_KEY, JSON.stringify({ sessions: compact, active, cmdHistory: cmdHistory.slice(0, 50), nextId, aiEnabled }))
   } catch {}
 }
 
@@ -2353,6 +2353,10 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
   const [running, setRunning] = useState(false)
   const [cmdHistory, setCmdHistory] = useState<string[]>(savedTerm.current?.cmdHistory || [])
   const [histIdx, setHistIdx] = useState(-1)
+  // Chat IA désactivé par défaut : la console affiche uniquement le shell
+  // (actions de l'agent + commandes manuelles). La saisie en langage naturel
+  // est disponible derrière un toggle (case à cocher dans l'en-tête).
+  const [aiEnabled, setAiEnabled] = useState<boolean>(!!savedTerm.current?.aiEnabled)
   const scrollRef = useRef<HTMLDivElement>(null)
   const nextId = useRef(savedTerm.current?.nextId || 2)
   const abortRef = useRef<AbortController | null>(null)
@@ -2360,8 +2364,8 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
 
   // Persist terminal sessions on every change
   useEffect(() => {
-    saveTermSessions(sessions, activeSession, cmdHistory, nextId.current)
-  }, [sessions, activeSession, cmdHistory])
+    saveTermSessions(sessions, activeSession, cmdHistory, nextId.current, aiEnabled)
+  }, [sessions, activeSession, cmdHistory, aiEnabled])
 
   const addSession = () => { const id = String(nextId.current++); setSessions(prev => [...prev, { id, name: `Terminal ${id}`, history: [], aiHistory: [] }]); setActiveSession(id) }
   const autoScroll = () => requestAnimationFrame(() => scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight))
@@ -2405,7 +2409,10 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
   }
 
   const [inputMode, setInputMode] = useState<'shell' | 'ai'>('shell')
-  useEffect(() => { setInputMode(command.trim() ? detectMode(command, lastEntryIsAi()) : 'shell') }, [command, sessions, activeSession])
+  useEffect(() => {
+    if (!aiEnabled) { setInputMode('shell'); return }
+    setInputMode(command.trim() ? detectMode(command, lastEntryIsAi()) : 'shell')
+  }, [command, sessions, activeSession, aiEnabled])
 
   // Streaming AI chat with conversation history per session
   const runAI = async (question: string) => {
@@ -2527,8 +2534,12 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
     const toRun = cmd || command.trim(); if (!toRun || running) return
     setRunning(true); setCmdHistory(prev => [toRun, ...prev.filter(c => c !== toRun)].slice(0, 50)); setHistIdx(-1)
 
-    const mode = detectMode(toRun, lastEntryIsAi())
-    const cleanCmd = toRun.startsWith('$') ? toRun.substring(1).trim() : toRun.startsWith('?') ? toRun.substring(1).trim() : toRun
+    // Chat IA off → on force le mode shell (on ignore la détection de langage
+    // naturel et les préfixes ?). Chat IA on → détection automatique.
+    const mode = aiEnabled ? detectMode(toRun, lastEntryIsAi()) : 'shell'
+    const cleanCmd = toRun.startsWith('$') ? toRun.substring(1).trim()
+      : (aiEnabled && toRun.startsWith('?')) ? toRun.substring(1).trim()
+      : toRun
 
     if (mode === 'ai') {
       setCommand('')
@@ -2580,12 +2591,37 @@ function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string; onClo
         <button onClick={addSession} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>+</button>
         <div style={{ flex: 1 }} />
         {runFile && <button onClick={handleRunFile} disabled={running} style={{ ...S.badge('#22c55e', true), border: 'none', fontSize: 9, marginRight: 4 } as any}>{running ? '...' : `Run ${runFile.split('/').pop()}`}</button>}
-        {session.aiHistory.length > 0 && <span style={{ fontSize: 8, color: '#8b5cf6', marginRight: 8, opacity: 0.7 }}>{Math.floor(session.aiHistory.length / 2)} echanges</span>}
+        {aiEnabled && session.aiHistory.length > 0 && <span style={{ fontSize: 8, color: '#8b5cf6', marginRight: 8, opacity: 0.7 }}>{Math.floor(session.aiHistory.length / 2)} echanges</span>}
+        <button
+          onClick={() => setAiEnabled(v => !v)}
+          title={aiEnabled ? 'Desactiver le chat IA (retour shell uniquement)' : 'Activer le chat IA (langage naturel + memoire de session)'}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            border: `1px solid ${aiEnabled ? '#8b5cf6' : '#1e2633'}`,
+            background: aiEnabled ? 'rgba(139, 92, 246, 0.12)' : 'transparent',
+            color: aiEnabled ? '#c4b5fd' : '#8b949e',
+            cursor: 'pointer', fontSize: 9, fontWeight: 600,
+            padding: '2px 7px', borderRadius: 4, marginRight: 6,
+            fontFamily: MONO,
+          }}>
+          <span style={{
+            width: 8, height: 8, borderRadius: 2, flexShrink: 0,
+            background: aiEnabled ? '#8b5cf6' : 'transparent',
+            border: `1px solid ${aiEnabled ? '#8b5cf6' : '#6b7280'}`,
+          }} />
+          Chat IA
+        </button>
         <button onClick={clearSession} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 9, marginRight: 4 }}>Clear</button>
         <button onClick={onClose} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 11, marginRight: 8 }}>&times;</button>
       </div>
       <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: '4px 12px', fontFamily: MONO, fontSize: 11, lineHeight: 1.5 }}>
-        {session.history.length === 0 && <div style={{ color: '#8b949e', fontSize: 10, padding: '4px 0', lineHeight: 1.8 }}>Terminal hybride conversationnel.<br /><span style={{ color: '#6b7280' }}>Commandes shell executees normalement. Questions en langage naturel = conversation IA avec memoire de session.<br />Prefixez <span style={{ color: 'var(--scarlet)' }}>$</span> pour forcer shell, <span style={{ color: '#8b5cf6' }}>?</span> pour forcer IA. L'IA se souvient du contexte de cette session.</span></div>}
+        {session.history.length === 0 && (
+          aiEnabled ? (
+            <div style={{ color: '#8b949e', fontSize: 10, padding: '4px 0', lineHeight: 1.8 }}>Terminal hybride conversationnel.<br /><span style={{ color: '#6b7280' }}>Commandes shell executees normalement. Questions en langage naturel = conversation IA avec memoire de session.<br />Prefixez <span style={{ color: 'var(--scarlet)' }}>$</span> pour forcer shell, <span style={{ color: '#8b5cf6' }}>?</span> pour forcer IA. L'IA se souvient du contexte de cette session.</span></div>
+          ) : (
+            <div style={{ color: '#8b949e', fontSize: 10, padding: '4px 0', lineHeight: 1.8 }}>Terminal shell.<br /><span style={{ color: '#6b7280' }}>Les actions executees par l'agent s'affichent ici. Saisissez une commande pour l'executer.<br />Cochez <span style={{ color: '#8b5cf6' }}>Chat IA</span> pour activer la conversation en langage naturel dans ce terminal.</span></div>
+          )
+        )}
         {session.history.map((h, i) => (
           <div key={i} style={{ marginBottom: 6 }}>
             <div>
