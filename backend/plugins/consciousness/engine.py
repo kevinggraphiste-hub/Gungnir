@@ -340,18 +340,27 @@ class ConsciousnessEngine:
         On a fresh ConsciousnessEngine (first request after a redeploy or a
         hard refresh of a page whose tab had previously hit /vector/init),
         self._vector_memory is None. Users expect the connection to come back
-        on its own rather than having to click "Initialiser" again. We attempt
-        an init exactly once per instance lifetime; if the user has no Qdrant
-        configured, auto-detect gracefully returns without provider and no
-        further attempts are made.
+        on its own rather than having to click "Initialiser" again.
+
+        On succès, on mémorise `_vector_autoinit_done = True` pour ne pas
+        resolliciter la DB à chaque appel. En cas d'échec (Qdrant pas prêt
+        au démarrage, DB encore froide, ...), on NE marque PAS done : le
+        prochain tick de background thinking refera la tentative. Sans ça,
+        une init qui échoue au boot laissait la mémoire vectorielle à vide
+        pour toute la vie du process.
         """
         if self._vector_memory is not None or self._vector_autoinit_done:
             return
-        self._vector_autoinit_done = True
         try:
-            await self.init_vector_memory()
+            ok = await self.init_vector_memory()
         except Exception as e:
-            logger.debug(f"Lazy vector init failed for user {self.user_id}: {e}")
+            logger.warning(f"Lazy vector init failed for user {self.user_id}: {e}")
+            return
+        # init_vector_memory() marque déjà _vector_autoinit_done = True à
+        # l'intérieur. On ne "colle" le flag que si l'init a réellement
+        # produit un vector_memory, pour permettre les retries sinon.
+        if not ok and self._vector_memory is None:
+            self._vector_autoinit_done = False
 
     async def init_vector_memory(self) -> bool:
         """Initialize vector memory from config. Call after startup or config change.

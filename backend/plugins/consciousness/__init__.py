@@ -166,6 +166,13 @@ async def _think_for_user(user_id: int):
         except Exception:
             pass
 
+    # Lazy auto-init du vector memory : sans ça, add_thought() incrémente
+    # seulement le compteur mais n'écrit rien dans Qdrant (silencieux).
+    try:
+        await engine.ensure_vector_ready()
+    except Exception as e:
+        logger.debug(f"ensure_vector_ready failed for user {user_id}: {e}")
+
     try:
         engine.add_thought(
             thought_type="observation",
