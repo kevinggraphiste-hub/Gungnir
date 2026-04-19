@@ -33,8 +33,13 @@ logger = logging.getLogger("gungnir.plugins.code")
 # The context var is set by the dependency injected into the router.
 _current_user_id: ContextVar[int] = ContextVar("_current_user_id", default=0)
 
-def _inject_user_id(request: Request):
-    """Extract user_id from auth middleware and store in context var."""
+async def _inject_user_id(request: Request):
+    """Extract user_id from auth middleware and store in context var.
+
+    MUST be async: sync FastAPI deps run in a threadpool via anyio, and a
+    ContextVar.set() in that thread is not visible to the async handler
+    executing afterwards. Declaring the dep as async keeps the set() in the
+    caller's context so ``_current_user_id`` reflects the real user id."""
     uid = getattr(request.state, "user_id", None) or 0
     _current_user_id.set(uid)
 
