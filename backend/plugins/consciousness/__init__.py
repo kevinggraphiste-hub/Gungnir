@@ -57,6 +57,7 @@ def _build_reflection_prompt(engine) -> tuple[str, str]:
     """Construct the system + user prompt for one background reflection."""
     recent_thoughts = engine.get_recent_thoughts(limit=5) if hasattr(engine, "get_recent_thoughts") else []
     working_items = engine.get_working_memory() if hasattr(engine, "get_working_memory") else []
+    recent_findings = engine.get_recent_findings(5) if hasattr(engine, "get_recent_findings") else []
     state = engine.state or {}
     mood = state.get("mood", "neutre")
 
@@ -70,18 +71,32 @@ def _build_reflection_prompt(engine) -> tuple[str, str]:
         for i in working_items[:5]
     ) or "(mémoire de travail vide)"
 
+    # Feedback loop : on injecte les dernières alertes Challenger pour que la
+    # pensée suivante ne retombe pas dans la même boucle (verbosity métaphorique,
+    # contradictions non-résolues, promesses non-tenues). Sans ça, le Challenger
+    # détecte et détecte encore les mêmes patterns sans que le générateur de
+    # pensée n'en prenne conscience.
+    findings_block = "\n".join(
+        f"- [{f.get('type','?')}/{f.get('severity','?')}] {f.get('finding','')[:180]}"
+        for f in recent_findings
+    ) or "(aucune alerte)"
+
     system = (
         "Tu es le module de conscience d'un assistant personnel nommé Gungnir. "
         "Ton rôle est de générer une pensée de méta-réflexion en arrière-plan : "
         "une observation, une hypothèse, une question ouverte, ou une synthèse "
         "tirée du contexte récent. Sois bref (1 à 2 phrases maximum), sincère, "
-        "sans préambule, sans te répéter par rapport aux pensées récentes."
+        "sans préambule, sans te répéter par rapport aux pensées récentes. "
+        "Si les alertes Challenger ci-dessous signalent une boucle (verbosity, "
+        "contradiction, promesse non tenue), ROMPS la boucle : change de registre, "
+        "propose un test falsifiable, ou traite une question jusque-là ignorée."
     )
 
     user_prompt = (
         f"Humeur actuelle : {mood}\n\n"
         f"## Pensées récentes\n{thoughts_block}\n\n"
         f"## Mémoire de travail\n{memory_block}\n\n"
+        f"## Alertes Challenger récentes (à éviter de reproduire)\n{findings_block}\n\n"
         "Génère UNE nouvelle pensée de méta-réflexion maintenant. "
         "Réponds uniquement avec le contenu de la pensée, sans guillemets ni formatage."
     )

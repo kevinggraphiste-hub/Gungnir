@@ -777,15 +777,74 @@ class ConsciousnessEngine:
 
     # ── Challenger ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _finding_signature(finding_type: str, finding: str) -> str:
+        """Signature courte type+préfixe normalisé pour détecter les doublons.
+
+        Deux findings du même type qui commencent par les 80 mêmes caractères
+        (après normalisation espaces/casse) sont traités comme doublon.
+        """
+        import hashlib, re
+        norm = re.sub(r"\s+", " ", (finding or "").strip().lower())[:80]
+        return hashlib.md5(f"{finding_type}|{norm}".encode("utf-8")).hexdigest()[:12]
+
+    def _prune_stale_findings(self, max_age_hours: int = 168) -> int:
+        """Supprime les findings plus vieux que max_age_hours (défaut : 7 jours)."""
+        findings = self._challenger_log.get("findings", [])
+        if not findings:
+            return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        kept = []
+        dropped = 0
+        for f in findings:
+            raw = f.get("timestamp") or ""
+            ts = None
+            try:
+                iso = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+                ts = datetime.fromisoformat(iso) if iso else None
+                if ts is not None and ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+            except Exception:
+                ts = None
+            if ts is None or ts >= cutoff:
+                kept.append(f)
+            else:
+                dropped += 1
+        if dropped:
+            self._challenger_log["findings"] = kept
+        return dropped
+
     def add_finding(self, finding_type: str, severity: str, finding: str, evidence: list = None, action: str = ""):
-        """Enregistre une découverte du Challenger."""
+        """Enregistre une découverte du Challenger.
+
+        Deux garde-fous :
+        - Dédup : on ignore un finding dont la signature (type + préfixe
+          normalisé) existe déjà dans les 10 derniers. Évite que le LLM
+          re-poste 40 fois la même alerte "verbosity" cycle après cycle.
+        - TTL : purge les findings de plus de 7 jours avant l'ajout.
+        """
+        sig = self._finding_signature(finding_type, finding)
+        recent = self._challenger_log.get("findings", [])[-10:]
+        for prev in recent:
+            if prev.get("_sig") == sig:
+                # Doublon détecté : on met à jour le timestamp (fraîcheur)
+                # plutôt que de créer une nouvelle entrée.
+                prev["timestamp"] = _now()
+                prev["_count"] = int(prev.get("_count", 1)) + 1
+                _save_json(self._paths["challenger_log"], self._challenger_log)
+                return
+
+        self._prune_stale_findings()
+
         entry = {
             "timestamp": _now(),
             "type": finding_type,  # contradiction | unkept_promise | bias | trend | verbosity
             "severity": severity,  # low | medium | high
             "finding": finding,
             "evidence": evidence or [],
-            "action_suggested": action
+            "action_suggested": action,
+            "_sig": sig,
+            "_count": 1,
         }
         self._challenger_log["findings"].append(entry)
         if len(self._challenger_log["findings"]) > 200:
