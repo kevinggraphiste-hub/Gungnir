@@ -46,6 +46,7 @@ class BudgetUpdate(BaseModel):
 class ProviderBudgetUpdate(BaseModel):
     monthly_limit: Optional[float] = None
     weekly_limit: Optional[float] = None
+    block_on_limit: Optional[bool] = None
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -218,7 +219,8 @@ async def upsert_provider_budget(provider: str, data: ProviderBudgetUpdate, requ
     try:
         async with async_session() as session:
             return await cm.upsert_provider_budget(
-                session, provider, data.monthly_limit, data.weekly_limit, user_id=uid
+                session, provider, data.monthly_limit, data.weekly_limit,
+                user_id=uid, block_on_limit=data.block_on_limit,
             )
     except Exception as e:
         logger.error(f"Upsert provider budget error: {e}")

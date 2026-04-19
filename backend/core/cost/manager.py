@@ -534,6 +534,7 @@ class CostManager:
                     "provider": pb.provider,
                     "monthly_limit": float(pb.monthly_limit) if pb.monthly_limit else None,
                     "weekly_limit": float(pb.weekly_limit) if pb.weekly_limit else None,
+                    "block_on_limit": bool(pb.block_on_limit),
                 }
                 for pb in result.scalars().all()
             ]
@@ -548,6 +549,7 @@ class CostManager:
         monthly_limit: float = None,
         weekly_limit: float = None,
         user_id: Optional[int] = None,
+        block_on_limit: Optional[bool] = None,
     ) -> dict:
         """Create or update a provider budget for a user."""
         try:
@@ -559,12 +561,15 @@ class CostManager:
             if pb:
                 pb.monthly_limit = monthly_limit
                 pb.weekly_limit = weekly_limit
+                if block_on_limit is not None:
+                    pb.block_on_limit = bool(block_on_limit)
             else:
                 pb = ProviderBudget(
                     user_id=int(user_id) if user_id is not None else None,
                     provider=provider,
                     monthly_limit=monthly_limit,
                     weekly_limit=weekly_limit,
+                    block_on_limit=bool(block_on_limit) if block_on_limit is not None else False,
                 )
                 session.add(pb)
             await session.commit()
@@ -662,8 +667,9 @@ class CostManager:
                 scope = f"{pb['provider']} {label_suffix}"
                 if pct >= 100:
                     alerts.append({"level": 100, "scope": scope, "percent": round(pct, 1), "cost": round(cost, 4), "limit": limit})
-                    should_block = True
-                    block_reason = block_reason or f"{scope}: ${cost:.4f} / ${limit:.2f}"
+                    if pb.get("block_on_limit"):
+                        should_block = True
+                        block_reason = block_reason or f"{scope}: ${cost:.4f} / ${limit:.2f}"
                 elif pct >= 80:
                     alerts.append({"level": 80, "scope": scope, "percent": round(pct, 1), "cost": round(cost, 4), "limit": limit})
 

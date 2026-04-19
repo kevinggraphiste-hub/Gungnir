@@ -215,6 +215,7 @@ class ProviderBudget(Base):
     provider = Column(String(100), nullable=False)
     monthly_limit = Column(Float, nullable=True)
     weekly_limit = Column(Float, nullable=True)
+    block_on_limit = Column(Boolean, default=False)
 
 
 # ── Plugin registry ──────────────────────────────────────────────────────────

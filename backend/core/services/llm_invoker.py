@@ -13,6 +13,7 @@ import uuid as _uuid
 from typing import Any, Awaitable, Callable
 
 from backend.core.config.settings import Settings
+from backend.core.cost.manager import get_cost_manager
 from backend.core.db.engine import async_session
 from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
 from backend.core.providers import get_provider, ChatMessage
@@ -46,6 +47,26 @@ async def invoke_llm_for_user(
         { "ok": False, "error": "..." }
     """
     settings = Settings.load()
+
+    # Budget gate — skip the call entirely if the user's budget is over and
+    # block_on_limit is active. Mirrors the chat.py pre-call budget check so
+    # background daemons (conscience, challenger, scheduler) can't bypass it.
+    try:
+        cm = get_cost_manager()
+        async with async_session() as session:
+            budget_status = await cm.check_all_budgets(session, user_id=int(user_id))
+        if budget_status.get("should_block"):
+            reason = budget_status.get("block_reason") or "budget dépassé"
+            logger.warning(
+                f"LLM invocation blocked by budget for user {user_id}: {reason}"
+            )
+            return {
+                "ok": False,
+                "error": f"Budget dépassé — appel bloqué ({reason})",
+                "budget_blocked": True,
+            }
+    except Exception as budget_err:
+        logger.warning(f"Budget check skipped for user {user_id}: {budget_err}")
 
     # Resolve provider/model from per-user settings first, then global fallback
     api_key = None

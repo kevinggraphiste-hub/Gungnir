@@ -365,7 +365,8 @@ class CostManager:
             r = await session.execute(q)
             return [{"id": pb.id, "provider": pb.provider,
                       "monthly_limit": float(pb.monthly_limit) if pb.monthly_limit else None,
-                      "weekly_limit": float(pb.weekly_limit) if pb.weekly_limit else None}
+                      "weekly_limit": float(pb.weekly_limit) if pb.weekly_limit else None,
+                      "block_on_limit": bool(pb.block_on_limit)}
                      for pb in r.scalars().all()]
         except Exception as e:
             logger.error(f"Provider budgets error: {e}")
@@ -373,7 +374,8 @@ class CostManager:
 
     async def upsert_provider_budget(self, session: AsyncSession,
                                       provider: str, monthly: float = None,
-                                      weekly: float = None, user_id: Optional[int] = None) -> dict:
+                                      weekly: float = None, user_id: Optional[int] = None,
+                                      block_on_limit: Optional[bool] = None) -> dict:
         try:
             q = select(ProviderBudget).where(ProviderBudget.provider == provider)
             if user_id is not None:
@@ -383,12 +385,15 @@ class CostManager:
             if pb:
                 pb.monthly_limit = monthly
                 pb.weekly_limit = weekly
+                if block_on_limit is not None:
+                    pb.block_on_limit = bool(block_on_limit)
             else:
                 pb = ProviderBudget(
                     user_id=int(user_id) if user_id is not None else None,
                     provider=provider,
                     monthly_limit=monthly,
                     weekly_limit=weekly,
+                    block_on_limit=bool(block_on_limit) if block_on_limit is not None else False,
                 )
                 session.add(pb)
             await session.commit()
@@ -451,8 +456,9 @@ class CostManager:
                 if pct >= 100:
                     alerts.append({"level": 100, "scope": scope, "percent": round(pct, 1),
                                    "cost": round(cost, 4), "limit": limit})
-                    should_block = True
-                    block_reason = block_reason or f"{scope}: ${cost:.4f} / ${limit:.2f}"
+                    if pb.get("block_on_limit"):
+                        should_block = True
+                        block_reason = block_reason or f"{scope}: ${cost:.4f} / ${limit:.2f}"
                 elif pct >= 80:
                     alerts.append({"level": 80, "scope": scope, "percent": round(pct, 1),
                                    "cost": round(cost, 4), "limit": limit})

@@ -103,6 +103,11 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text("ALTER TABLE provider_budgets ADD COLUMN user_id INTEGER"))
                 await conn.execute(text("UPDATE provider_budgets SET user_id = 1 WHERE user_id IS NULL"))
                 logger.info("Migration: added user_id column to provider_budgets (assigned to user #1)")
+            if not await _has_col("provider_budgets", "block_on_limit"):
+                await conn.execute(text(
+                    "ALTER TABLE provider_budgets ADD COLUMN block_on_limit BOOLEAN DEFAULT FALSE"
+                ))
+                logger.info("Migration: added block_on_limit column to provider_budgets")
 
             # Drop legacy single-column unique constraint on provider_budgets.provider
             # (uniqueness is now enforced per (user_id, provider) at the application layer).

@@ -80,6 +80,7 @@ interface ProviderBudget {
   provider: string
   monthly_limit: number | null
   weekly_limit: number | null
+  block_on_limit: boolean
 }
 
 interface BudgetCheck {
@@ -756,6 +757,25 @@ function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget
                 <div style={{ display: 'flex', gap: 16, fontSize: 13, color: 'var(--text-secondary)', alignItems: 'center' }}>
                   <span>Mensuel: {pb.monthly_limit ? fmtCost(pb.monthly_limit) : '—'}</span>
                   <span>Hebdo: {pb.weekly_limit ? fmtCost(pb.weekly_limit) : '—'}</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', color: pb.block_on_limit ? '#ef4444' : 'var(--text-muted)' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!pb.block_on_limit}
+                      onChange={async (e) => {
+                        await apiFetch(`/provider-budgets/${pb.provider}`, {
+                          method: 'PUT',
+                          body: JSON.stringify({
+                            monthly_limit: pb.monthly_limit,
+                            weekly_limit: pb.weekly_limit,
+                            block_on_limit: e.target.checked,
+                          }),
+                        })
+                        loadData()
+                      }}
+                      style={{ accentColor: 'var(--scarlet)' }}
+                    />
+                    Bloquer au dépassement
+                  </label>
                   <SecondaryButton size="sm" danger icon={<Trash2 size={12} />} onClick={async () => {
                     await apiFetch(`/provider-budgets/${pb.provider}`, { method: 'DELETE' })
                     loadData()
