@@ -53,7 +53,8 @@ def _classify_llm_error(exc: Exception) -> str:
 # Vision fallback : description d'images pour modèles non-multimodaux
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Patterns de modèles connus comme supportant la vision
+# Fallback patterns quand le catalogue OpenRouter n'est pas joignable.
+# Utilisé uniquement si `_fetch_openrouter_models()` échoue (offline, rate-limit…).
 _VISION_MODEL_PATTERNS = [
     "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-4.1",
     "claude-3", "claude-sonnet", "claude-opus", "claude-haiku",
@@ -63,9 +64,36 @@ _VISION_MODEL_PATTERNS = [
     "yi-vision", "phi-3-vision", "phi-3.5-vision",
 ]
 
-def _model_supports_vision(model_name: str) -> bool:
-    """Heuristique : le modèle supporte-t-il les images ?"""
-    name = model_name.lower()
+
+async def _model_supports_vision(model_name: str) -> bool:
+    """Le modèle supporte-t-il les images ?
+
+    Source de vérité : OpenRouter `architecture.input_modalities` (cache 5 min
+    déjà tenu par le plugin model_guide). Fallback sur la liste statique
+    `_VISION_MODEL_PATTERNS` si le catalogue est indisponible.
+    """
+    name = (model_name or "").lower()
+    if not name:
+        return False
+    # 1) Source dynamique — cache OpenRouter du plugin model_guide
+    try:
+        from backend.plugins.model_guide.routes import _fetch_openrouter_models
+        catalog = await _fetch_openrouter_models()
+        if catalog:
+            # OpenRouter IDs sont en "provider/model" ; les providers natifs
+            # utilisent souvent juste "model". On teste les deux formes.
+            entry = catalog.get(model_name) or catalog.get(name)
+            if entry is None:
+                # match suffixe : "gpt-4o-mini" contre "openai/gpt-4o-mini"
+                for mid, info in catalog.items():
+                    if mid.endswith("/" + model_name) or mid.endswith("/" + name):
+                        entry = info
+                        break
+            if entry is not None:
+                return bool(entry.get("vision"))
+    except Exception as e:
+        print(f"[Wolf] Vision dynamic check failed, falling back to patterns: {e}")
+    # 2) Fallback : liste statique
     return any(p in name for p in _VISION_MODEL_PATTERNS)
 
 
@@ -795,7 +823,7 @@ async def _chat_impl(
     # Extraire les images si présentes + fallback vision
     user_images = data.get("images", [])
     actual_model = model or provider_config.default_model or ""
-    if user_images and not _model_supports_vision(actual_model):
+    if user_images and not await _model_supports_vision(actual_model):
         # Le modèle ne supporte pas la vision → décrire les images en texte.
         # Only the caller's own vision keys are used — no cross-user fallback.
         print(f"[Wolf] Model '{actual_model}' has no vision — using fallback description")
