@@ -23,6 +23,9 @@ router = APIRouter()
 
 def _classify_llm_error(exc: Exception) -> str:
     """Return a user-friendly error message based on the LLM API exception."""
+    # Validation errors (ValueError) ont un message déjà parlant : on le renvoie tel quel
+    if isinstance(exc, ValueError):
+        return str(exc)
     msg = str(exc).lower()
     # Credit / payment
     if "402" in msg or "payment required" in msg or "insufficient" in msg or "quota" in msg or "credits" in msg:
@@ -78,6 +81,7 @@ async def _describe_images_for_blind_model(
     If the user has no vision-capable provider configured, returns a textual
     placeholder instead of falling back to another user's key.
     """
+    from backend.core.api.auth_helpers import get_user_provider_key
     vision_providers = [
         ("openrouter", "openai/gpt-4o-mini"),
         ("openai", "gpt-4o-mini"),

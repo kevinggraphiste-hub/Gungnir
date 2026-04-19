@@ -12,10 +12,19 @@ class OpenRouterProvider(LLMProvider):
 
     def __init__(self, api_key: str, base_url: Optional[str] = None, **kwargs):
         super().__init__(api_key, base_url, **kwargs)
+        clean_key = (api_key or "").strip()
+        try:
+            clean_key.encode("ascii")
+        except UnicodeEncodeError:
+            raise ValueError(
+                "Clé API OpenRouter invalide : elle contient des caractères non-ASCII "
+                "(probablement un copier-coller corrompu). Re-saisis-la dans "
+                "Paramètres → Providers → OpenRouter."
+            )
         self.client = httpx.AsyncClient(
             base_url=self.base_url or self.BASE_URL,
             headers={
-                "Authorization": f"Bearer {api_key}",
+                "Authorization": f"Bearer {clean_key}",
                 "HTTP-Referer": "https://openclaude.local",
                 "X-Title": "OpenClaude",
             },
