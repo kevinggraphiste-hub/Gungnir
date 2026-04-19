@@ -27,6 +27,37 @@ class CostManager:
     def __init__(self):
         pass
 
+    async def _resolve_pricing(self, model: str) -> tuple[str, float, float] | None:
+        """Try to resolve model ID + prices from the live OpenRouter catalog.
+
+        Returns (canonical_id, input_$_per_1M, output_$_per_1M) or None if the
+        catalog is unreachable or the model isn't listed. This is the single
+        source of truth for every OpenRouter-routed call : the model keeps its
+        real ID (no lumping) and the price is the current one, no hardcoding.
+        """
+        if not model:
+            return None
+        try:
+            from backend.plugins.model_guide.routes import _fetch_openrouter_models
+            catalog = await _fetch_openrouter_models()
+        except Exception:
+            return None
+        if not catalog:
+            return None
+        name = model.lower()
+        # Direct match by ID (e.g. "xiaomi/mimo-v2-omni")
+        entry = catalog.get(model) or catalog.get(name)
+        if entry is None:
+            # Match suffix : provider retourne parfois juste "gpt-4o-mini"
+            for mid, info in catalog.items():
+                if mid.lower() == name or mid.lower().endswith("/" + name):
+                    entry = info
+                    model = mid
+                    break
+        if entry is None:
+            return None
+        return (model, float(entry.get("input_1m", 0)), float(entry.get("output_1m", 0)))
+
     async def record_message_cost(
         self,
         session: AsyncSession,
@@ -39,8 +70,15 @@ class CostManager:
     ) -> float:
         """Record cost for a message and return the calculated cost."""
         try:
-            standardized_model = extract_model_from_response(model)
-            cost = calculate_cost(standardized_model, tokens_input, tokens_output)
+            # 1) Source dynamique : catalogue OpenRouter (identité + prix réels)
+            dyn = await self._resolve_pricing(model)
+            if dyn is not None:
+                standardized_model, in_p, out_p = dyn
+                cost = (tokens_input / 1_000_000) * in_p + (tokens_output / 1_000_000) * out_p
+            else:
+                # 2) Fallback : liste statique MODEL_PRICING (modèles hors catalogue)
+                standardized_model = extract_model_from_response(model)
+                cost = calculate_cost(standardized_model, tokens_input, tokens_output)
 
             record_date = message_date.date() if message_date else datetime.utcnow().date()
 

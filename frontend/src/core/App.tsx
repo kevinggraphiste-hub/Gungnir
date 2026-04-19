@@ -14,6 +14,7 @@ import { useStore } from './stores/appStore'
 import { api, apiFetch, clearAuthToken } from './services/api'
 import { usePluginStore } from './stores/pluginStore'
 import { useGlobalKeyboard } from './hooks/useKeyboard'
+import { useUIPreferences } from './hooks/useUIPreferences'
 import { getPluginComponent } from './services/pluginLoader'
 
 // ── Core pages (always bundled) ─────────────────────────────────────────────
@@ -73,6 +74,9 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
 
   // Global keyboard shortcuts
   useGlobalKeyboard()
+
+  // Charge et applique les préférences typographie / accessibilité (persistées par user)
+  useUIPreferences()
 
   // Apply saved theme & font size on mount
   useEffect(() => {

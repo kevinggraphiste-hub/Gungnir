@@ -1,4 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&family=Atkinson+Hyperlegible:wght@400;700&family=Lora:wght@400;500;600;700&display=swap');
+/* OpenDyslexic : non dispo sur Google Fonts, on passe par le CDN jsdelivr.
+   Police conçue pour réduire l'inversion de lettres chez les lecteurs dyslexiques. */
+@import url('https://cdn.jsdelivr.net/npm/open-dyslexic@1.0.3/open-dyslexic-regular.css');
 
 @tailwind base;
 @tailwind components;
@@ -165,10 +168,42 @@
   --shadow-glow: 0 0 40px rgba(220, 38, 38, 0.15);
 }
 
-/* ── Taille de texte ──────────────────────────── */
+/* ── Taille de texte (ancien système, conservé pour compat) ── */
 [data-fontsize="sm"] { font-size: 13px; }
 [data-fontsize="md"] { font-size: 15px; }
 [data-fontsize="lg"] { font-size: 17px; }
+
+/* ── Accessibilité typographique ──────────────────
+   Variables pilotées par data-* sur <html>, écrites par useUIPreferences. */
+:root {
+  --app-font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --app-font-size: 15px;
+  --app-line-height: 1.55;
+}
+
+/* Police principale (avec empattement / sans / OpenDyslexic / Atkinson) */
+[data-font="inter"][data-fontstyle="sans"] {
+  --app-font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+[data-font="inter"][data-fontstyle="serif"] {
+  --app-font-family: 'Lora', Georgia, 'Times New Roman', serif;
+}
+[data-font="atkinson"] {
+  --app-font-family: 'Atkinson Hyperlegible', 'Inter', -apple-system, sans-serif;
+}
+[data-font="opendyslexic"] {
+  --app-font-family: 'OpenDyslexic', 'Atkinson Hyperlegible', Verdana, sans-serif;
+}
+
+/* Taille globale */
+[data-fontsize-pref="small"]  { --app-font-size: 13px; }
+[data-fontsize-pref="normal"] { --app-font-size: 15px; }
+[data-fontsize-pref="large"]  { --app-font-size: 17px; }
+
+/* Interligne */
+[data-linespacing="tight"]  { --app-line-height: 1.35; }
+[data-linespacing="normal"] { --app-line-height: 1.55; }
+[data-linespacing="loose"]  { --app-line-height: 1.8; }
 
 * {
   box-sizing: border-box;
@@ -180,6 +215,9 @@ body {
   min-height: 100vh;
   background: var(--bg-primary);
   color: var(--text-primary);
+  font-family: var(--app-font-family);
+  font-size: var(--app-font-size);
+  line-height: var(--app-line-height);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

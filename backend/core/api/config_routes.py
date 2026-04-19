@@ -775,6 +775,65 @@ async def save_user_app_settings(request: Request, session: AsyncSession = Depen
     return {"status": "saved"}
 
 
+# ── UI preferences (per-user) ────────────────────────────────────────────────
+
+_UI_DEFAULTS = {
+    "font_family": "inter",       # inter | opendyslexic | atkinson
+    "font_style": "sans",         # sans | serif
+    "font_size": "normal",        # small | normal | large
+    "line_spacing": "normal",     # tight | normal | loose
+}
+
+_UI_ALLOWED = {
+    "font_family": {"inter", "opendyslexic", "atkinson"},
+    "font_style": {"sans", "serif"},
+    "font_size": {"small", "normal", "large"},
+    "line_spacing": {"tight", "normal", "loose"},
+}
+
+
+@router.get("/config/user/ui")
+async def get_user_ui_prefs(request: Request, session: AsyncSession = Depends(get_session)):
+    """Retourne les préférences typographie / accessibilité de l'utilisateur."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        return dict(_UI_DEFAULTS)
+    user_settings = await get_user_settings(user_id, session)
+    prefs = dict(user_settings.ui_preferences or {})
+    # Merge avec les defaults — si un champ est manquant ou invalide on reprend le défaut
+    out = dict(_UI_DEFAULTS)
+    for k, v in prefs.items():
+        if k in _UI_ALLOWED and v in _UI_ALLOWED[k]:
+            out[k] = v
+    return out
+
+
+@router.post("/config/user/ui")
+async def save_user_ui_prefs(request: Request, session: AsyncSession = Depends(get_session)):
+    """Enregistre les préférences typographie / accessibilité de l'utilisateur.
+    On valide chaque champ contre `_UI_ALLOWED` avant de persister pour éviter
+    qu'un payload malformé pollue le JSON."""
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        user_id = await open_mode_fallback_user_id(session)
+        if user_id is None:
+            return JSONResponse(
+                {"error": "Authentification requise."},
+                status_code=401,
+            )
+    body = await request.json()
+    user_settings = await get_user_settings(user_id, session)
+    prefs = dict(user_settings.ui_preferences or {})
+    for k, v in (body or {}).items():
+        if k in _UI_ALLOWED and v in _UI_ALLOWED[k]:
+            prefs[k] = v
+    from sqlalchemy.orm.attributes import flag_modified
+    user_settings.ui_preferences = prefs
+    flag_modified(user_settings, "ui_preferences")
+    await session.commit()
+    return {"status": "saved", "ui_preferences": prefs}
+
+
 # ── MCP Servers (per-user) ───────────────────────────────────────────────────
 
 def _require_user_id(request: Request) -> int:
