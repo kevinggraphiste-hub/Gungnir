@@ -82,11 +82,15 @@ async def _describe_images_for_blind_model(
     placeholder instead of falling back to another user's key.
     """
     from backend.core.api.auth_helpers import get_user_provider_key
+    # Ordre optimisé coût/qualité : Gemini 2.5 Flash Lite est ~4x moins cher que
+    # GPT-4o-mini pour une vision de qualité équivalente sur des tâches de
+    # description. On tente d'abord les moins chers, puis on escalade.
     vision_providers = [
-        ("openrouter", "openai/gpt-4o-mini"),
+        ("openrouter", "google/gemini-2.5-flash-lite"),   # ~$0.10/$0.40 per 1M
+        ("google", "gemini-2.5-flash-lite"),              # direct, même prix
+        ("openrouter", "openai/gpt-4o-mini"),             # ~$0.15/$0.60 per 1M
         ("openai", "gpt-4o-mini"),
-        ("anthropic", "claude-sonnet-4-5-20250514"),
-        ("google", "gemini-2.0-flash"),
+        ("anthropic", "claude-3-5-haiku-20241022"),       # fallback Anthropic (pas Sonnet)
     ]
     for prov_name, fallback_model in vision_providers:
         api_key = None
