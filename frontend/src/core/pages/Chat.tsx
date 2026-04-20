@@ -797,6 +797,16 @@ export default function Chat() {
     } else if (engine === 'elevenlabs') {
       body.voice = prefs?.elevenVoiceId || '21m00Tcm4TlvDq8ikWAM'
       body.model = prefs?.elevenModelId || 'eleven_multilingual_v2'
+    } else if (engine === 'google') {
+      body.lang = prefs?.lang && prefs.lang !== 'auto'
+        ? prefs.lang
+        : (i18n.language === 'en' ? 'en-US' : 'fr-FR')
+      if (prefs?.googleVoice) body.voice = prefs.googleVoice
+      body.speed = prefs?.googleSpeed ?? 1.0
+    } else if (engine === 'custom') {
+      body.voice = prefs?.customVoice || 'alloy'
+      body.model = prefs?.customModel || 'tts-1'
+      body.speed = prefs?.customSpeed ?? 1.0
     }
     setTtsSpeaking(true)
     apiFetch('/api/chat/tts', {
@@ -942,6 +952,12 @@ export default function Chat() {
           form.append('provider', engine)
           if (forcedLang) form.append('lang', forcedLang)
           else form.append('lang', i18n.language === 'en' ? 'en-US' : 'fr-FR')
+          // Model hint pour mistral / custom (openai = whisper-1 hardcodé backend)
+          if (engine === 'mistral' && (prefs as any)?.mistralModel) {
+            form.append('model', (prefs as any).mistralModel)
+          } else if (engine === 'custom' && (prefs as any)?.customModel) {
+            form.append('model', (prefs as any).customModel)
+          }
           const r = await apiFetch('/api/chat/stt', { method: 'POST', body: form })
           const data = await r.json()
           if (data?.ok && data.text) {

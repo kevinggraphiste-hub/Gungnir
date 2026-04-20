@@ -326,6 +326,8 @@ SERVICE_LABELS = {
     "huggingface": "Hugging Face",
     "replicate": "Replicate",
     "stability": "Stability AI",
+    # Voix (endpoint OpenAI-compatible custom pour TTS/STT)
+    "voice_custom": "Voix — endpoint OpenAI-compatible (custom)",
     # Recherche web (HuntR)
     "tavily": "Tavily (Web Search)",
     "brave": "Brave Search",
@@ -345,7 +347,7 @@ SERVICE_CATEGORIES = {
     "communication": ["slack", "discord", "telegram", "email_smtp", "teams", "whatsapp"],
     "automation": ["n8n", "make", "zapier", "activepieces"],
     "monitoring": ["sentry", "grafana", "posthog"],
-    "ai": ["huggingface", "replicate", "stability"],
+    "ai": ["huggingface", "replicate", "stability", "voice_custom"],
     "search": ["tavily", "brave", "exa", "serper", "serpapi", "kagi", "bing", "searxng"],
 }
 

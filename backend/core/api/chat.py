@@ -1761,6 +1761,60 @@ async def _get_user_elevenlabs_key(user_id: int) -> str | None:
     return None
 
 
+async def _get_user_provider_key(user_id: int, provider: str) -> str | None:
+    """Retourne une clé LLM provider per-user (google, mistral…)."""
+    from backend.core.db.engine import get_session
+    from backend.core.db.models import UserSettings
+    from backend.core.config.settings import decrypt_value
+    from sqlalchemy import select
+    try:
+        async for session in get_session():
+            r = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == int(user_id))
+            )
+            us = r.scalar_one_or_none()
+            if us is None:
+                return None
+            prov = (us.provider_keys or {}).get(provider) or {}
+            key = prov.get("api_key")
+            if not key:
+                return None
+            return decrypt_value(key)
+    except Exception as e:
+        logger.warning(f"{provider} key lookup failed for user {user_id}: {e}")
+    return None
+
+
+async def _get_user_voice_custom(user_id: int) -> dict | None:
+    """Retourne la config voice_custom per-user : {base_url, api_key} ou None.
+
+    Utilisé pour un endpoint OpenAI-compatible custom (local Whisper, Groq,
+    self-hosted TTS, etc). Les clés viennent de service_keys.voice_custom."""
+    from backend.core.db.engine import get_session
+    from backend.core.db.models import UserSettings
+    from backend.core.api.auth_helpers import get_user_service_key
+    from sqlalchemy import select
+    try:
+        async for session in get_session():
+            r = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == int(user_id))
+            )
+            us = r.scalar_one_or_none()
+            if us is None:
+                return None
+            svc = get_user_service_key(us, "voice_custom")
+            if not svc:
+                return None
+            base_url = (svc.get("base_url") or "").rstrip("/")
+            api_key = svc.get("api_key") or ""
+            if not base_url:
+                return None
+            return {"base_url": base_url, "api_key": api_key}
+    except Exception as e:
+        logger.warning(f"voice_custom lookup failed for user {user_id}: {e}")
+    return None
+
+
 @router.get("/chat/voice-capabilities")
 async def voice_capabilities(request: Request):
     """Retourne les moteurs TTS/STT disponibles pour l'user courant.
@@ -1775,6 +1829,9 @@ async def voice_capabilities(request: Request):
 
     openai_key = await _get_user_openai_key(uid)
     el_key = await _get_user_elevenlabs_key(uid)
+    google_key = await _get_user_provider_key(uid, "google")
+    mistral_key = await _get_user_provider_key(uid, "mistral")
+    custom = await _get_user_voice_custom(uid)
 
     return {
         "tts": {
@@ -1784,11 +1841,22 @@ async def voice_capabilities(request: Request):
                         "source": "provider_keys.openai"},
             "elevenlabs": {"available": bool(el_key), "label": "ElevenLabs", "free": False,
                            "source": "voice_config.elevenlabs"},
+            "google":  {"available": bool(google_key), "label": "Google Cloud TTS",
+                        "free": False, "source": "provider_keys.google"},
+            "custom":  {"available": bool(custom), "label": "Custom (OpenAI-compatible)",
+                        "free": False, "source": "service_keys.voice_custom"},
         },
         "stt": {
             "browser": {"available": True, "label": "Navigateur (SpeechRecognition)", "free": True},
             "openai":  {"available": bool(openai_key), "label": "OpenAI Whisper", "free": False,
                         "source": "provider_keys.openai"},
+            "google":  {"available": bool(google_key), "label": "Google Cloud Speech-to-Text",
+                        "free": False, "source": "provider_keys.google"},
+            "mistral": {"available": bool(mistral_key), "label": "Mistral Voxtral",
+                        "free": False, "source": "provider_keys.mistral",
+                        "models": ["voxtral-mini-latest", "voxtral-small-latest"]},
+            "custom":  {"available": bool(custom), "label": "Custom (OpenAI-compatible)",
+                        "free": False, "source": "service_keys.voice_custom"},
         },
     }
 
@@ -1885,8 +1953,76 @@ async def chat_tts(data: dict, request: Request):
         except Exception as e:
             return JSONResponse({"error": f"Erreur réseau : {e}"}, status_code=502)
 
+    if provider == "google":
+        api_key = await _get_user_provider_key(uid, "google")
+        if not api_key:
+            return JSONResponse({"error": "Aucune clé Google configurée"}, status_code=400)
+        # Google Cloud TTS : auth par ?key=...  Response = base64 dans le JSON.
+        language_code = str(data.get("lang") or "fr-FR").strip()
+        voice_name = str(data.get("voice") or "").strip()  # optionnel
+        payload: dict = {
+            "input": {"text": text},
+            "voice": {"languageCode": language_code},
+            "audioConfig": {"audioEncoding": "MP3",
+                            "speakingRate": max(0.25, min(4.0, float(data.get("speed") or 1.0)))},
+        }
+        if voice_name:
+            payload["voice"]["name"] = voice_name
+        url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(url, json=payload,
+                                   timeout=aiohttp.ClientTimeout(total=30)) as r:
+                    if r.status != 200:
+                        body = await r.text()
+                        return JSONResponse(
+                            {"error": f"Google TTS {r.status}: {body[:200]}"},
+                            status_code=r.status,
+                        )
+                    doc = await r.json()
+                    b64 = doc.get("audioContent") or ""
+                    if not b64:
+                        return JSONResponse({"error": "Google TTS: audioContent vide"}, status_code=502)
+                    import base64 as _b64
+                    audio = _b64.b64decode(b64)
+                    return Response(content=audio, media_type="audio/mpeg")
+        except Exception as e:
+            return JSONResponse({"error": f"Erreur réseau : {e}"}, status_code=502)
+
+    if provider == "custom":
+        cfg = await _get_user_voice_custom(uid)
+        if not cfg:
+            return JSONResponse({"error": "Endpoint custom non configuré (Paramètres → Services → Voix custom)"}, status_code=400)
+        # Parle OpenAI-compatible : POST {base_url}/audio/speech
+        voice = str(data.get("voice") or "alloy").strip()
+        model = str(data.get("model") or "tts-1").strip()
+        payload = {
+            "model": model, "input": text, "voice": voice,
+            "response_format": "mp3",
+            "speed": max(0.25, min(4.0, float(data.get("speed") or 1.0))),
+        }
+        url = f"{cfg['base_url']}/audio/speech"
+        headers = {"Content-Type": "application/json"}
+        if cfg.get("api_key"):
+            headers["Authorization"] = f"Bearer {cfg['api_key']}"
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(url, json=payload, headers=headers,
+                                   timeout=aiohttp.ClientTimeout(total=30)) as r:
+                    if r.status != 200:
+                        body = await r.text()
+                        return JSONResponse(
+                            {"error": f"Custom TTS {r.status}: {body[:200]}"},
+                            status_code=r.status,
+                        )
+                    audio = await r.read()
+                    return Response(content=audio, media_type="audio/mpeg")
+        except Exception as e:
+            return JSONResponse({"error": f"Erreur réseau : {e}"}, status_code=502)
+
     return JSONResponse(
-        {"error": f"Provider '{provider}' non supporté. Utilise 'openai' ou 'elevenlabs'."},
+        {"error": f"Provider '{provider}' non supporté. "
+                  "Utilise 'openai', 'elevenlabs', 'google' ou 'custom'."},
         status_code=400,
     )
 
@@ -1917,30 +2053,30 @@ async def chat_stt(request: Request):
     if len(audio_bytes) > 25 * 1024 * 1024:
         return JSONResponse({"error": "Audio > 25 MB (limite Whisper)"}, status_code=400)
 
-    if provider == "openai":
-        api_key = await _get_user_openai_key(uid)
-        if not api_key:
-            return JSONResponse({"error": "Aucune clé OpenAI configurée"}, status_code=400)
-        # Whisper accepte webm/mp3/wav/m4a — on laisse le navigateur choisir.
-        fname = getattr(audio, "filename", None) or "recording.webm"
-        ctype = getattr(audio, "content_type", None) or "audio/webm"
-        data = aiohttp.FormData()
-        data.add_field("file", audio_bytes, filename=fname, content_type=ctype)
-        data.add_field("model", "whisper-1")
-        lang_hint = str(form.get("lang") or "").strip()
+    fname = getattr(audio, "filename", None) or "recording.webm"
+    ctype = getattr(audio, "content_type", None) or "audio/webm"
+    lang_hint = str(form.get("lang") or "").strip()
+
+    # Helper : upload multipart OpenAI-compatible (OpenAI, Mistral, custom)
+    async def _openai_compat_transcribe(base_url: str, api_key: str | None,
+                                         model_name: str) -> JSONResponse | dict:
+        data_form = aiohttp.FormData()
+        data_form.add_field("file", audio_bytes, filename=fname, content_type=ctype)
+        data_form.add_field("model", model_name)
         if lang_hint and lang_hint != "auto":
-            # Whisper accepte un code ISO-639-1 (fr, en…) — on split BCP-47
-            data.add_field("language", lang_hint.split("-")[0])
-        headers = {"Authorization": f"Bearer {api_key}"}
+            data_form.add_field("language", lang_hint.split("-")[0])
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         try:
             async with aiohttp.ClientSession() as s:
-                async with s.post("https://api.openai.com/v1/audio/transcriptions",
-                                   data=data, headers=headers,
+                async with s.post(f"{base_url.rstrip('/')}/audio/transcriptions",
+                                   data=data_form, headers=headers,
                                    timeout=aiohttp.ClientTimeout(total=60)) as r:
                     if r.status != 200:
                         body = await r.text()
                         return JSONResponse(
-                            {"ok": False, "error": f"Whisper {r.status}: {body[:200]}"},
+                            {"ok": False, "error": f"STT {r.status}: {body[:200]}"},
                             status_code=r.status,
                         )
                     resp = await r.json()
@@ -1948,7 +2084,75 @@ async def chat_stt(request: Request):
         except Exception as e:
             return JSONResponse({"ok": False, "error": f"Erreur réseau : {e}"}, status_code=502)
 
+    if provider == "openai":
+        api_key = await _get_user_openai_key(uid)
+        if not api_key:
+            return JSONResponse({"error": "Aucune clé OpenAI configurée"}, status_code=400)
+        return await _openai_compat_transcribe("https://api.openai.com/v1", api_key, "whisper-1")
+
+    if provider == "mistral":
+        api_key = await _get_user_provider_key(uid, "mistral")
+        if not api_key:
+            return JSONResponse({"error": "Aucune clé Mistral configurée"}, status_code=400)
+        model = str(form.get("model") or "voxtral-mini-latest").strip()
+        if model not in ("voxtral-mini-latest", "voxtral-small-latest"):
+            model = "voxtral-mini-latest"
+        return await _openai_compat_transcribe("https://api.mistral.ai/v1", api_key, model)
+
+    if provider == "custom":
+        cfg = await _get_user_voice_custom(uid)
+        if not cfg:
+            return JSONResponse({"error": "Endpoint custom non configuré"}, status_code=400)
+        model = str(form.get("model") or "whisper-1").strip()
+        return await _openai_compat_transcribe(cfg["base_url"], cfg.get("api_key") or None, model)
+
+    if provider == "google":
+        api_key = await _get_user_provider_key(uid, "google")
+        if not api_key:
+            return JSONResponse({"error": "Aucune clé Google configurée"}, status_code=400)
+        # Google Speech-to-Text : /v1/speech:recognize ; audio en base64 inline.
+        # On déduit l'encoding du content_type (webm/opus par défaut côté Chrome).
+        import base64 as _b64
+        encoding = "WEBM_OPUS"
+        sample_rate = 48000
+        if "mp4" in ctype.lower() or "m4a" in fname.lower():
+            encoding = "MP4_AAC"  # note : non officiellement supporté, fallback possible
+        elif "wav" in ctype.lower():
+            encoding = "LINEAR16"
+            sample_rate = 16000
+        body_raw = {
+            "config": {
+                "encoding": encoding,
+                "sampleRateHertz": sample_rate,
+                "languageCode": (lang_hint if lang_hint and lang_hint != "auto" else "fr-FR"),
+                "enableAutomaticPunctuation": True,
+            },
+            "audio": {"content": _b64.b64encode(audio_bytes).decode("ascii")},
+        }
+        url = f"https://speech.googleapis.com/v1/speech:recognize?key={api_key}"
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(url, json=body_raw,
+                                   timeout=aiohttp.ClientTimeout(total=60)) as r:
+                    if r.status != 200:
+                        body = await r.text()
+                        return JSONResponse(
+                            {"ok": False, "error": f"Google STT {r.status}: {body[:200]}"},
+                            status_code=r.status,
+                        )
+                    doc = await r.json()
+                    parts = []
+                    for res in doc.get("results", []):
+                        alts = res.get("alternatives") or []
+                        if alts and alts[0].get("transcript"):
+                            parts.append(alts[0]["transcript"])
+                    text = " ".join(parts).strip()
+                    return {"ok": True, "text": text}
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"Erreur réseau : {e}"}, status_code=502)
+
     return JSONResponse(
-        {"error": f"Provider STT '{provider}' non supporté. Utilise 'openai'."},
+        {"error": f"Provider STT '{provider}' non supporté. "
+                  "Utilise 'openai', 'mistral', 'google' ou 'custom'."},
         status_code=400,
     )

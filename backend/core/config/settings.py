@@ -235,6 +235,8 @@ class Settings(BaseSettings):
         "huggingface": ServiceConfig(base_url="https://api-inference.huggingface.co"),
         "replicate": ServiceConfig(base_url="https://api.replicate.com/v1"),
         "stability": ServiceConfig(base_url="https://api.stability.ai/v2beta"),
+        # Voix — endpoint OpenAI-compatible custom (local, self-hosted, Groq…)
+        "voice_custom": ServiceConfig(base_url="https://api.openai.com/v1"),
         # Recherche web (HuntR) — chaque utilisateur doit fournir SA PROPRE clé
         # dans user_settings.service_keys ; ces entrées sont juste les base_url
         # par défaut pour que le service apparaisse dans Paramètres → Services.

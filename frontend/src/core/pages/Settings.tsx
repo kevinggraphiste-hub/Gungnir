@@ -14,8 +14,11 @@ import { useUIPreferences } from '../hooks/useUIPreferences'
 
 // Défauts pour les prefs TTS/PTT — utilisés en fallback si rien n'est
 // encore en localStorage ou si un champ manque (ajout rétrocompatible).
+type TtsEngine = 'browser' | 'openai' | 'elevenlabs' | 'google' | 'custom'
+type SttEngine = 'browser' | 'openai' | 'google' | 'mistral' | 'custom'
+
 const DEFAULT_TTS_PREF = {
-  engine: 'browser' as 'browser' | 'openai' | 'elevenlabs',
+  engine: 'browser' as TtsEngine,
   voiceURI: '',
   rate: 1.05,
   pitch: 1.0,
@@ -26,13 +29,20 @@ const DEFAULT_TTS_PREF = {
   openaiSpeed: 1.0,
   elevenVoiceId: '21m00Tcm4TlvDq8ikWAM',  // "Rachel" — voix publique par défaut
   elevenModelId: 'eleven_multilingual_v2',
+  googleVoice: '',              // ex: "fr-FR-Wavenet-A" (vide = défaut Google)
+  googleSpeed: 1.0,
+  customVoice: 'alloy',         // custom OpenAI-compatible
+  customModel: 'tts-1',
+  customSpeed: 1.0,
 }
 
 const DEFAULT_PTT_PREF = {
-  engine: 'browser' as 'browser' | 'openai',
+  engine: 'browser' as SttEngine,
   lang: 'auto',
   continuous: false,
   interim: false,
+  mistralModel: 'voxtral-mini-latest',
+  customModel: 'whisper-1',
 }
 
 const LANG_FLAG: Record<string, string> = {
@@ -192,43 +202,29 @@ export default function Settings() {
   // OpenAI TTS (nécessite clé OpenAI, voix neurales), ElevenLabs (voix
   // premium, voix custom possibles). Pour PTT : navigateur ou Whisper.
   // Le choix d'engine + les settings détaillés sont en localStorage.
-  const [ttsPref, setTtsPref] = useState<{
-    engine: 'browser' | 'openai' | 'elevenlabs'
-    voiceURI: string      // browser only
-    rate: number          // browser only (OpenAI a son propre speed)
-    pitch: number         // browser only
-    volume: number        // browser only
-    lang: string          // 'auto' ou BCP-47
-    openaiVoice: string   // alloy | echo | fable | onyx | nova | shimmer
-    openaiModel: string   // tts-1 | tts-1-hd
-    openaiSpeed: number   // 0.25 - 4.0
-    elevenVoiceId: string
-    elevenModelId: string
-  }>(() => {
+  // Note : typeof DEFAULT_TTS_PREF / DEFAULT_PTT_PREF pour garder l'inférence
+  // synchrone avec les defaults quand on ajoute un champ (pas de duplication
+  // d'interface manuelle → pas de drift).
+  const [ttsPref, setTtsPref] = useState<typeof DEFAULT_TTS_PREF>(() => {
     try {
       const raw = localStorage.getItem('chat.tts.prefs')
       if (raw) return { ...DEFAULT_TTS_PREF, ...JSON.parse(raw) }
     } catch { /* ignore */ }
     return DEFAULT_TTS_PREF
   })
-  const persistTtsPref = useCallback((next: typeof ttsPref) => {
+  const persistTtsPref = useCallback((next: typeof DEFAULT_TTS_PREF) => {
     setTtsPref(next)
     try { localStorage.setItem('chat.tts.prefs', JSON.stringify(next)) } catch { /* ignore */ }
   }, [])
 
-  const [pttPref, setPttPref] = useState<{
-    engine: 'browser' | 'openai'
-    lang: string       // 'auto' | BCP-47
-    continuous: boolean
-    interim: boolean
-  }>(() => {
+  const [pttPref, setPttPref] = useState<typeof DEFAULT_PTT_PREF>(() => {
     try {
       const raw = localStorage.getItem('chat.ptt.prefs')
       if (raw) return { ...DEFAULT_PTT_PREF, ...JSON.parse(raw) }
     } catch { /* ignore */ }
     return DEFAULT_PTT_PREF
   })
-  const persistPttPref = useCallback((next: typeof pttPref) => {
+  const persistPttPref = useCallback((next: typeof DEFAULT_PTT_PREF) => {
     setPttPref(next)
     try { localStorage.setItem('chat.ptt.prefs', JSON.stringify(next)) } catch { /* ignore */ }
   }, [])
@@ -289,6 +285,14 @@ export default function Settings() {
       } else if (ttsPref.engine === 'elevenlabs') {
         body.voice = ttsPref.elevenVoiceId
         body.model = ttsPref.elevenModelId
+      } else if (ttsPref.engine === 'google') {
+        body.lang = ttsPref.lang === 'auto' ? 'fr-FR' : ttsPref.lang
+        if (ttsPref.googleVoice) body.voice = ttsPref.googleVoice
+        body.speed = ttsPref.googleSpeed
+      } else if (ttsPref.engine === 'custom') {
+        body.voice = ttsPref.customVoice
+        body.model = ttsPref.customModel
+        body.speed = ttsPref.customSpeed
       }
       const r = await apiFetch('/api/chat/tts', {
         method: 'POST',
@@ -1445,18 +1449,38 @@ export default function Settings() {
                     >
                       <option value="browser">Navigateur — gratuit, hors-ligne, voix OS</option>
                       <option value="openai" disabled={!voiceCaps?.tts?.openai?.available}>
-                        OpenAI TTS — neuronal, 6 voix{voiceCaps?.tts?.openai?.available ? '' : ' (clé OpenAI requise)'}
+                        OpenAI TTS — 6 voix neurales{voiceCaps?.tts?.openai?.available ? '' : ' (clé OpenAI requise)'}
                       </option>
                       <option value="elevenlabs" disabled={!voiceCaps?.tts?.elevenlabs?.available}>
                         ElevenLabs — premium, voix custom{voiceCaps?.tts?.elevenlabs?.available ? '' : ' (clé ElevenLabs requise)'}
                       </option>
+                      <option value="google" disabled={!voiceCaps?.tts?.google?.available}>
+                        Google Cloud TTS — WaveNet/Neural2{voiceCaps?.tts?.google?.available ? '' : ' (clé Google requise)'}
+                      </option>
+                      <option value="custom" disabled={!voiceCaps?.tts?.custom?.available}>
+                        Custom (OpenAI-compatible){voiceCaps?.tts?.custom?.available ? '' : ' (configurer service Voice custom)'}
+                      </option>
                     </select>
-                    {(ttsPref.engine === 'openai' && !voiceCaps?.tts?.openai?.available)
-                      || (ttsPref.engine === 'elevenlabs' && !voiceCaps?.tts?.elevenlabs?.available) ? (
+                    {(ttsPref.engine === 'openai' && !voiceCaps?.tts?.openai?.available) && (
                       <span className="text-[10px]" style={{ color: 'var(--accent-error, #ef4444)' }}>
-                        Clé manquante — configure{ttsPref.engine === 'openai' ? ' ton provider OpenAI' : ' ElevenLabs dans les providers realtime ci-dessous'}
+                        Clé manquante — configure ton provider OpenAI
                       </span>
-                    ) : null}
+                    )}
+                    {(ttsPref.engine === 'elevenlabs' && !voiceCaps?.tts?.elevenlabs?.available) && (
+                      <span className="text-[10px]" style={{ color: 'var(--accent-error, #ef4444)' }}>
+                        Clé manquante — configure ElevenLabs dans les providers realtime ci-dessous
+                      </span>
+                    )}
+                    {(ttsPref.engine === 'google' && !voiceCaps?.tts?.google?.available) && (
+                      <span className="text-[10px]" style={{ color: 'var(--accent-error, #ef4444)' }}>
+                        Clé manquante — configure ton provider Google (Gemini) dans Paramètres → Providers. Active l'API Cloud TTS sur ton projet GCP.
+                      </span>
+                    )}
+                    {(ttsPref.engine === 'custom' && !voiceCaps?.tts?.custom?.available) && (
+                      <span className="text-[10px]" style={{ color: 'var(--accent-error, #ef4444)' }}>
+                        Endpoint non configuré — Paramètres → Services → "Voix — endpoint OpenAI-compatible"
+                      </span>
+                    )}
                   </label>
 
                   {/* Paramètres spécifiques au moteur sélectionné */}
@@ -1603,6 +1627,90 @@ export default function Settings() {
                       </label>
                     </div>
                   )}
+
+                  {ttsPref.engine === 'google' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Langue</span>
+                        <select
+                          value={ttsPref.lang}
+                          onChange={e => persistTtsPref({ ...ttsPref, lang: e.target.value })}
+                          className="rounded-lg px-3 py-2 text-sm outline-none"
+                          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        >
+                          <option value="auto">Auto (fr-FR)</option>
+                          <option value="fr-FR">Français (fr-FR)</option>
+                          <option value="en-US">English US (en-US)</option>
+                          <option value="en-GB">English UK (en-GB)</option>
+                          <option value="es-ES">Español (es-ES)</option>
+                          <option value="de-DE">Deutsch (de-DE)</option>
+                          <option value="it-IT">Italiano (it-IT)</option>
+                          <option value="pt-PT">Português (pt-PT)</option>
+                          <option value="ja-JP">日本語 (ja-JP)</option>
+                          <option value="zh-CN">中文 (zh-CN)</option>
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Nom de voix (optionnel)</span>
+                        <input
+                          type="text"
+                          value={ttsPref.googleVoice}
+                          onChange={e => persistTtsPref({ ...ttsPref, googleVoice: e.target.value })}
+                          placeholder="fr-FR-Wavenet-A"
+                          className="rounded-lg px-3 py-2 text-sm outline-none font-mono"
+                          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        />
+                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                          Ex: fr-FR-Wavenet-A, en-US-Neural2-F. Vide = défaut Google pour la langue.
+                        </span>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
+                          <span>Vitesse</span><span>{ttsPref.googleSpeed.toFixed(2)}x</span>
+                        </span>
+                        <input type="range" min={0.25} max={4.0} step={0.05}
+                          value={ttsPref.googleSpeed}
+                          onChange={e => persistTtsPref({ ...ttsPref, googleSpeed: parseFloat(e.target.value) })}
+                          className="accent-[var(--accent-primary)]" />
+                      </label>
+                    </div>
+                  )}
+
+                  {ttsPref.engine === 'custom' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Voix</span>
+                        <input
+                          type="text"
+                          value={ttsPref.customVoice}
+                          onChange={e => persistTtsPref({ ...ttsPref, customVoice: e.target.value })}
+                          placeholder="alloy"
+                          className="rounded-lg px-3 py-2 text-sm outline-none font-mono"
+                          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Modèle</span>
+                        <input
+                          type="text"
+                          value={ttsPref.customModel}
+                          onChange={e => persistTtsPref({ ...ttsPref, customModel: e.target.value })}
+                          placeholder="tts-1"
+                          className="rounded-lg px-3 py-2 text-sm outline-none font-mono"
+                          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
+                          <span>Vitesse</span><span>{ttsPref.customSpeed.toFixed(2)}x</span>
+                        </span>
+                        <input type="range" min={0.25} max={4.0} step={0.05}
+                          value={ttsPref.customSpeed}
+                          onChange={e => persistTtsPref({ ...ttsPref, customSpeed: parseFloat(e.target.value) })}
+                          className="accent-[var(--accent-primary)]" />
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 {/* ── PTT ───────────────────────────────────────── */}
@@ -1624,7 +1732,16 @@ export default function Settings() {
                     >
                       <option value="browser">Navigateur — gratuit, temps réel, offline sur macOS</option>
                       <option value="openai" disabled={!voiceCaps?.stt?.openai?.available}>
-                        OpenAI Whisper — haute précision{voiceCaps?.stt?.openai?.available ? '' : ' (clé OpenAI requise)'}
+                        OpenAI Whisper{voiceCaps?.stt?.openai?.available ? '' : ' (clé OpenAI requise)'}
+                      </option>
+                      <option value="google" disabled={!voiceCaps?.stt?.google?.available}>
+                        Google Cloud Speech-to-Text{voiceCaps?.stt?.google?.available ? '' : ' (clé Google requise)'}
+                      </option>
+                      <option value="mistral" disabled={!voiceCaps?.stt?.mistral?.available}>
+                        Mistral Voxtral{voiceCaps?.stt?.mistral?.available ? '' : ' (clé Mistral requise)'}
+                      </option>
+                      <option value="custom" disabled={!voiceCaps?.stt?.custom?.available}>
+                        Custom (OpenAI-compatible){voiceCaps?.stt?.custom?.available ? '' : ' (configurer service Voice custom)'}
                       </option>
                     </select>
                     {pttPref.engine === 'openai' && !voiceCaps?.stt?.openai?.available && (
@@ -1632,12 +1749,61 @@ export default function Settings() {
                         Clé OpenAI manquante — configure Paramètres → Providers
                       </span>
                     )}
-                    {pttPref.engine === 'openai' && voiceCaps?.stt?.openai?.available && (
-                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                        Whisper upload l'audio après l'enregistrement — léger délai mais reconnaissance plus précise.
+                    {pttPref.engine === 'google' && !voiceCaps?.stt?.google?.available && (
+                      <span className="text-[10px]" style={{ color: 'var(--accent-error, #ef4444)' }}>
+                        Clé Google manquante — configure Paramètres → Providers (active Cloud Speech-to-Text sur ton projet GCP)
                       </span>
                     )}
+                    {pttPref.engine === 'mistral' && !voiceCaps?.stt?.mistral?.available && (
+                      <span className="text-[10px]" style={{ color: 'var(--accent-error, #ef4444)' }}>
+                        Clé Mistral manquante — configure Paramètres → Providers
+                      </span>
+                    )}
+                    {pttPref.engine === 'custom' && !voiceCaps?.stt?.custom?.available && (
+                      <span className="text-[10px]" style={{ color: 'var(--accent-error, #ef4444)' }}>
+                        Endpoint non configuré — Paramètres → Services → "Voix — endpoint OpenAI-compatible"
+                      </span>
+                    )}
+                    {['openai', 'google', 'mistral', 'custom'].includes(pttPref.engine) && (
+                      voiceCaps?.stt?.[pttPref.engine]?.available ? (
+                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                          L'audio est uploadé après l'enregistrement — léger délai, reconnaissance premium.
+                        </span>
+                      ) : null
+                    )}
                   </label>
+
+                  {/* Sélecteur de modèle pour Mistral et Custom */}
+                  {pttPref.engine === 'mistral' && (
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Modèle Voxtral</span>
+                      <select
+                        value={pttPref.mistralModel}
+                        onChange={e => persistPttPref({ ...pttPref, mistralModel: e.target.value })}
+                        className="rounded-lg px-3 py-2 text-sm outline-none"
+                        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                      >
+                        <option value="voxtral-mini-latest">voxtral-mini-latest (rapide)</option>
+                        <option value="voxtral-small-latest">voxtral-small-latest (haute précision)</option>
+                      </select>
+                    </label>
+                  )}
+                  {pttPref.engine === 'custom' && (
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Modèle</span>
+                      <input
+                        type="text"
+                        value={pttPref.customModel}
+                        onChange={e => persistPttPref({ ...pttPref, customModel: e.target.value })}
+                        placeholder="whisper-1"
+                        className="rounded-lg px-3 py-2 text-sm outline-none font-mono"
+                        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                      />
+                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        Nom du modèle accepté par ton endpoint (ex: whisper-1, faster-whisper-large-v3…)
+                      </span>
+                    </label>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label className="flex flex-col gap-1">
@@ -2085,6 +2251,8 @@ export default function Settings() {
                   kagi: ['api_key'],
                   bing: ['api_key'],
                   searxng: ['base_url', 'api_key'],
+                  // Voix custom
+                  voice_custom: ['base_url', 'api_key'],
                 }
                 const fieldDefs: Record<string, { label: string; placeholder: string; type?: string }> = {
                   base_url: { label: 'URL de base', placeholder: 'https://...' },
