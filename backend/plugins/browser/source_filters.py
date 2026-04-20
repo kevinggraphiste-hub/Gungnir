@@ -93,6 +93,22 @@ def _host_in_list(host: str, domains: list[str]) -> bool:
     return False
 
 
+def has_active_filters(config: dict) -> bool:
+    """Vrai dès qu'au moins un filtre est susceptible d'avoir un effet
+    (starter list activée, blocklist user non-vide, ou allowlist utilisée
+    avec un mode autre que off). Sert à décider si on montre un rapport
+    de filtre dans l'UI, même quand 0 source n'a été effectivement bloquée."""
+    cfg = config or {}
+    if cfg.get("use_starter_blocklist"):
+        return True
+    if cfg.get("blocklist"):
+        return True
+    mode = str(cfg.get("allowlist_mode") or "off").lower()
+    if mode in ("boost", "strict") and cfg.get("allowlist"):
+        return True
+    return False
+
+
 def get_effective_blocklist(config: dict) -> list[tuple[str, str]]:
     """Fusionne la starter list (si activée) et la blocklist user.
 

@@ -34,7 +34,7 @@ from .search_providers import (
     SearXNGProvider, SearchResult, VALID_TOPICS,
     FREE_PROVIDERS, PROVIDER_WEIGHTS, multi_search,
 )
-from .source_filters import apply_source_filters, STARTER_BLOCKLIST
+from .source_filters import apply_source_filters, STARTER_BLOCKLIST, has_active_filters as _has_active_filters
 from .cache import tavily_cache
 
 logger = logging.getLogger("gungnir.plugins.huntr")
@@ -1000,9 +1000,15 @@ async def search_stream(req: SearchRequest, request: Request,
 
                 results = await multi_search(providers_list, query, req.max_results, topic)
                 results, filter_report = apply_source_filters(results, source_filter_cfg)
-                if filter_report.get("blocked_count", 0) > 0:
+                # Émet le rapport dès que des filtres sont activés, pas
+                # seulement quand quelque chose a été bloqué — l'user doit
+                # voir que son mode boost/strict a été pris en compte même
+                # avec 0 blocage, sinon le feature paraît "inactif".
+                if _has_active_filters(source_filter_cfg):
                     yield _sse("status", {
-                        "message": f"{filter_report['blocked_count']} source(s) filtrée(s)",
+                        "message": (f"{filter_report['blocked_count']} source(s) filtrée(s)"
+                                    if filter_report.get("blocked_count", 0) > 0
+                                    else "Filtres appliqués"),
                         "step": 1, "topic": topic,
                         "filter_report": filter_report,
                     })
@@ -1056,9 +1062,11 @@ async def search_stream(req: SearchRequest, request: Request,
             })
             results = await multi_search(providers_list, query, req.max_results, topic)
             results, filter_report = apply_source_filters(results, source_filter_cfg)
-            if filter_report.get("blocked_count", 0) > 0:
+            if _has_active_filters(source_filter_cfg):
                 yield _sse("status", {
-                    "message": f"{filter_report['blocked_count']} source(s) filtrée(s)",
+                    "message": (f"{filter_report['blocked_count']} source(s) filtrée(s)"
+                                if filter_report.get("blocked_count", 0) > 0
+                                else "Filtres appliqués"),
                     "step": 1, "total_steps": 4, "topic": topic,
                     "filter_report": filter_report,
                 })

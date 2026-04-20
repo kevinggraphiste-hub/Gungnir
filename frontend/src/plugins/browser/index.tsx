@@ -746,6 +746,15 @@ export default function HuntRPlugin() {
   const [topic, setTopic] = useState<Topic>('web')
   const [searching, setSearching] = useState(false)
   const [status, setStatus] = useState('')
+  // Rapport de filtrage source : persistant durant la session d'affichage
+  // de la réponse, pour montrer "X sources filtrées" + la liste des domaines.
+  const [lastFilterReport, setLastFilterReport] = useState<{
+    blocked_count: number
+    blocked_domains: Array<{ domain: string; reason: string }>
+    mode: string
+    boosted_count?: number
+    strict_dropped?: number
+  } | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
   const [totalSteps, setTotalSteps] = useState(0)
   const [result, setResult] = useState<SearchResult | null>(null)
@@ -1002,6 +1011,7 @@ export default function HuntRPlugin() {
     setTotalSteps(0)
     setResult(null)
     setLiveSources([])
+    setLastFilterReport(null)
     setError('')
     if (overrideQuery) setQuery(overrideQuery)
 
@@ -1059,6 +1069,17 @@ export default function HuntRPlugin() {
                   setStatus(d.message || '')
                   if (d.step) setCurrentStep(d.step)
                   if (d.total_steps) setTotalSteps(d.total_steps)
+                  // Filter report : persiste pour l'affichage dans la méta
+                  // de la réponse, au-delà du status éphémère.
+                  if (d.filter_report) {
+                    setLastFilterReport({
+                      blocked_count: d.filter_report.blocked_count || 0,
+                      blocked_domains: d.filter_report.blocked_domains || [],
+                      mode: d.filter_report.mode || 'off',
+                      boosted_count: d.filter_report.boosted_count,
+                      strict_dropped: d.filter_report.strict_dropped,
+                    })
+                  }
                   break
                 case 'search':
                   final.search_count = d.count || 0
@@ -1975,6 +1996,47 @@ export default function HuntRPlugin() {
                         {e}
                       </span>
                     ))}
+                    {lastFilterReport && lastFilterReport.blocked_count > 0 && (
+                      <span
+                        title={`Sources bloquées :\n${lastFilterReport.blocked_domains.map(b => `• ${b.domain} — ${b.reason}`).join('\n')}`}
+                        style={{
+                          padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                          background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
+                          color: 'var(--scarlet)',
+                          border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
+                          cursor: 'help',
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                        }}>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M3 4h18l-7 10v6l-4-2v-4L3 4z"/>
+                        </svg>
+                        {lastFilterReport.blocked_count} filtrée{lastFilterReport.blocked_count > 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {lastFilterReport && lastFilterReport.mode === 'strict' && typeof lastFilterReport.strict_dropped === 'number' && lastFilterReport.strict_dropped > 0 && (
+                      <span
+                        title={`Mode strict : ${lastFilterReport.strict_dropped} résultat(s) hors de l'allowlist écarté(s)`}
+                        style={{
+                          padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                          background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
+                          color: 'var(--accent-success, #10b981)',
+                          border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
+                          cursor: 'help',
+                        }}>
+                        strict · {lastFilterReport.strict_dropped} hors liste
+                      </span>
+                    )}
+                    {lastFilterReport && lastFilterReport.mode === 'boost' && typeof lastFilterReport.boosted_count === 'number' && lastFilterReport.boosted_count > 0 && (
+                      <span
+                        style={{
+                          padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                          background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
+                          color: 'var(--accent-success, #10b981)',
+                          border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
+                        }}>
+                        {lastFilterReport.boosted_count} priorisée{lastFilterReport.boosted_count > 1 ? 's' : ''}
+                      </span>
+                    )}
                     {result.model && (
                       <span style={{
                         padding: '2px 8px', borderRadius: 20, fontSize: 10,
