@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next'
 import {
   MessageSquare, Bot, Settings2, ChevronLeft, ChevronRight,
   Globe, Mic, BarChart3, Calendar, Plug, Webhook, BookOpen, Code, RadioTower, Brain,
+  LayoutGrid,
   LogOut,
 } from 'lucide-react'
 import { useSidebarStore } from '../stores/sidebarStore'
@@ -18,7 +19,7 @@ import { useStore } from '../stores/appStore'
 // Map icon names from manifests to Lucide components
 const ICON_MAP: Record<string, any> = {
   Globe, Mic, BarChart3, Calendar, Plug, Webhook, BookOpen, Code,
-  MessageSquare, Bot, Settings2, RadioTower, Brain,
+  MessageSquare, Bot, Settings2, RadioTower, Brain, LayoutGrid,
 }
 
 export default function Sidebar() {

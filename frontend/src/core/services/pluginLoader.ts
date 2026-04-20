@@ -18,6 +18,7 @@ const PLUGIN_COMPONENTS: Record<string, () => Promise<{ default: React.Component
   scheduler: () => import('../../plugins/scheduler/index'),
   model_guide: () => import('../../plugins/model_guide/index'),
   consciousness: () => import('../../plugins/consciousness/index'),
+  valkyrie: () => import('../../plugins/valkyrie/index'),
 }
 
 const _cache: Record<string, LazyComponent> = {}
