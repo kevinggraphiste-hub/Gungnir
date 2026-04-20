@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   LayoutGrid, Plus, Trash2, Archive, Save, ChevronDown, ChevronRight,
-  X, Check, Loader2, Edit3, GripVertical,
+  X, Check, Loader2, Edit3, GripVertical, Search, Download, Tag as TagIcon,
 } from 'lucide-react'
 import InfoButton from '@core/components/InfoButton'
 import manifest from './manifest.json'
@@ -54,13 +54,36 @@ interface CardT {
   id: number
   project_id: number
   title: string
+  subtitle: string
   description: string
   status_key: string
   position: number
   expanded: boolean
   subtasks: SubtaskT[]
+  subtasks2: SubtaskT[]
+  tags: string[]
   created_at: string | null
   updated_at: string | null
+}
+
+interface TagEntryT { label: string; count: number }
+
+// Palette de couleurs pour les tags : dérivée du hash du label → index stable
+const TAG_COLORS = [
+  '#dc2626', '#ef4444', '#f97316', '#f59e0b',
+  '#eab308', '#84cc16', '#22c55e', '#10b981',
+  '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6',
+  '#6366f1', '#8b5cf6', '#a855f7', '#d946ef',
+  '#ec4899', '#f43f5e',
+]
+
+function colorForTag(label: string): string {
+  // Hash stable — simple djb2 tronqué → index dans la palette
+  let hash = 5381
+  for (let i = 0; i < label.length; i++) {
+    hash = ((hash << 5) + hash) + label.charCodeAt(i)
+  }
+  return TAG_COLORS[Math.abs(hash) % TAG_COLORS.length]
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -100,6 +123,12 @@ export default function ValkyriePlugin() {
   const [newCardStatus, setNewCardStatus] = useState('todo')
   const [showProjectMenu, setShowProjectMenu] = useState(false)
   const [savingFlash, setSavingFlash] = useState<'ok' | 'err' | null>(null)
+
+  // Recherche + filtre tags
+  const [searchQuery, setSearchQuery] = useState('')
+  const [tagFilter, setTagFilter] = useState<string[]>([])
+  const [allTags, setAllTags] = useState<TagEntryT[]>([])
+  const [showExportMenu, setShowExportMenu] = useState(false)
 
   const activeProject = useMemo(
     () => projects.find(p => p.id === activeProjectId) || null,
@@ -146,6 +175,15 @@ export default function ValkyriePlugin() {
     })()
     return () => { cancelled = true }
   }, [activeProjectId])
+
+  // ── Tags : fetch la liste globale user (autocomplete + compteurs) ──
+  const refreshTags = useCallback(async () => {
+    try {
+      const r = await jget<{ tags: TagEntryT[] }>(`${API}/tags`)
+      setAllTags(r.tags || [])
+    } catch { /* silencieux */ }
+  }, [])
+  useEffect(() => { refreshTags() }, [refreshTags, cards.length])
 
   // ── Project mutations ──────────────────────────────────────────────
   const saveProject = useCallback(async (updates: Partial<ProjectT>) => {
@@ -318,9 +356,28 @@ export default function ValkyriePlugin() {
 
   // ── Render ──────────────────────────────────────────────────────────
   const visibleCards = useMemo(() => {
-    const filtered = filter == null ? cards : cards.filter(c => c.status_key === filter)
+    const q = searchQuery.trim().toLowerCase()
+    const tags = tagFilter.map(t => t.toLowerCase())
+    const filtered = cards.filter(c => {
+      if (filter != null && c.status_key !== filter) return false
+      if (tags.length > 0) {
+        const cardTagsLower = (c.tags || []).map(t => t.toLowerCase())
+        // Match ANY des tags sélectionnés (plus permissif qu'un ET)
+        if (!tags.some(t => cardTagsLower.includes(t))) return false
+      }
+      if (q) {
+        const hay = [
+          c.title, c.subtitle, c.description,
+          ...(c.tags || []),
+          ...(c.subtasks || []).map(s => s.label),
+          ...(c.subtasks2 || []).map(s => s.label),
+        ].join(' ').toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      return true
+    })
     return [...filtered].sort((a, b) => a.position - b.position)
-  }, [cards, filter])
+  }, [cards, filter, searchQuery, tagFilter])
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -507,12 +564,52 @@ export default function ValkyriePlugin() {
           </div>
         )}
 
-        {/* ── Filter bar ───────────────────────────────────────── */}
+        {/* ── Search bar ─────────────────────────────────────── */}
+        {activeProject && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <div style={{ position: 'relative', flex: 1, minWidth: 240 }}>
+              <Search className="w-3.5 h-3.5" style={{
+                position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)',
+                color: 'var(--text-muted)', pointerEvents: 'none',
+              }} />
+              <input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Rechercher dans les cartes (titre, description, sous-tâches, tags…)"
+                className="w-full rounded-lg text-sm outline-none"
+                style={{
+                  background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                  color: 'var(--text-primary)', padding: '8px 10px 8px 32px',
+                }}
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  style={{
+                    position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--text-muted)', padding: 2,
+                  }}
+                  title="Effacer"><X className="w-3.5 h-3.5" /></button>
+              )}
+            </div>
+            <ExportMenu
+              project={activeProject}
+              cards={cards}
+              statuses={statuses}
+              open={showExportMenu}
+              onToggle={() => setShowExportMenu(v => !v)}
+              onClose={() => setShowExportMenu(false)}
+            />
+          </div>
+        )}
+
+        {/* ── Filter bar (statuts) ──────────────────────────────── */}
         {activeProject && (
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] font-mono uppercase tracking-[2px]"
               style={{ color: 'var(--text-muted)', marginRight: 4 }}>
-              Filtre
+              Statut
             </span>
             <StatusChip
               label="Tout" count={cards.length}
@@ -543,6 +640,49 @@ export default function ValkyriePlugin() {
           </div>
         )}
 
+        {/* ── Filter bar (tags) — affichée si au moins un tag existe ── */}
+        {activeProject && allTags.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] font-mono uppercase tracking-[2px]"
+              style={{ color: 'var(--text-muted)', marginRight: 4 }}>
+              Tags
+            </span>
+            {allTags.map(t => {
+              const active = tagFilter.some(x => x.toLowerCase() === t.label.toLowerCase())
+              const c = colorForTag(t.label)
+              return (
+                <button
+                  key={t.label}
+                  onClick={() => setTagFilter(prev => active
+                    ? prev.filter(x => x.toLowerCase() !== t.label.toLowerCase())
+                    : [...prev, t.label])}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors"
+                  style={{
+                    background: active ? `color-mix(in srgb, ${c} 18%, transparent)` : 'var(--bg-secondary)',
+                    border: `1px solid ${active ? `color-mix(in srgb, ${c} 50%, transparent)` : 'var(--border)'}`,
+                    color: active ? c : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                  }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: c }} />
+                  {t.label}
+                  <span style={{
+                    fontFamily: 'JetBrains Mono, monospace', fontSize: 9,
+                    color: 'var(--text-muted)', padding: '0 4px',
+                    background: 'var(--bg-primary)', borderRadius: 4,
+                  }}>{t.count}</span>
+                </button>
+              )
+            })}
+            {tagFilter.length > 0 && (
+              <button onClick={() => setTagFilter([])}
+                className="text-[10px] font-medium px-2 py-1 rounded-lg transition-colors"
+                style={{ color: 'var(--text-muted)', background: 'transparent', border: 'none' }}>
+                Effacer les filtres tags
+              </button>
+            )}
+          </div>
+        )}
+
         {/* ── Grid board ───────────────────────────────────────── */}
         {activeProject && (
           <div className="rounded-xl p-4" style={{
@@ -556,11 +696,9 @@ export default function ValkyriePlugin() {
             backgroundSize: '274px 274px',
             backgroundPosition: '16px 16px',
           }}>
-            {visibleCards.length === 0 ? (
+            {visibleCards.length === 0 && (searchQuery || tagFilter.length > 0 || filter != null) ? (
               <div className="flex items-center justify-center h-96 text-sm" style={{ color: 'var(--text-muted)' }}>
-                {cards.length === 0
-                  ? 'Aucune carte — utilise le formulaire ci-dessus pour créer la première.'
-                  : `Aucune carte "${getStatus(filter || '').label}". Clique "Tout" pour voir les autres.`}
+                Aucune carte ne correspond aux filtres.
               </div>
             ) : (
               <div style={{
@@ -576,6 +714,7 @@ export default function ValkyriePlugin() {
                     card={card}
                     status={getStatus(card.status_key)}
                     statuses={statuses}
+                    allTags={allTags}
                     isDragged={draggedId === card.id}
                     isDropTarget={dropTargetIdx === idx}
                     onDragStart={e => handleDragStart(e, card.id)}
@@ -586,6 +725,28 @@ export default function ValkyriePlugin() {
                     onDelete={() => deleteCard(card.id)}
                   />
                 ))}
+                {/* Emplacements vides avec "+" — ajouter une carte à la volée.
+                    On ajoute plusieurs slots pour combler visuellement la grille
+                    même quand elle est quasi-pleine. N'apparaît pas quand un
+                    filtre est actif (la grille est "filtrée", pas vide). */}
+                {filter == null && !searchQuery && tagFilter.length === 0 && (
+                  Array.from({ length: Math.max(3, 8 - visibleCards.length % 8) }).map((_, i) => (
+                    <EmptySlot
+                      key={`empty-${i}`}
+                      onCreate={async () => {
+                        if (!activeProjectId) return
+                        try {
+                          const r = await jsend<{ card: CardT }>(
+                            `${API}/projects/${activeProjectId}/cards`, 'POST',
+                            { title: 'Nouvelle carte', status_key: newCardStatus,
+                              position: cards.length + i, expanded: true }
+                          )
+                          setCards(prev => [...prev, r.card])
+                        } catch (err) { console.warn('create from slot failed:', err) }
+                      }}
+                    />
+                  ))
+                )}
               </div>
             )}
           </div>
@@ -665,13 +826,14 @@ function StatusChip({
 // ════════════════════════════════════════════════════════════════════════
 
 function CardTile({
-  card, status, statuses, isDragged, isDropTarget,
+  card, status, statuses, allTags, isDragged, isDropTarget,
   onDragStart, onDragOver, onDrop, onDragEnd,
   onUpdate, onDelete,
 }: {
   card: CardT
   status: StatusT
   statuses: StatusT[]
+  allTags: TagEntryT[]
   isDragged: boolean
   isDropTarget: boolean
   onDragStart: (e: React.DragEvent) => void
@@ -683,9 +845,12 @@ function CardTile({
 }) {
   const [statusMenuOpen, setStatusMenuOpen] = useState(false)
   const [newSubtaskLabel, setNewSubtaskLabel] = useState('')
+  const [newSubtask2Label, setNewSubtask2Label] = useState('')
 
-  const doneCount = card.subtasks.filter(s => s.done).length
-  const totalSubtasks = card.subtasks.length
+  // Agrégé des 2 listes pour la barre globale en bas
+  const allSubs = [...(card.subtasks || []), ...(card.subtasks2 || [])]
+  const doneCount = allSubs.filter(s => s.done).length
+  const totalSubtasks = allSubs.length
   const progress = totalSubtasks > 0 ? doneCount / totalSubtasks : 0
 
   const toggleExpanded = () => onUpdate({ expanded: !card.expanded })
@@ -695,21 +860,42 @@ function CardTile({
     onUpdate({ status_key: key })
   }
 
-  const toggleSubtask = (sid: string) => {
-    const next = card.subtasks.map(s => s.id === sid ? { ...s, done: !s.done } : s)
-    onUpdate({ subtasks: next })
+  // Helpers génériques pour les 2 listes — `which` choisit quel champ update
+  const toggleSubtask = (sid: string, which: 1 | 2 = 1) => {
+    const src = which === 1 ? card.subtasks : card.subtasks2
+    const next = src.map(s => s.id === sid ? { ...s, done: !s.done } : s)
+    onUpdate(which === 1 ? { subtasks: next } : { subtasks2: next })
   }
-
-  const addSubtask = () => {
-    const label = newSubtaskLabel.trim()
+  const renameSubtask = (sid: string, label: string, which: 1 | 2 = 1) => {
+    const src = which === 1 ? card.subtasks : card.subtasks2
+    const cleaned = label.trim()
+    if (!cleaned) return
+    const next = src.map(s => s.id === sid ? { ...s, label: cleaned } : s)
+    onUpdate(which === 1 ? { subtasks: next } : { subtasks2: next })
+  }
+  const addSubtask = (which: 1 | 2 = 1) => {
+    const label = (which === 1 ? newSubtaskLabel : newSubtask2Label).trim()
     if (!label) return
-    const next = [...card.subtasks, { id: newSubtaskId(), label, done: false }]
-    onUpdate({ subtasks: next })
-    setNewSubtaskLabel('')
+    const src = which === 1 ? card.subtasks : card.subtasks2
+    const next = [...src, { id: newSubtaskId(), label, done: false }]
+    onUpdate(which === 1 ? { subtasks: next } : { subtasks2: next })
+    if (which === 1) setNewSubtaskLabel(''); else setNewSubtask2Label('')
+  }
+  const removeSubtask = (sid: string, which: 1 | 2 = 1) => {
+    const src = which === 1 ? card.subtasks : card.subtasks2
+    onUpdate(which === 1
+      ? { subtasks: src.filter(s => s.id !== sid) }
+      : { subtasks2: src.filter(s => s.id !== sid) })
   }
 
-  const removeSubtask = (sid: string) => {
-    onUpdate({ subtasks: card.subtasks.filter(s => s.id !== sid) })
+  const addTag = (label: string) => {
+    const cleaned = label.trim().slice(0, 40)
+    if (!cleaned) return
+    if ((card.tags || []).some(t => t.toLowerCase() === cleaned.toLowerCase())) return
+    onUpdate({ tags: [...(card.tags || []), cleaned] })
+  }
+  const removeTag = (label: string) => {
+    onUpdate({ tags: (card.tags || []).filter(t => t !== label) })
   }
 
   return (
@@ -756,21 +942,42 @@ function CardTile({
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
           {card.expanded ? (
-            <EditableText
-              value={card.title}
-              onSave={v => onUpdate({ title: v })}
-              className="text-sm font-semibold"
-              style={{ color: 'var(--text-primary)', lineHeight: 1.35 }}
-              singleLine
-            />
+            <>
+              <EditableText
+                value={card.title}
+                onSave={v => onUpdate({ title: v })}
+                className="text-sm font-semibold"
+                style={{ color: 'var(--text-primary)', lineHeight: 1.35 }}
+                singleLine
+              />
+              <EditableText
+                value={card.subtitle}
+                onSave={v => onUpdate({ subtitle: v })}
+                placeholder="Sous-titre (optionnel)…"
+                className="text-[11px] mt-0.5"
+                style={{ color: 'var(--text-muted)', lineHeight: 1.35, fontStyle: 'italic' }}
+                singleLine
+              />
+            </>
           ) : (
-            <div className="text-sm font-semibold" style={{
-              color: 'var(--text-primary)', lineHeight: 1.35,
-              display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-            }}>
-              {card.title || 'Sans titre'}
-            </div>
+            <>
+              <div className="text-sm font-semibold" style={{
+                color: 'var(--text-primary)', lineHeight: 1.35,
+                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+              }}>
+                {card.title || 'Sans titre'}
+              </div>
+              {card.subtitle && (
+                <div className="text-[11px] mt-0.5" style={{
+                  color: 'var(--text-muted)', lineHeight: 1.3, fontStyle: 'italic',
+                  display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}>
+                  {card.subtitle}
+                </div>
+              )}
+            </>
           )}
         </div>
         {/* Status badge (top-right) */}
@@ -816,10 +1023,19 @@ function CardTile({
         </div>
       </div>
 
-      {/* Body (toujours visible mais différent selon expanded) */}
+      {/* Body */}
       <div style={{ flex: 1, padding: 12, paddingTop: card.expanded ? 10 : 0, display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0 }}>
         {card.expanded ? (
           <>
+            {/* Tags (gérables dans le mode déplié) */}
+            <TagBar
+              tags={card.tags || []}
+              suggestions={allTags}
+              onAdd={addTag}
+              onRemove={removeTag}
+            />
+
+            {/* Description éditable */}
             <EditableText
               value={card.description}
               onSave={v => onUpdate({ description: v })}
@@ -828,76 +1044,50 @@ function CardTile({
               style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}
             />
 
-            {/* Subtasks */}
-            <div style={{ flex: 1, overflowY: 'auto', marginTop: 4 }}>
-              {card.subtasks.length > 0 && (
-                <>
-                  <div style={{
-                    display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6,
-                    fontSize: 10, color: 'var(--text-muted)',
-                    fontFamily: 'JetBrains Mono, monospace',
-                  }}>
-                    <span>{doneCount}/{totalSubtasks}</span>
-                    <div style={{
-                      flex: 1, height: 3, borderRadius: 2, background: 'var(--bg-primary)', overflow: 'hidden',
-                    }}>
-                      <div style={{
-                        height: '100%', width: `${progress * 100}%`,
-                        background: 'var(--scarlet)', transition: 'width 0.2s',
-                      }} />
-                    </div>
-                  </div>
-                </>
-              )}
-              {card.subtasks.map(st => (
-                <div key={st.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '4px 0', fontSize: 12,
-                }}>
-                  <button onClick={() => toggleSubtask(st.id)}
-                    style={{
-                      flexShrink: 0, width: 14, height: 14,
-                      borderRadius: 4, border: `1.5px solid ${st.done ? 'var(--scarlet)' : 'var(--border)'}`,
-                      background: st.done ? 'var(--scarlet)' : 'transparent',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      cursor: 'pointer', padding: 0,
-                    }}>
-                    {st.done && <Check className="w-2.5 h-2.5" style={{ color: '#fff' }} strokeWidth={3} />}
-                  </button>
-                  <span style={{
-                    flex: 1,
-                    textDecoration: st.done ? 'line-through' : 'none',
-                    color: st.done ? 'var(--text-muted)' : 'var(--text-primary)',
-                  }}>{st.label}</span>
-                  <button onClick={() => removeSubtask(st.id)}
-                    style={{
-                      background: 'none', border: 'none', padding: 2, cursor: 'pointer',
-                      color: 'var(--text-muted)', opacity: 0.5,
-                    }}
-                    onMouseOver={e => (e.currentTarget.style.opacity = '1')}
-                    onMouseOut={e => (e.currentTarget.style.opacity = '0.5')}>
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '4px 0', marginTop: 4,
-              }}>
-                <Plus className="w-3 h-3" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                <input
-                  value={newSubtaskLabel}
-                  onChange={e => setNewSubtaskLabel(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && addSubtask()}
-                  onBlur={addSubtask}
-                  placeholder="Nouvelle sous-tâche…"
-                  style={{
-                    flex: 1, background: 'transparent', border: 'none',
-                    fontSize: 11.5, color: 'var(--text-primary)', outline: 'none',
-                  }}
-                />
-              </div>
+            {/* Zone sous-tâches scrollable : 2 listes côte à côte ou empilées */}
+            <div style={{ flex: 1, overflowY: 'auto', marginTop: 4, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <SubtaskList
+                label="Sous-tâches"
+                items={card.subtasks || []}
+                newLabel={newSubtaskLabel}
+                setNewLabel={setNewSubtaskLabel}
+                onToggle={sid => toggleSubtask(sid, 1)}
+                onRename={(sid, label) => renameSubtask(sid, label, 1)}
+                onAdd={() => addSubtask(1)}
+                onRemove={sid => removeSubtask(sid, 1)}
+              />
+              <SubtaskList
+                label="Seconde liste"
+                items={card.subtasks2 || []}
+                newLabel={newSubtask2Label}
+                setNewLabel={setNewSubtask2Label}
+                onToggle={sid => toggleSubtask(sid, 2)}
+                onRename={(sid, label) => renameSubtask(sid, label, 2)}
+                onAdd={() => addSubtask(2)}
+                onRemove={sid => removeSubtask(sid, 2)}
+              />
             </div>
+
+            {/* Progress bar agrégée (placée en bas comme demandé) */}
+            {totalSubtasks > 0 && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                paddingTop: 6,
+                fontSize: 10, color: 'var(--text-muted)',
+                fontFamily: 'JetBrains Mono, monospace',
+              }}>
+                <span>{doneCount}/{totalSubtasks}</span>
+                <div style={{
+                  flex: 1, height: 3, borderRadius: 2, background: 'var(--bg-primary)', overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%', width: `${progress * 100}%`,
+                    background: 'var(--scarlet)', transition: 'width 0.2s',
+                  }} />
+                </div>
+                <span style={{ opacity: 0.6 }}>{Math.round(progress * 100)}%</span>
+              </div>
+            )}
 
             {/* Footer actions */}
             <div style={{
@@ -928,9 +1118,33 @@ function CardTile({
                 {card.description}
               </div>
             )}
+            {/* Tags repliés — max 3 visibles + compteur "+N" */}
+            {(card.tags || []).length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 'auto' }}>
+                {(card.tags || []).slice(0, 3).map(t => {
+                  const c = colorForTag(t)
+                  return (
+                    <span key={t} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 3,
+                      padding: '1px 6px', borderRadius: 4,
+                      background: `color-mix(in srgb, ${c} 15%, transparent)`,
+                      color: c, fontSize: 9.5, fontWeight: 600,
+                    }}>
+                      <span style={{ width: 4, height: 4, borderRadius: '50%', background: c }} />
+                      {t}
+                    </span>
+                  )
+                })}
+                {(card.tags || []).length > 3 && (
+                  <span style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
+                    +{(card.tags || []).length - 3}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Progress bar en bas de la carte repliée aussi */}
             {totalSubtasks > 0 && (
               <div style={{
-                marginTop: 'auto',
                 display: 'flex', alignItems: 'center', gap: 6,
                 fontSize: 10, color: 'var(--text-muted)',
                 fontFamily: 'JetBrains Mono, monospace',
@@ -946,9 +1160,9 @@ function CardTile({
                 </div>
               </div>
             )}
-            <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <GripVertical className="w-3 h-3" style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
-              <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5 }}>
+              <GripVertical className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
+              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
                 glisser pour déplacer
               </span>
             </div>
@@ -957,6 +1171,540 @@ function CardTile({
       </div>
     </div>
   )
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// SubtaskList — liste cochable + édition inline du label
+// ════════════════════════════════════════════════════════════════════════
+
+function SubtaskList({
+  label, items, newLabel, setNewLabel,
+  onToggle, onRename, onAdd, onRemove,
+}: {
+  label: string
+  items: SubtaskT[]
+  newLabel: string
+  setNewLabel: (v: string) => void
+  onToggle: (sid: string) => void
+  onRename: (sid: string, label: string) => void
+  onAdd: () => void
+  onRemove: (sid: string) => void
+}) {
+  return (
+    <div>
+      {items.length > 0 && (
+        <div className="text-[9px] font-mono uppercase tracking-[2px] mb-1"
+          style={{ color: 'var(--text-muted)' }}>
+          {label}
+        </div>
+      )}
+      {items.map(st => (
+        <div key={st.id} style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '4px 0', fontSize: 12,
+        }}>
+          <button onClick={() => onToggle(st.id)}
+            style={{
+              flexShrink: 0, width: 14, height: 14,
+              borderRadius: 4, border: `1.5px solid ${st.done ? 'var(--scarlet)' : 'var(--border)'}`,
+              background: st.done ? 'var(--scarlet)' : 'transparent',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', padding: 0,
+            }}>
+            {st.done && <Check className="w-2.5 h-2.5" style={{ color: '#fff' }} strokeWidth={3} />}
+          </button>
+          {/* Label éditable — click pour entrer en édition (même quand done) */}
+          <InlineEditableLabel
+            value={st.label}
+            done={st.done}
+            onSave={v => onRename(st.id, v)}
+          />
+          <button onClick={() => onRemove(st.id)}
+            style={{
+              background: 'none', border: 'none', padding: 2, cursor: 'pointer',
+              color: 'var(--text-muted)', opacity: 0.5, flexShrink: 0,
+            }}
+            onMouseOver={e => (e.currentTarget.style.opacity = '1')}
+            onMouseOut={e => (e.currentTarget.style.opacity = '0.5')}
+            title="Supprimer">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      ))}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '4px 0', marginTop: 4,
+      }}>
+        <Plus className="w-3 h-3" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+        <input
+          value={newLabel}
+          onChange={e => setNewLabel(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onAdd() } }}
+          onBlur={() => newLabel.trim() && onAdd()}
+          placeholder={items.length === 0 ? `Nouvelle ${label.toLowerCase()}…` : 'Ajouter…'}
+          style={{
+            flex: 1, background: 'transparent', border: 'none',
+            fontSize: 11.5, color: 'var(--text-primary)', outline: 'none',
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// Label de sous-tâche éditable : click → input, blur/Enter save, Escape cancel
+function InlineEditableLabel({
+  value, done, onSave,
+}: { value: string; done: boolean; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+  const ref = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => setDraft(value), [value])
+  useEffect(() => { if (editing) ref.current?.focus() }, [editing])
+
+  if (editing) {
+    return (
+      <input
+        ref={ref}
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => { setEditing(false); if (draft !== value && draft.trim()) onSave(draft) }}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur() }
+          if (e.key === 'Escape') { setDraft(value); setEditing(false) }
+        }}
+        style={{
+          flex: 1, background: 'var(--bg-primary)',
+          border: '1px solid color-mix(in srgb, var(--scarlet) 35%, var(--border))',
+          borderRadius: 4, padding: '2px 6px',
+          fontSize: 11.5, color: 'var(--text-primary)', outline: 'none',
+        }}
+      />
+    )
+  }
+  return (
+    <span
+      onClick={() => setEditing(true)}
+      style={{
+        flex: 1,
+        textDecoration: done ? 'line-through' : 'none',
+        color: done ? 'var(--text-muted)' : 'var(--text-primary)',
+        cursor: 'text',
+        padding: '1px 2px',
+        borderRadius: 3,
+      }}
+      title="Cliquer pour éditer"
+    >
+      {value}
+    </span>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// TagBar — chips + input avec autocomplete depuis tous les tags user
+// ════════════════════════════════════════════════════════════════════════
+
+function TagBar({
+  tags, suggestions, onAdd, onRemove,
+}: {
+  tags: string[]
+  suggestions: TagEntryT[]
+  onAdd: (label: string) => void
+  onRemove: (label: string) => void
+}) {
+  const [input, setInput] = useState('')
+  const [showSuggest, setShowSuggest] = useState(false)
+  const currentLower = tags.map(t => t.toLowerCase())
+  const filtered = suggestions
+    .filter(s => !currentLower.includes(s.label.toLowerCase()))
+    .filter(s => !input || s.label.toLowerCase().includes(input.toLowerCase()))
+    .slice(0, 8)
+
+  const commit = (label: string) => {
+    const v = label.trim()
+    if (!v) return
+    onAdd(v)
+    setInput('')
+  }
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+      <TagIcon className="w-3 h-3" style={{ color: 'var(--text-muted)', marginRight: 2 }} />
+      {tags.map(t => {
+        const c = colorForTag(t)
+        return (
+          <span key={t} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '2px 6px 2px 8px', borderRadius: 4,
+            background: `color-mix(in srgb, ${c} 15%, transparent)`,
+            border: `1px solid color-mix(in srgb, ${c} 30%, transparent)`,
+            color: c, fontSize: 10, fontWeight: 600,
+          }}>
+            <span style={{ width: 5, height: 5, borderRadius: '50%', background: c }} />
+            {t}
+            <button onClick={() => onRemove(t)}
+              style={{
+                background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                color: 'inherit', display: 'flex', alignItems: 'center',
+              }} title="Retirer">
+              <X className="w-2.5 h-2.5" />
+            </button>
+          </span>
+        )
+      })}
+      <div style={{ position: 'relative' }}>
+        <input
+          value={input}
+          onChange={e => { setInput(e.target.value); setShowSuggest(true) }}
+          onFocus={() => setShowSuggest(true)}
+          onBlur={() => setTimeout(() => setShowSuggest(false), 120)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(input) }
+            if (e.key === 'Escape') { setInput(''); setShowSuggest(false) }
+          }}
+          placeholder="+ tag"
+          style={{
+            background: 'transparent', border: '1px dashed var(--border)',
+            borderRadius: 4, padding: '1px 6px', fontSize: 10,
+            color: 'var(--text-muted)', outline: 'none', width: 70,
+          }}
+        />
+        {showSuggest && filtered.length > 0 && (
+          <div style={{
+            position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+            minWidth: 140, maxWidth: 200,
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            borderRadius: 6, boxShadow: '0 8px 18px rgba(0,0,0,0.3)',
+            padding: 3, zIndex: 10, maxHeight: 160, overflowY: 'auto',
+          }}>
+            {filtered.map(s => {
+              const c = colorForTag(s.label)
+              return (
+                <button key={s.label}
+                  onMouseDown={e => { e.preventDefault(); commit(s.label) }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    width: '100%', padding: '4px 6px',
+                    borderRadius: 4, background: 'transparent', border: 'none',
+                    color: 'var(--text-primary)', fontSize: 11, cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                  onMouseOver={e => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
+                  onMouseOut={e => (e.currentTarget.style.background = 'transparent')}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: c }} />
+                  <span style={{ flex: 1 }}>{s.label}</span>
+                  <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>×{s.count}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// EmptySlot — cellule "+" cliquable pour créer une carte à la volée
+// ════════════════════════════════════════════════════════════════════════
+
+function EmptySlot({ onCreate }: { onCreate: () => void }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      onClick={onCreate}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        gridColumn: 'span 1', gridRow: 'span 1',
+        background: hover ? 'color-mix(in srgb, var(--scarlet) 4%, transparent)' : 'transparent',
+        border: `1px dashed ${hover ? 'color-mix(in srgb, var(--scarlet) 50%, transparent)' : 'var(--border)'}`,
+        borderRadius: 12,
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        gap: 6, cursor: 'pointer',
+        transition: 'all 0.15s', padding: 0,
+      }}
+      title="Créer une carte ici">
+      <div style={{
+        width: 32, height: 32, borderRadius: 8,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: hover
+          ? 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))'
+          : 'var(--bg-primary)',
+        border: `1px solid ${hover ? 'transparent' : 'var(--border)'}`,
+        color: hover ? '#fff' : 'var(--text-muted)',
+      }}>
+        <Plus className="w-4 h-4" />
+      </div>
+      <span style={{
+        fontSize: 10, color: hover ? 'var(--scarlet)' : 'var(--text-muted)',
+        fontWeight: 500,
+      }}>
+        {hover ? 'Créer ici' : 'Emplacement libre'}
+      </span>
+    </button>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// ExportMenu — 5 formats (JSON, Markdown, CSV, PDF, HTML)
+// ════════════════════════════════════════════════════════════════════════
+
+function ExportMenu({
+  project, cards, statuses, open, onToggle, onClose,
+}: {
+  project: ProjectT
+  cards: CardT[]
+  statuses: StatusT[]
+  open: boolean
+  onToggle: () => void
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open, onClose])
+
+  const pick = (fmt: 'json' | 'md' | 'csv' | 'pdf' | 'html') => {
+    onClose()
+    const stamp = new Date().toISOString().slice(0, 10)
+    const slug = (project.title || 'valkyrie').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) || 'projet'
+    const fname = `valkyrie-${slug}-${stamp}`
+    if (fmt === 'json') downloadBlob(buildJson(project, cards, statuses), `${fname}.json`, 'application/json')
+    if (fmt === 'md')   downloadBlob(buildMarkdown(project, cards, statuses), `${fname}.md`, 'text/markdown;charset=utf-8')
+    if (fmt === 'csv')  downloadBlob(buildCsv(project, cards, statuses), `${fname}.csv`, 'text/csv;charset=utf-8')
+    if (fmt === 'html') downloadBlob(buildHtml(project, cards, statuses, false), `${fname}.html`, 'text/html;charset=utf-8')
+    if (fmt === 'pdf')  openPrintPdf(buildHtml(project, cards, statuses, true))
+  }
+
+  return (
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+      <button onClick={onToggle}
+        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+        title="Exporter le projet">
+        <Download className="w-3.5 h-3.5" /> Exporter ▾
+      </button>
+      {open && (
+        <div role="menu" style={{
+          position: 'absolute', right: 0, top: 'calc(100% + 4px)',
+          minWidth: 220, background: 'var(--bg-secondary)',
+          border: '1px solid var(--border)', borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.3)', zIndex: 20, padding: 4,
+        }}>
+          {([
+            ['pdf',  'PDF',      'Impression navigateur → PDF'],
+            ['html', 'HTML',     'Page web autonome stylée'],
+            ['md',   'Markdown', 'Pour Notion, Obsidian…'],
+            ['json', 'JSON',     'Données brutes complètes'],
+            ['csv',  'CSV',      'Excel / Google Sheets'],
+          ] as const).map(([k, lbl, desc]) => (
+            <button key={k}
+              onClick={() => pick(k as any)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '6px 10px', borderRadius: 6,
+                background: 'transparent', border: 'none',
+                color: 'var(--text-primary)', cursor: 'pointer',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+              <div style={{ fontSize: 12, fontWeight: 600 }}>{lbl}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{desc}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Export builders ─────────────────────────────────────────────────────
+
+function downloadBlob(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+
+function openPrintPdf(html: string) {
+  const w = window.open('', '_blank', 'width=900,height=700')
+  if (!w) { alert('Popup bloquée. Autorise les popups pour exporter en PDF.'); return }
+  w.document.open()
+  w.document.write(html.replace('</body></html>',
+    '<script>window.addEventListener("load",()=>setTimeout(()=>window.print(),250));<\/script></body></html>'))
+  w.document.close()
+}
+
+function buildJson(project: ProjectT, cards: CardT[], statuses: StatusT[]): string {
+  return JSON.stringify({
+    plugin: 'valkyrie',
+    generated_at: new Date().toISOString(),
+    project,
+    statuses,
+    cards: cards.map(c => ({ ...c })),
+  }, null, 2)
+}
+
+function buildMarkdown(project: ProjectT, cards: CardT[], statuses: StatusT[]): string {
+  const statusLabel = (key: string) => statuses.find(s => s.key === key)?.label || key
+  const lines: string[] = []
+  lines.push(`# ${project.title}`)
+  if (project.description) lines.push('', project.description)
+  lines.push('', `> Export Valkyrie — ${new Date().toLocaleString('fr-FR')} · ${cards.length} carte${cards.length > 1 ? 's' : ''}`)
+  // Grouper par statut pour la lisibilité
+  const byStatus: Record<string, CardT[]> = {}
+  for (const c of cards) (byStatus[c.status_key] ||= []).push(c)
+  for (const st of statuses) {
+    const group = byStatus[st.key] || []
+    if (!group.length) continue
+    lines.push('', `## ${st.label} (${group.length})`)
+    for (const c of group) {
+      lines.push('', `### ${c.title || '(sans titre)'}`)
+      if (c.subtitle) lines.push(`_${c.subtitle}_`)
+      if ((c.tags || []).length) lines.push(`**Tags :** ${c.tags.map(t => `\`${t}\``).join(' ')}`)
+      if (c.description) lines.push('', c.description)
+      const dumpList = (label: string, arr: SubtaskT[]) => {
+        if (!arr.length) return
+        lines.push('', `**${label}**`)
+        for (const s of arr) lines.push(`- [${s.done ? 'x' : ' '}] ${s.label}`)
+      }
+      dumpList('Sous-tâches', c.subtasks || [])
+      dumpList('Seconde liste', c.subtasks2 || [])
+    }
+  }
+  return lines.join('\n') + '\n'
+}
+
+function buildCsv(project: ProjectT, cards: CardT[], statuses: StatusT[]): string {
+  const statusLabel = (key: string) => statuses.find(s => s.key === key)?.label || key
+  const esc = (v: any) => {
+    const s = String(v ?? '')
+    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+    return s
+  }
+  const header = ['id', 'title', 'subtitle', 'status', 'description', 'tags',
+                  'subtasks1_done', 'subtasks1_total',
+                  'subtasks2_done', 'subtasks2_total',
+                  'created_at', 'updated_at'].join(',')
+  const rows = cards.map(c => [
+    c.id, c.title, c.subtitle || '', statusLabel(c.status_key),
+    (c.description || '').replace(/\n/g, ' '),
+    (c.tags || []).join('|'),
+    (c.subtasks || []).filter(s => s.done).length, (c.subtasks || []).length,
+    (c.subtasks2 || []).filter(s => s.done).length, (c.subtasks2 || []).length,
+    c.created_at || '', c.updated_at || '',
+  ].map(esc).join(','))
+  return `# Valkyrie — ${project.title}\n${header}\n${rows.join('\n')}\n`
+}
+
+function buildHtml(project: ProjectT, cards: CardT[], statuses: StatusT[], forPdf: boolean): string {
+  const esc = (s: string) => (s || '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' } as any)[c])
+  const statusLabel = (key: string) => statuses.find(s => s.key === key)?.label || key
+  const statusColor = (key: string) => statuses.find(s => s.key === key)?.color || '#7a8a9b'
+
+  // PDF : variant "light" lisible à l'impression (les navigateurs coupent les
+  // bg sombres par défaut). HTML download : variant "dark" ScarletWolf.
+  const dark = !forPdf
+  const css = dark ? `
+    body { font-family: 'Inter', system-ui, sans-serif; color: #f5f5f5; background: #080808; line-height: 1.6; max-width: 820px; margin: 0 auto; padding: 32px 28px; }
+    header { border-bottom: 3px solid #dc2626; padding-bottom: 16px; margin-bottom: 24px; }
+    h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; }
+    h1 .r { color: #ef4444; text-shadow: 0 0 12px rgba(220,38,38,0.4); }
+    .desc { color: #a3a3a3; margin-top: 6px; }
+    .meta { color: #666; font-size: 11px; font-variant: all-small-caps; letter-spacing: 0.05em; margin-top: 8px; }
+    h2 { color: #f5f5f5; border-bottom: 1px solid rgba(220,38,38,0.3); padding-bottom: 4px; margin-top: 26px; }
+    .card { background: #131313; border-left: 3px solid #dc2626; border-radius: 6px; padding: 12px 14px; margin: 10px 0; }
+    .card h3 { margin: 0 0 2px; font-size: 15px; color: #f5f5f5; }
+    .card .sub { color: #a3a3a3; font-style: italic; font-size: 12px; margin-bottom: 6px; }
+    .badge { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 4px; margin-right: 4px; }
+    .tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px; margin: 0 3px 3px 0; }
+    .list { margin: 8px 0 4px; padding-left: 18px; color: #d4d4d4; font-size: 13px; }
+    .list li { list-style: none; margin: 2px 0; }
+    .list li.done { color: #666; text-decoration: line-through; }
+    .list li::before { content: '☐'; margin-right: 6px; color: #737373; }
+    .list li.done::before { content: '☑'; color: #10b981; }
+    .list-title { font-size: 10px; font-family: 'JetBrains Mono', monospace; color: #737373; text-transform: uppercase; letter-spacing: 2px; margin-top: 8px; }
+    footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #2a2a2a; font-size: 10px; color: #666; text-align: center; }
+  ` : `
+    @page { margin: 18mm; }
+    body { font-family: 'Inter', system-ui, sans-serif; color: #1c1c1c; background: #faf7f2; line-height: 1.55; max-width: 780px; margin: 0 auto; padding: 24px; }
+    header { border-bottom: 3px solid #dc2626; padding-bottom: 12px; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 24px; }
+    h1 .r { color: #dc2626; }
+    .desc { color: #4a3f35; margin-top: 4px; font-size: 13px; }
+    .meta { color: #8a7a6a; font-size: 10.5px; font-variant: all-small-caps; letter-spacing: 0.04em; margin-top: 6px; }
+    h2 { color: #1c1c1c; border-bottom: 1px solid rgba(220,38,38,0.25); padding-bottom: 4px; margin-top: 22px; }
+    .card { background: #f0eadf; border-left: 3px solid #dc2626; border-radius: 4px; padding: 10px 12px; margin: 8px 0; break-inside: avoid; }
+    .card h3 { margin: 0 0 2px; font-size: 14px; }
+    .card .sub { color: #4a3f35; font-style: italic; font-size: 11.5px; margin-bottom: 4px; }
+    .badge { display: inline-block; font-size: 9.5px; padding: 1px 6px; border-radius: 4px; margin-right: 3px; }
+    .tag { display: inline-block; font-size: 9.5px; padding: 1px 6px; border-radius: 4px; margin: 0 3px 3px 0; }
+    .list { margin: 6px 0 4px; padding-left: 16px; color: #2b2620; font-size: 12px; }
+    .list li { list-style: none; margin: 1px 0; }
+    .list li.done { color: #8a7a6a; text-decoration: line-through; }
+    .list li::before { content: '☐'; margin-right: 6px; color: #8a7a6a; }
+    .list li.done::before { content: '☑'; color: #7a1010; }
+    .list-title { font-size: 9.5px; font-family: 'JetBrains Mono', monospace; color: #8a7a6a; text-transform: uppercase; letter-spacing: 2px; margin-top: 6px; }
+    footer { margin-top: 24px; padding-top: 10px; border-top: 1px solid #ddd5c8; font-size: 10px; color: #8a7a6a; text-align: center; }
+  `
+
+  const renderCard = (c: CardT) => {
+    const color = statusColor(c.status_key)
+    const tags = (c.tags || []).map(t => `<span class="tag" style="background:color-mix(in srgb, ${colorForTag(t)} 15%, transparent); color:${colorForTag(t)}">${esc(t)}</span>`).join('')
+    const list = (items: SubtaskT[]) => items.length
+      ? `<ul class="list">${items.map(s => `<li class="${s.done ? 'done' : ''}">${esc(s.label)}</li>`).join('')}</ul>`
+      : ''
+    return `
+      <div class="card">
+        <span class="badge" style="background:color-mix(in srgb, ${color} 15%, transparent); color:${color}">
+          ${esc(statusLabel(c.status_key))}
+        </span>
+        ${tags}
+        <h3>${esc(c.title) || '(sans titre)'}</h3>
+        ${c.subtitle ? `<div class="sub">${esc(c.subtitle)}</div>` : ''}
+        ${c.description ? `<p>${esc(c.description).replace(/\n/g, '<br>')}</p>` : ''}
+        ${(c.subtasks || []).length ? `<div class="list-title">Sous-tâches</div>${list(c.subtasks)}` : ''}
+        ${(c.subtasks2 || []).length ? `<div class="list-title">Seconde liste</div>${list(c.subtasks2)}` : ''}
+      </div>`
+  }
+
+  // Grouper par statut
+  const byStatus: Record<string, CardT[]> = {}
+  for (const c of cards) (byStatus[c.status_key] ||= []).push(c)
+  const sections = statuses
+    .map(st => {
+      const group = byStatus[st.key] || []
+      if (!group.length) return ''
+      return `<h2>${esc(st.label)} <span style="font-size:12px; color:${dark ? '#666' : '#8a7a6a'}">(${group.length})</span></h2>${group.map(renderCard).join('')}`
+    })
+    .join('')
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<title>Valkyrie — ${esc(project.title)}</title>
+<style>${css}</style></head><body>
+<header>
+  <h1>Valkyri<span class="r">e</span></h1>
+  <div class="desc"><strong>${esc(project.title)}</strong>${project.description ? ` — ${esc(project.description)}` : ''}</div>
+  <div class="meta">Export ${new Date().toLocaleString('fr-FR')} · ${cards.length} carte${cards.length > 1 ? 's' : ''}</div>
+</header>
+<main>${sections || '<p style="color:#666">Aucune carte.</p>'}</main>
+<footer>Généré par Valkyrie — plugin Gungnir ScarletWolf</footer>
+</body></html>`
 }
 
 // ════════════════════════════════════════════════════════════════════════

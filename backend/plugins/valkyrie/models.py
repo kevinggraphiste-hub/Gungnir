@@ -73,12 +73,17 @@ class ValkyrieCard(Base):
                          nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(300), nullable=False, default="")
+    subtitle = Column(String(300), default="")  # ligne d'accroche sous le titre
     description = Column(Text, default="")
     status_key = Column(String(60), nullable=False, default="todo")
     position = Column(Integer, default=0)  # rang dans la grille
     expanded = Column(Boolean, default=False)
-    # Liste de dicts : [{id, label, done}]
+    # Deux listes de sous-tâches côte à côte (ex: "livrables" + "preuves").
+    # Format commun : [{id, label, done}]
     subtasks_json = Column(JSON, default=list)
+    subtasks2_json = Column(JSON, default=list)
+    # Tags libres : liste de strings (couleur dérivée en UI via hash du label)
+    tags_json = Column(JSON, default=list)
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
     updated_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(),
                          onupdate=datetime.utcnow)

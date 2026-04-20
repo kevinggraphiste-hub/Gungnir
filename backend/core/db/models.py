@@ -333,6 +333,10 @@ async def init_db(engine):
         ("ALTER TABLE user_settings ADD COLUMN voice_config JSONB DEFAULT '{}'::jsonb", "voice_config -> user_settings"),
         ("ALTER TABLE user_settings ADD COLUMN huntr_config JSONB DEFAULT '{}'::jsonb", "huntr_config -> user_settings"),
         ("ALTER TABLE user_settings ADD COLUMN ui_preferences JSONB DEFAULT '{}'::jsonb", "ui_preferences -> user_settings"),
+        # ── Plugin Valkyrie : extensions de carte (v1.1) ─────────────────
+        ("ALTER TABLE valkyrie_cards ADD COLUMN subtitle VARCHAR(300) DEFAULT ''", "subtitle -> valkyrie_cards"),
+        ("ALTER TABLE valkyrie_cards ADD COLUMN subtasks2_json JSONB DEFAULT '[]'::jsonb", "subtasks2_json -> valkyrie_cards"),
+        ("ALTER TABLE valkyrie_cards ADD COLUMN tags_json JSONB DEFAULT '[]'::jsonb", "tags_json -> valkyrie_cards"),
     ]
     for sql, label in migrations:
         try:

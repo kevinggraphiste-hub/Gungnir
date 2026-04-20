@@ -71,11 +71,14 @@ class SubtaskIn(BaseModel):
 
 class CardIn(BaseModel):
     title: Optional[str] = None
+    subtitle: Optional[str] = None
     description: Optional[str] = None
     status_key: Optional[str] = None
     position: Optional[int] = None
     expanded: Optional[bool] = None
-    subtasks: Optional[list] = None  # liste de {id?, label, done}
+    subtasks: Optional[list] = None   # liste 1 de {id?, label, done}
+    subtasks2: Optional[list] = None  # liste 2 — même shape
+    tags: Optional[list] = None       # liste de strings (labels libres)
 
 
 class CardReorder(BaseModel):
@@ -114,11 +117,14 @@ def _serialize_card(c: ValkyrieCard) -> dict:
         "id": c.id,
         "project_id": c.project_id,
         "title": c.title or "",
+        "subtitle": (c.subtitle or ""),
         "description": c.description or "",
         "status_key": c.status_key,
         "position": c.position or 0,
         "expanded": bool(c.expanded),
         "subtasks": list(c.subtasks_json or []),
+        "subtasks2": list(c.subtasks2_json or []),
+        "tags": list(c.tags_json or []),
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "updated_at": c.updated_at.isoformat() if c.updated_at else None,
     }
@@ -366,16 +372,18 @@ async def create_card(project_id: int, payload: CardIn, request: Request,
     uid = await _uid(request, session)
     _require_uid(uid)
     await _get_project_owned(session, uid, project_id)
-    subtasks = _sanitize_subtasks(payload.subtasks or [])
     row = ValkyrieCard(
         project_id=project_id,
         user_id=uid,
         title=(payload.title or "").strip()[:300] or "Nouvelle carte",
+        subtitle=(payload.subtitle or "").strip()[:300],
         description=(payload.description or "").strip(),
         status_key=(payload.status_key or "todo").strip()[:60] or "todo",
         position=int(payload.position or 0),
         expanded=bool(payload.expanded or False),
-        subtasks_json=subtasks,
+        subtasks_json=_sanitize_subtasks(payload.subtasks or []),
+        subtasks2_json=_sanitize_subtasks(payload.subtasks2 or []),
+        tags_json=_sanitize_tags(payload.tags or []),
     )
     session.add(row)
     await session.commit()
@@ -391,6 +399,8 @@ async def update_card(card_id: int, payload: CardIn, request: Request,
     row = await _get_card_owned(session, uid, card_id)
     if payload.title is not None:
         row.title = payload.title.strip()[:300]
+    if payload.subtitle is not None:
+        row.subtitle = payload.subtitle.strip()[:300]
     if payload.description is not None:
         row.description = payload.description.strip()
     if payload.status_key is not None:
@@ -402,6 +412,12 @@ async def update_card(card_id: int, payload: CardIn, request: Request,
     if payload.subtasks is not None:
         row.subtasks_json = _sanitize_subtasks(payload.subtasks)
         flag_modified(row, "subtasks_json")
+    if payload.subtasks2 is not None:
+        row.subtasks2_json = _sanitize_subtasks(payload.subtasks2)
+        flag_modified(row, "subtasks2_json")
+    if payload.tags is not None:
+        row.tags_json = _sanitize_tags(payload.tags)
+        flag_modified(row, "tags_json")
     await session.commit()
     return {"card": _serialize_card(row)}
 
@@ -480,3 +496,51 @@ def _sanitize_subtasks(items) -> list[dict]:
         sid = str(it.get("id") or "").strip() or f"s_{uuid.uuid4().hex[:8]}"
         out.append({"id": sid[:32], "label": label, "done": bool(it.get("done", False))})
     return out
+
+
+def _sanitize_tags(items) -> list[str]:
+    """Normalise la liste de tags : strings uniques trim, ≤40 chars chacun,
+    max 20 tags par carte. On lowercase pas — l'user garde sa casse."""
+    out: list[str] = []
+    seen = set()
+    for it in items or []:
+        if not isinstance(it, str):
+            continue
+        label = it.strip()[:40]
+        if not label:
+            continue
+        key = label.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(label)
+        if len(out) >= 20:
+            break
+    return out
+
+
+# ── Tags (autocomplete source — tous les tags utilisés par l'user) ───────
+
+@router.get("/tags")
+async def list_tags(request: Request, session: AsyncSession = Depends(get_session)):
+    """Retourne tous les tags uniques utilisés par l'user sur l'ensemble de
+    ses cartes. Utilisé par l'UI pour l'autocomplétion + la recherche."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ValkyrieCard.tags_json).where(ValkyrieCard.user_id == uid)
+    )
+    seen: dict[str, int] = {}  # label → count
+    for (tags,) in rs.all():
+        if not tags:
+            continue
+        for t in tags:
+            if not isinstance(t, str):
+                continue
+            key = t.strip()
+            if not key:
+                continue
+            seen[key] = seen.get(key, 0) + 1
+    # Trié par fréquence descendante puis alphabétique
+    ranked = sorted(seen.items(), key=lambda x: (-x[1], x[0].lower()))
+    return {"tags": [{"label": k, "count": v} for k, v in ranked]}
