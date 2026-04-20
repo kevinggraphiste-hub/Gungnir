@@ -473,6 +473,24 @@ class ConsciousnessEngine:
         ok = await self._vector_memory.initialize()
         if ok:
             logger.info("Vector memory initialized successfully")
+            # Migration silencieuse : si Qdrant vient de la config consciousness
+            # (vm_config.qdrant_url) et pas encore dans user_settings.service_keys,
+            # on mirror pour que Paramètres → Services voie la connexion. Évite
+            # l'affichage "non connecté" dans Settings pour les users qui ont
+            # historiquement configuré Qdrant via l'onglet mémoire vectorielle.
+            if (vm_config.get("vector_provider") == "qdrant"
+                    and vm_config.get("qdrant_url") and self.user_id):
+                try:
+                    from backend.plugins.consciousness.routes import (
+                        _mirror_qdrant_to_service_keys,
+                    )
+                    await _mirror_qdrant_to_service_keys(
+                        self.user_id,
+                        qdrant_url=vm_config.get("qdrant_url", ""),
+                        qdrant_api_key=vm_config.get("qdrant_api_key", "") or "",
+                    )
+                except Exception as e:
+                    logger.debug(f"Qdrant mirror to service_keys failed: {e}")
         else:
             logger.warning("Vector memory initialization failed")
             self._vector_memory = None

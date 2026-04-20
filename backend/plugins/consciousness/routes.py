@@ -171,7 +171,61 @@ async def get_config(request: Request):
 async def update_config(req: ConfigUpdate, request: Request):
     c = _get_consciousness(request)
     c.update_config(req.updates)
+    # Miroir Qdrant : quand l'user configure son vector store ici, on sync
+    # aussi service_keys.qdrant pour que Paramètres → Services voie la même
+    # connexion. Évite le cas "Qdrant connecté côté conscience, affiché
+    # comme non-configuré dans Settings".
+    try:
+        vm = (req.updates or {}).get("vector_memory") or {}
+        if vm.get("vector_provider") == "qdrant" and vm.get("qdrant_url"):
+            await _mirror_qdrant_to_service_keys(
+                _require_uid(request),
+                qdrant_url=vm.get("qdrant_url", ""),
+                qdrant_api_key=vm.get("qdrant_api_key", "") or "",
+            )
+    except Exception:
+        pass  # Non-bloquant : la conscience a déjà enregistré sa config
     return {"ok": True, "config": c.config}
+
+
+async def _mirror_qdrant_to_service_keys(
+    user_id: int, qdrant_url: str, qdrant_api_key: str
+) -> None:
+    """Copie les credentials Qdrant de consciousness.vector_memory vers
+    user_settings.service_keys.qdrant si ce dernier est vide ou obsolète.
+
+    Stratégie :
+    - si service_keys.qdrant n'existe pas → créer avec {enabled, base_url, api_key}
+    - si service_keys.qdrant existe SANS base_url → compléter
+    - si service_keys.qdrant existe avec un autre base_url → ne pas écraser
+      (l'user a fait un choix explicite quelque part, on respecte)
+    """
+    if not qdrant_url:
+        return
+    from backend.core.db.engine import get_session as _get_sess
+    from backend.core.api.auth_helpers import get_user_settings
+    from backend.core.config.settings import encrypt_value
+    from sqlalchemy.orm.attributes import flag_modified
+
+    async for sess in _get_sess():
+        try:
+            us = await get_user_settings(user_id, sess)
+            service_keys = dict(us.service_keys or {})
+            current = dict(service_keys.get("qdrant") or {})
+            existing_url = (current.get("base_url") or "").strip()
+            if existing_url and existing_url != qdrant_url.strip():
+                return  # URL différente déjà configurée → ne pas écraser
+            current["base_url"] = qdrant_url.strip()
+            if qdrant_api_key and not current.get("api_key"):
+                current["api_key"] = encrypt_value(qdrant_api_key.strip())
+            current.setdefault("enabled", True)
+            service_keys["qdrant"] = current
+            us.service_keys = service_keys
+            flag_modified(us, "service_keys")
+            await sess.commit()
+        except Exception:
+            await sess.rollback()
+        break
 
 
 # ── State ───────────────────────────────────────────────────────────────────

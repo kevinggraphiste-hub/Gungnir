@@ -350,6 +350,52 @@ SERVICE_CATEGORIES = {
 }
 
 
+# Services qui se connectent sur une URL sans forcément de clé API (ex: Qdrant
+# self-hosted sans auth, SearXNG public). Pour ceux-là, un `base_url` non-
+# défaut (= différent de localhost/la valeur par défaut du catalogue) SUFFIT
+# à considérer le service comme "configuré".
+_URL_ONLY_SERVICES = {"qdrant", "searxng", "redis", "n8n", "ollama",
+                      "postgresql", "mysql", "mongodb", "elasticsearch",
+                      "weaviate", "chromadb", "milvus"}
+
+
+def _service_has_credentials(user_entry: dict, meta_base_url: str, service_name: str) -> bool:
+    """Retourne True si l'user a fourni de quoi faire fonctionner le service.
+
+    - services "URL-only" (Qdrant, SearXNG, Redis…) : un base_url distinct du
+      default du catalogue suffit (ex: Qdrant Cloud avec URL custom)
+    - services API-key : api_key OU token présent
+    - tout service : clé ou token valide → considéré configuré
+    """
+    if not isinstance(user_entry, dict):
+        return False
+    if user_entry.get("api_key") or user_entry.get("token"):
+        return True
+    user_url = (user_entry.get("base_url") or "").strip()
+    if service_name in _URL_ONLY_SERVICES and user_url and user_url != (meta_base_url or "").strip():
+        return True
+    return False
+
+
+def _effective_enabled(user_entry: dict, meta_base_url: str, service_name: str) -> bool:
+    """Résout l'état "activé" à afficher côté UI.
+
+    - user_entry.enabled == True  → activé (toggle user explicite)
+    - user_entry.enabled == False → désactivé (toggle user explicite)
+    - absent / None → auto : activé SI des credentials utilisables sont
+      présents (résout le cas Qdrant configuré pour la conscience mais
+      jamais toggle depuis Paramètres → Services)
+    """
+    if not isinstance(user_entry, dict):
+        return False
+    explicit = user_entry.get("enabled")
+    if explicit is True:
+        return True
+    if explicit is False:
+        return False
+    return _service_has_credentials(user_entry, meta_base_url, service_name)
+
+
 @router.get("/config/services")
 async def list_services(request: Request, session: AsyncSession = Depends(get_session)):
     """List services with metadata + the current user's has_api_key/has_token flags.
@@ -375,7 +421,10 @@ async def list_services(request: Request, session: AsyncSession = Depends(get_se
             "label": SERVICE_LABELS.get(name, name),
             "api_key": "***" if user_entry.get("api_key") else None,
             "token": "***" if user_entry.get("token") else None,
-            "enabled": bool(user_entry.get("enabled")),
+            "enabled": _effective_enabled(user_entry, s.base_url or "", name),
+            "enabled_explicit": user_entry.get("enabled"),  # pour distinguer auto vs user-set
+            "has_api_key": bool(user_entry.get("api_key")),
+            "has_token": bool(user_entry.get("token")),
             "base_url": user_entry.get("base_url") or s.base_url,
         }
     return {"services": services, "categories": SERVICE_CATEGORIES, "labels": SERVICE_LABELS}
@@ -401,7 +450,10 @@ async def get_service(service_name: str, request: Request, session: AsyncSession
     data = svc.model_dump()
     data["api_key"] = "***" if user_entry.get("api_key") else None
     data["token"] = "***" if user_entry.get("token") else None
-    data["enabled"] = bool(user_entry.get("enabled"))
+    data["enabled"] = _effective_enabled(user_entry, svc.base_url or "", service_name)
+    data["enabled_explicit"] = user_entry.get("enabled")
+    data["has_api_key"] = bool(user_entry.get("api_key"))
+    data["has_token"] = bool(user_entry.get("token"))
     data["base_url"] = user_entry.get("base_url") or svc.base_url
     data["label"] = SERVICE_LABELS.get(service_name, service_name)
     return data
@@ -478,9 +530,11 @@ async def test_service(service_name: str, request: Request, session: AsyncSessio
     api_key = user_svc.get("api_key") or None
     token = user_svc.get("token") or None
     base_url = user_svc.get("base_url") or meta.base_url
-    enabled = user_svc.get("enabled", False)
-    if not enabled:
-        return {"ok": False, "error": "Service désactivé pour cet utilisateur"}
+    # Même logique que dans list_services : un toggle `enabled: False` explicite
+    # bloque le test, sinon on accepte dès que les credentials sont présents
+    # (évite "désactivé" sur Qdrant/SearXNG configurés sans toggle manuel).
+    if not _effective_enabled(user_svc, meta.base_url or "", service_name):
+        return {"ok": False, "error": "Service non configuré (ni clé ni URL custom)"}
 
     # Basic connectivity test per service type
     try:
@@ -503,7 +557,23 @@ async def test_service(service_name: str, request: Request, session: AsyncSessio
             await writer.wait_closed()
             return {"ok": True, "service": service_name, "message": "Connexion PostgreSQL OK"}
 
-        elif service_name in ("n8n", "qdrant"):
+        elif service_name == "qdrant":
+            if not base_url:
+                return {"ok": False, "error": "URL non configurée"}
+            # Qdrant Cloud : /healthz en GET, éventuel header api-key sur les
+            # instances authentifiées. L'endpoint est cheap et public.
+            healthz = base_url.rstrip("/") + "/healthz"
+            headers = {}
+            if api_key:
+                headers["api-key"] = api_key
+            async with aiohttp.ClientSession() as session_http:
+                async with session_http.get(healthz, headers=headers,
+                                             timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    ok = resp.status < 400
+                    msg = "Connexion Qdrant OK" if ok else f"HTTP {resp.status}"
+                    return {"ok": ok, "service": service_name, "status": resp.status, "message": msg}
+
+        elif service_name == "n8n":
             if not base_url:
                 return {"ok": False, "error": "URL non configurée"}
             async with aiohttp.ClientSession() as session_http:
