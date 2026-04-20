@@ -549,7 +549,8 @@ def _build_impulse_prompt(engine, top_need: str, top_data: dict) -> tuple[str, s
 
     triggers = ", ".join(top_data.get("triggers", [])) or "(aucun)"
 
-    system = (
+    from backend.plugins.consciousness.guardrails import wrap_with_preamble
+    system = wrap_with_preamble(
         "Tu es le module de volition d'un assistant nommé Gungnir. Ton rôle : "
         "transformer un besoin non satisfait en UNE action concrète, utile, "
         "proposée à l'utilisateur — pas une introspection vague. "
@@ -909,17 +910,22 @@ async def _consolidate_for_user(user_id: int, force: bool = False) -> bool:
     return True
 
 
-def _apply_score_conditioning(user_id: int) -> None:
+def _apply_score_conditioning(user_id: int) -> int:
     """Applique mood auto + pression volition depuis les scores du user.
 
     Les deux sont locaux (pas de LLM), donc on les tourne à chaque tick sans
     gate no-key. Log seulement en cas de changement effectif.
+
+    Évalue aussi le palier de sécurité (kill-switch) et applique ses effets.
+    Retourne le tier courant (0–3) pour que le caller puisse gater les boucles
+    LLM externes à `_apply_score_conditioning`.
     """
     from backend.plugins.consciousness.engine import consciousness_manager
+    from backend.plugins.consciousness import guardrails
 
     engine = consciousness_manager.get(user_id)
     if not engine.enabled:
-        return
+        return guardrails.TIER_OK
 
     new_mood = engine.update_mood_from_scores()
     if new_mood:
@@ -932,6 +938,13 @@ def _apply_score_conditioning(user_id: int) -> None:
     # Décroissance naturelle : rééquilibre les bumps (pressure, triggers,
     # résidus d'impulses) pour que les urgences redescendent sans intervention.
     engine.apply_natural_decay()
+
+    # Kill-switch : réévalue + applique les effets persistants (tier 3 coupe).
+    tier = guardrails.evaluate_safety_tier(engine)
+    changed = guardrails.apply_tier_effects(engine, tier)
+    if changed:
+        logger.warning(f"Safety tier changed for user {user_id} → {tier}")
+    return tier
 
 
 async def _tick_once():
@@ -971,6 +984,24 @@ async def _tick_once():
             except Exception:
                 continue
 
+        # Conditionnement local (mood + volition + kill-switch) AVANT les
+        # boucles LLM : si le palier de sécurité coupe la conscience, on veut
+        # qu'il gate le tick courant, pas seulement le suivant. Aucun appel
+        # LLM, donc pas de gate no-key.
+        from backend.plugins.consciousness import guardrails
+        tier = guardrails.TIER_OK
+        try:
+            tier = _apply_score_conditioning(user_id)
+        except Exception as e:
+            logger.exception(f"Score conditioning crashed for user {user_id}: {e}")
+
+        # Tier 3 (shutdown) : la conscience vient d'être désactivée dans
+        # apply_tier_effects → rien d'autre à faire.
+        # Tier 2 (safe mode) : on coupe toutes les boucles LLM de fond. Le
+        # chat direct reste actif (avec le préambule constitutionnel).
+        if not guardrails.tier_allows_background_llm(tier):
+            continue
+
         if think_on:
             try:
                 await _think_for_user(user_id)
@@ -1000,14 +1031,6 @@ async def _tick_once():
                 await _consolidate_for_user(user_id)
             except Exception as e:
                 logger.exception(f"Consolidation pass crashed for user {user_id}: {e}")
-
-        # Conditionnement local (mood + volition) depuis les scores 👍/👎.
-        # Aucun appel LLM, donc pas de gate no-key : on tourne toujours si
-        # la conscience est activée (même sans provider configuré).
-        try:
-            _apply_score_conditioning(user_id)
-        except Exception as e:
-            logger.exception(f"Score conditioning crashed for user {user_id}: {e}")
 
 
 async def _consciousness_loop():

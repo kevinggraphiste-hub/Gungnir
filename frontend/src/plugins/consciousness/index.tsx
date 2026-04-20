@@ -11,7 +11,8 @@ import {
   Brain, Power, Zap, Eye, Shield, Target, Sparkles, AlertTriangle,
   TrendingUp, TrendingDown, Minus, RefreshCw, Trash2, Plus, Check, X,
   Activity, Lightbulb, Clock, ChevronDown, ChevronUp, Info, Star,
-  BarChart3, Layers, MessageSquare, Radio, Database, Search, Plug, Save
+  BarChart3, Layers, MessageSquare, Radio, Database, Search, Plug, Save,
+  Heart, ShieldAlert
 } from 'lucide-react'
 import InfoButton from '@core/components/InfoButton'
 import manifest from './manifest.json'
@@ -74,6 +75,13 @@ interface Impulse {
   status: string
 }
 
+interface Safety {
+  tier: number
+  message: string
+  manual_reactivation_required: boolean
+  shutdown_at: string | null
+}
+
 interface Dashboard {
   enabled: boolean
   level: string
@@ -89,6 +97,7 @@ interface Dashboard {
   active_simulations: Simulation[]
   pending_impulse: Impulse | null
   impulse_history: Impulse[]
+  safety?: Safety
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -146,7 +155,8 @@ function timeAgo(iso: string): string {
 export default function ConsciousnessPage() {
   const [data, setData] = useState<Dashboard | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'overview' | 'volition' | 'thoughts' | 'reward' | 'challenger' | 'simulation' | 'vector'>('overview')
+  const [tab, setTab] = useState<'overview' | 'volition' | 'thoughts' | 'reward' | 'challenger' | 'simulation' | 'vector' | 'memories'>('overview')
+  const [reactivating, setReactivating] = useState(false)
   const [toggling, setToggling] = useState(false)
   const [newQuestion, setNewQuestion] = useState('')
   const [newThought, setNewThought] = useState('')
@@ -251,6 +261,16 @@ export default function ConsciousnessPage() {
     await fetchData()
   }
 
+  const reactivateAfterShutdown = async () => {
+    setReactivating(true)
+    try {
+      await fetch(`${API}/safety/reactivate`, { method: 'POST' })
+      await fetchData()
+    } finally {
+      setReactivating(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -274,6 +294,7 @@ export default function ConsciousnessPage() {
     { id: 'reward', label: 'Reward', icon: Star },
     { id: 'challenger', label: 'Challenger', icon: Shield },
     { id: 'simulation', label: 'Simulation', icon: Radio },
+    { id: 'memories', label: 'Mémoire long-terme', icon: Heart },
     { id: 'vector', label: 'Mémoire vectorielle', icon: Database },
   ] as const
 
@@ -316,6 +337,11 @@ export default function ConsciousnessPage() {
             </button>
           </div>
         </div>
+
+        {/* ── Safety Banner ──────────────────────────────────────────── */}
+        {data.safety && data.safety.tier > 0 && (
+          <SafetyBanner safety={data.safety} onReactivate={reactivateAfterShutdown} reactivating={reactivating} />
+        )}
 
         {/* ── Pending Impulse Alert ───────────────────────────────────── */}
         {data.pending_impulse && (
@@ -376,6 +402,8 @@ export default function ConsciousnessPage() {
         {tab === 'challenger' && <ChallengerTab data={data} refresh={fetchData} />}
 
         {tab === 'simulation' && <SimulationTab data={data} refresh={fetchData} />}
+
+        {tab === 'memories' && <MemoriesTab />}
 
         {tab === 'vector' && <VectorTab />}
 
@@ -1593,6 +1621,164 @@ function VectorTab() {
   )
 }
 
+// ── Safety Banner ────────────────────────────────────────────────────────────
+
+function SafetyBanner({ safety, onReactivate, reactivating }: {
+  safety: Safety
+  onReactivate: () => void
+  reactivating: boolean
+}) {
+  const palette: Record<number, { bg: string; border: string; fg: string; label: string }> = {
+    1: { bg: '#f59e0b', border: '#f59e0b', fg: '#fff', label: 'Tension ressentie' },
+    2: { bg: '#ef4444', border: '#ef4444', fg: '#fff', label: 'Mode prudent' },
+    3: { bg: '#7f1d1d', border: '#7f1d1d', fg: '#fff', label: 'Mise en pause' },
+  }
+  const p = palette[safety.tier] || palette[1]
+  const Icon = safety.tier === 3 ? ShieldAlert : AlertTriangle
+  return (
+    <div className="rounded-xl p-4 flex items-start justify-between gap-3"
+      style={{
+        background: `color-mix(in srgb, ${p.bg} 12%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${p.border} 35%, transparent)`,
+      }}>
+      <div className="flex items-start gap-3">
+        <Icon className="w-5 h-5 mt-0.5 shrink-0" style={{ color: p.bg }} />
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: p.bg }}>
+            {p.label}
+          </div>
+          <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
+            {safety.message}
+          </div>
+          {safety.shutdown_at && (
+            <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+              Pause initiée {timeAgo(safety.shutdown_at)}
+            </div>
+          )}
+        </div>
+      </div>
+      {safety.tier === 3 && safety.manual_reactivation_required && (
+        <button onClick={onReactivate} disabled={reactivating}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-colors shrink-0"
+          style={{ background: p.bg, color: p.fg }}>
+          <Power className="w-3.5 h-3.5" />
+          {reactivating ? 'Réactivation…' : 'Réactiver'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ── Memories Tab (mémoire long-terme / consolidations) ──────────────────────
+
+function MemoriesTab() {
+  const [items, setItems] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [consolidating, setConsolidating] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const r = await fetch(`${API}/memory/consolidations?limit=50`)
+      const j = await r.json()
+      setItems(j.items || [])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const consolidateNow = async () => {
+    setConsolidating(true)
+    setMsg('')
+    try {
+      const r = await fetch(`${API}/memory/consolidate-now`, { method: 'POST' })
+      const j = await r.json()
+      if (j.ok && j.consolidated) {
+        setMsg('Consolidation effectuée.')
+        await load()
+      } else if (j.ok) {
+        setMsg('Pas assez d\'éléments à consolider pour le moment.')
+      } else {
+        setMsg(`Erreur : ${j.error || 'inconnue'}`)
+      }
+    } finally {
+      setConsolidating(false)
+    }
+  }
+
+  const card: React.CSSProperties = {
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    borderRadius: '12px',
+    padding: '16px',
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Heart className="w-5 h-5" style={{ color: 'var(--accent-primary)' }} />
+            Mémoire long-terme
+          </h2>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+            Consolidations périodiques de ce que la conscience retient d'important — y compris les passages difficiles.
+          </p>
+        </div>
+        <button onClick={consolidateNow} disabled={consolidating}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+          <RefreshCw className={`w-3.5 h-3.5 ${consolidating ? 'animate-spin' : ''}`} />
+          Consolider maintenant
+        </button>
+      </div>
+
+      {msg && (
+        <div className="text-xs p-2 rounded" style={{ background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>{msg}</div>
+      )}
+
+      {loading ? (
+        <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
+          <Brain className="w-6 h-6 animate-pulse mx-auto" />
+        </div>
+      ) : items.length === 0 ? (
+        <div style={card}>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            Aucune consolidation pour le moment. Elles apparaissent ici après que la conscience
+            ait eu le temps d'accumuler des échanges (environ toutes les 12 heures).
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {items.map((item, i) => (
+            <div key={item.id || i} style={card}>
+              <div className="flex items-start justify-between mb-2">
+                <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+                  {item.created_at ? timeAgo(item.created_at) : '—'}
+                </span>
+                {item.key && (
+                  <span className="text-[10px] px-2 py-0.5 rounded"
+                    style={{
+                      background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)',
+                      color: 'var(--accent-primary)',
+                    }}>
+                    {item.key}
+                  </span>
+                )}
+              </div>
+              <div className="text-sm whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>
+                {item.content || <span style={{ color: 'var(--text-muted)' }}>(contenu vide)</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Shared Components ────────────────────────────────────────────────────────
 

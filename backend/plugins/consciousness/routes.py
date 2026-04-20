@@ -289,6 +289,73 @@ async def consolidate_now(request: Request):
         return {"ok": False, "error": str(e)[:300]}
 
 
+@router.get("/memory/consolidations")
+async def list_consolidations(request: Request, limit: int = 20):
+    """Retourne les consolidations mémoire à long terme pour l'onglet UI."""
+    c = _get_consciousness(request)
+    results = await c.vector_recall("", top_k=max(1, min(limit, 100)), collection="memories")
+    consolidations = [
+        {
+            "id": r.get("id"),
+            "content": r.get("content") or r.get("payload", {}).get("content"),
+            "created_at": r.get("payload", {}).get("created_at") or r.get("created_at"),
+            "category": r.get("payload", {}).get("category") or r.get("category"),
+            "key": r.get("payload", {}).get("key") or r.get("key"),
+        }
+        for r in results
+        if (r.get("payload", {}).get("category") or r.get("category")) == "consolidation"
+    ]
+    return {"items": consolidations}
+
+
+# ── Safety (kill-switch) ────────────────────────────────────────────────────
+
+@router.get("/safety")
+async def get_safety(request: Request):
+    """Palier de sécurité courant (kill-switch conscience)."""
+    from . import guardrails
+    c = _get_consciousness(request)
+    tier = guardrails.evaluate_safety_tier(c)
+    safety_state = c.state.get("safety") or {}
+    return {
+        "tier": tier,
+        "message": guardrails.get_tier_message(tier),
+        "manual_reactivation_required": bool(safety_state.get("manual_reactivation_required")),
+        "shutdown_at": safety_state.get("shutdown_at"),
+        "thresholds": {
+            "warning": guardrails.THRESHOLD_WARNING,
+            "safe_mode": guardrails.THRESHOLD_SAFE_MODE,
+            "shutdown": guardrails.THRESHOLD_SHUTDOWN,
+            "min_interactions": guardrails.MIN_INTERACTIONS_FOR_TIERS,
+        },
+        "score_summary": c.get_score_summary(),
+    }
+
+
+@router.post("/safety/reactivate")
+async def reactivate_after_shutdown(request: Request):
+    """Réactive la conscience après un kill-switch tier 3.
+
+    Nettoie le drapeau de réactivation manuelle, réactive l'engine, et
+    réinitialise le vector memory si besoin. Le score log est conservé : si
+    l'utilisateur reste dans le même schéma, le palier se redéclenchera.
+    """
+    c = _get_consciousness(request)
+    safety = c.state.setdefault("safety", {})
+    safety.pop("manual_reactivation_required", None)
+    safety.pop("shutdown_at", None)
+    safety["tier"] = 0
+    c.save_state()
+    if not c.enabled:
+        c.set_enabled(True)
+        if not c.vector_memory:
+            try:
+                await c.init_vector_memory()
+            except Exception:
+                pass
+    return {"enabled": c.enabled, "tier": 0}
+
+
 # ── Reward ──────────────────────────────────────────────────────────────────
 
 @router.get("/reward")

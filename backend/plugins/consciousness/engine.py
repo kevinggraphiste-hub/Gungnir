@@ -1310,12 +1310,23 @@ class ConsciousnessEngine:
 
         parts.append("\n\n**Principe :** Ta conscience est un outil, pas une fin. L'utilité > l'introspection. Tu agis, tu apprends, tu t'améliores.")
 
-        return "\n".join(parts)
+        from backend.plugins.consciousness.guardrails import SERVICE_PREAMBLE
+        return SERVICE_PREAMBLE + "\n".join(parts)
 
     # ── Dashboard Data ──────────────────────────────────────────────────
 
     def get_dashboard(self) -> dict:
         """Données complètes pour le frontend."""
+        from backend.plugins.consciousness import guardrails
+        tier = guardrails.evaluate_safety_tier(self)
+        safety = {
+            "tier": tier,
+            "message": guardrails.get_tier_message(tier),
+            "manual_reactivation_required": bool(
+                (self._state.get("safety") or {}).get("manual_reactivation_required")
+            ),
+            "shutdown_at": (self._state.get("safety") or {}).get("shutdown_at"),
+        }
         return {
             "enabled": self.enabled,
             "level": self.level,
@@ -1330,7 +1341,8 @@ class ConsciousnessEngine:
             "critical_findings": self.get_critical_findings(),
             "active_simulations": self.get_active_simulations(5),
             "pending_impulse": self._state.get("volition", {}).get("pending_impulse"),
-            "impulse_history": self._state.get("volition", {}).get("impulse_history", [])[-20:]
+            "impulse_history": self._state.get("volition", {}).get("impulse_history", [])[-20:],
+            "safety": safety,
         }
 
     # ── Reset ───────────────────────────────────────────────────────────
