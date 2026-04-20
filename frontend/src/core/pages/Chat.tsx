@@ -712,17 +712,28 @@ export default function Chat() {
     setTtsEnabled(v => {
       const next = !v
       try { localStorage.setItem('chat.ttsEnabled', next ? '1' : '0') } catch { /* ignore */ }
-      // Si on désactive pendant une lecture, on coupe tout de suite.
-      if (!next && typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.cancel()
+      // Si on désactive pendant une lecture, on coupe tout de suite
+      // (navigateur ET cloud audio en cours).
+      if (!next) {
+        if (typeof window !== 'undefined' && window.speechSynthesis) {
+          window.speechSynthesis.cancel()
+        }
+        if (cloudAudioRef.current) {
+          cloudAudioRef.current.pause()
+          cloudAudioRef.current.src = ''
+          cloudAudioRef.current = null
+        }
         setTtsSpeaking(false)
       }
       return next
     })
   }, [])
 
+  // Référence au dernier HTMLAudioElement cloud (pour pouvoir l'arrêter).
+  const cloudAudioRef = useRef<HTMLAudioElement | null>(null)
+
   const speakText = useCallback((text: string) => {
-    if (!text || typeof window === 'undefined' || !window.speechSynthesis) return
+    if (!text) return
     // Strip markdown basique avant d'envoyer au TTS — sinon le synthétiseur
     // lit les `*`, `#`, les liens URL, le code… littéralement.
     const plain = text
@@ -736,35 +747,90 @@ export default function Chat() {
       .replace(/\n{2,}/g, '. ')              // paragraphes → pause
       .trim()
     if (!plain) return
-    window.speechSynthesis.cancel()  // arrête la lecture en cours s'il y en a une
-    const utter = new SpeechSynthesisUtterance(plain)
 
-    // Lit les prefs TTS depuis localStorage (écrites par Settings → Voix).
-    // Fallback safe si rien n'est configuré.
-    let prefs: { voiceURI: string; rate: number; pitch: number; volume: number; lang: string } | null = null
+    // Prefs depuis localStorage (écrites par Settings → Voix).
+    let prefs: any = null
     try {
       const raw = localStorage.getItem('chat.tts.prefs')
       if (raw) prefs = JSON.parse(raw)
     } catch { /* ignore */ }
+    const engine = prefs?.engine || 'browser'
 
-    utter.rate = prefs?.rate ?? 1.05
-    utter.pitch = prefs?.pitch ?? 1.0
-    utter.volume = prefs?.volume ?? 1.0
-    // Langue : 'auto' suit i18n ; sinon on force la langue explicite.
-    const forcedLang = prefs?.lang && prefs.lang !== 'auto' ? prefs.lang : null
-    utter.lang = forcedLang
-      || (i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`)
-    // Voix explicite si l'user en a choisi une.
-    if (prefs?.voiceURI) {
-      const voices = window.speechSynthesis.getVoices() || []
-      const found = voices.find(v => v.voiceURI === prefs!.voiceURI)
-      if (found) utter.voice = found
+    // Coupe toute lecture en cours (navigateur + cloud) avant de relancer.
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel()
+    }
+    if (cloudAudioRef.current) {
+      cloudAudioRef.current.pause()
+      cloudAudioRef.current.src = ''
+      cloudAudioRef.current = null
     }
 
-    utter.onstart = () => setTtsSpeaking(true)
-    utter.onend = () => setTtsSpeaking(false)
-    utter.onerror = () => setTtsSpeaking(false)
-    window.speechSynthesis.speak(utter)
+    // ─── Engine "browser" : Web Speech API native ───────────
+    if (engine === 'browser') {
+      if (typeof window === 'undefined' || !window.speechSynthesis) return
+      const utter = new SpeechSynthesisUtterance(plain)
+      utter.rate = prefs?.rate ?? 1.05
+      utter.pitch = prefs?.pitch ?? 1.0
+      utter.volume = prefs?.volume ?? 1.0
+      const forcedLang = prefs?.lang && prefs.lang !== 'auto' ? prefs.lang : null
+      utter.lang = forcedLang
+        || (i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`)
+      if (prefs?.voiceURI) {
+        const voices = window.speechSynthesis.getVoices() || []
+        const found = voices.find(v => v.voiceURI === prefs.voiceURI)
+        if (found) utter.voice = found
+      }
+      utter.onstart = () => setTtsSpeaking(true)
+      utter.onend = () => setTtsSpeaking(false)
+      utter.onerror = () => setTtsSpeaking(false)
+      window.speechSynthesis.speak(utter)
+      return
+    }
+
+    // ─── Engine cloud : POST /api/chat/tts → blob MP3 → Audio ───
+    const body: any = { text: plain, provider: engine }
+    if (engine === 'openai') {
+      body.voice = prefs?.openaiVoice || 'alloy'
+      body.model = prefs?.openaiModel || 'tts-1'
+      body.speed = prefs?.openaiSpeed ?? 1.0
+    } else if (engine === 'elevenlabs') {
+      body.voice = prefs?.elevenVoiceId || '21m00Tcm4TlvDq8ikWAM'
+      body.model = prefs?.elevenModelId || 'eleven_multilingual_v2'
+    }
+    setTtsSpeaking(true)
+    apiFetch('/api/chat/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(async r => {
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        console.warn('Cloud TTS failed:', err?.error || r.status)
+        setTtsSpeaking(false)
+        return
+      }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      cloudAudioRef.current = audio
+      audio.onended = () => {
+        setTtsSpeaking(false)
+        URL.revokeObjectURL(url)
+        if (cloudAudioRef.current === audio) cloudAudioRef.current = null
+      }
+      audio.onerror = () => {
+        setTtsSpeaking(false)
+        URL.revokeObjectURL(url)
+      }
+      audio.play().catch(() => {
+        setTtsSpeaking(false)
+        URL.revokeObjectURL(url)
+      })
+    }).catch(e => {
+      console.warn('Cloud TTS network error:', e)
+      setTtsSpeaking(false)
+    })
   }, [])
 
   // Déclenche le TTS à la fin du stream d'une réponse assistant — on
@@ -782,55 +848,134 @@ export default function Chat() {
     }
   }, [isLoading, ttsEnabled, messages, speakText])
 
-  // Stop TTS si l'utilisateur quitte la page ou change de conversation
+  // Stop TTS (navigateur + cloud) quand on quitte / change de conversation
   useEffect(() => {
     return () => {
       if (typeof window !== 'undefined' && window.speechSynthesis) {
         window.speechSynthesis.cancel()
       }
+      if (cloudAudioRef.current) {
+        cloudAudioRef.current.pause()
+        cloudAudioRef.current.src = ''
+        cloudAudioRef.current = null
+      }
     }
   }, [currentConversation])
 
-  const startPTT = useCallback(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SpeechRecognition) return
-    if (recognitionRef.current) return
+  // Pour l'engine cloud STT : MediaRecorder + chunks audio.
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const audioStreamRef = useRef<MediaStream | null>(null)
+
+  const startPTT = useCallback(async () => {
     // Lit les prefs PTT depuis localStorage (Settings → Voix).
-    let prefs: { lang: string; continuous: boolean; interim: boolean } | null = null
+    let prefs: { engine?: string; lang: string; continuous: boolean; interim: boolean } | null = null
     try {
       const raw = localStorage.getItem('chat.ptt.prefs')
       if (raw) prefs = JSON.parse(raw)
     } catch { /* ignore */ }
+    const engine = prefs?.engine || 'browser'
     const forcedLang = prefs?.lang && prefs.lang !== 'auto' ? prefs.lang : null
-    const recognition = new SpeechRecognition()
-    recognition.lang = forcedLang
-      || (i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`)
-    recognition.interimResults = !!prefs?.interim
-    recognition.maxAlternatives = 1
-    recognition.continuous = !!prefs?.continuous
-    recognition.onstart = () => setPttStatus('recording')
-    recognition.onresult = (event: any) => {
-      // Mode continu + interim : on aggrège seulement les segments finalisés
-      // depuis l'index du dernier batch reçu pour éviter les doublons.
-      let finalText = ''
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const res = event.results[i]
-        if (res.isFinal && res[0]?.transcript) finalText += res[0].transcript
+
+    // ─── Engine "browser" : Web Speech Recognition ───────────
+    if (engine === 'browser') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+      if (!SpeechRecognition) return
+      if (recognitionRef.current) return
+      const recognition = new SpeechRecognition()
+      recognition.lang = forcedLang
+        || (i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`)
+      recognition.interimResults = !!prefs?.interim
+      recognition.maxAlternatives = 1
+      recognition.continuous = !!prefs?.continuous
+      recognition.onstart = () => setPttStatus('recording')
+      recognition.onresult = (event: any) => {
+        let finalText = ''
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const res = event.results[i]
+          if (res.isFinal && res[0]?.transcript) finalText += res[0].transcript
+        }
+        finalText = finalText.trim()
+        if (finalText) {
+          setInput(prev => (prev ? prev + ' ' : '') + finalText)
+          setTimeout(() => inputRef.current?.focus(), 50)
+        }
       }
-      finalText = finalText.trim()
-      if (finalText) {
-        setInput(prev => (prev ? prev + ' ' : '') + finalText)
-        setTimeout(() => inputRef.current?.focus(), 50)
-      }
+      recognition.onerror = () => { setPttStatus('idle'); recognitionRef.current = null }
+      recognition.onend = () => { setPttStatus('idle'); recognitionRef.current = null }
+      recognitionRef.current = recognition
+      recognition.start()
+      return
     }
-    recognition.onerror = () => { setPttStatus('idle'); recognitionRef.current = null }
-    recognition.onend = () => { setPttStatus('idle'); recognitionRef.current = null }
-    recognitionRef.current = recognition
-    recognition.start()
+
+    // ─── Engine cloud (Whisper…) : MediaRecorder → POST /stt au stop ───
+    if (mediaRecorderRef.current) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      audioStreamRef.current = stream
+      // On tente webm/opus (Chrome/Firefox), fallback au défaut navigateur.
+      let mimeType = ''
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported) {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus'
+        else if (MediaRecorder.isTypeSupported('audio/webm')) mimeType = 'audio/webm'
+        else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4'
+      }
+      const mr = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+      audioChunksRef.current = []
+      mr.ondataavailable = e => { if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data) }
+      mr.onstart = () => setPttStatus('recording')
+      mr.onstop = async () => {
+        setPttStatus('processing')
+        // Coupe le micro immédiatement pour l'indicateur OS
+        if (audioStreamRef.current) {
+          audioStreamRef.current.getTracks().forEach(t => t.stop())
+          audioStreamRef.current = null
+        }
+        const chunks = audioChunksRef.current
+        audioChunksRef.current = []
+        const blob = new Blob(chunks, { type: mimeType || 'audio/webm' })
+        if (!blob.size) { setPttStatus('idle'); mediaRecorderRef.current = null; return }
+        try {
+          const form = new FormData()
+          const ext = (mimeType.includes('mp4') ? 'm4a' : 'webm')
+          form.append('audio', blob, `recording.${ext}`)
+          form.append('provider', engine)
+          if (forcedLang) form.append('lang', forcedLang)
+          else form.append('lang', i18n.language === 'en' ? 'en-US' : 'fr-FR')
+          const r = await apiFetch('/api/chat/stt', { method: 'POST', body: form })
+          const data = await r.json()
+          if (data?.ok && data.text) {
+            setInput(prev => (prev ? prev + ' ' : '') + data.text.trim())
+            setTimeout(() => inputRef.current?.focus(), 50)
+          } else {
+            console.warn('Cloud STT failed:', data?.error)
+          }
+        } catch (e) {
+          console.warn('Cloud STT network error:', e)
+        } finally {
+          setPttStatus('idle')
+          mediaRecorderRef.current = null
+        }
+      }
+      mr.onerror = () => { setPttStatus('idle'); mediaRecorderRef.current = null }
+      mediaRecorderRef.current = mr
+      mr.start()
+    } catch (e) {
+      console.warn('Mic access denied or unavailable:', e)
+      setPttStatus('idle')
+    }
   }, [])
 
   const stopPTT = useCallback(() => {
-    if (recognitionRef.current) { setPttStatus('processing'); recognitionRef.current.stop() }
+    // Engine browser → recognition.stop() ; engine cloud → mediaRecorder.stop()
+    if (recognitionRef.current) {
+      setPttStatus('processing')
+      recognitionRef.current.stop()
+      return
+    }
+    if (mediaRecorderRef.current) {
+      try { mediaRecorderRef.current.stop() } catch { /* ignore */ }
+    }
   }, [])
 
   // Listen for Ctrl+B custom event from useKeyboard hook

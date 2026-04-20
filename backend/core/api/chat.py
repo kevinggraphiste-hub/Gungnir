@@ -1700,3 +1700,255 @@ async def improve_prompt(data: dict, request: Request):
         return {"ok": False, "error": "Le LLM a renvoyé une réponse vide"}
 
     return {"ok": True, "prompt": improved, "original": draft}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TTS / STT — moteurs premium optionnels (navigateur = défaut gratuit)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Voix OpenAI disponibles pour /v1/audio/speech. Exposées en UI via
+# /chat/voice-capabilities. Référence : platform.openai.com/docs/guides/text-to-speech
+_OPENAI_TTS_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+_OPENAI_TTS_MODELS = ["tts-1", "tts-1-hd"]
+
+
+async def _get_user_openai_key(user_id: int) -> str | None:
+    """Retourne la clé OpenAI per-user (depuis provider_keys)."""
+    from backend.core.db.engine import get_session
+    from backend.core.db.models import UserSettings
+    from backend.core.config.settings import decrypt_value
+    from sqlalchemy import select
+    try:
+        async for session in get_session():
+            r = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == int(user_id))
+            )
+            us = r.scalar_one_or_none()
+            if us is None:
+                return None
+            prov = (us.provider_keys or {}).get("openai") or {}
+            key = prov.get("api_key")
+            if not key:
+                return None
+            # Déchiffre FERNET: si nécessaire
+            return decrypt_value(key)
+    except Exception as e:
+        logger.warning(f"OpenAI key lookup failed for user {user_id}: {e}")
+    return None
+
+
+async def _get_user_elevenlabs_key(user_id: int) -> str | None:
+    """Retourne la clé ElevenLabs per-user (depuis voice_config)."""
+    from backend.core.db.engine import get_session
+    from backend.core.db.models import UserSettings
+    from backend.core.config.settings import decrypt_value
+    from sqlalchemy import select
+    try:
+        async for session in get_session():
+            r = await session.execute(
+                select(UserSettings).where(UserSettings.user_id == int(user_id))
+            )
+            us = r.scalar_one_or_none()
+            if us is None:
+                return None
+            vc = (us.voice_config or {}).get("elevenlabs") or {}
+            key = vc.get("api_key")
+            if not key:
+                return None
+            return decrypt_value(key)
+    except Exception as e:
+        logger.warning(f"ElevenLabs key lookup failed for user {user_id}: {e}")
+    return None
+
+
+@router.get("/chat/voice-capabilities")
+async def voice_capabilities(request: Request):
+    """Retourne les moteurs TTS/STT disponibles pour l'user courant.
+
+    Le frontend utilise ça pour peupler les dropdowns dans Paramètres → Voix
+    et griser les options sans clé. `browser` est toujours disponible
+    (Web Speech API natif).
+    """
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+
+    openai_key = await _get_user_openai_key(uid)
+    el_key = await _get_user_elevenlabs_key(uid)
+
+    return {
+        "tts": {
+            "browser": {"available": True, "label": "Navigateur (Web Speech API)", "free": True},
+            "openai":  {"available": bool(openai_key), "label": "OpenAI TTS", "free": False,
+                        "voices": _OPENAI_TTS_VOICES, "models": _OPENAI_TTS_MODELS,
+                        "source": "provider_keys.openai"},
+            "elevenlabs": {"available": bool(el_key), "label": "ElevenLabs", "free": False,
+                           "source": "voice_config.elevenlabs"},
+        },
+        "stt": {
+            "browser": {"available": True, "label": "Navigateur (SpeechRecognition)", "free": True},
+            "openai":  {"available": bool(openai_key), "label": "OpenAI Whisper", "free": False,
+                        "source": "provider_keys.openai"},
+        },
+    }
+
+
+@router.post("/chat/tts")
+async def chat_tts(data: dict, request: Request):
+    """Synthèse vocale d'un texte via un provider cloud (OpenAI/ElevenLabs).
+
+    Body : { text, provider: 'openai'|'elevenlabs', voice?, model? }
+    Retourne directement le flux audio (MP3) en tant que StreamingResponse.
+
+    Les clés sont strictement per-user : chaque utilisateur utilise SA propre
+    clé OpenAI / ElevenLabs. Aucune clé globale, aucun fallback admin.
+    """
+    import aiohttp
+    from fastapi.responses import Response
+
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+
+    text = str(data.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "Texte vide"}, status_code=400)
+    if len(text) > 4096:
+        text = text[:4096]  # OpenAI limite à ~4096 chars par requête
+
+    provider = str(data.get("provider") or "").lower()
+
+    if provider == "openai":
+        api_key = await _get_user_openai_key(uid)
+        if not api_key:
+            return JSONResponse({"error": "Aucune clé OpenAI configurée"}, status_code=400)
+        voice = str(data.get("voice") or "alloy").lower()
+        if voice not in _OPENAI_TTS_VOICES:
+            voice = "alloy"
+        model = str(data.get("model") or "tts-1").lower()
+        if model not in _OPENAI_TTS_MODELS:
+            model = "tts-1"
+        payload = {
+            "model": model,
+            "input": text,
+            "voice": voice,
+            "response_format": "mp3",
+            "speed": max(0.25, min(4.0, float(data.get("speed") or 1.0))),
+        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post("https://api.openai.com/v1/audio/speech",
+                                   json=payload, headers=headers,
+                                   timeout=aiohttp.ClientTimeout(total=30)) as r:
+                    if r.status != 200:
+                        body = await r.text()
+                        return JSONResponse(
+                            {"error": f"OpenAI TTS {r.status}: {body[:200]}"},
+                            status_code=r.status,
+                        )
+                    audio = await r.read()
+                    return Response(content=audio, media_type="audio/mpeg")
+        except Exception as e:
+            return JSONResponse({"error": f"Erreur réseau : {e}"}, status_code=502)
+
+    if provider == "elevenlabs":
+        api_key = await _get_user_elevenlabs_key(uid)
+        if not api_key:
+            return JSONResponse({"error": "Aucune clé ElevenLabs configurée"}, status_code=400)
+        # voice_id ElevenLabs : le user doit le fournir via settings. Sinon
+        # on utilise "Rachel" (voice_id public par défaut, accepté par tous les comptes).
+        voice_id = str(data.get("voice") or "21m00Tcm4TlvDq8ikWAM").strip()
+        model_id = str(data.get("model") or "eleven_multilingual_v2").strip()
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+        headers = {"xi-api-key": api_key, "Content-Type": "application/json",
+                   "Accept": "audio/mpeg"}
+        payload = {
+            "text": text,
+            "model_id": model_id,
+            "voice_settings": {
+                "stability": 0.5, "similarity_boost": 0.75, "style": 0.0,
+            },
+        }
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(url, json=payload, headers=headers,
+                                   timeout=aiohttp.ClientTimeout(total=30)) as r:
+                    if r.status != 200:
+                        body = await r.text()
+                        return JSONResponse(
+                            {"error": f"ElevenLabs {r.status}: {body[:200]}"},
+                            status_code=r.status,
+                        )
+                    audio = await r.read()
+                    return Response(content=audio, media_type="audio/mpeg")
+        except Exception as e:
+            return JSONResponse({"error": f"Erreur réseau : {e}"}, status_code=502)
+
+    return JSONResponse(
+        {"error": f"Provider '{provider}' non supporté. Utilise 'openai' ou 'elevenlabs'."},
+        status_code=400,
+    )
+
+
+@router.post("/chat/stt")
+async def chat_stt(request: Request):
+    """Transcription audio via un provider cloud (OpenAI Whisper pour l'instant).
+
+    Multipart form-data : `audio` (fichier) + `provider` (champ).
+    Retourne `{ok, text}` ou `{ok: False, error}`.
+
+    Les clés sont strictement per-user (même règle que TTS).
+    """
+    import aiohttp
+
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+
+    form = await request.form()
+    provider = str(form.get("provider") or "openai").lower()
+    audio = form.get("audio")
+    if audio is None or not hasattr(audio, "read"):
+        return JSONResponse({"error": "Fichier audio manquant"}, status_code=400)
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        return JSONResponse({"error": "Audio vide"}, status_code=400)
+    if len(audio_bytes) > 25 * 1024 * 1024:
+        return JSONResponse({"error": "Audio > 25 MB (limite Whisper)"}, status_code=400)
+
+    if provider == "openai":
+        api_key = await _get_user_openai_key(uid)
+        if not api_key:
+            return JSONResponse({"error": "Aucune clé OpenAI configurée"}, status_code=400)
+        # Whisper accepte webm/mp3/wav/m4a — on laisse le navigateur choisir.
+        fname = getattr(audio, "filename", None) or "recording.webm"
+        ctype = getattr(audio, "content_type", None) or "audio/webm"
+        data = aiohttp.FormData()
+        data.add_field("file", audio_bytes, filename=fname, content_type=ctype)
+        data.add_field("model", "whisper-1")
+        lang_hint = str(form.get("lang") or "").strip()
+        if lang_hint and lang_hint != "auto":
+            # Whisper accepte un code ISO-639-1 (fr, en…) — on split BCP-47
+            data.add_field("language", lang_hint.split("-")[0])
+        headers = {"Authorization": f"Bearer {api_key}"}
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post("https://api.openai.com/v1/audio/transcriptions",
+                                   data=data, headers=headers,
+                                   timeout=aiohttp.ClientTimeout(total=60)) as r:
+                    if r.status != 200:
+                        body = await r.text()
+                        return JSONResponse(
+                            {"ok": False, "error": f"Whisper {r.status}: {body[:200]}"},
+                            status_code=r.status,
+                        )
+                    resp = await r.json()
+                    return {"ok": True, "text": (resp.get("text") or "").strip()}
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"Erreur réseau : {e}"}, status_code=502)
+
+    return JSONResponse(
+        {"error": f"Provider STT '{provider}' non supporté. Utilise 'openai'."},
+        status_code=400,
+    )

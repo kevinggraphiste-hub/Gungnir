@@ -12,6 +12,29 @@ import InfoButton from '../components/InfoButton'
 import { PageHeader } from '../components/ui'
 import { useUIPreferences } from '../hooks/useUIPreferences'
 
+// Défauts pour les prefs TTS/PTT — utilisés en fallback si rien n'est
+// encore en localStorage ou si un champ manque (ajout rétrocompatible).
+const DEFAULT_TTS_PREF = {
+  engine: 'browser' as 'browser' | 'openai' | 'elevenlabs',
+  voiceURI: '',
+  rate: 1.05,
+  pitch: 1.0,
+  volume: 1.0,
+  lang: 'auto',
+  openaiVoice: 'alloy',
+  openaiModel: 'tts-1',
+  openaiSpeed: 1.0,
+  elevenVoiceId: '21m00Tcm4TlvDq8ikWAM',  // "Rachel" — voix publique par défaut
+  elevenModelId: 'eleven_multilingual_v2',
+}
+
+const DEFAULT_PTT_PREF = {
+  engine: 'browser' as 'browser' | 'openai',
+  lang: 'auto',
+  continuous: false,
+  interim: false,
+}
+
 const LANG_FLAG: Record<string, string> = {
   fr: 'fr', en: 'gb', es: 'es', pt: 'pt', it: 'it', de: 'de', nl: 'nl', ca: 'es-ct', be: 'be', br: 'fr',
   sv: 'se', no: 'no', da: 'dk', fi: 'fi', is: 'is',
@@ -164,22 +187,29 @@ export default function Settings() {
   const [doctorResult, setDoctorResult] = useState<any>(null)
   const [doctorLoading, setDoctorLoading] = useState(false)
 
-  // ── Préférences TTS/PTT du navigateur (Web Speech API) ───────────
-  // Stockées en localStorage et relues par Chat.tsx à chaque utilisation.
-  // Pas de backend — ces réglages sont client-side et dépendent des
-  // voix installées sur l'OS de l'user.
+  // ── Préférences TTS/PTT ──────────────────────────────────────────
+  // Trois moteurs TTS possibles : navigateur (gratuit, défaut),
+  // OpenAI TTS (nécessite clé OpenAI, voix neurales), ElevenLabs (voix
+  // premium, voix custom possibles). Pour PTT : navigateur ou Whisper.
+  // Le choix d'engine + les settings détaillés sont en localStorage.
   const [ttsPref, setTtsPref] = useState<{
-    voiceURI: string
-    rate: number
-    pitch: number
-    volume: number
-    lang: string  // 'auto' ou BCP-47 (fr-FR, en-US, ...)
+    engine: 'browser' | 'openai' | 'elevenlabs'
+    voiceURI: string      // browser only
+    rate: number          // browser only (OpenAI a son propre speed)
+    pitch: number         // browser only
+    volume: number        // browser only
+    lang: string          // 'auto' ou BCP-47
+    openaiVoice: string   // alloy | echo | fable | onyx | nova | shimmer
+    openaiModel: string   // tts-1 | tts-1-hd
+    openaiSpeed: number   // 0.25 - 4.0
+    elevenVoiceId: string
+    elevenModelId: string
   }>(() => {
     try {
       const raw = localStorage.getItem('chat.tts.prefs')
-      if (raw) return JSON.parse(raw)
+      if (raw) return { ...DEFAULT_TTS_PREF, ...JSON.parse(raw) }
     } catch { /* ignore */ }
-    return { voiceURI: '', rate: 1.05, pitch: 1.0, volume: 1.0, lang: 'auto' }
+    return DEFAULT_TTS_PREF
   })
   const persistTtsPref = useCallback((next: typeof ttsPref) => {
     setTtsPref(next)
@@ -187,20 +217,35 @@ export default function Settings() {
   }, [])
 
   const [pttPref, setPttPref] = useState<{
+    engine: 'browser' | 'openai'
     lang: string       // 'auto' | BCP-47
     continuous: boolean
     interim: boolean
   }>(() => {
     try {
       const raw = localStorage.getItem('chat.ptt.prefs')
-      if (raw) return JSON.parse(raw)
+      if (raw) return { ...DEFAULT_PTT_PREF, ...JSON.parse(raw) }
     } catch { /* ignore */ }
-    return { lang: 'auto', continuous: false, interim: false }
+    return DEFAULT_PTT_PREF
   })
   const persistPttPref = useCallback((next: typeof pttPref) => {
     setPttPref(next)
     try { localStorage.setItem('chat.ptt.prefs', JSON.stringify(next)) } catch { /* ignore */ }
   }, [])
+
+  // Capacités voix (quels providers sont dispos pour cet user, selon les
+  // clés qu'il a configurées). Chargé depuis /api/chat/voice-capabilities.
+  const [voiceCaps, setVoiceCaps] = useState<{
+    tts: Record<string, { available: boolean; label: string; free?: boolean; voices?: string[]; models?: string[]; source?: string }>
+    stt: Record<string, { available: boolean; label: string; free?: boolean; source?: string }>
+  } | null>(null)
+  useEffect(() => {
+    if (activeTab !== 'voice') return
+    apiFetch('/api/chat/voice-capabilities')
+      .then(r => r.json())
+      .then(d => setVoiceCaps(d))
+      .catch(() => setVoiceCaps(null))
+  }, [activeTab])
 
   // Voix TTS dispo (fetch async : le navigateur charge la liste après
   // l'event voiceschanged, parfois après le mount).
@@ -213,21 +258,63 @@ export default function Settings() {
     return () => window.speechSynthesis.removeEventListener('voiceschanged', load)
   }, [])
 
-  const previewTts = useCallback(() => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return
-    window.speechSynthesis.cancel()
-    const utter = new SpeechSynthesisUtterance(
-      'Bonjour, ceci est un aperçu de la voix du chat Gungnir.'
-    )
-    utter.rate = ttsPref.rate
-    utter.pitch = ttsPref.pitch
-    utter.volume = ttsPref.volume
-    utter.lang = ttsPref.lang === 'auto' ? (i18n.language === 'en' ? 'en-US' : 'fr-FR') : ttsPref.lang
-    if (ttsPref.voiceURI) {
-      const v = ttsVoices.find(x => x.voiceURI === ttsPref.voiceURI)
-      if (v) utter.voice = v
+  const [previewBusy, setPreviewBusy] = useState(false)
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null)
+  const previewTts = useCallback(async () => {
+    const demo = 'Bonjour, ceci est un aperçu de la voix du chat Gungnir.'
+    // Engine navigateur : API native, instantané
+    if (ttsPref.engine === 'browser') {
+      if (typeof window === 'undefined' || !window.speechSynthesis) return
+      window.speechSynthesis.cancel()
+      const utter = new SpeechSynthesisUtterance(demo)
+      utter.rate = ttsPref.rate
+      utter.pitch = ttsPref.pitch
+      utter.volume = ttsPref.volume
+      utter.lang = ttsPref.lang === 'auto' ? (i18n.language === 'en' ? 'en-US' : 'fr-FR') : ttsPref.lang
+      if (ttsPref.voiceURI) {
+        const v = ttsVoices.find(x => x.voiceURI === ttsPref.voiceURI)
+        if (v) utter.voice = v
+      }
+      window.speechSynthesis.speak(utter)
+      return
     }
-    window.speechSynthesis.speak(utter)
+    // Engine cloud : appel backend + lecture via HTMLAudioElement
+    setPreviewBusy(true)
+    try {
+      const body: any = { text: demo, provider: ttsPref.engine }
+      if (ttsPref.engine === 'openai') {
+        body.voice = ttsPref.openaiVoice
+        body.model = ttsPref.openaiModel
+        body.speed = ttsPref.openaiSpeed
+      } else if (ttsPref.engine === 'elevenlabs') {
+        body.voice = ttsPref.elevenVoiceId
+        body.model = ttsPref.elevenModelId
+      }
+      const r = await apiFetch('/api/chat/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
+        alert(`Échec TTS : ${err.error || 'inconnu'}`)
+        return
+      }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause()
+        previewAudioRef.current.src = ''
+      }
+      const audio = new Audio(url)
+      previewAudioRef.current = audio
+      audio.onended = () => URL.revokeObjectURL(url)
+      audio.play().catch(() => URL.revokeObjectURL(url))
+    } catch (e: any) {
+      alert(`Erreur réseau : ${e?.message || e}`)
+    } finally {
+      setPreviewBusy(false)
+    }
   }, [ttsPref, ttsVoices])
 
   // Custom theme
@@ -1335,86 +1422,187 @@ export default function Settings() {
                     <h4 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
                       Lecture des réponses (TTS)
                     </h4>
-                    <button onClick={previewTts}
-                      className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors hover:opacity-80"
+                    <button onClick={previewTts} disabled={previewBusy}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors hover:opacity-80 disabled:opacity-50"
                       style={{ background: 'color-mix(in srgb, var(--accent-primary) 15%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)' }}>
-                      Tester
+                      {previewBusy
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : null}
+                      {previewBusy ? 'Synthèse…' : 'Tester'}
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* Voix */}
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Voix</span>
-                      <select
-                        value={ttsPref.voiceURI}
-                        onChange={e => persistTtsPref({ ...ttsPref, voiceURI: e.target.value })}
-                        className="rounded-lg px-3 py-2 text-sm outline-none"
-                        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
-                      >
-                        <option value="">Défaut navigateur</option>
-                        {ttsVoices.map(v => (
-                          <option key={v.voiceURI} value={v.voiceURI}>
-                            {v.name} ({v.lang}){v.default ? ' ·' : ''}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                        {ttsVoices.length} voix détectée{ttsVoices.length > 1 ? 's' : ''}
+                  {/* Moteur TTS */}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>
+                      Moteur
+                    </span>
+                    <select
+                      value={ttsPref.engine}
+                      onChange={e => persistTtsPref({ ...ttsPref, engine: e.target.value as any })}
+                      className="rounded-lg px-3 py-2 text-sm outline-none"
+                      style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                    >
+                      <option value="browser">Navigateur — gratuit, hors-ligne, voix OS</option>
+                      <option value="openai" disabled={!voiceCaps?.tts?.openai?.available}>
+                        OpenAI TTS — neuronal, 6 voix{voiceCaps?.tts?.openai?.available ? '' : ' (clé OpenAI requise)'}
+                      </option>
+                      <option value="elevenlabs" disabled={!voiceCaps?.tts?.elevenlabs?.available}>
+                        ElevenLabs — premium, voix custom{voiceCaps?.tts?.elevenlabs?.available ? '' : ' (clé ElevenLabs requise)'}
+                      </option>
+                    </select>
+                    {(ttsPref.engine === 'openai' && !voiceCaps?.tts?.openai?.available)
+                      || (ttsPref.engine === 'elevenlabs' && !voiceCaps?.tts?.elevenlabs?.available) ? (
+                      <span className="text-[10px]" style={{ color: 'var(--accent-error, #ef4444)' }}>
+                        Clé manquante — configure{ttsPref.engine === 'openai' ? ' ton provider OpenAI' : ' ElevenLabs dans les providers realtime ci-dessous'}
                       </span>
-                    </label>
+                    ) : null}
+                  </label>
 
-                    {/* Langue */}
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Langue forcée</span>
-                      <select
-                        value={ttsPref.lang}
-                        onChange={e => persistTtsPref({ ...ttsPref, lang: e.target.value })}
-                        className="rounded-lg px-3 py-2 text-sm outline-none"
-                        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
-                      >
-                        <option value="auto">Auto (suit l'interface)</option>
-                        <option value="fr-FR">Français (fr-FR)</option>
-                        <option value="en-US">English (en-US)</option>
-                        <option value="en-GB">English (en-GB)</option>
-                        <option value="es-ES">Español (es-ES)</option>
-                        <option value="de-DE">Deutsch (de-DE)</option>
-                        <option value="it-IT">Italiano (it-IT)</option>
-                        <option value="pt-PT">Português (pt-PT)</option>
-                      </select>
-                    </label>
-                  </div>
+                  {/* Paramètres spécifiques au moteur sélectionné */}
+                  {ttsPref.engine === 'browser' && (
+                    <>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Voix</span>
+                          <select
+                            value={ttsPref.voiceURI}
+                            onChange={e => persistTtsPref({ ...ttsPref, voiceURI: e.target.value })}
+                            className="rounded-lg px-3 py-2 text-sm outline-none"
+                            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                          >
+                            <option value="">Défaut navigateur</option>
+                            {ttsVoices.map(v => (
+                              <option key={v.voiceURI} value={v.voiceURI}>
+                                {v.name} ({v.lang}){v.default ? ' ·' : ''}
+                              </option>
+                            ))}
+                          </select>
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                            {ttsVoices.length} voix détectée{ttsVoices.length > 1 ? 's' : ''}
+                          </span>
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Langue forcée</span>
+                          <select
+                            value={ttsPref.lang}
+                            onChange={e => persistTtsPref({ ...ttsPref, lang: e.target.value })}
+                            className="rounded-lg px-3 py-2 text-sm outline-none"
+                            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                          >
+                            <option value="auto">Auto (suit l'interface)</option>
+                            <option value="fr-FR">Français (fr-FR)</option>
+                            <option value="en-US">English (en-US)</option>
+                            <option value="en-GB">English (en-GB)</option>
+                            <option value="es-ES">Español (es-ES)</option>
+                            <option value="de-DE">Deutsch (de-DE)</option>
+                            <option value="it-IT">Italiano (it-IT)</option>
+                            <option value="pt-PT">Português (pt-PT)</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
+                            <span>Vitesse</span><span>{ttsPref.rate.toFixed(2)}x</span>
+                          </span>
+                          <input type="range" min={0.5} max={2.0} step={0.05}
+                            value={ttsPref.rate}
+                            onChange={e => persistTtsPref({ ...ttsPref, rate: parseFloat(e.target.value) })}
+                            className="accent-[var(--accent-primary)]" />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
+                            <span>Pitch</span><span>{ttsPref.pitch.toFixed(2)}</span>
+                          </span>
+                          <input type="range" min={0.5} max={2.0} step={0.05}
+                            value={ttsPref.pitch}
+                            onChange={e => persistTtsPref({ ...ttsPref, pitch: parseFloat(e.target.value) })}
+                            className="accent-[var(--accent-primary)]" />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
+                            <span>Volume</span><span>{Math.round(ttsPref.volume * 100)}%</span>
+                          </span>
+                          <input type="range" min={0} max={1.0} step={0.05}
+                            value={ttsPref.volume}
+                            onChange={e => persistTtsPref({ ...ttsPref, volume: parseFloat(e.target.value) })}
+                            className="accent-[var(--accent-primary)]" />
+                        </label>
+                      </div>
+                    </>
+                  )}
 
-                  {/* Sliders */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
-                        <span>Vitesse</span><span>{ttsPref.rate.toFixed(2)}x</span>
-                      </span>
-                      <input type="range" min={0.5} max={2.0} step={0.05}
-                        value={ttsPref.rate}
-                        onChange={e => persistTtsPref({ ...ttsPref, rate: parseFloat(e.target.value) })}
-                        className="accent-[var(--accent-primary)]" />
-                    </label>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
-                        <span>Pitch</span><span>{ttsPref.pitch.toFixed(2)}</span>
-                      </span>
-                      <input type="range" min={0.5} max={2.0} step={0.05}
-                        value={ttsPref.pitch}
-                        onChange={e => persistTtsPref({ ...ttsPref, pitch: parseFloat(e.target.value) })}
-                        className="accent-[var(--accent-primary)]" />
-                    </label>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
-                        <span>Volume</span><span>{Math.round(ttsPref.volume * 100)}%</span>
-                      </span>
-                      <input type="range" min={0} max={1.0} step={0.05}
-                        value={ttsPref.volume}
-                        onChange={e => persistTtsPref({ ...ttsPref, volume: parseFloat(e.target.value) })}
-                        className="accent-[var(--accent-primary)]" />
-                    </label>
-                  </div>
+                  {ttsPref.engine === 'openai' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Voix</span>
+                        <select
+                          value={ttsPref.openaiVoice}
+                          onChange={e => persistTtsPref({ ...ttsPref, openaiVoice: e.target.value })}
+                          className="rounded-lg px-3 py-2 text-sm outline-none"
+                          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        >
+                          {(voiceCaps?.tts?.openai?.voices || ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']).map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Modèle</span>
+                        <select
+                          value={ttsPref.openaiModel}
+                          onChange={e => persistTtsPref({ ...ttsPref, openaiModel: e.target.value })}
+                          className="rounded-lg px-3 py-2 text-sm outline-none"
+                          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        >
+                          <option value="tts-1">tts-1 (rapide, moins cher)</option>
+                          <option value="tts-1-hd">tts-1-hd (qualité HD)</option>
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
+                          <span>Vitesse</span><span>{ttsPref.openaiSpeed.toFixed(2)}x</span>
+                        </span>
+                        <input type="range" min={0.25} max={4.0} step={0.05}
+                          value={ttsPref.openaiSpeed}
+                          onChange={e => persistTtsPref({ ...ttsPref, openaiSpeed: parseFloat(e.target.value) })}
+                          className="accent-[var(--accent-primary)]" />
+                      </label>
+                    </div>
+                  )}
+
+                  {ttsPref.engine === 'elevenlabs' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Voice ID</span>
+                        <input
+                          type="text"
+                          value={ttsPref.elevenVoiceId}
+                          onChange={e => persistTtsPref({ ...ttsPref, elevenVoiceId: e.target.value })}
+                          placeholder="21m00Tcm4TlvDq8ikWAM"
+                          className="rounded-lg px-3 py-2 text-sm outline-none font-mono"
+                          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        />
+                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                          Dashboard ElevenLabs → Voice Library → Copy voice ID
+                        </span>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Model ID</span>
+                        <select
+                          value={ttsPref.elevenModelId}
+                          onChange={e => persistTtsPref({ ...ttsPref, elevenModelId: e.target.value })}
+                          className="rounded-lg px-3 py-2 text-sm outline-none"
+                          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        >
+                          <option value="eleven_multilingual_v2">Multilingual v2 (recommandé)</option>
+                          <option value="eleven_turbo_v2_5">Turbo v2.5 (rapide, latence faible)</option>
+                          <option value="eleven_monolingual_v1">Monolingual v1 (legacy)</option>
+                        </select>
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 {/* ── PTT ───────────────────────────────────────── */}
@@ -1422,6 +1610,34 @@ export default function Settings() {
                   <h4 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
                     Dictée vocale (PTT)
                   </h4>
+
+                  {/* Moteur STT */}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>
+                      Moteur
+                    </span>
+                    <select
+                      value={pttPref.engine}
+                      onChange={e => persistPttPref({ ...pttPref, engine: e.target.value as any })}
+                      className="rounded-lg px-3 py-2 text-sm outline-none"
+                      style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                    >
+                      <option value="browser">Navigateur — gratuit, temps réel, offline sur macOS</option>
+                      <option value="openai" disabled={!voiceCaps?.stt?.openai?.available}>
+                        OpenAI Whisper — haute précision{voiceCaps?.stt?.openai?.available ? '' : ' (clé OpenAI requise)'}
+                      </option>
+                    </select>
+                    {pttPref.engine === 'openai' && !voiceCaps?.stt?.openai?.available && (
+                      <span className="text-[10px]" style={{ color: 'var(--accent-error, #ef4444)' }}>
+                        Clé OpenAI manquante — configure Paramètres → Providers
+                      </span>
+                    )}
+                    {pttPref.engine === 'openai' && voiceCaps?.stt?.openai?.available && (
+                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        Whisper upload l'audio après l'enregistrement — léger délai mais reconnaissance plus précise.
+                      </span>
+                    )}
+                  </label>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label className="flex flex-col gap-1">
@@ -1443,24 +1659,26 @@ export default function Settings() {
                       </select>
                     </label>
 
-                    <div className="flex flex-col gap-2">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={pttPref.continuous}
-                          onChange={e => persistPttPref({ ...pttPref, continuous: e.target.checked })}
-                          className="w-4 h-4 accent-[var(--accent-primary)]" />
-                        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                          Mode continu <span style={{ color: 'var(--text-muted)' }}>(dicte plusieurs phrases avant de s'arrêter)</span>
-                        </span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={pttPref.interim}
-                          onChange={e => persistPttPref({ ...pttPref, interim: e.target.checked })}
-                          className="w-4 h-4 accent-[var(--accent-primary)]" />
-                        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                          Résultats intermédiaires <span style={{ color: 'var(--text-muted)' }}>(affiche le texte au fur et à mesure)</span>
-                        </span>
-                      </label>
-                    </div>
+                    {pttPref.engine === 'browser' && (
+                      <div className="flex flex-col gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={pttPref.continuous}
+                            onChange={e => persistPttPref({ ...pttPref, continuous: e.target.checked })}
+                            className="w-4 h-4 accent-[var(--accent-primary)]" />
+                          <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                            Mode continu <span style={{ color: 'var(--text-muted)' }}>(dicte plusieurs phrases avant de s'arrêter)</span>
+                          </span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={pttPref.interim}
+                            onChange={e => persistPttPref({ ...pttPref, interim: e.target.checked })}
+                            className="w-4 h-4 accent-[var(--accent-primary)]" />
+                          <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                            Résultats intermédiaires <span style={{ color: 'var(--text-muted)' }}>(affiche le texte au fur et à mesure)</span>
+                          </span>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
