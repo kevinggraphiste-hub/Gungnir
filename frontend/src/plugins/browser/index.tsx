@@ -717,7 +717,7 @@ function ExportMenu({ query, result }: { query: string; result: SearchResult }) 
                 width: '100%',
                 textAlign: 'left',
                 padding: '6px 10px',
-                borderRadius: 6,
+                borderRadius: 8,
                 background: 'transparent',
                 border: 'none',
                 color: 'var(--text-primary)',
@@ -1199,7 +1199,7 @@ export default function HuntRPlugin() {
         display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
       }}>
         <div style={{
-          width: 34, height: 34, borderRadius: 10,
+          width: 34, height: 34, borderRadius: 12,
           background: 'linear-gradient(135deg, var(--scarlet), var(--ember))',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
@@ -1256,7 +1256,7 @@ export default function HuntRPlugin() {
               {!hasResults && (
                 <div style={{ textAlign: 'center', marginBottom: 28 }}>
                   <div style={{
-                    width: 56, height: 56, borderRadius: 14, margin: '0 auto 14px',
+                    width: 56, height: 56, borderRadius: 12, margin: '0 auto 14px',
                     background: 'linear-gradient(135deg, var(--scarlet-light), var(--ember-light, rgba(234,88,12,0.15)))',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
@@ -1620,7 +1620,7 @@ export default function HuntRPlugin() {
                               onClick={e => { e.preventDefault(); e.stopPropagation(); setProSearch(true) }}
                               title="Passer en mode Pro pour utiliser ce provider"
                               style={{
-                                padding: '3px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                                padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
                                 background: 'color-mix(in srgb, var(--amber, #f59e0b) 15%, transparent)',
                                 color: 'var(--amber, #f59e0b)',
                                 border: '1px solid color-mix(in srgb, var(--amber, #f59e0b) 40%, transparent)',
@@ -1754,7 +1754,7 @@ export default function HuntRPlugin() {
                       {sourceFilters.blocklist.map(d => (
                         <span key={d} style={{
                           display: 'inline-flex', alignItems: 'center', gap: 4,
-                          padding: '3px 8px', borderRadius: 6,
+                          padding: '3px 8px', borderRadius: 4,
                           background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
                           border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
                           fontSize: 11, fontFamily: 'monospace',
@@ -1789,7 +1789,7 @@ export default function HuntRPlugin() {
                               background: sourceFilters.allowlist_mode === m ? 'var(--scarlet)' : 'var(--bg-tertiary)',
                               color: sourceFilters.allowlist_mode === m ? '#fff' : 'var(--text-muted)',
                               border: '1px solid var(--border)',
-                              borderRadius: m === 'off' ? '6px 0 0 6px' : m === 'strict' ? '0 6px 6px 0' : 0,
+                              borderRadius: m === 'off' ? '8px 0 0 8px' : m === 'strict' ? '0 8px 8px 0' : 0,
                               cursor: 'pointer',
                             }}
                           >
@@ -1833,7 +1833,7 @@ export default function HuntRPlugin() {
                       {sourceFilters.allowlist.map(d => (
                         <span key={d} style={{
                           display: 'inline-flex', alignItems: 'center', gap: 4,
-                          padding: '3px 8px', borderRadius: 6,
+                          padding: '3px 8px', borderRadius: 4,
                           background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
                           border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
                           fontSize: 11, fontFamily: 'monospace',
@@ -1950,7 +1950,7 @@ export default function HuntRPlugin() {
                     try { host = new URL(s.url).hostname.replace('www.', '') } catch {}
                     return (
                       <div key={i} style={{
-                        padding: '4px 8px', borderRadius: 6, fontSize: 11,
+                        padding: '4px 8px', borderRadius: 8, fontSize: 11,
                         background: 'var(--bg-primary)', border: '1px solid var(--border)',
                         display: 'flex', alignItems: 'center', gap: 4,
                         animation: 'huntr-fadeIn 0.3s ease-out',
@@ -1998,7 +1998,7 @@ export default function HuntRPlugin() {
                     {result.pro_search && (
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: 3,
-                        padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                        padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
                         background: 'var(--amber-light, rgba(245,158,11,0.15))',
                         color: 'var(--amber, #f59e0b)',
                         border: '1px solid var(--amber, #f59e0b)',
@@ -2010,7 +2010,7 @@ export default function HuntRPlugin() {
                     {result.topic && (
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: 4,
-                        padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                        padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
                         background: 'rgba(220,38,38,0.1)', color: 'var(--scarlet)',
                         border: '1px solid var(--scarlet)',
                       }}>
@@ -2020,7 +2020,7 @@ export default function HuntRPlugin() {
                     )}
                     {result.engines.map(e => (
                       <span key={e} style={{
-                        padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 500,
+                        padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 500,
                         background: 'var(--bg-tertiary)', color: ENGINE_COLORS[e] || 'var(--text-muted)',
                         border: '1px solid var(--border)',
                       }}>
@@ -2031,7 +2031,7 @@ export default function HuntRPlugin() {
                       <span
                         title={`Sources bloquées :\n${lastFilterReport.blocked_domains.map(b => `• ${b.domain} — ${b.reason}`).join('\n')}`}
                         style={{
-                          padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                          padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
                           background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
                           color: 'var(--scarlet)',
                           border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
@@ -2048,7 +2048,7 @@ export default function HuntRPlugin() {
                       <span
                         title={`Mode strict : ${lastFilterReport.strict_dropped} résultat(s) hors de l'allowlist écarté(s)`}
                         style={{
-                          padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                          padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
                           background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
                           color: 'var(--accent-success, #10b981)',
                           border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
@@ -2060,7 +2060,7 @@ export default function HuntRPlugin() {
                     {lastFilterReport && lastFilterReport.mode === 'boost' && typeof lastFilterReport.boosted_count === 'number' && lastFilterReport.boosted_count > 0 && (
                       <span
                         style={{
-                          padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                          padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
                           background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
                           color: 'var(--accent-success, #10b981)',
                           border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
@@ -2070,7 +2070,7 @@ export default function HuntRPlugin() {
                     )}
                     {result.model && (
                       <span style={{
-                        padding: '2px 8px', borderRadius: 6, fontSize: 10,
+                        padding: '2px 8px', borderRadius: 4, fontSize: 10,
                         background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
                         border: '1px solid var(--border)',
                       }}>
@@ -2278,7 +2278,7 @@ export default function HuntRPlugin() {
               <button
                 onClick={() => setFavoritesOnly(false)}
                 style={{
-                  flex: 1, padding: '4px 6px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                  flex: 1, padding: '4px 6px', borderRadius: 8, fontSize: 10, fontWeight: 600,
                   background: !favoritesOnly ? 'var(--scarlet-light)' : 'var(--bg-tertiary)',
                   color: !favoritesOnly ? 'var(--scarlet)' : 'var(--text-muted)',
                   border: '1px solid var(--border)', cursor: 'pointer',
@@ -2287,7 +2287,7 @@ export default function HuntRPlugin() {
               <button
                 onClick={() => setFavoritesOnly(true)}
                 style={{
-                  flex: 1, padding: '4px 6px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                  flex: 1, padding: '4px 6px', borderRadius: 8, fontSize: 10, fontWeight: 600,
                   background: favoritesOnly ? 'var(--scarlet-light)' : 'var(--bg-tertiary)',
                   color: favoritesOnly ? 'var(--scarlet)' : 'var(--text-muted)',
                   border: '1px solid var(--border)', cursor: 'pointer',
@@ -2311,7 +2311,7 @@ export default function HuntRPlugin() {
                     <div key={h.id ?? h.timestamp}
                       style={{
                         display: 'flex', alignItems: 'stretch', gap: 2,
-                        borderRadius: 6,
+                        borderRadius: 8,
                         background: 'var(--bg-tertiary)',
                         border: isActive ? '1px solid var(--scarlet)' : '1px solid transparent',
                         transition: 'border-color 0.15s',
@@ -2548,7 +2548,7 @@ function MarkdownRenderer({ text, citations, onCiteClick }: {
         <div key={key++} style={{ overflowX: 'auto', margin: '10px 0' }}>
           <table style={{
             width: '100%', borderCollapse: 'collapse', fontSize: 12,
-            border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden',
+            border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden',
           }}>
             <thead style={{ background: 'var(--bg-tertiary)' }}>
               <tr>
@@ -2876,7 +2876,7 @@ function WysiwygEditor({
 
   const tbBtn = (active: boolean) => ({
     width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    borderRadius: 5, border: 'none', cursor: 'pointer' as const,
+    borderRadius: 8, border: 'none', cursor: 'pointer' as const,
     background: active ? 'color-mix(in srgb, var(--scarlet) 18%, transparent)' : 'transparent',
     color: active ? 'var(--scarlet)' : 'var(--text-secondary)',
     position: 'relative' as const, transition: 'all 0.1s',
@@ -3025,7 +3025,7 @@ function WysiwygEditor({
               style={{
                 height: 28, padding: '0 10px', fontSize: 11.5, gap: 6,
                 background: 'transparent', border: '1px solid var(--border)',
-                borderRadius: 5, color: 'var(--text-secondary)',
+                borderRadius: 8, color: 'var(--text-secondary)',
                 cursor: 'pointer', display: 'flex', alignItems: 'center',
               }}
             >
@@ -3039,7 +3039,7 @@ function WysiwygEditor({
                 <div style={{
                   position: 'absolute', top: 'calc(100% + 4px)', left: 0,
                   background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-                  borderRadius: 7, boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
+                  borderRadius: 8, boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
                   minWidth: 180, padding: 4, zIndex: 20,
                 }}>
                   {([
@@ -3128,7 +3128,7 @@ function WysiwygEditor({
         {/* Mode toggle */}
         <div style={{
           display: 'flex', background: 'var(--bg-primary)',
-          border: '1px solid var(--border)', borderRadius: 5, padding: 2,
+          border: '1px solid var(--border)', borderRadius: 8, padding: 2,
         }}>
           {(['wysiwyg', 'markdown'] as const).map(m => {
             const active = mode === m
@@ -3150,7 +3150,7 @@ function WysiwygEditor({
                   fontSize: 10, fontWeight: 600, letterSpacing: 0.5,
                   color: active ? 'var(--scarlet)' : 'var(--text-muted)',
                   background: active ? 'var(--bg-tertiary)' : 'transparent',
-                  border: 'none', borderRadius: 3, cursor: 'pointer',
+                  border: 'none', borderRadius: 4, cursor: 'pointer',
                   textTransform: 'uppercase',
                 }}
               >{m === 'wysiwyg' ? 'WYSIWYG' : 'Markdown'}</button>
@@ -3247,14 +3247,14 @@ function WysiwygEditor({
               style={{
                 width: '100%', padding: '8px 12px', marginBottom: 8,
                 background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                borderRadius: 6, color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none',
               }} />
             <input type="text" value={linkText} onChange={e => setLinkText(e.target.value)}
               placeholder="Texte du lien (optionnel)"
               style={{
                 width: '100%', padding: '8px 12px',
                 background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                borderRadius: 6, color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none',
               }} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <SecondaryButton onClick={() => setLinkOpen(false)}>Annuler</SecondaryButton>
