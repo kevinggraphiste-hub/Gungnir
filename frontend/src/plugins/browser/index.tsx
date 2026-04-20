@@ -393,7 +393,94 @@ function downloadBlob(content: string, filename: string, mime: string) {
   setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
 
-function buildHuntRHtml(query: string, result: SearchResult): string {
+// Styles ScarletWolf pour les exports HTML/PDF. Deux variantes :
+// - `light`  : fond crème, idéal pour l'impression (PDF) — les navigateurs
+//              masquent les fonds par défaut, donc on DOIT rester lisible
+//              sans couleur de fond.
+// - `dark`   : fond noir + texte blanc + accents scarlet, clone visuel
+//              de l'app (utilisé pour le download HTML autonome).
+//
+// L'identité commune : typographie Inter, la signature "Hunt" + "R" rouge,
+// barre scarlet sous le header, citations superscript en scarlet, sources
+// dans un bloc bordé scarlet avec l'index en rouge majuscule.
+const HUNTR_EXPORT_CSS_LIGHT = `
+  @page { margin: 18mm; }
+  :root { color-scheme: light; }
+  body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1c1c1c; background: #faf7f2; line-height: 1.6; max-width: 780px; margin: 0 auto; padding: 24px; }
+  header { border-bottom: 3px solid #dc2626; padding-bottom: 14px; margin-bottom: 22px; position: relative; }
+  header::before { content: ''; position: absolute; bottom: -3px; left: 0; width: 60px; height: 3px; background: #7a1010; }
+  header h1 { margin: 0 0 2px; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: #1c1c1c; }
+  header h1 .r { color: #dc2626; text-shadow: 0 0 1px rgba(220,38,38,0.2); }
+  header h1 .mark { display: inline-block; vertical-align: middle; margin-left: 8px; width: 18px; height: 18px; }
+  header .q { font-size: 15px; color: #2b2620; margin: 8px 0 4px; font-weight: 600; }
+  header .meta { font-size: 10.5px; color: #6b5b4a; font-variant: all-small-caps; letter-spacing: 0.03em; }
+  main { margin-top: 10px; }
+  h2 { font-size: 17px; font-weight: 700; color: #1c1c1c; margin: 20px 0 8px; padding-bottom: 4px; border-bottom: 1px solid rgba(220,38,38,0.25); }
+  h3 { font-size: 14px; font-weight: 700; color: #2b2620; margin: 14px 0 4px; }
+  h4 { font-size: 13px; font-weight: 600; color: #2b2620; margin: 10px 0 3px; }
+  p { margin: 4px 0 10px; font-size: 12.5px; }
+  li { font-size: 12.5px; margin: 3px 0; }
+  strong { color: #1c1c1c; }
+  a { color: #b91c1c; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a.hr-cite { color: #dc2626; font-weight: 700; font-size: 0.85em; }
+  sup a.hr-cite { text-decoration: none; }
+  code { background: #ece6db; color: #7a1010; padding: 1px 5px; border-radius: 3px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+  pre { background: #ece6db; color: #2b2620; padding: 10px; border-radius: 6px; overflow: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; border-left: 3px solid #dc2626; }
+  blockquote { border-left: 3px solid #dc2626; padding-left: 12px; margin: 10px 0; color: #4a3f35; font-style: italic; }
+  .sources { margin-top: 28px; padding-top: 14px; border-top: 2px solid #dc2626; }
+  .sources h2 { border: none; margin-top: 0; color: #7a1010; }
+  .sources ol { list-style: none; padding: 0; counter-reset: none; }
+  .sources li { margin: 8px 0; padding: 10px 12px; background: #f0eadf; border-left: 3px solid #dc2626; border-radius: 3px; }
+  .sources .idx { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #dc2626; margin-right: 6px; letter-spacing: -0.02em; }
+  .sources a { color: #1c1c1c; font-weight: 600; }
+  .sources .host { font-size: 10.5px; color: #8a7a6a; margin-top: 3px; font-variant: all-small-caps; letter-spacing: 0.03em; }
+  footer { margin-top: 36px; padding-top: 12px; border-top: 1px solid #ddd5c8; font-size: 10px; color: #8a7a6a; text-align: center; font-variant: all-small-caps; letter-spacing: 0.06em; }
+  footer .dot { color: #dc2626; margin: 0 5px; }
+`
+
+const HUNTR_EXPORT_CSS_DARK = `
+  @page { margin: 18mm; }
+  :root { color-scheme: dark; }
+  body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #f5f5f5; background: #080808; line-height: 1.65; max-width: 820px; margin: 0 auto; padding: 32px 28px; }
+  header { border-bottom: 3px solid #dc2626; padding-bottom: 16px; margin-bottom: 24px; position: relative; box-shadow: 0 1px 0 rgba(220,38,38,0.15); }
+  header::before { content: ''; position: absolute; bottom: -3px; left: 0; width: 80px; height: 3px; background: #ef4444; box-shadow: 0 0 12px rgba(220,38,38,0.5); }
+  header h1 { margin: 0 0 3px; font-size: 28px; font-weight: 800; letter-spacing: -0.02em; color: #f5f5f5; }
+  header h1 .r { color: #ef4444; text-shadow: 0 0 14px rgba(220,38,38,0.5); }
+  header h1 .mark { display: inline-block; vertical-align: middle; margin-left: 10px; width: 20px; height: 20px; }
+  header .q { font-size: 16px; color: #e5e5e5; margin: 10px 0 6px; font-weight: 600; }
+  header .meta { font-size: 11px; color: #a3a3a3; font-variant: all-small-caps; letter-spacing: 0.05em; }
+  main { margin-top: 14px; }
+  h2 { font-size: 18px; font-weight: 700; color: #f5f5f5; margin: 22px 0 10px; padding-bottom: 5px; border-bottom: 1px solid rgba(220,38,38,0.3); }
+  h3 { font-size: 15px; font-weight: 700; color: #e5e5e5; margin: 16px 0 6px; }
+  h4 { font-size: 13.5px; font-weight: 600; color: #d4d4d4; margin: 12px 0 4px; }
+  p { margin: 6px 0 12px; font-size: 13.5px; color: #d4d4d4; }
+  li { font-size: 13.5px; margin: 4px 0; color: #d4d4d4; }
+  strong { color: #f5f5f5; }
+  a { color: #f87171; text-decoration: none; }
+  a:hover { text-decoration: underline; text-decoration-color: #ef4444; }
+  a.hr-cite { color: #ef4444; font-weight: 700; font-size: 0.85em; text-shadow: 0 0 6px rgba(220,38,38,0.4); }
+  sup a.hr-cite { text-decoration: none; }
+  code { background: #1a1a1a; color: #f87171; padding: 1px 6px; border-radius: 3px; font-family: 'JetBrains Mono', monospace; font-size: 12px; border: 1px solid #2a2a2a; }
+  pre { background: #111111; color: #e5e5e5; padding: 12px; border-radius: 6px; overflow: auto; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; border-left: 3px solid #dc2626; }
+  blockquote { border-left: 3px solid #dc2626; padding-left: 14px; margin: 12px 0; color: #a3a3a3; font-style: italic; }
+  .sources { margin-top: 32px; padding-top: 16px; border-top: 2px solid #dc2626; }
+  .sources h2 { border: none; margin-top: 0; color: #ef4444; }
+  .sources ol { list-style: none; padding: 0; }
+  .sources li { margin: 10px 0; padding: 12px 14px; background: #131313; border-left: 3px solid #dc2626; border-radius: 3px; }
+  .sources .idx { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #ef4444; margin-right: 7px; letter-spacing: -0.02em; }
+  .sources a { color: #e5e5e5; font-weight: 600; }
+  .sources a:hover { color: #f87171; }
+  .sources .host { font-size: 11px; color: #666666; margin-top: 4px; font-variant: all-small-caps; letter-spacing: 0.04em; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid #2a2a2a; font-size: 10.5px; color: #666666; text-align: center; font-variant: all-small-caps; letter-spacing: 0.06em; }
+  footer .dot { color: #dc2626; margin: 0 6px; }
+`
+
+// SVG wolf minimaliste intégré en inline — petit claw/crest rouge. Pas de
+// dépendance réseau (les exports fonctionnent offline).
+const HUNTR_WOLF_MARK = `<svg class="mark" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M4 10 L6 4 L9 8 L12 3 L15 8 L18 4 L20 10 L22 14 L18 13 L17 19 L13 16 L12 21 L11 16 L7 19 L6 13 L2 14 Z" fill="#dc2626" stroke="#b91c1c" stroke-width="0.5" stroke-linejoin="round"/></svg>`
+
+function buildHuntRHtml(query: string, result: SearchResult, variant: 'light' | 'dark' = 'light'): string {
   const body = markdownToHtml(result.answer || '', result.citations || [])
   const sources = (result.citations || []).map(c => {
     const host = (() => { try { return new URL(c.url).hostname.replace('www.', '') } catch { return c.url } })()
@@ -408,42 +495,19 @@ function buildHuntRHtml(query: string, result: SearchResult): string {
     `${result.search_count} sources`,
     new Date().toLocaleString('fr-FR'),
   ].filter(Boolean).map(escapeHtml).join(' • ')
+  const css = variant === 'dark' ? HUNTR_EXPORT_CSS_DARK : HUNTR_EXPORT_CSS_LIGHT
 
   return `<!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><title>HuntR — ${escapeHtml(query)}</title>
-<style>
-  @page { margin: 18mm; }
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #1a1a1a; line-height: 1.55; max-width: 780px; margin: 0 auto; }
-  header { border-bottom: 3px solid #dc2626; padding-bottom: 10px; margin-bottom: 18px; }
-  header h1 { margin: 0 0 4px; font-size: 22px; }
-  header h1 .r { color: #dc2626; }
-  header .q { font-size: 15px; color: #333; margin: 6px 0 2px; font-weight: 600; }
-  header .meta { font-size: 11px; color: #666; }
-  h2 { font-size: 17px; color: #111; margin: 16px 0 6px; border-bottom: 1px solid #eee; padding-bottom: 3px; }
-  h3 { font-size: 14px; color: #222; margin: 14px 0 4px; }
-  h4 { font-size: 13px; color: #333; margin: 10px 0 3px; }
-  p { margin: 4px 0 8px; font-size: 12.5px; }
-  li { font-size: 12.5px; margin: 3px 0; }
-  a { color: #dc2626; text-decoration: none; }
-  a.hr-cite { color: #dc2626; font-weight: 700; }
-  code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; font-size: 11.5px; }
-  pre { background: #f4f4f4; padding: 10px; border-radius: 6px; overflow: auto; font-size: 11px; }
-  .sources { margin-top: 24px; border-top: 2px solid #dc2626; padding-top: 12px; }
-  .sources h2 { border: none; margin-top: 0; }
-  .sources ol { list-style: none; padding: 0; }
-  .sources li { margin: 8px 0; padding: 8px; background: #fafafa; border-left: 3px solid #dc2626; border-radius: 3px; }
-  .sources .idx { font-weight: 700; color: #dc2626; margin-right: 5px; }
-  .sources .host { font-size: 10.5px; color: #888; margin-top: 2px; }
-  footer { margin-top: 30px; font-size: 10px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 10px; }
-</style></head><body>
+<html lang="fr" data-theme="${variant === 'dark' ? 'dark-scarlet' : 'light-scarlet'}"><head><meta charset="utf-8"><title>HuntR — ${escapeHtml(query)}</title>
+<style>${css}</style></head><body>
 <header>
-  <h1>Hunt<span class="r">R</span></h1>
+  <h1>Hunt<span class="r">R</span>${HUNTR_WOLF_MARK}</h1>
   <div class="q">${escapeHtml(query)}</div>
   <div class="meta">${meta}</div>
 </header>
 <main>${body}</main>
 <section class="sources"><h2>Sources (${(result.citations || []).length})</h2><ol>${sources}</ol></section>
-<footer>Généré par HuntR — Gungnir</footer>
+<footer>Généré par Hunt<span class="dot">●</span>R <span class="dot">●</span> ScarletWolf Gungnir</footer>
 </body></html>`
 }
 
@@ -528,7 +592,8 @@ function exportAs(format: ExportFormat, query: string, result: SearchResult) {
     return
   }
   if (format === 'html') {
-    downloadBlob(buildHuntRHtml(query, result), `${base}.html`, 'text/html;charset=utf-8')
+    // HTML autonome = clone visuel de l'app (dark ScarletWolf).
+    downloadBlob(buildHuntRHtml(query, result, 'dark'), `${base}.html`, 'text/html;charset=utf-8')
     return
   }
   if (format === 'md') {
@@ -546,10 +611,10 @@ function exportAs(format: ExportFormat, query: string, result: SearchResult) {
 }
 
 function exportAsPdf(query: string, result: SearchResult) {
-  // Réutilise le même HTML que l'export "HTML" mais injecte un script de
-  // print auto : le user obtient une boîte d'impression (→ PDF) sans avoir
-  // à le déclencher manuellement.
-  const html = buildHuntRHtml(query, result).replace(
+  // Variante 'light' : fond crème, accents scarlet. Les navigateurs masquent
+  // les fonds par défaut à l'impression — un PDF light reste lisible sans
+  // que l'user ait à activer "Imprimer les couleurs d'arrière-plan".
+  const html = buildHuntRHtml(query, result, 'light').replace(
     '</body></html>',
     '<script>window.addEventListener("load", () => setTimeout(() => window.print(), 250));</script></body></html>'
   )
