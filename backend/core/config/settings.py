@@ -235,8 +235,17 @@ class Settings(BaseSettings):
         "huggingface": ServiceConfig(base_url="https://api-inference.huggingface.co"),
         "replicate": ServiceConfig(base_url="https://api.replicate.com/v1"),
         "stability": ServiceConfig(base_url="https://api.stability.ai/v2beta"),
-        "serper": ServiceConfig(base_url="https://google.serper.dev"),
-        "tavily": ServiceConfig(base_url="https://api.tavily.com"),
+        # Recherche web (HuntR) — chaque utilisateur doit fournir SA PROPRE clé
+        # dans user_settings.service_keys ; ces entrées sont juste les base_url
+        # par défaut pour que le service apparaisse dans Paramètres → Services.
+        "tavily":   ServiceConfig(base_url="https://api.tavily.com"),
+        "brave":    ServiceConfig(base_url="https://api.search.brave.com/res/v1"),
+        "exa":      ServiceConfig(base_url="https://api.exa.ai"),
+        "serper":   ServiceConfig(base_url="https://google.serper.dev"),
+        "serpapi":  ServiceConfig(base_url="https://serpapi.com"),
+        "kagi":     ServiceConfig(base_url="https://kagi.com/api/v0"),
+        "bing":     ServiceConfig(base_url="https://api.bing.microsoft.com/v7.0"),
+        "searxng":  ServiceConfig(base_url="http://localhost:8080"),
     })
     # Legacy field — MCP servers are now stored per-user in the `mcp_server_configs`
     # DB table. Kept for the one-shot migration in main.py lifespan; no code path
