@@ -25,6 +25,7 @@ DEFAULT_CHALLENGER_INTERVAL_MINUTES = 60
 DEFAULT_SIMULATION_INTERVAL_MINUTES = 30
 DEFAULT_IMPULSE_CHECK_INTERVAL_MINUTES = 15
 DEFAULT_CONSOLIDATION_INTERVAL_HOURS = 12
+DEFAULT_GOALS_CHECK_INTERVAL_HOURS = 24
 
 # When an LLM invocation fails because no API key is configured, backoff before
 # retrying so the logs don't spam every tick until the user sets a provider.
@@ -488,6 +489,306 @@ async def _simulate_for_user(user_id: int, force: bool = False) -> int:
             logger.exception(f"add_simulation failed for user {user_id}: {e}")
 
     logger.info(f"Simulation tick for user {user_id}: +{added} scénarios")
+    return added
+
+
+def _build_goals_prompt(engine, signals: dict) -> tuple[str, str]:
+    """Prompt LLM pour proposer 1 à N goals à partir de signaux structurels."""
+    state = engine.state or {}
+    mood = state.get("mood", "neutre")
+    existing = engine.get_active_goals(10) or []
+
+    persistent_block = "\n".join(
+        f"- {n['name']} (urgence {n.get('urgency', 0):.2f}, priorité {n.get('priority', 0)})"
+        for n in signals.get("persistent_needs", [])
+    ) or "(aucun)"
+
+    recurrent_block = "\n".join(
+        f"- [{f['type']}/×{f['count']}] {str(f.get('finding',''))[:160]}"
+        for f in signals.get("recurrent_findings", [])
+    ) or "(aucun)"
+
+    score_line = signals.get("score_trend_line") or "(aucune tendance dégradée)"
+
+    existing_block = "\n".join(
+        f"- [{g.get('status')}] {g.get('title','')}" for g in existing
+    ) or "(aucun)"
+
+    system = (
+        "Tu es le module de planification long-terme d'un assistant nommé Gungnir. "
+        "Ton rôle : transformer des signaux structurels (besoins persistants, "
+        "patterns d'auto-critique récurrents, tendances de qualité) en objectifs "
+        "moyen terme — des buts qui orientent l'agent sur plusieurs jours. "
+        "Chaque goal doit être CONCRET, MESURABLE, et directement lié à un signal "
+        "observé. Évite les goals vagues type 'mieux réfléchir' ou 'être plus utile'. "
+        "Ne re-propose PAS un goal déjà actif ou récemment abandonné. Réponds "
+        "STRICTEMENT en JSON valide, aucun texte avant/après, aucun bloc markdown."
+    )
+    user = (
+        f"Humeur courante : {mood}\n\n"
+        f"## Signaux détectés\n"
+        f"### Besoins persistants (urgence haute depuis longtemps)\n{persistent_block}\n\n"
+        f"### Findings Challenger récurrents (même pattern ≥ 3×)\n{recurrent_block}\n\n"
+        f"### Tendance scores\n{score_line}\n\n"
+        f"## Goals déjà actifs (à NE PAS doublonner)\n{existing_block}\n\n"
+        "Propose au maximum 3 nouveaux goals (0 si rien de structurel à signaler). "
+        "Chaque goal doit clairement dériver d'un signal ci-dessus.\n"
+        "Format de réponse :\n"
+        '{"goals":[{"title":"<titre court actionnable>",'
+        '"description":"<1-2 phrases : pourquoi ce goal, ce qu\'il implique concrètement>",'
+        '"origin":"need_recurrence|challenger_pattern|score_decline",'
+        '"origin_evidence":["<citation courte du signal>"],'
+        '"linked_needs":["<nom_besoin>"]}]}'
+        '\nSi rien à proposer, retourne {"goals":[]}'
+    )
+    return system, user
+
+
+def _parse_goals_response(raw: str) -> list[dict]:
+    """Parse la réponse LLM en liste de goals. Tolère fences markdown."""
+    if not raw:
+        return []
+    s = raw.strip()
+    if s.startswith("```"):
+        lines = s.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        s = "\n".join(lines).strip()
+    if "{" in s and "}" in s:
+        s = s[s.find("{"): s.rfind("}") + 1]
+    try:
+        data = json.loads(s)
+    except Exception:
+        return []
+    items = data.get("goals") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return []
+    valid_origins = {"need_recurrence", "challenger_pattern", "score_decline", "manual"}
+    out: list[dict] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        title = str(it.get("title") or "").strip()
+        if not title:
+            continue
+        origin = str(it.get("origin") or "need_recurrence").strip().lower()
+        if origin not in valid_origins:
+            origin = "need_recurrence"
+        linked = it.get("linked_needs") or []
+        if not isinstance(linked, list):
+            linked = [str(linked)]
+        evidence = it.get("origin_evidence") or []
+        if not isinstance(evidence, list):
+            evidence = [str(evidence)]
+        out.append({
+            "title": title[:200],
+            "description": str(it.get("description") or "").strip()[:800],
+            "origin": origin,
+            "origin_evidence": [str(e)[:200] for e in evidence[:5]],
+            "linked_needs": [str(n)[:40] for n in linked[:5]],
+        })
+    return out[:3]
+
+
+def _collect_goals_signals(engine) -> dict:
+    """Extrait les signaux structurels utilisés pour générer des goals.
+
+    On reste local (pas de LLM) — l'idée est de pré-filtrer : si aucun signal,
+    inutile d'appeler le LLM.
+    """
+    cfg = (engine.config or {}).get("goals", {}) or {}
+    min_urgency = float(cfg.get("persistent_need_min_urgency", 0.5))
+    min_count = int(cfg.get("recurrent_finding_min_count", 3))
+
+    # Besoins persistants : urgence courante haute + jamais satisfait récemment.
+    urgencies = engine.calculate_urgencies() or {}
+    persistent: list[dict] = []
+    for name, d in urgencies.items():
+        if float(d.get("urgency", 0)) < min_urgency:
+            continue
+        persistent.append({
+            "name": name,
+            "urgency": float(d.get("urgency", 0)),
+            "priority": int(d.get("priority", 0)),
+        })
+    persistent.sort(key=lambda x: x["urgency"] * (1 + x["priority"] * 0.1), reverse=True)
+    persistent = persistent[:5]
+
+    # Challenger : signatures avec _count >= seuil (add_finding incrémente
+    # _count sur les doublons détectés, donc c'est un proxy direct).
+    recurrent: list[dict] = []
+    try:
+        findings = engine.get_recent_findings(limit=200) or []
+    except Exception:
+        findings = []
+    for f in findings:
+        c = int(f.get("_count", 1) or 1)
+        if c < min_count:
+            continue
+        recurrent.append({
+            "type": f.get("type", "?"),
+            "finding": f.get("finding", ""),
+            "count": c,
+        })
+    # Dédup par signature (on peut retrouver plusieurs entries à cause des mises
+    # à jour de timestamp, ne garder que la plus fraîche).
+    seen = set()
+    unique_recurrent: list[dict] = []
+    for f in sorted(recurrent, key=lambda x: x["count"], reverse=True):
+        key = f["type"] + "|" + f["finding"][:80].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_recurrent.append(f)
+    unique_recurrent = unique_recurrent[:5]
+
+    # Tendance : on regarde le score_summary seulement si la tendance est
+    # "declining". Pas de goal depuis une tendance stable / améliorante.
+    score_line = ""
+    try:
+        summary = engine.get_score_summary() or {}
+        if (summary.get("trend") == "declining"
+                and int(summary.get("count") or 0) >= 10):
+            by_dim = summary.get("by_dimension") or {}
+            # On pointe la dimension la plus faible.
+            if by_dim:
+                worst = min(by_dim.items(), key=lambda kv: kv[1])
+                score_line = (
+                    f"Tendance en déclin (moyenne {float(summary.get('average') or 0):.2f}, "
+                    f"dimension la plus faible : {worst[0]} à {worst[1]:.2f})"
+                )
+    except Exception:
+        pass
+
+    return {
+        "persistent_needs": persistent,
+        "recurrent_findings": unique_recurrent,
+        "score_trend_line": score_line,
+    }
+
+
+async def _goals_for_user(user_id: int, force: bool = False) -> int:
+    """Génère des goals moyen/long terme pour un user.
+
+    Retourne le nombre de goals effectivement créés (après dédup).
+    Respecte l'intervalle, la config, le max_active_goals, et le cooldown
+    no-key partagé avec le background_think.
+    """
+    from backend.plugins.consciousness.engine import consciousness_manager
+    from backend.core.services.llm_invoker import invoke_llm_for_user
+
+    engine = consciousness_manager.get(user_id)
+    if not engine.enabled:
+        return 0
+
+    goals_cfg = (engine.config or {}).get("goals", {}) or {}
+    if not goals_cfg.get("enabled", True):
+        return 0
+
+    now = _now()
+    if not force:
+        interval_hours = float(goals_cfg.get("check_interval_hours", DEFAULT_GOALS_CHECK_INTERVAL_HOURS))
+        last_check = _parse_iso((engine.state or {}).get("last_goals_check"))
+        if last_check is not None:
+            elapsed_h = (now - last_check).total_seconds() / 3600
+            if elapsed_h < interval_hours:
+                return 0
+
+        cooldown_until = _parse_iso((engine.state or {}).get("background_think_cooldown_until"))
+        if cooldown_until and now < cooldown_until:
+            return 0
+
+    # Cap active goals — si déjà plein, pas d'appel LLM (et on note le check
+    # pour ne pas retester avant le prochain intervalle).
+    max_active = int(goals_cfg.get("max_active_goals", 5))
+    active = engine.get_active_goals(limit=max_active + 1)
+    if len(active) >= max_active:
+        engine.state["last_goals_check"] = now.isoformat()
+        try:
+            engine.save_state()
+        except Exception:
+            pass
+        return 0
+
+    # Pré-filtre local : si aucun signal structurel, pas de LLM.
+    signals = _collect_goals_signals(engine)
+    has_signal = bool(
+        signals["persistent_needs"]
+        or signals["recurrent_findings"]
+        or signals["score_trend_line"]
+    )
+    if not has_signal and not force:
+        engine.state["last_goals_check"] = now.isoformat()
+        try:
+            engine.save_state()
+        except Exception:
+            pass
+        return 0
+
+    system_prompt, user_prompt = _build_goals_prompt(engine, signals)
+
+    logger.info(
+        f"Goals tick for user {user_id} "
+        f"(needs={len(signals['persistent_needs'])}, "
+        f"recurrent={len(signals['recurrent_findings'])}, "
+        f"score_trend={bool(signals['score_trend_line'])})"
+    )
+    result = await invoke_llm_for_user(user_id, user_prompt, system_prompt=system_prompt)
+
+    if not result.get("ok") and _is_no_key_error(result.get("error") or ""):
+        from backend.plugins.consciousness.challenger_llm import pick_fallback_llm
+        fb_provider, fb_model = await pick_fallback_llm(user_id)
+        if fb_provider:
+            result = await invoke_llm_for_user(
+                user_id, user_prompt, system_prompt=system_prompt,
+                provider=fb_provider, model=fb_model,
+            )
+
+    engine.state["last_goals_check"] = now.isoformat()
+
+    if not result.get("ok"):
+        err = result.get("error") or ""
+        if _is_no_key_error(err) and not force:
+            until = now + timedelta(minutes=NO_KEY_COOLDOWN_MINUTES)
+            engine.state["background_think_cooldown_until"] = until.isoformat()
+        try:
+            engine.save_state()
+        except Exception:
+            pass
+        logger.warning(f"Goals generation failed for user {user_id}: {err}")
+        return 0
+
+    proposals = _parse_goals_response(result.get("content") or "")
+    if not proposals:
+        try:
+            engine.save_state()
+        except Exception:
+            pass
+        return 0
+
+    added = 0
+    for p in proposals:
+        # Respecter le cap en écrivant
+        if len(engine.get_active_goals(limit=max_active + 1)) >= max_active:
+            break
+        goal = engine.add_goal(
+            title=p["title"],
+            description=p["description"],
+            origin=p["origin"],
+            origin_evidence=p["origin_evidence"],
+            linked_needs=p["linked_needs"],
+        )
+        if goal:
+            added += 1
+
+    try:
+        engine.save_state()
+    except Exception:
+        pass
+
+    logger.info(f"Goals tick for user {user_id}: +{added} goal(s)")
     return added
 
 
@@ -967,6 +1268,7 @@ async def _tick_once():
         simulation_on = False
         impulse_on = False
         consolidation_on = False
+        goals_on = False
         config_file = user_dir / "config.json"
         if config_file.exists():
             try:
@@ -981,6 +1283,7 @@ async def _tick_once():
                 impulse_on = bool((vol.get("auto_impulses") or {}).get("enabled"))
                 wm = cfg.get("working_memory", {}) or {}
                 consolidation_on = bool((wm.get("consolidation") or {}).get("enabled", True))
+                goals_on = bool((cfg.get("goals", {}) or {}).get("enabled", True))
             except Exception:
                 continue
 
@@ -1031,6 +1334,12 @@ async def _tick_once():
                 await _consolidate_for_user(user_id)
             except Exception as e:
                 logger.exception(f"Consolidation pass crashed for user {user_id}: {e}")
+
+        if goals_on:
+            try:
+                await _goals_for_user(user_id)
+            except Exception as e:
+                logger.exception(f"Goals pass crashed for user {user_id}: {e}")
 
 
 async def _consciousness_loop():

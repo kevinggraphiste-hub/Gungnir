@@ -75,6 +75,19 @@ interface Impulse {
   status: string
 }
 
+interface Goal {
+  id: string
+  title: string
+  description: string
+  origin: string
+  origin_evidence: string[]
+  linked_needs: string[]
+  status: string  // proposed | active | completed | abandoned
+  progress: number
+  created_at: string
+  updated_at: string
+}
+
 interface Safety {
   tier: number
   message: string
@@ -97,6 +110,8 @@ interface Dashboard {
   active_simulations: Simulation[]
   pending_impulse: Impulse | null
   impulse_history: Impulse[]
+  goals?: Goal[]
+  active_goals?: Goal[]
   safety?: Safety
 }
 
@@ -155,7 +170,7 @@ function timeAgo(iso: string): string {
 export default function ConsciousnessPage() {
   const [data, setData] = useState<Dashboard | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'overview' | 'volition' | 'thoughts' | 'reward' | 'challenger' | 'simulation' | 'vector' | 'memories'>('overview')
+  const [tab, setTab] = useState<'overview' | 'volition' | 'thoughts' | 'reward' | 'challenger' | 'simulation' | 'goals' | 'vector' | 'memories'>('overview')
   const [reactivating, setReactivating] = useState(false)
   const [toggling, setToggling] = useState(false)
   const [newQuestion, setNewQuestion] = useState('')
@@ -303,6 +318,7 @@ export default function ConsciousnessPage() {
     { id: 'reward', label: 'Reward', icon: Star },
     { id: 'challenger', label: 'Challenger', icon: Shield },
     { id: 'simulation', label: 'Simulation', icon: Radio },
+    { id: 'goals', label: 'Goals', icon: Target },
     { id: 'memories', label: 'Mémoire long-terme', icon: Heart },
     { id: 'vector', label: 'Mémoire vectorielle', icon: Database },
   ] as const
@@ -413,6 +429,8 @@ export default function ConsciousnessPage() {
 
         {tab === 'simulation' && <SimulationTab data={data} refresh={fetchData}
           updateConfig={updateConfig} />}
+
+        {tab === 'goals' && <GoalsTab data={data} refresh={fetchData} updateConfig={updateConfig} />}
 
         {tab === 'memories' && <MemoriesTab data={data} updateConfig={updateConfig} />}
 
@@ -1873,6 +1891,332 @@ function SafetyBanner({ safety, onReactivate, reactivating }: {
           <Power className="w-3.5 h-3.5" />
           {reactivating ? 'Réactivation…' : 'Réactiver'}
         </button>
+      )}
+    </div>
+  )
+}
+
+// ── Goals Tab ────────────────────────────────────────────────────────────────
+
+const GOAL_STATUS_COLORS: Record<string, string> = {
+  proposed: '#f59e0b',
+  active: '#10b981',
+  completed: '#6366f1',
+  abandoned: '#6b7280',
+}
+
+const GOAL_ORIGIN_LABELS: Record<string, string> = {
+  manual: 'Manuel',
+  need_recurrence: 'Besoin persistant',
+  challenger_pattern: 'Pattern Challenger',
+  score_decline: 'Tendance scores',
+}
+
+function GoalsTab({ data, refresh, updateConfig }: any) {
+  const goalsCfg = data?.config?.goals || {}
+  const active = (data?.active_goals || []) as Goal[]
+  const all = (data?.goals || []) as Goal[]
+  const archived = all.filter(g => g.status === 'completed' || g.status === 'abandoned')
+
+  const [proposing, setProposing] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [newTitle, setNewTitle] = useState('')
+  const [newDesc, setNewDesc] = useState('')
+  const [adding, setAdding] = useState(false)
+
+  const patch = async (updates: any) => {
+    setSaving(true)
+    try { await updateConfig({ goals: updates }) }
+    finally { setSaving(false) }
+  }
+
+  const proposeNow = async () => {
+    setProposing(true); setMsg('')
+    try {
+      const r = await fetch(`${API}/goals/propose-now`, { method: 'POST' })
+      const j = await r.json()
+      if (j.ok) {
+        setMsg(j.added > 0 ? `${j.added} goal(s) proposé(s)` : 'Aucun goal proposé (pas de signal structurel ou quota atteint)')
+        await refresh?.()
+      } else {
+        setMsg(`Erreur : ${j.error || 'inconnue'}`)
+      }
+    } catch (e: any) { setMsg(`Erreur : ${e?.message || 'réseau'}`) }
+    finally { setProposing(false) }
+  }
+
+  const addManual = async () => {
+    const title = newTitle.trim()
+    if (!title) return
+    setAdding(true)
+    try {
+      const r = await fetch(`${API}/goals/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, description: newDesc.trim(), linked_needs: [] }),
+      })
+      const j = await r.json()
+      if (j.ok) { setNewTitle(''); setNewDesc(''); await refresh?.() }
+      else setMsg(`Erreur : ${j.error || 'inconnue'}`)
+    } finally { setAdding(false) }
+  }
+
+  const updateGoal = async (id: string, body: any) => {
+    await fetch(`${API}/goals/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal_id: id, ...body }),
+    })
+    await refresh?.()
+  }
+
+  const removeGoal = async (id: string) => {
+    if (!confirm('Supprimer ce goal définitivement ?')) return
+    await fetch(`${API}/goals/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal_id: id }),
+    })
+    await refresh?.()
+  }
+
+  const card: React.CSSProperties = {
+    background: 'var(--bg-card)', border: '1px solid var(--border)',
+    borderRadius: 12, padding: 16,
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Intro */}
+      <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+        <span>Objectifs moyen/long terme</span>
+        <InfoButton>
+          <strong>Les goals</strong> sont des objectifs persistants sur plusieurs jours, dérivés automatiquement de signaux structurels :
+          <br /><br />
+          • <strong>Besoin persistant</strong> : un besoin dont l'urgence reste haute tick après tick.
+          <br />• <strong>Pattern Challenger</strong> : le même type de finding revient ≥ 3 fois.
+          <br />• <strong>Tendance scores</strong> : la moyenne baisse sur une dimension spécifique.
+          <br /><br />
+          Contrairement aux impulsions (action immédiate), les goals orientent l'agent sur la durée et apparaissent dans son system prompt.
+        </InfoButton>
+      </div>
+
+      {/* Header action */}
+      <div style={card}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+            Goals actifs ({active.length})
+          </div>
+          <button onClick={proposeNow} disabled={proposing}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-opacity disabled:opacity-50"
+            style={{ background: 'var(--accent-primary)', color: '#fff' }}>
+            <Sparkles className="w-3.5 h-3.5" />
+            {proposing ? 'Analyse…' : 'Proposer des goals maintenant'}
+          </button>
+        </div>
+        {msg && (
+          <div className="text-[11px] mb-3 px-2 py-1.5 rounded" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}>
+            {msg}
+          </div>
+        )}
+        <div className="space-y-2">
+          {active.length === 0 && (
+            <div className="text-xs py-2" style={{ color: 'var(--text-muted)' }}>
+              Aucun goal actif. Tant que des signaux structurels n'apparaissent pas (besoins persistants, findings récurrents), la conscience ne propose rien de lui-même.
+            </div>
+          )}
+          {active.map(g => (
+            <GoalCard key={g.id} goal={g} onUpdate={updateGoal} onRemove={removeGoal} />
+          ))}
+        </div>
+      </div>
+
+      {/* Add manual */}
+      <div style={card}>
+        <div className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+          Ajouter un goal manuel
+        </div>
+        <div className="space-y-2">
+          <input value={newTitle} onChange={e => setNewTitle(e.target.value)}
+            placeholder="Titre court et actionnable…"
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+            style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+          <textarea value={newDesc} onChange={e => setNewDesc(e.target.value)}
+            placeholder="Description (optionnel) — pourquoi ce goal et ce qu'il implique"
+            rows={2}
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none"
+            style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+          <div className="flex justify-end">
+            <button onClick={addManual} disabled={adding || !newTitle.trim()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+              style={{ background: 'var(--accent-primary)', color: '#fff' }}>
+              <Plus className="w-3.5 h-3.5" /> Ajouter
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Archive */}
+      {archived.length > 0 && (
+        <div style={card}>
+          <div className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+            Archive ({archived.length})
+          </div>
+          <div className="space-y-1.5">
+            {archived.slice(0, 20).map(g => (
+              <div key={g.id} className="flex items-center justify-between px-3 py-2 rounded-lg text-xs"
+                style={{ background: 'var(--bg-tertiary)' }}>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full" style={{ background: GOAL_STATUS_COLORS[g.status] }} />
+                  <span style={{ color: 'var(--text-secondary)' }}>{g.title}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] capitalize" style={{ color: GOAL_STATUS_COLORS[g.status] }}>
+                    {g.status}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)' }}>{timeAgo(g.updated_at)}</span>
+                  <button onClick={() => removeGoal(g.id)} className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Paramètres */}
+      <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+        <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Paramètres</div>
+
+        <label className="flex items-center justify-between text-xs">
+          <span>Génération automatique</span>
+          <input type="checkbox" checked={goalsCfg.enabled !== false} disabled={saving}
+            onChange={e => patch({ ...goalsCfg, enabled: e.target.checked })} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Intervalle de vérification (heures)</span>
+          <input type="number" min={1} max={168} value={goalsCfg.check_interval_hours ?? 24}
+            disabled={saving || goalsCfg.enabled === false}
+            onChange={e => patch({ ...goalsCfg, check_interval_hours: Math.max(1, Number(e.target.value) || 24) })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Max goals actifs simultanés</span>
+          <input type="number" min={1} max={20} value={goalsCfg.max_active_goals ?? 5}
+            disabled={saving}
+            onChange={e => patch({ ...goalsCfg, max_active_goals: Math.max(1, Number(e.target.value) || 5) })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Urgence min. besoin persistant</span>
+          <input type="number" min={0.1} max={1.0} step={0.05} value={goalsCfg.persistent_need_min_urgency ?? 0.5}
+            disabled={saving}
+            onChange={e => patch({ ...goalsCfg, persistent_need_min_urgency: Math.max(0.1, Math.min(1.0, Number(e.target.value) || 0.5)) })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Occurrences min. finding récurrent</span>
+          <input type="number" min={2} max={20} value={goalsCfg.recurrent_finding_min_count ?? 3}
+            disabled={saving}
+            onChange={e => patch({ ...goalsCfg, recurrent_finding_min_count: Math.max(2, Number(e.target.value) || 3) })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+      </div>
+    </div>
+  )
+}
+
+function GoalCard({ goal, onUpdate, onRemove }: { goal: Goal; onUpdate: (id: string, body: any) => void; onRemove: (id: string) => void }) {
+  const color = GOAL_STATUS_COLORS[goal.status] || '#6b7280'
+  const progress = Math.max(0, Math.min(1, goal.progress || 0))
+
+  return (
+    <div className="px-3 py-3 rounded-lg" style={{
+      background: 'var(--bg-tertiary)',
+      border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`,
+    }}>
+      <div className="flex items-start justify-between mb-1.5">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <Target className="w-4 h-4 flex-shrink-0" style={{ color }} />
+          <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{goal.title}</span>
+        </div>
+        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium capitalize whitespace-nowrap"
+          style={{ background: `color-mix(in srgb, ${color} 15%, transparent)`, color }}>
+          {goal.status}
+        </span>
+      </div>
+
+      {goal.description && (
+        <div className="text-[11px] mb-2" style={{ color: 'var(--text-secondary)' }}>
+          {goal.description}
+        </div>
+      )}
+
+      <div className="h-1.5 rounded-full mb-2" style={{ background: 'var(--bg-primary)' }}>
+        <div className="h-full rounded-full transition-all" style={{ width: `${progress * 100}%`, background: color }} />
+      </div>
+
+      <div className="flex items-center justify-between text-[10px]">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-primary)', color: 'var(--text-muted)' }}>
+            {GOAL_ORIGIN_LABELS[goal.origin] || goal.origin}
+          </span>
+          {(goal.linked_needs || []).map(n => (
+            <span key={n} className="px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-primary)', color: 'var(--text-muted)' }}>
+              {n}
+            </span>
+          ))}
+          <span style={{ color: 'var(--text-muted)' }}>{timeAgo(goal.updated_at)}</span>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {goal.status === 'proposed' && (
+            <button onClick={() => onUpdate(goal.id, { status: 'active' })}
+              className="px-2 py-0.5 rounded" style={{ background: '#10b981', color: '#fff' }}>
+              Activer
+            </button>
+          )}
+          {goal.status === 'active' && (
+            <>
+              <input type="number" min={0} max={100} step={5} value={Math.round(progress * 100)}
+                onChange={e => onUpdate(goal.id, { progress: Math.max(0, Math.min(1, Number(e.target.value) / 100)) })}
+                className="w-14 px-1 py-0.5 rounded text-[10px]"
+                style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+              <button onClick={() => onUpdate(goal.id, { status: 'completed' })}
+                className="px-2 py-0.5 rounded" style={{ background: '#6366f1', color: '#fff' }}>
+                Terminer
+              </button>
+            </>
+          )}
+          {(goal.status === 'proposed' || goal.status === 'active') && (
+            <button onClick={() => onUpdate(goal.id, { status: 'abandoned' })}
+              className="px-2 py-0.5 rounded" style={{ background: 'var(--bg-primary)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+              Abandon
+            </button>
+          )}
+          <button onClick={() => onRemove(goal.id)}
+            className="p-1 rounded" style={{ color: 'var(--text-muted)' }}>
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+
+      {goal.origin_evidence && goal.origin_evidence.length > 0 && (
+        <div className="mt-2 pt-2 border-t text-[10px]"
+          style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+          {goal.origin_evidence.map((e, i) => (
+            <div key={i}>• {e}</div>
+          ))}
+        </div>
       )}
     </div>
   )

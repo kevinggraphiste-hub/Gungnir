@@ -105,6 +105,18 @@ class TriggerNeedRequest(BaseModel):
     need: str
     trigger: str
 
+class GoalAddRequest(BaseModel):
+    title: str
+    description: str = ""
+    linked_needs: list = []
+
+class GoalUpdateRequest(BaseModel):
+    goal_id: str
+    status: Optional[str] = None  # proposed | active | completed | abandoned
+    progress: Optional[float] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+
 
 # ── Dashboard ───────────────────────────────────────────────────────────────
 
@@ -434,6 +446,69 @@ async def simulation_generate_now(request: Request):
     try:
         from . import _simulate_for_user
         count = await _simulate_for_user(uid, force=True)
+        return {"ok": True, "added": int(count)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+# ── Goals (moyen/long terme) ────────────────────────────────────────────────
+
+@router.get("/goals")
+async def get_goals(request: Request, limit: int = 30):
+    c = _get_consciousness(request)
+    return {
+        "active": c.get_active_goals(10),
+        "all": c.get_goals(max(1, min(limit, 100))),
+    }
+
+
+@router.post("/goals/add")
+async def add_goal_manual(req: GoalAddRequest, request: Request):
+    c = _get_consciousness(request)
+    goal = c.add_goal(
+        title=req.title,
+        description=req.description,
+        origin="manual",
+        origin_evidence=[],
+        linked_needs=req.linked_needs,
+    )
+    if not goal:
+        return {"ok": False, "error": "Goal vide ou doublon d'un goal actif"}
+    return {"ok": True, "goal": goal}
+
+
+@router.post("/goals/update")
+async def update_goal(req: GoalUpdateRequest, request: Request):
+    c = _get_consciousness(request)
+    updated = c.update_goal(
+        goal_id=req.goal_id,
+        status=req.status,
+        progress=req.progress,
+        title=req.title,
+        description=req.description,
+    )
+    if not updated:
+        return {"ok": False, "error": "Goal introuvable ou paramètres invalides"}
+    return {"ok": True, "goal": updated}
+
+
+@router.post("/goals/remove")
+async def remove_goal(data: dict, request: Request):
+    c = _get_consciousness(request)
+    goal_id = str(data.get("goal_id") or "")
+    if not goal_id:
+        return {"ok": False, "error": "goal_id requis"}
+    ok = c.remove_goal(goal_id)
+    return {"ok": bool(ok)}
+
+
+@router.post("/goals/propose-now")
+async def goals_propose_now(request: Request):
+    """Force une passe de génération immédiate (ignore l'intervalle)."""
+    uid = _require_uid(request)
+    try:
+        from . import _goals_for_user
+        count = await _goals_for_user(uid, force=True)
         return {"ok": True, "added": int(count)}
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}

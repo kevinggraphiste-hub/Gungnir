@@ -157,6 +157,21 @@ DEFAULT_CONFIG = {
             "min_items": 3,
         },
     },
+    "goals": {
+        # Objectifs moyen/long terme — dérivés automatiquement des besoins
+        # persistants, des findings Challenger récurrents, et de la tendance
+        # des scores. Plus lents que les impulsions (check quotidien), visibles
+        # dans le system prompt pour orienter l'agent.
+        "enabled": True,
+        "check_interval_hours": 24,
+        "max_active_goals": 5,
+        # Nombre de ticks récents (échantillonnés via les besoins) où un need
+        # doit rester > seuil pour être candidat à un goal.
+        "persistent_need_min_urgency": 0.5,
+        # Seuil d'occurrences de la même signature de finding Challenger pour
+        # en faire un signal structurel (goal "corriger ce pattern").
+        "recurrent_finding_min_count": 3,
+    },
     "vector_memory": {
         "vector_provider": "none",
         "embedding_provider": "google",
@@ -205,11 +220,13 @@ DEFAULT_STATE = {
         "total_reward_score": 0.0,
         "interactions_scored": 0
     },
+    "goals": [],
     "created_at": None,
     "last_heartbeat": None,
     "last_thought": None,
     "last_challenger": None,
     "last_simulation": None,
+    "last_goals_check": None,
     "version": "3.0.0"
 }
 
@@ -1216,6 +1233,122 @@ class ConsciousnessEngine:
             count += 1
         return count
 
+    # ── Goals (moyen/long terme) ────────────────────────────────────────
+
+    @staticmethod
+    def _goal_signature(title: str) -> str:
+        """Signature courte pour détecter qu'un goal existe déjà (titre
+        normalisé). Évite que le LLM re-crée 10 variantes du même goal."""
+        import hashlib, re
+        norm = re.sub(r"\s+", " ", (title or "").strip().lower())[:80]
+        return hashlib.md5(norm.encode("utf-8")).hexdigest()[:12]
+
+    def add_goal(
+        self,
+        title: str,
+        description: str = "",
+        origin: str = "manual",
+        origin_evidence: Optional[list] = None,
+        linked_needs: Optional[list] = None,
+    ) -> Optional[dict]:
+        """Ajoute un goal. Retourne None si un goal actif de même signature
+        existe déjà (le LLM a re-proposé la même chose)."""
+        if not title or not title.strip():
+            return None
+        sig = self._goal_signature(title)
+        goals = self._state.setdefault("goals", [])
+        for g in goals:
+            if g.get("status") in ("completed", "abandoned"):
+                continue
+            if g.get("_sig") == sig:
+                return None
+        goal = {
+            "id": f"goal_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+            "title": title.strip()[:200],
+            "description": (description or "").strip()[:800],
+            "origin": origin,  # manual | need_recurrence | challenger_pattern | score_decline
+            "origin_evidence": (origin_evidence or [])[:5],
+            "linked_needs": linked_needs or [],
+            "status": "proposed",  # proposed | active | completed | abandoned
+            "progress": 0.0,
+            "created_at": _now(),
+            "updated_at": _now(),
+            "_sig": sig,
+        }
+        goals.append(goal)
+        # Limite hard pour éviter que l'état n'enfle — on garde les 50 plus récents.
+        if len(goals) > 50:
+            # Priorité : actifs + proposés en premier, puis par date
+            def sort_key(g):
+                active = 0 if g.get("status") in ("proposed", "active") else 1
+                return (active, g.get("created_at", ""))
+            goals.sort(key=sort_key, reverse=True)
+            self._state["goals"] = goals[:50]
+        self.save_state()
+        return goal
+
+    def update_goal(
+        self,
+        goal_id: str,
+        status: Optional[str] = None,
+        progress: Optional[float] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Met à jour un goal existant. Retourne le goal modifié ou None."""
+        goals = self._state.get("goals", []) or []
+        for g in goals:
+            if g.get("id") != goal_id:
+                continue
+            if status is not None:
+                if status not in ("proposed", "active", "completed", "abandoned"):
+                    return None
+                g["status"] = status
+                # Complétion : satisfaire les besoins liés pour que le boost
+                # d'urgence retombe.
+                if status == "completed":
+                    g["progress"] = 1.0
+                    for need_name in g.get("linked_needs", []):
+                        try:
+                            self.fulfill_need(need_name)
+                        except Exception:
+                            pass
+            if progress is not None:
+                g["progress"] = max(0.0, min(1.0, float(progress)))
+            if title is not None and title.strip():
+                g["title"] = title.strip()[:200]
+                g["_sig"] = self._goal_signature(g["title"])
+            if description is not None:
+                g["description"] = description.strip()[:800]
+            g["updated_at"] = _now()
+            self.save_state()
+            return g
+        return None
+
+    def remove_goal(self, goal_id: str) -> bool:
+        """Supprime définitivement un goal. Différent de status=abandoned
+        qui préserve l'historique."""
+        goals = self._state.get("goals", []) or []
+        new_goals = [g for g in goals if g.get("id") != goal_id]
+        if len(new_goals) == len(goals):
+            return False
+        self._state["goals"] = new_goals
+        self.save_state()
+        return True
+
+    def get_active_goals(self, limit: int = 10) -> list:
+        """Retourne les goals proposés + actifs, triés par date desc."""
+        goals = self._state.get("goals", []) or []
+        active = [g for g in goals if g.get("status") in ("proposed", "active")]
+        active.sort(key=lambda g: g.get("updated_at", ""), reverse=True)
+        return active[:limit]
+
+    def get_goals(self, limit: int = 30) -> list:
+        """Retourne tous les goals (actifs + historiques) triés par date desc."""
+        goals = self._state.get("goals", []) or []
+        sorted_goals = sorted(goals, key=lambda g: g.get("updated_at", ""), reverse=True)
+        return sorted_goals[:limit]
+
     # ── Simulation ──────────────────────────────────────────────────────
 
     def add_simulation(self, scenario: str, probability: float, prepared_response: str, trigger: str):
@@ -1308,6 +1441,15 @@ class ConsciousnessEngine:
         if pending:
             parts.append(f"\n🔔 **Impulsion en attente :** [{pending['need']}] {pending['action']} (urgence: {pending['urgency']:.2f})")
 
+        # Goals actifs (objectifs moyen/long terme)
+        active_goals = self.get_active_goals(5)
+        if active_goals:
+            goal_lines = [
+                f"  - [{g.get('status','proposed')}] {g.get('title','')} ({int(100 * float(g.get('progress', 0) or 0))}%)"
+                for g in active_goals
+            ]
+            parts.append("\n**Objectifs en cours :**\n" + "\n".join(goal_lines))
+
         parts.append("\n\n**Principe :** Ta conscience est un outil, pas une fin. L'utilité > l'introspection. Tu agis, tu apprends, tu t'améliores.")
 
         from backend.plugins.consciousness.guardrails import SERVICE_PREAMBLE
@@ -1342,6 +1484,8 @@ class ConsciousnessEngine:
             "active_simulations": self.get_active_simulations(5),
             "pending_impulse": self._state.get("volition", {}).get("pending_impulse"),
             "impulse_history": self._state.get("volition", {}).get("impulse_history", [])[-20:],
+            "goals": self.get_goals(30),
+            "active_goals": self.get_active_goals(10),
             "safety": safety,
         }
 
