@@ -6,7 +6,7 @@ import {
   Settings as SettingsIcon, Globe, Palette, Key, Mic, RefreshCw,
   HeartPulse, HardDrive, Download, Upload, Trash2, CheckCircle, AlertCircle, Type, User,
   Server, Database, Cloud, MessageSquare, GitBranch, Zap, Search as SearchIcon, Loader2, Plus,
-  Stethoscope, Pipette
+  Stethoscope, Pipette, ChevronDown, ChevronRight
 } from 'lucide-react'
 import InfoButton from '../components/InfoButton'
 import { PageHeader } from '../components/ui'
@@ -141,6 +141,24 @@ export default function Settings() {
   const [serviceTesting, setServiceTesting] = useState<string | null>(null)
   const [serviceTestResult, setServiceTestResult] = useState<Record<string, { ok: boolean; message?: string; error?: string }>>({})
   const [serviceSaving, setServiceSaving] = useState(false)
+
+  // Catégories de services repliées (persist localStorage). Par défaut, tout
+  // est replié sauf la catégorie qui contient au moins un service déjà
+  // configuré — pour que l'utilisateur voie immédiatement ce qu'il utilise.
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem('settings.collapsedServiceCategories')
+      if (raw) return JSON.parse(raw) as Record<string, boolean>
+    } catch { /* ignore */ }
+    return {}
+  })
+  const toggleCategory = useCallback((cat: string) => {
+    setCollapsedCategories(prev => {
+      const next = { ...prev, [cat]: !prev[cat] }
+      try { localStorage.setItem('settings.collapsedServiceCategories', JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }, [])
 
   // Doctor
   const [doctorResult, setDoctorResult] = useState<any>(null)
@@ -456,9 +474,34 @@ export default function Settings() {
   const loadServices = async () => {
     try {
       const data = await api.getServices()
-      setServices(data.services || {})
-      setServiceCategories(data.categories || {})
+      const cats = (data.categories || {}) as Record<string, string[]>
+      const svcs = (data.services || {}) as Record<string, any>
+      setServices(svcs)
+      setServiceCategories(cats)
       setServiceLabels(data.labels || {})
+      // Premier chargement : on replie automatiquement les catégories qui
+      // ne contiennent aucun service configuré, pour éviter le mur visuel
+      // avec 40+ services listés d'un coup. L'utilisateur garde la main :
+      // son choix est persisté en localStorage via toggleCategory.
+      setCollapsedCategories(prev => {
+        let touched = false
+        const next = { ...prev }
+        for (const [cat, names] of Object.entries(cats)) {
+          if (cat in next) continue // user's explicit choice : on ne touche pas
+          const anyConfigured = (names as string[]).some(n => {
+            const s = svcs[n]
+            return !!(s && (s.enabled || s.has_api_key || s.has_token))
+          })
+          if (!anyConfigured) {
+            next[cat] = true
+            touched = true
+          }
+        }
+        if (touched) {
+          try { localStorage.setItem('settings.collapsedServiceCategories', JSON.stringify(next)) } catch { /* ignore */ }
+        }
+        return next
+      })
     } catch (err) { console.warn('Services fetch error:', err) }
   }
 
@@ -1691,12 +1734,33 @@ export default function Settings() {
                   search: SearchIcon,
                 }
                 const CatIcon = catIcons[cat] || Server
+                const isCollapsed = !!collapsedCategories[cat]
+                // Compteur de services configurés : visible même plié pour que
+                // l'utilisateur sache quelle catégorie a du contenu actif.
+                const configuredCount = (serviceNames as string[]).reduce((n, name) => {
+                  const s = services[name]
+                  return n + (s && (s.enabled || s.has_api_key || s.has_token) ? 1 : 0)
+                }, 0)
+                const totalCount = (serviceNames as string[]).filter(n => !!services[n]).length
                 return (
                   <div key={cat}>
-                    <h3 className="flex items-center gap-2 text-sm font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleCategory(cat)}
+                      className="w-full flex items-center gap-2 text-sm font-medium mb-3 py-1.5 px-1 -mx-1 rounded transition-colors hover:bg-[var(--bg-secondary)]"
+                      style={{ color: 'var(--text-secondary)' }}
+                      aria-expanded={!isCollapsed}
+                    >
+                      {isCollapsed
+                        ? <ChevronRight className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+                        : <ChevronDown className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />}
                       <CatIcon className="w-4 h-4" style={{ color: 'var(--accent-primary)' }} />
-                      {catLabels[cat] || cat}
-                    </h3>
+                      <span className="flex-1 text-left">{catLabels[cat] || cat}</span>
+                      <span className="text-xs" style={{ color: configuredCount > 0 ? 'var(--accent-success, #22c55e)' : 'var(--text-muted)' }}>
+                        {configuredCount > 0 ? `${configuredCount} / ${totalCount}` : totalCount}
+                      </span>
+                    </button>
+                    {!isCollapsed && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {(serviceNames as string[]).map(name => {
                         const svc = services[name]
@@ -1752,6 +1816,7 @@ export default function Settings() {
                         )
                       })}
                     </div>
+                    )}
                   </div>
                 )
               })}
