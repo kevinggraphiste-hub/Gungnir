@@ -1142,12 +1142,22 @@ function CardTile({
                 )}
               </div>
             )}
-            {/* Progress bar en bas de la carte repliée aussi */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5,
+              marginTop: (card.tags || []).length > 0 ? undefined : 'auto',
+            }}>
+              <GripVertical className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
+              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+                glisser pour déplacer
+              </span>
+            </div>
+            {/* Progress bar tout en bas de la carte repliée */}
             {totalSubtasks > 0 && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 fontSize: 10, color: 'var(--text-muted)',
                 fontFamily: 'JetBrains Mono, monospace',
+                paddingTop: 6, borderTop: '1px solid var(--border)',
               }}>
                 <span>{doneCount}/{totalSubtasks}</span>
                 <div style={{
@@ -1158,14 +1168,9 @@ function CardTile({
                     background: 'var(--scarlet)',
                   }} />
                 </div>
+                <span style={{ opacity: 0.7 }}>{Math.round(progress * 100)}%</span>
               </div>
             )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: 0.5 }}>
-              <GripVertical className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
-              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
-                glisser pour déplacer
-              </span>
-            </div>
           </>
         )}
       </div>
