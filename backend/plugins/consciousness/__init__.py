@@ -332,7 +332,16 @@ def _build_simulation_prompt(engine) -> tuple[str, str]:
     mood = state.get("mood", "neutre")
     recent_thoughts = engine.get_recent_thoughts(limit=5) if hasattr(engine, "get_recent_thoughts") else []
     working_items = engine.get_working_memory() if hasattr(engine, "get_working_memory") else []
-    needs = (state.get("volition", {}) or {}).get("needs", []) or []
+    # state.volition.needs est un dict {nom: {urgency, last_fulfilled}} —
+    # on convertit en liste d'entrées taggées pour pouvoir le trier/slicer.
+    needs_raw = (state.get("volition", {}) or {}).get("needs", {}) or {}
+    if isinstance(needs_raw, dict):
+        needs = [{"name": name, **(data or {})} for name, data in needs_raw.items()]
+    elif isinstance(needs_raw, list):
+        needs = needs_raw
+    else:
+        needs = []
+    needs.sort(key=lambda n: float(n.get("urgency", 0) or 0), reverse=True)
 
     thoughts_block = "\n".join(
         f"- [{t.get('type', 'obs')}] {t.get('content', '')[:180]}"
@@ -343,7 +352,7 @@ def _build_simulation_prompt(engine) -> tuple[str, str]:
         for i in working_items[:5]
     ) or "(mémoire de travail vide)"
     needs_block = "\n".join(
-        f"- {n.get('name','?')} (urgence {n.get('urgency', 0):.2f})"
+        f"- {n.get('name','?')} (urgence {float(n.get('urgency', 0) or 0):.2f})"
         for n in needs[:5]
     ) or "(aucun besoin actif)"
 
