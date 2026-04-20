@@ -34,6 +34,7 @@ from .search_providers import (
     SearXNGProvider, SearchResult, VALID_TOPICS,
     FREE_PROVIDERS, PROVIDER_WEIGHTS, multi_search,
 )
+from .source_filters import apply_source_filters, STARTER_BLOCKLIST
 from .cache import tavily_cache
 
 logger = logging.getLogger("gungnir.plugins.huntr")
@@ -901,6 +902,10 @@ async def search_stream(req: SearchRequest, request: Request,
     # ── Resolve per-user resources BEFORE the stream ─────────────────
     providers_list = await _resolve_huntr_providers(uid, session, pro=req.pro_search)
     provider_names = [name for name, _ in providers_list]
+    # Source reliability filters : blocklist starter (opt-in) + user block/
+    # allowlist. Appliqué après multi_search, avant la synthèse LLM et le cache.
+    _us_for_filters = await get_user_settings(uid, session)
+    source_filter_cfg = ((_us_for_filters.huntr_config or {}).get("source_filters") or {})
 
     # Resolve the effective custom format: request override > user preference.
     # `resolved_format` can be JSON-encoded blocks (from the block editor) or
@@ -936,6 +941,7 @@ async def search_stream(req: SearchRequest, request: Request,
         cache_key = tavily_cache.make_key(
             uid, req.query, "pro", req.max_results, topic,
             resolved_format_raw, providers=provider_names,
+            source_filters=source_filter_cfg,
         )
         cached_payload = tavily_cache.get(cache_key)
 
@@ -993,6 +999,13 @@ async def search_stream(req: SearchRequest, request: Request,
                 })
 
                 results = await multi_search(providers_list, query, req.max_results, topic)
+                results, filter_report = apply_source_filters(results, source_filter_cfg)
+                if filter_report.get("blocked_count", 0) > 0:
+                    yield _sse("status", {
+                        "message": f"{filter_report['blocked_count']} source(s) filtrée(s)",
+                        "step": 1, "topic": topic,
+                        "filter_report": filter_report,
+                    })
                 # `engines` = union des providers qui ont contribué au moins un
                 # résultat (pas juste ceux appelés).
                 engines = sorted({p for r in results for p in (r.providers or [r.source])}) or provider_names
@@ -1042,6 +1055,13 @@ async def search_stream(req: SearchRequest, request: Request,
                 "step": 1, "total_steps": 4, "topic": topic,
             })
             results = await multi_search(providers_list, query, req.max_results, topic)
+            results, filter_report = apply_source_filters(results, source_filter_cfg)
+            if filter_report.get("blocked_count", 0) > 0:
+                yield _sse("status", {
+                    "message": f"{filter_report['blocked_count']} source(s) filtrée(s)",
+                    "step": 1, "total_steps": 4, "topic": topic,
+                    "filter_report": filter_report,
+                })
 
             engines = sorted({p for r in results for p in (r.providers or [r.source])}) \
                       or provider_names
@@ -1243,6 +1263,10 @@ class HuntRPreferences(BaseModel):
     # de providers ("brave", "exa", ...) ; valeur = {enabled: bool}. Un provider
     # absent reste sur le défaut (DDG/Tavily activés).
     providers: Optional[dict] = None
+    # Filtres de fiabilité des sources (blocklist starter + user + allowlist).
+    # Structure : {use_starter_blocklist: bool, blocklist: list[str],
+    #              allowlist: list[str], allowlist_mode: 'off'|'boost'|'strict'}
+    source_filters: Optional[dict] = None
 
 
 _MAX_CUSTOM_FORMAT_LEN = 4000
@@ -1258,6 +1282,12 @@ async def get_preferences(request: Request, session: AsyncSession = Depends(get_
     return {
         "custom_format": cfg.get("custom_format", "") or "",
         "providers": cfg.get("providers") or {},
+        "source_filters": cfg.get("source_filters") or {
+            "use_starter_blocklist": False,
+            "blocklist": [],
+            "allowlist": [],
+            "allowlist_mode": "off",
+        },
     }
 
 
@@ -1295,6 +1325,33 @@ async def put_preferences(prefs: HuntRPreferences, request: Request,
                 cleaned[name] = {"enabled": entry}
         cfg["providers"] = cleaned
 
+    # Source filters : sanitize pour éviter d'accepter des champs arbitraires
+    # ou des types inattendus (une liste qui arrive en string par erreur).
+    if prefs.source_filters is not None:
+        if not isinstance(prefs.source_filters, dict):
+            raise HTTPException(status_code=400, detail="source_filters doit être un objet")
+        sf_raw = prefs.source_filters
+        mode = str(sf_raw.get("allowlist_mode") or "off").lower()
+        if mode not in ("off", "boost", "strict"):
+            mode = "off"
+        def _clean_domain_list(val) -> list[str]:
+            if not isinstance(val, list):
+                return []
+            out = []
+            for item in val:
+                if isinstance(item, str):
+                    d = item.strip().lower().lstrip(".")
+                    if d and len(d) <= 253 and "/" not in d:
+                        out.append(d)
+            # Dédup en gardant l'ordre
+            return list(dict.fromkeys(out))
+        cfg["source_filters"] = {
+            "use_starter_blocklist": bool(sf_raw.get("use_starter_blocklist", False)),
+            "blocklist": _clean_domain_list(sf_raw.get("blocklist")),
+            "allowlist": _clean_domain_list(sf_raw.get("allowlist")),
+            "allowlist_mode": mode,
+        }
+
     us.huntr_config = cfg
     # JSON Column mutation → flag the attribute so SQLAlchemy persists the change.
     from sqlalchemy.orm.attributes import flag_modified
@@ -1306,6 +1363,27 @@ async def put_preferences(prefs: HuntRPreferences, request: Request,
         "ok": True,
         "custom_format": cfg.get("custom_format", "") or "",
         "providers": cfg.get("providers") or {},
+        "source_filters": cfg.get("source_filters") or {
+            "use_starter_blocklist": False,
+            "blocklist": [],
+            "allowlist": [],
+            "allowlist_mode": "off",
+        },
+    }
+
+
+@router.get("/source-filters/starter")
+async def get_starter_blocklist(request: Request):
+    """Retourne la starter blocklist pour affichage UI (lecture seule).
+
+    Permet à l'utilisateur de voir ce qu'il active avant de cocher la case
+    `use_starter_blocklist`. On expose domaine + raison documentée."""
+    return {
+        "entries": [
+            {"domain": domain, "reason": reason}
+            for domain, reason in STARTER_BLOCKLIST.items()
+        ],
+        "count": len(STARTER_BLOCKLIST),
     }
 
 

@@ -22,12 +22,13 @@ class TavilyCache:
     @staticmethod
     def make_key(user_id: int, query: str, mode: str, max_results: int,
                  topic: str = "web", custom_format: str = "",
-                 providers: list[str] | None = None) -> str:
+                 providers: list[str] | None = None,
+                 source_filters: dict | None = None) -> str:
         q = (query or "").strip().lower()
         # Hash the custom format so cache entries with different structures
         # don't collide (a user switching from "3 aspects" to "4 paragraphes"
         # must get a fresh synthesis, not the previously cached one).
-        import hashlib
+        import hashlib, json
         if custom_format:
             fmt_hash = hashlib.sha1(custom_format.strip().encode("utf-8")).hexdigest()[:10]
         else:
@@ -38,7 +39,21 @@ class TavilyCache:
             prov_hash = hashlib.sha1(",".join(sorted(providers)).encode("utf-8")).hexdigest()[:8]
         else:
             prov_hash = "_"
-        return f"{user_id}|{mode}|{topic}|{max_results}|{fmt_hash}|{prov_hash}|{q}"
+        # Fingerprint des filtres sources : si l'user change la blocklist /
+        # allowlist, le cache doit être invalidé (résultats différents).
+        if source_filters:
+            sf_norm = {
+                "s": bool(source_filters.get("use_starter_blocklist", False)),
+                "b": sorted(source_filters.get("blocklist") or []),
+                "a": sorted(source_filters.get("allowlist") or []),
+                "m": source_filters.get("allowlist_mode") or "off",
+            }
+            sf_hash = hashlib.sha1(
+                json.dumps(sf_norm, sort_keys=True).encode("utf-8")
+            ).hexdigest()[:8]
+        else:
+            sf_hash = "_"
+        return f"{user_id}|{mode}|{topic}|{max_results}|{fmt_hash}|{prov_hash}|{sf_hash}|{q}"
 
     def get(self, key: str) -> dict | None:
         with self._lock:

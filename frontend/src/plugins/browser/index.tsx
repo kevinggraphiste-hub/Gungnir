@@ -768,6 +768,21 @@ export default function HuntRPlugin() {
   const [providersStatus, setProvidersStatus] = useState<ProviderStatus[]>([])
   const [showProvidersPanel, setShowProvidersPanel] = useState(false)
   const [savingProviders, setSavingProviders] = useState(false)
+
+  // ── Filtres de fiabilité des sources ─────────────────────────────────
+  const [sourceFilters, setSourceFilters] = useState<{
+    use_starter_blocklist: boolean
+    blocklist: string[]
+    allowlist: string[]
+    allowlist_mode: 'off' | 'boost' | 'strict'
+  }>({
+    use_starter_blocklist: false, blocklist: [], allowlist: [], allowlist_mode: 'off',
+  })
+  const [starterBlocklist, setStarterBlocklist] = useState<Array<{ domain: string; reason: string }>>([])
+  const [showFiltersPanel, setShowFiltersPanel] = useState(false)
+  const [savingFilters, setSavingFilters] = useState(false)
+  const [blockInput, setBlockInput] = useState('')
+  const [allowInput, setAllowInput] = useState('')
   const [formatFlash, setFormatFlash] = useState<'ok' | 'err' | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
@@ -812,7 +827,79 @@ export default function HuntRPlugin() {
       .then(r => r.json())
       .then(d => setProvidersStatus((d?.providers as ProviderStatus[]) || []))
       .catch(() => {})
+    // Les filtres source sont dans /preferences (déjà fetché plus haut pour
+    // custom_format), mais on doit aussi récupérer ce champ.
+    fetch(`${API}/preferences`)
+      .then(r => r.json())
+      .then(d => {
+        if (d?.source_filters) {
+          setSourceFilters({
+            use_starter_blocklist: !!d.source_filters.use_starter_blocklist,
+            blocklist: Array.isArray(d.source_filters.blocklist) ? d.source_filters.blocklist : [],
+            allowlist: Array.isArray(d.source_filters.allowlist) ? d.source_filters.allowlist : [],
+            allowlist_mode: (['off', 'boost', 'strict'].includes(d.source_filters.allowlist_mode)
+              ? d.source_filters.allowlist_mode : 'off') as 'off' | 'boost' | 'strict',
+          })
+        }
+      })
+      .catch(() => {})
+    fetch(`${API}/source-filters/starter`)
+      .then(r => r.json())
+      .then(d => setStarterBlocklist(d?.entries || []))
+      .catch(() => {})
   }, [])
+
+  const persistSourceFilters = useCallback(async (next: typeof sourceFilters) => {
+    setSavingFilters(true)
+    try {
+      await fetch(`${API}/preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_filters: next }),
+      })
+    } catch { /* silencieux : l'UI garde l'état optimiste */ }
+    finally { setSavingFilters(false) }
+  }, [])
+
+  const toggleStarterBlocklist = useCallback(() => {
+    const next = { ...sourceFilters, use_starter_blocklist: !sourceFilters.use_starter_blocklist }
+    setSourceFilters(next)
+    persistSourceFilters(next)
+  }, [sourceFilters, persistSourceFilters])
+
+  const addBlockDomain = useCallback(() => {
+    const d = blockInput.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+    if (!d || sourceFilters.blocklist.includes(d)) { setBlockInput(''); return }
+    const next = { ...sourceFilters, blocklist: [...sourceFilters.blocklist, d] }
+    setSourceFilters(next); setBlockInput('')
+    persistSourceFilters(next)
+  }, [blockInput, sourceFilters, persistSourceFilters])
+
+  const removeBlockDomain = useCallback((d: string) => {
+    const next = { ...sourceFilters, blocklist: sourceFilters.blocklist.filter(x => x !== d) }
+    setSourceFilters(next)
+    persistSourceFilters(next)
+  }, [sourceFilters, persistSourceFilters])
+
+  const addAllowDomain = useCallback(() => {
+    const d = allowInput.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+    if (!d || sourceFilters.allowlist.includes(d)) { setAllowInput(''); return }
+    const next = { ...sourceFilters, allowlist: [...sourceFilters.allowlist, d] }
+    setSourceFilters(next); setAllowInput('')
+    persistSourceFilters(next)
+  }, [allowInput, sourceFilters, persistSourceFilters])
+
+  const removeAllowDomain = useCallback((d: string) => {
+    const next = { ...sourceFilters, allowlist: sourceFilters.allowlist.filter(x => x !== d) }
+    setSourceFilters(next)
+    persistSourceFilters(next)
+  }, [sourceFilters, persistSourceFilters])
+
+  const setAllowMode = useCallback((mode: 'off' | 'boost' | 'strict') => {
+    const next = { ...sourceFilters, allowlist_mode: mode }
+    setSourceFilters(next)
+    persistSourceFilters(next)
+  }, [sourceFilters, persistSourceFilters])
 
   // Toggle un provider (optimiste + persiste) — rafraîchit l'état complet
   // depuis le serveur après la sauvegarde pour rester synchro avec la logique
@@ -1365,6 +1452,42 @@ export default function HuntRPlugin() {
                     </button>
                   )
                 })()}
+                {/* Filtres — blocklist/allowlist de fiabilité */}
+                {(() => {
+                  const hasFilters = sourceFilters.use_starter_blocklist
+                    || sourceFilters.blocklist.length > 0
+                    || (sourceFilters.allowlist.length > 0 && sourceFilters.allowlist_mode !== 'off')
+                  const counts =
+                    (sourceFilters.use_starter_blocklist ? starterBlocklist.length : 0)
+                    + sourceFilters.blocklist.length
+                  return (
+                    <button
+                      onClick={() => setShowFiltersPanel(v => !v)}
+                      title="Filtres de fiabilité des sources"
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '7px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                        background: hasFilters
+                          ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
+                          : 'var(--bg-secondary)',
+                        border: hasFilters ? '1px solid var(--scarlet)' : '1px solid var(--border)',
+                        color: hasFilters ? 'var(--scarlet)' : 'var(--text-muted)',
+                        cursor: 'pointer', transition: 'all 0.15s',
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 4h18l-7 10v6l-4-2v-4L3 4z"/>
+                      </svg>
+                      Filtres
+                      {counts > 0 && (
+                        <span style={{
+                          fontSize: 9, padding: '1px 6px', borderRadius: 999,
+                          background: 'var(--scarlet)', color: '#fff', fontWeight: 700,
+                        }}>{counts}</span>
+                      )}
+                    </button>
+                  )
+                })()}
               </div>
 
               {/* Format editor panel — WYSIWYG contenteditable */}
@@ -1466,6 +1589,220 @@ export default function HuntRPlugin() {
                     Quand plusieurs moteurs sont actifs, HuntR les lance en parallèle,
                     dédup les URLs et privilégie celles qui reviennent chez plusieurs
                     sources. Les clés API se configurent dans <strong style={{ color: 'var(--scarlet)' }}>Paramètres → Services</strong>.
+                  </div>
+                </div>
+              )}
+
+              {/* Panel Filtres — blocklist/allowlist de fiabilité */}
+              {showFiltersPanel && (
+                <div style={{
+                  marginTop: 10,
+                  padding: 14,
+                  borderRadius: 10,
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border)',
+                  width: '100%',
+                  maxWidth: !hasResults ? 640 : undefined,
+                }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    marginBottom: 10,
+                  }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Filtres de fiabilité
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                      {savingFilters ? 'Enregistrement…' : 'Modifié — sauvegarde auto'}
+                    </div>
+                  </div>
+
+                  {/* Starter blocklist toggle */}
+                  <div style={{
+                    padding: 10, borderRadius: 8,
+                    background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border)',
+                  }}>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={sourceFilters.use_starter_blocklist}
+                        onChange={toggleStarterBlocklist}
+                        style={{ accentColor: 'var(--scarlet)', marginTop: 2 }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                          Blocklist de base ({starterBlocklist.length} sources)
+                        </div>
+                        <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.45 }}>
+                          Propagande d'État documentée (RT, Sputnik, PressTV, CGTN, Xinhua…)
+                          + fermes de désinformation notées par plusieurs fact-checkers
+                          (naturalnews, infowars, gatewaypundit). Aucun média éditorial — tes choix politiques te regardent.
+                        </div>
+                      </div>
+                    </label>
+                    {sourceFilters.use_starter_blocklist && starterBlocklist.length > 0 && (
+                      <details style={{ marginTop: 8 }}>
+                        <summary style={{ fontSize: 10.5, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                          Voir la liste ({starterBlocklist.length})
+                        </summary>
+                        <div style={{ marginTop: 6, maxHeight: 160, overflowY: 'auto' }}>
+                          {starterBlocklist.map(e => (
+                            <div key={e.domain} style={{
+                              display: 'flex', gap: 8, padding: '4px 0',
+                              borderBottom: '1px solid var(--border)', fontSize: 11,
+                            }}>
+                              <span style={{ fontFamily: 'monospace', color: 'var(--scarlet)', minWidth: 160 }}>
+                                {e.domain}
+                              </span>
+                              <span style={{ color: 'var(--text-muted)', flex: 1 }}>{e.reason}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+
+                  {/* User blocklist */}
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Mes domaines bloqués
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                      <input
+                        value={blockInput}
+                        onChange={e => setBlockInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addBlockDomain())}
+                        placeholder="exemple.com"
+                        style={{
+                          flex: 1, padding: '6px 10px', borderRadius: 8,
+                          background: 'var(--bg-primary)', border: '1px solid var(--border)',
+                          color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+                          fontFamily: 'monospace',
+                        }}
+                      />
+                      <button
+                        onClick={addBlockDomain}
+                        disabled={!blockInput.trim()}
+                        style={{
+                          padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                          background: 'var(--scarlet)', color: '#fff', border: 'none',
+                          cursor: blockInput.trim() ? 'pointer' : 'not-allowed',
+                          opacity: blockInput.trim() ? 1 : 0.5,
+                        }}
+                      >
+                        Bloquer
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {sourceFilters.blocklist.length === 0 && (
+                        <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                          Ajoute un domaine (cnews.fr, foxnews.com…) — matching par suffixe, ex. rt.com bloque edition.rt.com.
+                        </span>
+                      )}
+                      {sourceFilters.blocklist.map(d => (
+                        <span key={d} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          padding: '3px 8px', borderRadius: 999,
+                          background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
+                          border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
+                          fontSize: 11, fontFamily: 'monospace',
+                          color: 'var(--scarlet)',
+                        }}>
+                          {d}
+                          <button onClick={() => removeBlockDomain(d)}
+                            style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, display: 'flex' }}>
+                            <X size={10} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Allowlist + mode */}
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      marginBottom: 6,
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Sources privilégiées
+                      </div>
+                      <div style={{ display: 'flex', gap: 2 }}>
+                        {(['off', 'boost', 'strict'] as const).map(m => (
+                          <button
+                            key={m}
+                            onClick={() => setAllowMode(m)}
+                            style={{
+                              padding: '3px 8px', fontSize: 10, fontWeight: 600,
+                              background: sourceFilters.allowlist_mode === m ? 'var(--scarlet)' : 'var(--bg-tertiary)',
+                              color: sourceFilters.allowlist_mode === m ? '#fff' : 'var(--text-muted)',
+                              border: '1px solid var(--border)',
+                              borderRadius: m === 'off' ? '6px 0 0 6px' : m === 'strict' ? '0 6px 6px 0' : 0,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {m === 'off' ? 'Off' : m === 'boost' ? 'Prioriser' : 'Strict'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                      <input
+                        value={allowInput}
+                        onChange={e => setAllowInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addAllowDomain())}
+                        placeholder="lemonde.fr"
+                        style={{
+                          flex: 1, padding: '6px 10px', borderRadius: 8,
+                          background: 'var(--bg-primary)', border: '1px solid var(--border)',
+                          color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+                          fontFamily: 'monospace',
+                        }}
+                      />
+                      <button
+                        onClick={addAllowDomain}
+                        disabled={!allowInput.trim()}
+                        style={{
+                          padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                          background: 'var(--accent-success, #10b981)', color: '#fff', border: 'none',
+                          cursor: allowInput.trim() ? 'pointer' : 'not-allowed',
+                          opacity: allowInput.trim() ? 1 : 0.5,
+                        }}
+                      >
+                        Ajouter
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {sourceFilters.allowlist.length === 0 && (
+                        <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                          <strong>Off</strong> : aucun privilège. <strong>Prioriser</strong> : remonte les domaines listés en tête. <strong>Strict</strong> : ne garde QUE ces domaines.
+                        </span>
+                      )}
+                      {sourceFilters.allowlist.map(d => (
+                        <span key={d} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          padding: '3px 8px', borderRadius: 999,
+                          background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
+                          border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
+                          fontSize: 11, fontFamily: 'monospace',
+                          color: 'var(--accent-success, #10b981)',
+                        }}>
+                          {d}
+                          <button onClick={() => removeAllowDomain(d)}
+                            style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, display: 'flex' }}>
+                            <X size={10} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{
+                    marginTop: 10, fontSize: 10.5, color: 'var(--text-muted)',
+                    lineHeight: 1.45, paddingTop: 10, borderTop: '1px solid var(--border)',
+                  }}>
+                    Les filtres s'appliquent <strong style={{ color: 'var(--text-secondary)' }}>après</strong> la recherche multi-providers,
+                    <strong style={{ color: 'var(--text-secondary)' }}> avant</strong> la synthèse LLM. Les domaines bloqués ne sont pas cités, la blocklist starter reste un choix neutre (propagande d'État et désinfo documentées uniquement).
                   </div>
                 </div>
               )}
