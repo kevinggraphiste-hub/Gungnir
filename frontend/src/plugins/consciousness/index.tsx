@@ -246,6 +246,15 @@ export default function ConsciousnessPage() {
     await fetchData()
   }
 
+  const updateConfig = async (updates: any) => {
+    await fetch(`${API}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updates })
+    })
+    await fetchData()
+  }
+
   const resetAll = async () => {
     if (!confirm('Réinitialiser toute la conscience ? Les données seront perdues.')) return
     await fetch(`${API}/reset`, { method: 'POST' })
@@ -392,18 +401,20 @@ export default function ConsciousnessPage() {
           newQuestion={newQuestion} setNewQuestion={setNewQuestion} addQuestion={addQuestion}
           removeQuestion={removeQuestion} resetAll={resetAll} />}
 
-        {tab === 'volition' && <VolitionTab data={data} resetVolition={resetVolition} />}
+        {tab === 'volition' && <VolitionTab data={data} resetVolition={resetVolition}
+          updateConfig={updateConfig} refresh={fetchData} />}
 
         {tab === 'thoughts' && <ThoughtsTab data={data} newThought={newThought}
           setNewThought={setNewThought} addThought={addThought} />}
 
-        {tab === 'reward' && <RewardTab data={data} />}
+        {tab === 'reward' && <RewardTab data={data} updateConfig={updateConfig} />}
 
         {tab === 'challenger' && <ChallengerTab data={data} refresh={fetchData} />}
 
-        {tab === 'simulation' && <SimulationTab data={data} refresh={fetchData} />}
+        {tab === 'simulation' && <SimulationTab data={data} refresh={fetchData}
+          updateConfig={updateConfig} />}
 
-        {tab === 'memories' && <MemoriesTab />}
+        {tab === 'memories' && <MemoriesTab data={data} updateConfig={updateConfig} />}
 
         {tab === 'vector' && <VectorTab />}
 
@@ -620,7 +631,35 @@ function OverviewTab({ data, setMood, setLevel, newQuestion, setNewQuestion, add
 
 // ── Volition Tab ──────────────────────────────────────────────────────────────
 
-function VolitionTab({ data, resetVolition }: any) {
+function VolitionTab({ data, resetVolition, updateConfig, refresh }: any) {
+  const volCfg = data?.config?.volition || {}
+  const autoImp = volCfg.auto_impulses || {}
+  const decay = volCfg.natural_decay || {}
+  const [saving, setSaving] = useState(false)
+  const [proposing, setProposing] = useState(false)
+  const [propMsg, setPropMsg] = useState('')
+
+  const patch = async (updates: any) => {
+    setSaving(true)
+    try { await updateConfig({ volition: updates }) }
+    finally { setSaving(false) }
+  }
+
+  const proposeNow = async () => {
+    setProposing(true); setPropMsg('')
+    try {
+      const r = await fetch(`${API}/volition/propose-now`, { method: 'POST' })
+      const j = await r.json()
+      if (j.ok) {
+        setPropMsg(j.proposed > 0 ? 'Impulsion proposée.' : 'Aucune action générée (seuil non atteint ou quota).')
+        await refresh?.()
+      } else {
+        setPropMsg(`Erreur : ${j.error || 'inconnue'}`)
+      }
+    } catch (e: any) { setPropMsg(`Erreur : ${e?.message || 'réseau'}`) }
+    finally { setProposing(false) }
+  }
+
   return (
     <div className="space-y-4">
       {/* Pyramid Visual */}
@@ -724,6 +763,79 @@ function VolitionTab({ data, resetVolition }: any) {
           )}
         </div>
       </div>
+
+      {/* Paramètres volition */}
+      <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+          <span>Paramètres</span>
+          <InfoButton>
+            <strong>Impulsions auto</strong> : quand activé, l'agent te propose une action dès qu'un besoin dépasse le seuil d'urgence. Respecte les heures silencieuses (23h→7h) et le quota horaire.
+            <br /><br />
+            <strong>Décroissance naturelle</strong> : les urgences retombent vers une baseline au fil du temps. Sans elle, elles saturent à 100% et ne redescendent jamais.
+          </InfoButton>
+        </div>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Seuil d'urgence (0.0 → 1.0)</span>
+          <input type="number" min={0.1} max={1.0} step={0.05} value={volCfg.impulse_threshold ?? 0.6}
+            disabled={saving}
+            onChange={e => patch({ impulse_threshold: Math.max(0.1, Math.min(1.0, Number(e.target.value) || 0.6)) })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Quota impulsions / heure</span>
+          <input type="number" min={1} max={20} value={volCfg.max_impulses_per_hour ?? 3}
+            disabled={saving}
+            onChange={e => patch({ max_impulses_per_hour: Math.max(1, Number(e.target.value) || 3) })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <div className="pt-2 border-t" style={{ borderColor: 'var(--border)' }} />
+
+        <label className="flex items-center justify-between text-xs">
+          <span>Impulsions automatiques</span>
+          <input type="checkbox" checked={!!autoImp.enabled} disabled={saving}
+            onChange={e => patch({ auto_impulses: { ...autoImp, enabled: e.target.checked } })} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Intervalle check (min)</span>
+          <input type="number" min={5} max={1440} value={autoImp.check_interval_minutes ?? 15}
+            disabled={saving || !autoImp.enabled}
+            onChange={e => patch({ auto_impulses: { ...autoImp, check_interval_minutes: Math.max(5, Number(e.target.value) || 15) } })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <div className="pt-2 border-t" style={{ borderColor: 'var(--border)' }} />
+
+        <label className="flex items-center justify-between text-xs">
+          <span>Décroissance naturelle des urgences</span>
+          <input type="checkbox" checked={decay.enabled !== false} disabled={saving}
+            onChange={e => patch({ natural_decay: { ...decay, enabled: e.target.checked } })} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Demi-vie (heures)</span>
+          <input type="number" min={1} max={168} step={1} value={decay.half_life_hours ?? 12}
+            disabled={saving || decay.enabled === false}
+            onChange={e => patch({ natural_decay: { ...decay, half_life_hours: Math.max(1, Number(e.target.value) || 12) } })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <div className="pt-2 flex items-center gap-2">
+          <button onClick={proposeNow} disabled={proposing}
+            className="px-3 py-1.5 rounded text-xs font-semibold"
+            style={{ background: 'var(--accent-primary)', color: 'white', opacity: proposing ? 0.5 : 1, cursor: proposing ? 'not-allowed' : 'pointer' }}>
+            {proposing ? 'Génération…' : 'Proposer une impulsion maintenant'}
+          </button>
+          {propMsg && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{propMsg}</span>}
+        </div>
+      </div>
     </div>
   )
 }
@@ -806,10 +918,19 @@ function ThoughtsTab({ data, newThought, setNewThought, addThought }: any) {
 
 // ── Reward Tab ────────────────────────────────────────────────────────────────
 
-function RewardTab({ data }: any) {
+function RewardTab({ data, updateConfig }: any) {
   const summary = data.score_summary || {}
   const TrendIcon = summary.trend === 'improving' ? TrendingUp : summary.trend === 'declining' ? TrendingDown : Minus
   const trendColor = summary.trend === 'improving' ? '#10b981' : summary.trend === 'declining' ? '#ef4444' : 'var(--text-muted)'
+
+  const rewardCfg = data?.config?.reward || {}
+  const vp = rewardCfg.volition_pressure || {}
+  const [saving, setSaving] = useState(false)
+  const patch = async (updates: any) => {
+    setSaving(true)
+    try { await updateConfig({ reward: updates }) }
+    finally { setSaving(false) }
+  }
 
   return (
     <div className="space-y-4">
@@ -875,6 +996,58 @@ function RewardTab({ data }: any) {
             <div className="text-xs py-2" style={{ color: 'var(--text-muted)' }}>Aucun score enregistré</div>
           )}
         </div>
+      </div>
+
+      {/* Paramètres reward */}
+      <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+          <span>Paramètres</span>
+          <InfoButton>
+            <strong>Auto-scoring</strong> : un LLM léger note chaque réponse de l'agent sur plusieurs dimensions (utilité, précision, ton, autonomie). Ces scores alimentent le mood auto et la pression volition.
+            <br /><br />
+            <strong>Humeur auto</strong> : le mood évolue (content / concentré / prudent / frustré) en fonction de la tendance des scores récents. Pas de LLM, c'est local.
+            <br /><br />
+            <strong>Pression volition</strong> : si la moyenne des scores chute sous un seuil, l'urgence du besoin <em>integrity</em> est poussée pour que l'agent reconnaisse qu'il y a un problème de qualité.
+          </InfoButton>
+        </div>
+
+        <label className="flex items-center justify-between text-xs">
+          <span>Auto-scoring des réponses chat</span>
+          <input type="checkbox" checked={rewardCfg.auto_score !== false} disabled={saving}
+            onChange={e => patch({ auto_score: e.target.checked })} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs">
+          <span>Humeur automatique (depuis scores)</span>
+          <input type="checkbox" checked={rewardCfg.auto_mood !== false} disabled={saving}
+            onChange={e => patch({ auto_mood: e.target.checked })} />
+        </label>
+
+        <div className="pt-2 border-t" style={{ borderColor: 'var(--border)' }} />
+
+        <label className="flex items-center justify-between text-xs">
+          <span>Pression volition (scores faibles → urgence integrity)</span>
+          <input type="checkbox" checked={vp.enabled !== false} disabled={saving}
+            onChange={e => patch({ volition_pressure: { ...vp, enabled: e.target.checked } })} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Seuil d'activation (moyenne sous)</span>
+          <input type="number" min={0.1} max={1.0} step={0.05} value={vp.threshold ?? 0.45}
+            disabled={saving || vp.enabled === false}
+            onChange={e => patch({ volition_pressure: { ...vp, threshold: Math.max(0.1, Math.min(1.0, Number(e.target.value) || 0.45)) } })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Bump urgence (0.0 → 0.5)</span>
+          <input type="number" min={0.05} max={0.5} step={0.05} value={vp.bump ?? 0.15}
+            disabled={saving || vp.enabled === false}
+            onChange={e => patch({ volition_pressure: { ...vp, bump: Math.max(0.05, Math.min(0.5, Number(e.target.value) || 0.15)) } })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
       </div>
     </div>
   )
@@ -1196,9 +1369,16 @@ function FindingCard({ finding }: { finding: Finding }) {
 
 // ── Simulation Tab ───────────────────────────────────────────────────────────
 
-function SimulationTab({ data, refresh }: any) {
+function SimulationTab({ data, refresh, updateConfig }: any) {
   const [generating, setGenerating] = useState(false)
   const [msg, setMsg] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const patch = async (updates: any) => {
+    setSaving(true)
+    try { await updateConfig({ simulation: updates }) }
+    finally { setSaving(false) }
+  }
 
   const generateNow = async () => {
     setGenerating(true); setMsg('')
@@ -1285,11 +1465,40 @@ function SimulationTab({ data, refresh }: any) {
           {autoEnabled ? (
             <p>Génération automatique activée — un LLM produit 2-3 scénarios probables toutes les <strong>{intervalMin} min</strong>.</p>
           ) : (
-            <p>Génération automatique désactivée. Active-la dans la config <code>simulation.enabled</code>, ou clique sur <strong>Générer des scénarios</strong> ci-dessus pour un passage manuel.</p>
+            <p>Génération automatique désactivée. Active-la dans les paramètres ci-dessous, ou clique sur <strong>Générer des scénarios</strong> pour un passage manuel.</p>
           )}
           <p>Ce n'est pas de la prédiction — c'est de la <strong>préparation</strong>. Comme imaginer sa journée avant de se lever.</p>
           <p>Si un scénario se matérialise, la réponse préparée est utilisée pour accélérer le traitement.</p>
         </div>
+      </div>
+
+      {/* Paramètres simulation */}
+      <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+        <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Paramètres</div>
+
+        <label className="flex items-center justify-between text-xs">
+          <span>Génération automatique</span>
+          <input type="checkbox" checked={autoEnabled} disabled={saving}
+            onChange={e => patch({ ...simCfg, enabled: e.target.checked })} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Intervalle (min)</span>
+          <input type="number" min={5} max={1440} value={simCfg.interval_minutes ?? 30}
+            disabled={saving || !autoEnabled}
+            onChange={e => patch({ ...simCfg, interval_minutes: Math.max(5, Number(e.target.value) || 30) })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Nombre de scénarios par passage</span>
+          <input type="number" min={1} max={10} value={simCfg.max_scenarios ?? 3}
+            disabled={saving}
+            onChange={e => patch({ ...simCfg, max_scenarios: Math.max(1, Number(e.target.value) || 3) })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
       </div>
     </div>
   )
@@ -1671,11 +1880,21 @@ function SafetyBanner({ safety, onReactivate, reactivating }: {
 
 // ── Memories Tab (mémoire long-terme / consolidations) ──────────────────────
 
-function MemoriesTab() {
+function MemoriesTab({ data, updateConfig }: any) {
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [consolidating, setConsolidating] = useState(false)
   const [msg, setMsg] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const wmCfg = data?.config?.working_memory || {}
+  const cons = wmCfg.consolidation || {}
+
+  const patch = async (updates: any) => {
+    setSaving(true)
+    try { await updateConfig({ working_memory: updates }) }
+    finally { setSaving(false) }
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1739,6 +1958,40 @@ function MemoriesTab() {
       {msg && (
         <div className="text-xs p-2 rounded" style={{ background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>{msg}</div>
       )}
+
+      {/* Paramètres consolidation */}
+      <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+          <span>Paramètres consolidation</span>
+          <InfoButton>
+            Un LLM résume périodiquement la mémoire de travail + pensées + feedback en un paragraphe narratif stocké en vector long-terme. N'efface pas la working memory (le TTL s'en charge).
+          </InfoButton>
+        </div>
+
+        <label className="flex items-center justify-between text-xs">
+          <span>Consolidation automatique</span>
+          <input type="checkbox" checked={cons.enabled !== false} disabled={saving}
+            onChange={e => patch({ ...wmCfg, consolidation: { ...cons, enabled: e.target.checked } })} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Intervalle (heures)</span>
+          <input type="number" min={1} max={168} value={cons.interval_hours ?? 12}
+            disabled={saving || cons.enabled === false}
+            onChange={e => patch({ ...wmCfg, consolidation: { ...cons, interval_hours: Math.max(1, Number(e.target.value) || 12) } })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <label className="flex items-center justify-between text-xs gap-3">
+          <span>Items min. pour consolider</span>
+          <input type="number" min={1} max={50} value={cons.min_items ?? 3}
+            disabled={saving || cons.enabled === false}
+            onChange={e => patch({ ...wmCfg, consolidation: { ...cons, min_items: Math.max(1, Number(e.target.value) || 3) } })}
+            className="w-20 px-2 py-1 rounded text-xs"
+            style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+        </label>
+      </div>
 
       {loading ? (
         <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
