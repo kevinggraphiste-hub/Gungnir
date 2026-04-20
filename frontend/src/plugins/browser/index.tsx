@@ -55,6 +55,7 @@ interface LiveSource {
   url: string
   snippet?: string
   source?: string
+  providers?: string[]
 }
 
 interface HistoryEntry {
@@ -75,9 +76,20 @@ interface HistoryEntry {
 
 interface UserCapabilities {
   has_tavily: boolean
+  has_any_search_key: boolean
   has_llm: boolean
   provider: string | null
   model: string | null
+}
+
+interface ProviderStatus {
+  id: string               // "brave", "tavily", "duckduckgo", ...
+  label: string            // "Brave Search"
+  needs_key: boolean       // true si une clé API est requise
+  has_requirements: boolean // clé/URL configurée
+  enabled: boolean         // toggle user
+  supports_classic: boolean // utilisable en mode Classique (gratuit)
+  weight: number
 }
 
 const API = '/api/plugins/browser'
@@ -288,6 +300,13 @@ const SUGGESTIONS = [
 const ENGINE_COLORS: Record<string, string> = {
   duckduckgo: '#de5833',
   tavily: '#6366f1',
+  brave: '#fb542b',
+  exa: '#22c55e',
+  serper: '#0ea5e9',
+  serpapi: '#3b82f6',
+  kagi: '#f59e0b',
+  bing: '#008373',
+  searxng: '#6a1d9a',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -744,6 +763,11 @@ export default function HuntRPlugin() {
   const [draftMarkdown, setDraftMarkdown] = useState('')
   const [showFormatEditor, setShowFormatEditor] = useState(false)
   const [savingFormat, setSavingFormat] = useState(false)
+
+  // ── Multi-providers (Brave, Exa, Serper…) : toggle par user ──────────
+  const [providersStatus, setProvidersStatus] = useState<ProviderStatus[]>([])
+  const [showProvidersPanel, setShowProvidersPanel] = useState(false)
+  const [savingProviders, setSavingProviders] = useState(false)
   const [formatFlash, setFormatFlash] = useState<'ok' | 'err' | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
@@ -784,7 +808,43 @@ export default function HuntRPlugin() {
         }
       })
       .catch(() => {})
+    fetch(`${API}/providers`)
+      .then(r => r.json())
+      .then(d => setProvidersStatus((d?.providers as ProviderStatus[]) || []))
+      .catch(() => {})
   }, [])
+
+  // Toggle un provider (optimiste + persiste) — rafraîchit l'état complet
+  // depuis le serveur après la sauvegarde pour rester synchro avec la logique
+  // de défauts (un user qui n'a encore rien touché hérite de DDG+Tavily auto).
+  const toggleProvider = useCallback(async (id: string, nextEnabled: boolean) => {
+    setSavingProviders(true)
+    // Optimiste : on met à jour l'UI avant la réponse serveur
+    setProvidersStatus(prev => prev.map(p => p.id === id ? { ...p, enabled: nextEnabled } : p))
+    try {
+      // On construit le dict providers à partir de l'état courant + le toggle
+      const payload: Record<string, { enabled: boolean }> = {}
+      for (const p of providersStatus) {
+        payload[p.id] = { enabled: p.id === id ? nextEnabled : p.enabled }
+      }
+      await fetch(`${API}/preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providers: payload }),
+      })
+      // Resync depuis le serveur (gère le cas où un provider a perdu sa clé)
+      const r = await fetch(`${API}/providers`)
+      const d = await r.json()
+      setProvidersStatus((d?.providers as ProviderStatus[]) || [])
+    } catch {
+      // En cas d'erreur, on recharge l'état serveur pour annuler l'optimisme
+      fetch(`${API}/providers`).then(r => r.json())
+        .then(d => setProvidersStatus((d?.providers as ProviderStatus[]) || []))
+        .catch(() => {})
+    } finally {
+      setSavingProviders(false)
+    }
+  }, [providersStatus])
 
   const persistFormat = useCallback(async (raw: string) => {
     setSavingFormat(true)
@@ -1010,7 +1070,11 @@ export default function HuntRPlugin() {
   }
 
   const hasResults = result || searching
-  const canPro = caps?.has_tavily && caps?.has_llm
+  // Pro = synthèse LLM sur résultats de recherche. La recherche fallback
+  // sur DDG si aucun provider payant n'est configuré, donc le vrai prérequis
+  // c'est l'accès à un LLM. Les providers premium (Brave/Tavily/…) améliorent
+  // la qualité mais ne conditionnent plus l'accès.
+  const canPro = !!caps?.has_llm
 
   // ── Render ────────────────────────────────────────────────────────
 
@@ -1099,8 +1163,8 @@ export default function HuntRPlugin() {
                     Posez une question. Obtenez une réponse sourcée.
                   </p>
 
-                  {/* Tavily promo if not configured */}
-                  {caps && !caps.has_tavily && (
+                  {/* Promo providers si aucune clé payante configurée */}
+                  {caps && !caps.has_any_search_key && (
                     <div style={{
                       marginTop: 16, padding: '12px 16px', borderRadius: 10,
                       background: 'color-mix(in srgb, var(--accent-primary) 8%, transparent)',
@@ -1108,16 +1172,25 @@ export default function HuntRPlugin() {
                       fontSize: 12, color: 'var(--text-secondary)', textAlign: 'left',
                       maxWidth: 480, margin: '16px auto 0',
                     }}>
-                      <strong style={{ color: 'var(--accent-primary)' }}>Débloquez le mode Pro</strong>
+                      <strong style={{ color: 'var(--accent-primary)' }}>Renforcez la qualité des recherches</strong>
                       <p style={{ margin: '6px 0 0', lineHeight: 1.5 }}>
-                        Créez un compte gratuit sur{' '}
+                        HuntR tourne par défaut sur DuckDuckGo. Pour combiner les sources,
+                        ajoutez une ou plusieurs clés gratuites :{' '}
                         <a href="https://app.tavily.com/sign-in" target="_blank" rel="noopener noreferrer"
                           style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>
-                          Tavily (1000 req/mois gratuites)
+                          Tavily
+                        </a>,{' '}
+                        <a href="https://api.search.brave.com/" target="_blank" rel="noopener noreferrer"
+                          style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>
+                          Brave
+                        </a>,{' '}
+                        <a href="https://exa.ai/" target="_blank" rel="noopener noreferrer"
+                          style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>
+                          Exa
                         </a>
-                        {' '}puis ajoutez votre clé dans{' '}
+                        {' '}(≈1000 req/mois gratuites chacun) dans{' '}
                         <a href="/settings?tab=services" style={{ color: 'var(--accent-primary)', textDecoration: 'underline' }}>
-                          Paramètres &rarr; Services &rarr; Tavily
+                          Paramètres &rarr; Services
                         </a>.
                       </p>
                     </div>
@@ -1154,7 +1227,9 @@ export default function HuntRPlugin() {
                 {/* Pro toggle */}
                 <button
                   onClick={() => canPro && setProSearch(!proSearch)}
-                  title={canPro ? 'Tavily + LLM' : 'Configurez Tavily + un provider LLM pour activer le mode Pro'}
+                  title={canPro
+                    ? 'Synthèse LLM sur résultats multi-sources'
+                    : 'Configurez un provider LLM (Paramètres → Providers) pour activer le mode Pro'}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 5,
                     padding: '11px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600,
@@ -1251,6 +1326,45 @@ export default function HuntRPlugin() {
                     )}
                   </button>
                 )}
+                {/* Sources toggle — liste les providers activables (mode Pro
+                    a accès à tous, mode Classique uniquement aux gratuits) */}
+                {(() => {
+                  const activeCount = providersStatus.filter(p =>
+                    p.enabled && p.has_requirements && (proSearch || p.supports_classic)
+                  ).length
+                  const showON = activeCount > 1
+                  return (
+                    <button
+                      onClick={() => setShowProvidersPanel(v => !v)}
+                      title="Choisir les moteurs de recherche actifs"
+                      style={{
+                        marginLeft: customFormat ? 0 : 'auto',
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '7px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                        background: showON
+                          ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
+                          : 'var(--bg-secondary)',
+                        border: showON
+                          ? '1px solid var(--scarlet)'
+                          : '1px solid var(--border)',
+                        color: showON ? 'var(--scarlet)' : 'var(--text-muted)',
+                        cursor: 'pointer', transition: 'all 0.15s',
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35"/>
+                      </svg>
+                      Sources
+                      <span style={{
+                        fontSize: 9, padding: '1px 6px', borderRadius: 999,
+                        background: showON ? 'var(--scarlet)' : 'var(--bg-tertiary)',
+                        color: showON ? '#fff' : 'var(--text-muted)',
+                        fontWeight: 700,
+                      }}>{activeCount}</span>
+                    </button>
+                  )
+                })()}
               </div>
 
               {/* Format editor panel — WYSIWYG contenteditable */}
@@ -1268,6 +1382,92 @@ export default function HuntRPlugin() {
                   hasSavedFormat={!!customFormat}
                   hasResults={!!hasResults}
                 />
+              )}
+
+              {/* Panel Sources — toggle des moteurs de recherche */}
+              {showProvidersPanel && (
+                <div style={{
+                  marginTop: 10,
+                  padding: 14,
+                  borderRadius: 10,
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border)',
+                  width: '100%',
+                  maxWidth: !hasResults ? 640 : undefined,
+                }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    marginBottom: 10,
+                  }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Moteurs de recherche
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                      {proSearch
+                        ? 'Mode Pro : tous les providers disponibles'
+                        : 'Mode Classique : gratuits uniquement'}
+                    </div>
+                  </div>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                    gap: 8,
+                  }}>
+                    {providersStatus.map(p => {
+                      const usable = p.has_requirements && (proSearch || p.supports_classic)
+                      const reason = !p.has_requirements
+                        ? (p.needs_key ? 'Clé API manquante' : 'URL manquante')
+                        : (!proSearch && !p.supports_classic)
+                          ? 'Réservé au mode Pro'
+                          : ''
+                      return (
+                        <label
+                          key={p.id}
+                          title={reason || `Poids de consensus : ${p.weight.toFixed(1)}`}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            padding: '8px 10px', borderRadius: 8,
+                            background: 'var(--bg-tertiary)',
+                            border: usable && p.enabled
+                              ? '1px solid var(--scarlet)'
+                              : '1px solid var(--border)',
+                            cursor: usable ? 'pointer' : 'not-allowed',
+                            opacity: usable ? 1 : 0.5,
+                            transition: 'border-color 0.15s',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={p.enabled && usable}
+                            disabled={!usable || savingProviders}
+                            onChange={e => toggleProvider(p.id, e.target.checked)}
+                            style={{ accentColor: 'var(--scarlet)' }}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{
+                              fontSize: 12, fontWeight: 600,
+                              color: usable ? 'var(--text-primary)' : 'var(--text-muted)',
+                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            }}>
+                              {p.label}
+                            </div>
+                            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                              {reason || (p.supports_classic ? 'Gratuit' : 'Pro uniquement')}
+                            </div>
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <div style={{
+                    marginTop: 10, fontSize: 10.5, color: 'var(--text-muted)',
+                    lineHeight: 1.45,
+                  }}>
+                    Quand plusieurs moteurs sont actifs, HuntR les lance en parallèle,
+                    dédup les URLs et privilégie celles qui reviennent chez plusieurs
+                    sources. Les clés API se configurent dans <strong style={{ color: 'var(--scarlet)' }}>Paramètres → Services</strong>.
+                  </div>
+                </div>
               )}
 
               {/* Suggestions (idle) */}
@@ -1367,10 +1567,17 @@ export default function HuntRPlugin() {
                         animation: 'huntr-fadeIn 0.3s ease-out',
                         animationDelay: `${i * 0.05}s`, animationFillMode: 'both',
                       }}>
-                        <div style={{
-                          width: 6, height: 6, borderRadius: '50%',
-                          background: ENGINE_COLORS[s.source || ''] || 'var(--text-muted)', flexShrink: 0,
-                        }} />
+                        {/* Un point par provider qui a contribué cette URL —
+                            le nombre de points signale le niveau de consensus. */}
+                        <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}
+                             title={(s.providers || [s.source || '']).filter(Boolean).join(' + ')}>
+                          {(s.providers && s.providers.length ? s.providers : [s.source || '']).map((p, j) => (
+                            <div key={j} style={{
+                              width: 6, height: 6, borderRadius: '50%',
+                              background: ENGINE_COLORS[p || ''] || 'var(--text-muted)',
+                            }} />
+                          ))}
+                        </div>
                         <span style={{ color: 'var(--text-muted)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {host}
                         </span>

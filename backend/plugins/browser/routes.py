@@ -28,7 +28,12 @@ from backend.core.api.auth_helpers import (
     open_mode_fallback_user_id,
 )
 
-from .search_providers import DDGProvider, TavilyProvider, SearchResult, VALID_TOPICS
+from .search_providers import (
+    DDGProvider, TavilyProvider, BraveProvider, ExaProvider,
+    SerperProvider, SerpAPIProvider, KagiProvider, BingProvider,
+    SearXNGProvider, SearchResult, VALID_TOPICS,
+    FREE_PROVIDERS, PROVIDER_WEIGHTS, multi_search,
+)
 from .cache import tavily_cache
 
 logger = logging.getLogger("gungnir.plugins.huntr")
@@ -71,12 +76,154 @@ async def _uid(request: Request, session: AsyncSession) -> int:
 
 
 async def _resolve_tavily(user_id: int, session: AsyncSession) -> TavilyProvider | None:
-    """Get the user's Tavily provider (or None if no key configured)."""
+    """Legacy single-provider resolver (kept for cache-key back-compat)."""
     us = await get_user_settings(user_id, session)
     svc = get_user_service_key(us, "tavily")
     if not svc or not svc.get("api_key"):
         return None
     return TavilyProvider(api_key=svc["api_key"])
+
+
+# Registre des providers HuntR : chaque entrée décrit comment instancier le
+# provider à partir de la config service user, et si le provider est
+# utilisable en mode Classique (FREE_PROVIDERS).
+HUNTR_PROVIDER_SPECS: dict[str, dict] = {
+    "duckduckgo": {
+        "label": "DuckDuckGo",
+        "needs_key": False,
+        "factory": lambda svc: DDGProvider(),
+    },
+    "tavily": {
+        "label": "Tavily",
+        "needs_key": True,
+        "factory": lambda svc: TavilyProvider(api_key=svc["api_key"]),
+    },
+    "brave": {
+        "label": "Brave Search",
+        "needs_key": True,
+        "factory": lambda svc: BraveProvider(api_key=svc["api_key"]),
+    },
+    "exa": {
+        "label": "Exa",
+        "needs_key": True,
+        "factory": lambda svc: ExaProvider(api_key=svc["api_key"]),
+    },
+    "serper": {
+        "label": "Serper.dev",
+        "needs_key": True,
+        "factory": lambda svc: SerperProvider(api_key=svc["api_key"]),
+    },
+    "serpapi": {
+        "label": "SerpAPI",
+        "needs_key": True,
+        "factory": lambda svc: SerpAPIProvider(api_key=svc["api_key"]),
+    },
+    "kagi": {
+        "label": "Kagi",
+        "needs_key": True,
+        "factory": lambda svc: KagiProvider(api_key=svc["api_key"]),
+    },
+    "bing": {
+        "label": "Bing Web Search",
+        "needs_key": True,
+        "factory": lambda svc: BingProvider(api_key=svc["api_key"]),
+    },
+    "searxng": {
+        "label": "SearXNG (self-hosted)",
+        "needs_key": False,  # clé optionnelle, URL obligatoire
+        "factory": lambda svc: SearXNGProvider(
+            base_url=svc.get("base_url", ""),
+            api_key=svc.get("api_key", ""),
+        ),
+    },
+}
+
+
+# Activation par défaut si l'utilisateur n'a rien configuré — on allume DDG
+# (pas de clé) + Tavily (legacy, déjà configuré par beaucoup d'users) pour
+# ne pas casser les habitudes existantes.
+DEFAULT_ENABLED_PROVIDERS = {"duckduckgo", "tavily"}
+
+
+def _provider_has_requirements(name: str, svc: dict | None) -> bool:
+    """Vrai si les prérequis (clé ou URL) sont présents pour ce provider."""
+    if name == "duckduckgo":
+        return True
+    if name == "searxng":
+        return bool((svc or {}).get("base_url"))
+    return bool((svc or {}).get("api_key"))
+
+
+async def _resolve_huntr_providers(
+    user_id: int,
+    session: AsyncSession,
+    pro: bool,
+) -> list[tuple[str, object]]:
+    """Retourne la liste des (nom, instance) de providers à utiliser.
+
+    - En Classique : uniquement les providers "gratuits" (DDG + SearXNG
+      configuré), parmi ceux activés par l'utilisateur (défaut : DDG seul).
+    - En Pro : tous les providers pour lesquels l'utilisateur a une clé ET
+      qui sont activés dans `huntr_config.providers`.
+
+    Si aucun provider n'est résolvable (ex: aucune clé en Pro), on retombe
+    sur DDG pour garantir qu'il y a toujours un résultat.
+    """
+    us = await get_user_settings(user_id, session)
+    cfg = (us.huntr_config or {})
+    user_flags: dict = (cfg.get("providers") or {})
+
+    def _is_enabled(name: str) -> bool:
+        entry = user_flags.get(name)
+        if isinstance(entry, dict):
+            return bool(entry.get("enabled", True))  # présent = intentionnel
+        # Fallback : activation par défaut si l'user n'a rien configuré
+        return name in DEFAULT_ENABLED_PROVIDERS
+
+    out: list[tuple[str, object]] = []
+    for name, spec in HUNTR_PROVIDER_SPECS.items():
+        if not _is_enabled(name):
+            continue
+        if not pro and name not in FREE_PROVIDERS:
+            continue
+        svc = get_user_service_key(us, name) if spec["needs_key"] or name == "searxng" else None
+        if not _provider_has_requirements(name, svc):
+            continue
+        try:
+            out.append((name, spec["factory"](svc or {})))
+        except Exception as e:
+            logger.warning(f"[HuntR] provider '{name}' instantiation failed: {e}")
+
+    if not out:
+        logger.info(f"[HuntR] No provider resolved for user {user_id} pro={pro} → fallback DDG")
+        out.append(("duckduckgo", DDGProvider()))
+    return out
+
+
+async def _providers_status(user_id: int, session: AsyncSession) -> list[dict]:
+    """État par provider pour l'UI : label, has_key, enabled, supports_classic."""
+    us = await get_user_settings(user_id, session)
+    cfg = (us.huntr_config or {})
+    user_flags: dict = (cfg.get("providers") or {})
+    rows = []
+    for name, spec in HUNTR_PROVIDER_SPECS.items():
+        svc = get_user_service_key(us, name)
+        has_req = _provider_has_requirements(name, svc)
+        entry = user_flags.get(name)
+        if isinstance(entry, dict) and "enabled" in entry:
+            enabled = bool(entry["enabled"])
+        else:
+            enabled = name in DEFAULT_ENABLED_PROVIDERS
+        rows.append({
+            "id": name,
+            "label": spec["label"],
+            "needs_key": spec["needs_key"] or name == "searxng",
+            "has_requirements": has_req,
+            "enabled": enabled,
+            "supports_classic": name in FREE_PROVIDERS,
+            "weight": PROVIDER_WEIGHTS.get(name, 1.0),
+        })
+    return rows
 
 
 async def _resolve_llm(
@@ -738,7 +885,9 @@ async def search_stream(req: SearchRequest, request: Request,
     topic = req.safe_topic()
 
     # ── Resolve per-user resources BEFORE the stream ─────────────────
-    tavily = await _resolve_tavily(uid, session)
+    providers_list = await _resolve_huntr_providers(uid, session, pro=req.pro_search)
+    provider_names = [name for name, _ in providers_list]
+
     # Resolve the effective custom format: request override > user preference.
     # `resolved_format` can be JSON-encoded blocks (from the block editor) or
     # raw Markdown (legacy) — we normalize it to a Markdown template here so
@@ -753,12 +902,9 @@ async def search_stream(req: SearchRequest, request: Request,
     llm_error = None
 
     if req.pro_search:
-        if not tavily:
-            return JSONResponse(
-                {"error": "Mode Pro nécessite une clé Tavily. "
-                          "Ajoutez-la dans Paramètres → Services → Tavily."},
-                status_code=400,
-            )
+        # Pro autorisé même sans clé spécifique : le fallback DDG garantit
+        # qu'on a toujours au moins un provider. Ce qui nous manque vraiment
+        # c'est un LLM configuré pour la synthèse.
         try:
             llm_provider, llm_model = await _resolve_llm(
                 uid, session,
@@ -773,7 +919,10 @@ async def search_stream(req: SearchRequest, request: Request,
     cache_key = None
     cached_payload = None
     if req.pro_search and topic != "news":
-        cache_key = tavily_cache.make_key(uid, req.query, "pro", req.max_results, topic, resolved_format_raw)
+        cache_key = tavily_cache.make_key(
+            uid, req.query, "pro", req.max_results, topic,
+            resolved_format_raw, providers=provider_names,
+        )
         cached_payload = tavily_cache.get(cache_key)
 
     async def _stream():
@@ -820,21 +969,26 @@ async def search_stream(req: SearchRequest, request: Request,
 
             if not req.pro_search:
                 # ══════════════════════════════════════════════════════
-                # MODE CLASSIQUE — DDG only, 100% gratuit, 0 API key
+                # MODE CLASSIQUE — providers gratuits, 0 LLM
                 # ══════════════════════════════════════════════════════
                 topic_label = TOPIC_LABELS.get(topic, "Web")
-                yield _sse("status", {"message": f"Recherche {topic_label} (DuckDuckGo)...", "step": 1, "topic": topic})
+                sources_label = ", ".join(n.capitalize() for n in provider_names) or "DDG"
+                yield _sse("status", {
+                    "message": f"Recherche {topic_label} ({sources_label})...",
+                    "step": 1, "topic": topic,
+                })
 
-                ddg = DDGProvider()
-                results = await ddg.search(query, max_results=req.max_results, topic=topic)
-                engines = ["duckduckgo"]
+                results = await multi_search(providers_list, query, req.max_results, topic)
+                # `engines` = union des providers qui ont contribué au moins un
+                # résultat (pas juste ceux appelés).
+                engines = sorted({p for r in results for p in (r.providers or [r.source])}) or provider_names
 
                 yield _sse("search", {
                     "count": len(results),
                     "engines": engines,
                     "results": [
                         {"title": r.title, "url": r.url, "snippet": r.snippet,
-                         "source": r.source}
+                         "source": r.source, "providers": r.providers or [r.source]}
                         for r in results[:10]
                     ],
                 })
@@ -863,26 +1017,24 @@ async def search_stream(req: SearchRequest, request: Request,
                 return
 
             # ══════════════════════════════════════════════════════════
-            # MODE PRO — Tavily + LLM (4 steps)
+            # MODE PRO — multi-providers (parallèle + dédup) + LLM
             # ══════════════════════════════════════════════════════════
             topic_label = TOPIC_LABELS.get(topic, "Web")
+            sources_label = ", ".join(n.capitalize() for n in provider_names) or "DDG"
 
-            # Step 1: Tavily search
+            # Step 1: lancement parallèle de tous les providers activés
             yield _sse("status", {
-                "message": f"Recherche {topic_label} (Tavily)...",
+                "message": f"Recherche {topic_label} ({sources_label})...",
                 "step": 1, "total_steps": 4, "topic": topic,
             })
-            results = await tavily.search(query, max_results=req.max_results, topic=topic)
+            results = await multi_search(providers_list, query, req.max_results, topic)
 
-            if not results:
-                yield _sse("status", {"message": "Fallback DuckDuckGo...", "step": 1, "total_steps": 4})
-                ddg = DDGProvider()
-                results = await ddg.search(query, max_results=req.max_results, topic=topic)
-
-            engines = list(set(r.source for r in results)) if results else ["tavily"]
+            engines = sorted({p for r in results for p in (r.providers or [r.source])}) \
+                      or provider_names
 
             live_results = [
-                {"title": r.title, "url": r.url, "snippet": r.snippet, "source": r.source}
+                {"title": r.title, "url": r.url, "snippet": r.snippet,
+                 "source": r.source, "providers": r.providers or [r.source]}
                 for r in results[:10]
             ]
 
@@ -1073,6 +1225,10 @@ async def health():
 
 class HuntRPreferences(BaseModel):
     custom_format: Optional[str] = None  # None ou "" = reset au format par defaut
+    # Toggle par provider — envoyé par la page Settings HuntR. Clés = ids
+    # de providers ("brave", "exa", ...) ; valeur = {enabled: bool}. Un provider
+    # absent reste sur le défaut (DDG/Tavily activés).
+    providers: Optional[dict] = None
 
 
 _MAX_CUSTOM_FORMAT_LEN = 4000
@@ -1087,6 +1243,7 @@ async def get_preferences(request: Request, session: AsyncSession = Depends(get_
     cfg = us.huntr_config or {}
     return {
         "custom_format": cfg.get("custom_format", "") or "",
+        "providers": cfg.get("providers") or {},
     }
 
 
@@ -1098,21 +1255,57 @@ async def put_preferences(prefs: HuntRPreferences, request: Request,
         return JSONResponse({"error": "Authentification requise."}, status_code=401)
     us = await get_user_settings(uid, session)
     cfg = dict(us.huntr_config or {})
-    fmt = (prefs.custom_format or "").strip()
-    if len(fmt) > _MAX_CUSTOM_FORMAT_LEN:
-        raise HTTPException(status_code=400, detail=f"custom_format trop long (max {_MAX_CUSTOM_FORMAT_LEN} caractères)")
-    if fmt:
-        cfg["custom_format"] = fmt
-    else:
-        cfg.pop("custom_format", None)
+
+    # custom_format (inchangé)
+    if prefs.custom_format is not None:
+        fmt = (prefs.custom_format or "").strip()
+        if len(fmt) > _MAX_CUSTOM_FORMAT_LEN:
+            raise HTTPException(status_code=400, detail=f"custom_format trop long (max {_MAX_CUSTOM_FORMAT_LEN} caractères)")
+        if fmt:
+            cfg["custom_format"] = fmt
+        else:
+            cfg.pop("custom_format", None)
+
+    # Providers toggles : on n'accepte que les noms connus, uniquement la clé
+    # 'enabled' (pas d'injection de champs arbitraires).
+    if prefs.providers is not None:
+        if not isinstance(prefs.providers, dict):
+            raise HTTPException(status_code=400, detail="providers doit être un objet")
+        cleaned: dict = {}
+        for name, entry in prefs.providers.items():
+            if name not in HUNTR_PROVIDER_SPECS:
+                continue
+            if isinstance(entry, dict):
+                cleaned[name] = {"enabled": bool(entry.get("enabled", True))}
+            elif isinstance(entry, bool):
+                cleaned[name] = {"enabled": entry}
+        cfg["providers"] = cleaned
+
     us.huntr_config = cfg
     # JSON Column mutation → flag the attribute so SQLAlchemy persists the change.
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(us, "huntr_config")
     await session.commit()
-    # Invalidate user's cached Pro answers since the structure likely changed.
+    # Invalidate user's cached Pro answers since structure/providers may have changed.
     tavily_cache.invalidate_user(uid)
-    return {"ok": True, "custom_format": cfg.get("custom_format", "") or ""}
+    return {
+        "ok": True,
+        "custom_format": cfg.get("custom_format", "") or "",
+        "providers": cfg.get("providers") or {},
+    }
+
+
+@router.get("/providers")
+async def list_providers(request: Request, session: AsyncSession = Depends(get_session)):
+    """Retourne l'état de chaque provider HuntR pour l'UI config.
+
+    Inclut : label, si une clé est requise, si l'utilisateur a bien fourni
+    la clé/URL, si le toggle est activé, et si le provider fonctionne en
+    mode Classique (= gratuit)."""
+    uid = await _uid(request, session)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise."}, status_code=401)
+    return {"providers": await _providers_status(uid, session)}
 
 
 @router.get("/history")
@@ -1201,6 +1394,18 @@ async def user_capabilities(request: Request,
     if tavily_svc and tavily_svc.get("api_key"):
         has_tavily = True
 
+    # Dispose-t-on d'au moins un provider de recherche au-delà de DDG ? (utile
+    # pour relever les gates UI : Pro fonctionne même sur DDG seul désormais,
+    # mais montrer "aucun provider configuré" a une valeur informative.)
+    has_any_search_key = False
+    for name, spec in HUNTR_PROVIDER_SPECS.items():
+        if name == "duckduckgo":
+            continue
+        svc = get_user_service_key(us, name)
+        if _provider_has_requirements(name, svc):
+            has_any_search_key = True
+            break
+
     has_llm = False
     pname = us.active_provider or "openrouter"
     user_prov = get_user_provider_key(us, pname)
@@ -1209,6 +1414,7 @@ async def user_capabilities(request: Request,
 
     return {
         "has_tavily": has_tavily,
+        "has_any_search_key": has_any_search_key,
         "has_llm": has_llm,
         "provider": pname if has_llm else None,
         "model": us.active_model if has_llm else None,

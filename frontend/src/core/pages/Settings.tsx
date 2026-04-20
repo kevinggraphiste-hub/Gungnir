@@ -1598,11 +1598,15 @@ export default function Settings() {
                   huggingface: ['base_url', 'api_key'],
                   replicate: ['base_url', 'api_key'],
                   stability: ['base_url', 'api_key'],
-                  serper: ['api_key'],
-                  tavily: ['api_key'],
                   // Recherche web (HuntR)
+                  tavily: ['api_key'],
                   brave: ['api_key'],
-                  searxng: ['base_url'],
+                  exa: ['api_key'],
+                  serper: ['api_key'],
+                  serpapi: ['api_key'],
+                  kagi: ['api_key'],
+                  bing: ['api_key'],
+                  searxng: ['base_url', 'api_key'],
                 }
                 const fieldDefs: Record<string, { label: string; placeholder: string; type?: string }> = {
                   base_url: { label: 'URL de base', placeholder: 'https://...' },

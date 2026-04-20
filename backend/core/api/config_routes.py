@@ -326,10 +326,14 @@ SERVICE_LABELS = {
     "huggingface": "Hugging Face",
     "replicate": "Replicate",
     "stability": "Stability AI",
-    "serper": "Serper (Google Search)",
-    "tavily": "Tavily (Web Search)",
     # Recherche web (HuntR)
+    "tavily": "Tavily (Web Search)",
     "brave": "Brave Search",
+    "exa": "Exa (Neural Search)",
+    "serper": "Serper.dev (Google SERP)",
+    "serpapi": "SerpAPI (Google SERP)",
+    "kagi": "Kagi Search",
+    "bing": "Bing Web Search",
     "searxng": "SearXNG (self-hosted)",
 }
 
@@ -341,8 +345,8 @@ SERVICE_CATEGORIES = {
     "communication": ["slack", "discord", "telegram", "email_smtp", "teams", "whatsapp"],
     "automation": ["n8n", "make", "zapier", "activepieces"],
     "monitoring": ["sentry", "grafana", "posthog"],
-    "ai": ["huggingface", "replicate", "stability", "serper"],
-    "search": ["tavily", "brave", "searxng"],
+    "ai": ["huggingface", "replicate", "stability"],
+    "search": ["tavily", "brave", "exa", "serper", "serpapi", "kagi", "bing", "searxng"],
 }
 
 
