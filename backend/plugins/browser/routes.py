@@ -472,6 +472,94 @@ def _resolve_format_to_template(raw: str) -> str:
     return _md_to_marker_template(raw)
 
 
+_MARKER_RE = re.compile(r"\{\{[^{}\n]{1,200}\}\}")
+
+
+def _validate_template_compliance(answer: str, template: str) -> tuple[bool, list[str]]:
+    """Vérifie que la sortie LLM respecte le template marker.
+
+    Le revert `d1cae46` a été motivé par "le LLM ne respectait pas fiablement
+    le template" — en pratique, 90% des ratés observés tombent dans :
+    1. Le LLM recopie les marqueurs `{{CONTENU: …}}` verbatim au lieu de les
+       substituer par du contenu.
+    2. Le LLM saute des sections (moins de `##` que prévu).
+
+    Retourne (ok, issues). Non-destructif : c'est l'appelant qui décide s'il
+    relance ou pas.
+    """
+    issues: list[str] = []
+    if not (template or "").strip():
+        return True, issues
+
+    # 1. Aucun marqueur ne doit rester dans la réponse finale.
+    leftover = _MARKER_RE.findall(answer or "")
+    # On tolère {{TITRE}} vide car certains modèles le laissent comme "titre à
+    # définir" — le garde-fou principal, c'est les {{CONTENU:}} / {{LISTE ...}}.
+    hard_leftover = [m for m in leftover if not m.strip("{}").strip().upper().startswith("TITRE")]
+    if hard_leftover:
+        uniq = sorted(set(hard_leftover))[:5]
+        issues.append(f"marqueurs non-substitués ({len(hard_leftover)} total) : {uniq}")
+
+    # 2. Structure de titres : on compare le nombre de `#`, `##`, `###`
+    # (hors lignes dans des fences ``` — les tableaux n'en ont pas normalement).
+    def _count_headings(text: str) -> tuple[int, int, int]:
+        h1 = h2 = h3 = 0
+        in_fence = False
+        for line in (text or "").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            if stripped.startswith("### "):
+                h3 += 1
+            elif stripped.startswith("## "):
+                h2 += 1
+            elif stripped.startswith("# "):
+                h1 += 1
+        return h1, h2, h3
+
+    t_h1, t_h2, t_h3 = _count_headings(template)
+    a_h1, a_h2, a_h3 = _count_headings(answer or "")
+
+    # On tolère ±1 sur H2/H3 pour laisser au LLM une marge de style, mais un
+    # écart net = violation.
+    if t_h1 >= 1 and a_h1 == 0:
+        issues.append("titre H1 manquant")
+    if t_h2 > 0 and a_h2 < max(1, t_h2 - 1):
+        issues.append(f"structure H2 dégradée (template {t_h2}, réponse {a_h2})")
+    if t_h3 > 0 and a_h3 < max(1, t_h3 - 1):
+        issues.append(f"structure H3 dégradée (template {t_h3}, réponse {a_h3})")
+
+    return len(issues) == 0, issues
+
+
+def _build_corrective_prompt(template: str, broken_answer: str, issues: list[str]) -> str:
+    """Prompt de relance quand le LLM a produit une réponse non conforme.
+
+    On montre au LLM le template exact + sa réponse actuelle + la liste des
+    violations. Objectif : qu'il réécrive SANS re-poser les sources (il les
+    citait déjà dans broken_answer), juste réparer la structure.
+    """
+    issues_block = "\n".join(f"- {i}" for i in issues) or "- structure globale non respectée"
+    return (
+        "La réponse ci-dessous ne respecte pas le template imposé. Réécris-la "
+        "EN CONSERVANT le contenu, les citations `[1]`/`[2]`/... et les faits, "
+        "mais en réparant la structure.\n\n"
+        f"## Problèmes détectés\n{issues_block}\n\n"
+        f"## Template à respecter\n{template}\n\n"
+        f"## Réponse actuelle (à corriger)\n{broken_answer}\n\n"
+        "Règles impératives :\n"
+        "- AUCUN marqueur `{{...}}` ne doit rester dans la réponse finale (ils "
+        "sont des hints pour toi, pas du contenu).\n"
+        "- Conserve chaque citation [n] à l'endroit où elle était, ne les renumérote pas.\n"
+        "- Garde la hiérarchie exacte de `#`/`##`/`###` du template.\n"
+        "- Ne rajoute pas de préambule méta (« voici la version corrigée » etc.) : "
+        "commence directement par le titre."
+    )
+
+
 def get_system_prompt(topic: str, custom_format: str | None = None) -> str:
     """Build the HuntR pro system prompt.
 
@@ -651,10 +739,15 @@ async def search_stream(req: SearchRequest, request: Request,
 
     # ── Resolve per-user resources BEFORE the stream ─────────────────
     tavily = await _resolve_tavily(uid, session)
-    # Template universel pour tous les utilisateurs en mode Pro : H1 + 3 H2 +
-    # Conclusion (defini dans _BASE_STRUCTURE). On ignore volontairement
-    # `req.custom_format` et la pref DB pour garantir une sortie previsible
-    # quel que soit le LLM choisi.
+    # Resolve the effective custom format: request override > user preference.
+    # `resolved_format` can be JSON-encoded blocks (from the block editor) or
+    # raw Markdown (legacy) — we normalize it to a Markdown template here so
+    # the rest of the code + the LLM see a single consistent format.
+    resolved_format_raw = (req.custom_format or "").strip()
+    if not resolved_format_raw:
+        us = await get_user_settings(uid, session)
+        resolved_format_raw = ((us.huntr_config or {}).get("custom_format") or "").strip()
+    resolved_format = _resolve_format_to_template(resolved_format_raw)
     llm_provider = None
     llm_model = ""
     llm_error = None
@@ -680,7 +773,7 @@ async def search_stream(req: SearchRequest, request: Request,
     cache_key = None
     cached_payload = None
     if req.pro_search and topic != "news":
-        cache_key = tavily_cache.make_key(uid, req.query, "pro", req.max_results, topic)
+        cache_key = tavily_cache.make_key(uid, req.query, "pro", req.max_results, topic, resolved_format_raw)
         cached_payload = tavily_cache.get(cache_key)
 
     async def _stream():
@@ -821,31 +914,54 @@ async def search_stream(req: SearchRequest, request: Request,
             })
 
             context = _build_llm_context(results)
-            n = min(len(results), 10)
-            user_content = (
-                f"QUESTION : {query}\n\n"
-                f"PASSAGES WEB (numérotés [1] à [{n}]) :\n\n"
-                f"{context}\n\n"
-                f"---\n"
-                f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots).\n\n"
-                f"FORMAT OBLIGATOIRE — suis ce squelette exact :\n"
-                f"  1. Un `# Titre principal` (en une phrase)\n"
-                f"  2. `## Aspect 1` + paragraphe de 5-8 phrases\n"
-                f"  3. `## Aspect 2` + paragraphe de 5-8 phrases\n"
-                f"  4. `## Aspect 3` + paragraphe de 5-8 phrases\n"
-                f"  5. `## Conclusion` + paragraphe de 3-5 phrases\n\n"
-                f"AUCUNE liste à puces. AUCUNE liste numérotée. Uniquement de la prose.\n"
-                f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
-                f"Exploite TOUS les passages — chaque source citée au moins une fois."
-            )
-            system_prompt = get_system_prompt(topic)
+            if resolved_format:
+                n = min(len(results), 10)
+                user_content = (
+                    f"QUESTION DE L'UTILISATEUR : {query}\n\n"
+                    f"PASSAGES WEB (numérotés [1] à [{n}]) :\n\n"
+                    f"{context}\n\n"
+                    f"---\n"
+                    f"REPRODUIS EXACTEMENT le template defini dans le system prompt.\n"
+                    f"- Recopie chaque `#`, `##`, `###` (hors marqueurs) mot pour mot\n"
+                    f"- Remplace `{{{{TITRE}}}}` par un titre d'UNE SEULE PHRASE reformulant la question ci-dessus en affirmation\n"
+                    f"- Substitue chaque `{{{{CONTENU: ...}}}}`, `{{{{LISTE À PUCES: ...}}}}`, "
+                    f"`{{{{LISTE NUMÉROTÉE: ...}}}}`, `{{{{TABLEAU: ...}}}}` et `{{{{cellule}}}}` "
+                    f"par du contenu synthetise — AUCUN marqueur ne doit rester dans la reponse finale\n"
+                    f"- Les hints (texte apres `:` dans un marqueur) sont des INSTRUCTIONS pour toi, PAS du contenu a copier\n"
+                    f"- Cite chaque affirmation avec `[1]`, `[2]`, … (format EXACT, crochets droits + chiffre)\n"
+                    f"- Utilise au moins une fois chaque source ({n} au total)\n"
+                    f"- Reformule, ne copie jamais un passage tel quel"
+                )
+            else:
+                user_content = (
+                    f"QUESTION : {query}\n\n"
+                    f"PASSAGES WEB (numérotés [1] à [{min(len(results), 10)}]) :\n\n"
+                    f"{context}\n\n"
+                    f"---\n"
+                    f"Rédige une réponse LONGUE et DÉTAILLÉE (minimum 400 mots).\n\n"
+                    f"FORMAT OBLIGATOIRE — suis ce squelette exact :\n"
+                    f"  1. Un `# Titre principal` (en une phrase)\n"
+                    f"  2. `## Aspect 1` + paragraphe de 5-8 phrases\n"
+                    f"  3. `## Aspect 2` + paragraphe de 5-8 phrases\n"
+                    f"  4. `## Aspect 3` + paragraphe de 5-8 phrases\n"
+                    f"  5. `## Conclusion` + paragraphe de 3-5 phrases\n\n"
+                    f"AUCUNE liste à puces. AUCUNE liste numérotée. Uniquement de la prose.\n"
+                    f"REFORMULE, ne copie pas. Cite [1], [2] etc. DANS chaque phrase.\n"
+                    f"Exploite TOUS les passages — chaque source citée au moins une fois."
+                )
+            system_prompt = get_system_prompt(topic, resolved_format)
             messages = [
                 ChatMessage(role="system", content=system_prompt),
                 ChatMessage(role="user", content=user_content),
             ]
             logger.info(
-                f"[HuntR] Pro synth: topic={topic} system_prompt_len={len(system_prompt)}"
+                f"[HuntR] Pro synth: topic={topic} "
+                f"raw_len={len(resolved_format_raw)} normalized_len={len(resolved_format)} "
+                f"system_prompt_len={len(system_prompt)}"
             )
+            if resolved_format:
+                preview = resolved_format[:320].replace("\n", " ⏎ ")
+                logger.info(f"[HuntR] Normalized template: {preview}{'…' if len(resolved_format) > 320 else ''}")
 
             llm_ok = False
             answer = ""
@@ -869,6 +985,38 @@ async def search_stream(req: SearchRequest, request: Request,
             if not llm_ok:
                 logger.warning("[HuntR] Using classic fallback (LLM empty or failed)")
                 answer = _format_classic_answer(query, results)
+
+            # ── Post-process : si template personnalisé, vérifier qu'il est
+            # respecté. Sinon relancer UN appel correctif (non-streamé cette
+            # fois pour éviter d'abuser du temps user). Corrige le failure
+            # mode qui avait motivé le revert d1cae46.
+            if llm_ok and resolved_format:
+                ok, issues = _validate_template_compliance(answer, resolved_format)
+                if not ok:
+                    logger.warning(f"[HuntR] Template non respecté : {issues}")
+                    yield _sse("status", {"message": "Structure à corriger — relance…"})
+                    try:
+                        corrective = _build_corrective_prompt(resolved_format, answer, issues)
+                        fixed = ""
+                        async for token in llm_provider.chat_stream(
+                            [
+                                ChatMessage(role="system", content=system_prompt),
+                                ChatMessage(role="user", content=corrective),
+                            ],
+                            llm_model, max_tokens=4096, temperature=0.1,
+                        ):
+                            fixed += token
+                        ok2, issues2 = _validate_template_compliance(fixed, resolved_format)
+                        if fixed.strip() and ok2:
+                            logger.info(f"[HuntR] Correction réussie ({len(fixed)} chars)")
+                            answer = fixed
+                        else:
+                            logger.warning(
+                                f"[HuntR] Correction insuffisante (issues={issues2}) — "
+                                "on garde la réponse initiale"
+                            )
+                    except Exception as e:
+                        logger.warning(f"[HuntR] Corrective retry failed: {e}")
 
             related = _related_fallback(query)
             yield _sse("content", {"answer": answer})
