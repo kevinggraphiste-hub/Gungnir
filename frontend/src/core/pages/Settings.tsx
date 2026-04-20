@@ -164,6 +164,72 @@ export default function Settings() {
   const [doctorResult, setDoctorResult] = useState<any>(null)
   const [doctorLoading, setDoctorLoading] = useState(false)
 
+  // ── Préférences TTS/PTT du navigateur (Web Speech API) ───────────
+  // Stockées en localStorage et relues par Chat.tsx à chaque utilisation.
+  // Pas de backend — ces réglages sont client-side et dépendent des
+  // voix installées sur l'OS de l'user.
+  const [ttsPref, setTtsPref] = useState<{
+    voiceURI: string
+    rate: number
+    pitch: number
+    volume: number
+    lang: string  // 'auto' ou BCP-47 (fr-FR, en-US, ...)
+  }>(() => {
+    try {
+      const raw = localStorage.getItem('chat.tts.prefs')
+      if (raw) return JSON.parse(raw)
+    } catch { /* ignore */ }
+    return { voiceURI: '', rate: 1.05, pitch: 1.0, volume: 1.0, lang: 'auto' }
+  })
+  const persistTtsPref = useCallback((next: typeof ttsPref) => {
+    setTtsPref(next)
+    try { localStorage.setItem('chat.tts.prefs', JSON.stringify(next)) } catch { /* ignore */ }
+  }, [])
+
+  const [pttPref, setPttPref] = useState<{
+    lang: string       // 'auto' | BCP-47
+    continuous: boolean
+    interim: boolean
+  }>(() => {
+    try {
+      const raw = localStorage.getItem('chat.ptt.prefs')
+      if (raw) return JSON.parse(raw)
+    } catch { /* ignore */ }
+    return { lang: 'auto', continuous: false, interim: false }
+  })
+  const persistPttPref = useCallback((next: typeof pttPref) => {
+    setPttPref(next)
+    try { localStorage.setItem('chat.ptt.prefs', JSON.stringify(next)) } catch { /* ignore */ }
+  }, [])
+
+  // Voix TTS dispo (fetch async : le navigateur charge la liste après
+  // l'event voiceschanged, parfois après le mount).
+  const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([])
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return
+    const load = () => setTtsVoices(window.speechSynthesis.getVoices() || [])
+    load()
+    window.speechSynthesis.addEventListener('voiceschanged', load)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', load)
+  }, [])
+
+  const previewTts = useCallback(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return
+    window.speechSynthesis.cancel()
+    const utter = new SpeechSynthesisUtterance(
+      'Bonjour, ceci est un aperçu de la voix du chat Gungnir.'
+    )
+    utter.rate = ttsPref.rate
+    utter.pitch = ttsPref.pitch
+    utter.volume = ttsPref.volume
+    utter.lang = ttsPref.lang === 'auto' ? (i18n.language === 'en' ? 'en-US' : 'fr-FR') : ttsPref.lang
+    if (ttsPref.voiceURI) {
+      const v = ttsVoices.find(x => x.voiceURI === ttsPref.voiceURI)
+      if (v) utter.voice = v
+    }
+    window.speechSynthesis.speak(utter)
+  }, [ttsPref, ttsVoices])
+
   // Custom theme
   const [customThemeColors, setCustomThemeColors] = useState<Record<string, string>>(() => {
     try {
@@ -1249,6 +1315,156 @@ export default function Settings() {
           {/* -- Voice ----------------------------------------------------- */}
           {activeTab === 'voice' && (
             <div className="space-y-6">
+
+              {/* ── Voix du chat (navigateur) — TTS + PTT ──────────────── */}
+              <div className="border rounded-xl p-5 space-y-5"
+                style={{ borderColor: 'var(--border)', background: 'var(--bg-primary)' }}>
+                <div>
+                  <h3 className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                    <Mic className="w-4 h-4" style={{ color: 'var(--accent-primary)' }} />
+                    Voix du chat (navigateur)
+                  </h3>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                    Lecture vocale des réponses IA (TTS) et dictée vers la zone de saisie (PTT). Utilise l'API Web Speech native — aucune clé API requise, les voix dépendent de ton OS/navigateur.
+                  </p>
+                </div>
+
+                {/* ── TTS ───────────────────────────────────────── */}
+                <div className="space-y-3 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
+                      Lecture des réponses (TTS)
+                    </h4>
+                    <button onClick={previewTts}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors hover:opacity-80"
+                      style={{ background: 'color-mix(in srgb, var(--accent-primary) 15%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)' }}>
+                      Tester
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Voix */}
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Voix</span>
+                      <select
+                        value={ttsPref.voiceURI}
+                        onChange={e => persistTtsPref({ ...ttsPref, voiceURI: e.target.value })}
+                        className="rounded-lg px-3 py-2 text-sm outline-none"
+                        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                      >
+                        <option value="">Défaut navigateur</option>
+                        {ttsVoices.map(v => (
+                          <option key={v.voiceURI} value={v.voiceURI}>
+                            {v.name} ({v.lang}){v.default ? ' ·' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        {ttsVoices.length} voix détectée{ttsVoices.length > 1 ? 's' : ''}
+                      </span>
+                    </label>
+
+                    {/* Langue */}
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Langue forcée</span>
+                      <select
+                        value={ttsPref.lang}
+                        onChange={e => persistTtsPref({ ...ttsPref, lang: e.target.value })}
+                        className="rounded-lg px-3 py-2 text-sm outline-none"
+                        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                      >
+                        <option value="auto">Auto (suit l'interface)</option>
+                        <option value="fr-FR">Français (fr-FR)</option>
+                        <option value="en-US">English (en-US)</option>
+                        <option value="en-GB">English (en-GB)</option>
+                        <option value="es-ES">Español (es-ES)</option>
+                        <option value="de-DE">Deutsch (de-DE)</option>
+                        <option value="it-IT">Italiano (it-IT)</option>
+                        <option value="pt-PT">Português (pt-PT)</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  {/* Sliders */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
+                        <span>Vitesse</span><span>{ttsPref.rate.toFixed(2)}x</span>
+                      </span>
+                      <input type="range" min={0.5} max={2.0} step={0.05}
+                        value={ttsPref.rate}
+                        onChange={e => persistTtsPref({ ...ttsPref, rate: parseFloat(e.target.value) })}
+                        className="accent-[var(--accent-primary)]" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
+                        <span>Pitch</span><span>{ttsPref.pitch.toFixed(2)}</span>
+                      </span>
+                      <input type="range" min={0.5} max={2.0} step={0.05}
+                        value={ttsPref.pitch}
+                        onChange={e => persistTtsPref({ ...ttsPref, pitch: parseFloat(e.target.value) })}
+                        className="accent-[var(--accent-primary)]" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold flex justify-between" style={{ color: 'var(--text-muted)' }}>
+                        <span>Volume</span><span>{Math.round(ttsPref.volume * 100)}%</span>
+                      </span>
+                      <input type="range" min={0} max={1.0} step={0.05}
+                        value={ttsPref.volume}
+                        onChange={e => persistTtsPref({ ...ttsPref, volume: parseFloat(e.target.value) })}
+                        className="accent-[var(--accent-primary)]" />
+                    </label>
+                  </div>
+                </div>
+
+                {/* ── PTT ───────────────────────────────────────── */}
+                <div className="space-y-3 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                  <h4 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
+                    Dictée vocale (PTT)
+                  </h4>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Langue de reconnaissance</span>
+                      <select
+                        value={pttPref.lang}
+                        onChange={e => persistPttPref({ ...pttPref, lang: e.target.value })}
+                        className="rounded-lg px-3 py-2 text-sm outline-none"
+                        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                      >
+                        <option value="auto">Auto (suit l'interface)</option>
+                        <option value="fr-FR">Français (fr-FR)</option>
+                        <option value="en-US">English (en-US)</option>
+                        <option value="en-GB">English (en-GB)</option>
+                        <option value="es-ES">Español (es-ES)</option>
+                        <option value="de-DE">Deutsch (de-DE)</option>
+                        <option value="it-IT">Italiano (it-IT)</option>
+                        <option value="pt-PT">Português (pt-PT)</option>
+                      </select>
+                    </label>
+
+                    <div className="flex flex-col gap-2">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={pttPref.continuous}
+                          onChange={e => persistPttPref({ ...pttPref, continuous: e.target.checked })}
+                          className="w-4 h-4 accent-[var(--accent-primary)]" />
+                        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                          Mode continu <span style={{ color: 'var(--text-muted)' }}>(dicte plusieurs phrases avant de s'arrêter)</span>
+                        </span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={pttPref.interim}
+                          onChange={e => persistPttPref({ ...pttPref, interim: e.target.checked })}
+                          className="w-4 h-4 accent-[var(--accent-primary)]" />
+                        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                          Résultats intermédiaires <span style={{ color: 'var(--text-muted)' }}>(affiche le texte au fur et à mesure)</span>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                 Configurez vos providers de chat vocal temps réel. Chaque provider utilise du vrai bidirectionnel WebSocket.
               </p>

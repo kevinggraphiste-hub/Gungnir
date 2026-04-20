@@ -738,10 +738,29 @@ export default function Chat() {
     if (!plain) return
     window.speechSynthesis.cancel()  // arrête la lecture en cours s'il y en a une
     const utter = new SpeechSynthesisUtterance(plain)
-    // Langue : suit i18n (fr, en, etc.). Les voix sont choisies par le navigateur.
-    utter.lang = i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`
-    utter.rate = 1.05
-    utter.pitch = 1.0
+
+    // Lit les prefs TTS depuis localStorage (écrites par Settings → Voix).
+    // Fallback safe si rien n'est configuré.
+    let prefs: { voiceURI: string; rate: number; pitch: number; volume: number; lang: string } | null = null
+    try {
+      const raw = localStorage.getItem('chat.tts.prefs')
+      if (raw) prefs = JSON.parse(raw)
+    } catch { /* ignore */ }
+
+    utter.rate = prefs?.rate ?? 1.05
+    utter.pitch = prefs?.pitch ?? 1.0
+    utter.volume = prefs?.volume ?? 1.0
+    // Langue : 'auto' suit i18n ; sinon on force la langue explicite.
+    const forcedLang = prefs?.lang && prefs.lang !== 'auto' ? prefs.lang : null
+    utter.lang = forcedLang
+      || (i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`)
+    // Voix explicite si l'user en a choisi une.
+    if (prefs?.voiceURI) {
+      const voices = window.speechSynthesis.getVoices() || []
+      const found = voices.find(v => v.voiceURI === prefs!.voiceURI)
+      if (found) utter.voice = found
+    }
+
     utter.onstart = () => setTtsSpeaking(true)
     utter.onend = () => setTtsSpeaking(false)
     utter.onerror = () => setTtsSpeaking(false)
@@ -776,15 +795,33 @@ export default function Chat() {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SpeechRecognition) return
     if (recognitionRef.current) return
+    // Lit les prefs PTT depuis localStorage (Settings → Voix).
+    let prefs: { lang: string; continuous: boolean; interim: boolean } | null = null
+    try {
+      const raw = localStorage.getItem('chat.ptt.prefs')
+      if (raw) prefs = JSON.parse(raw)
+    } catch { /* ignore */ }
+    const forcedLang = prefs?.lang && prefs.lang !== 'auto' ? prefs.lang : null
     const recognition = new SpeechRecognition()
-    recognition.lang = i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`
-    recognition.interimResults = false
+    recognition.lang = forcedLang
+      || (i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`)
+    recognition.interimResults = !!prefs?.interim
     recognition.maxAlternatives = 1
-    recognition.continuous = false
+    recognition.continuous = !!prefs?.continuous
     recognition.onstart = () => setPttStatus('recording')
     recognition.onresult = (event: any) => {
-      const transcript = event.results[0]?.[0]?.transcript || ''
-      if (transcript) { setInput(prev => (prev ? prev + ' ' : '') + transcript); setTimeout(() => inputRef.current?.focus(), 50) }
+      // Mode continu + interim : on aggrège seulement les segments finalisés
+      // depuis l'index du dernier batch reçu pour éviter les doublons.
+      let finalText = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const res = event.results[i]
+        if (res.isFinal && res[0]?.transcript) finalText += res[0].transcript
+      }
+      finalText = finalText.trim()
+      if (finalText) {
+        setInput(prev => (prev ? prev + ' ' : '') + finalText)
+        setTimeout(() => inputRef.current?.focus(), 50)
+      }
     }
     recognition.onerror = () => { setPttStatus('idle'); recognitionRef.current = null }
     recognition.onend = () => { setPttStatus('idle'); recognitionRef.current = null }
