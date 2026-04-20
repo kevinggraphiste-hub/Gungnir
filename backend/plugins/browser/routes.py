@@ -139,12 +139,6 @@ HUNTR_PROVIDER_SPECS: dict[str, dict] = {
 }
 
 
-# Activation par défaut si l'utilisateur n'a rien configuré — on allume DDG
-# (pas de clé) + Tavily (legacy, déjà configuré par beaucoup d'users) pour
-# ne pas casser les habitudes existantes.
-DEFAULT_ENABLED_PROVIDERS = {"duckduckgo", "tavily"}
-
-
 def _provider_has_requirements(name: str, svc: dict | None) -> bool:
     """Vrai si les prérequis (clé ou URL) sont présents pour ce provider."""
     if name == "duckduckgo":
@@ -152,6 +146,25 @@ def _provider_has_requirements(name: str, svc: dict | None) -> bool:
     if name == "searxng":
         return bool((svc or {}).get("base_url"))
     return bool((svc or {}).get("api_key"))
+
+
+def _default_enabled(name: str, us) -> bool:
+    """Valeur par défaut du toggle quand l'user n'a rien explicitement configuré.
+
+    - DDG : toujours activé (pas de clé requise, pas de fuite possible).
+    - Autres providers : activés SEULEMENT si l'user a déjà fourni sa propre
+      clé/URL. Évite d'afficher Tavily/Brave/... comme "enabled" sans clé
+      (trompeur), et migre automatiquement les users existants qui avaient
+      configuré Tavily avant le multi-provider.
+
+    IMPORTANT : chaque clé lue ici vient strictement de `us` (user_settings
+    de l'user courant). Aucun fallback vers une clé admin/globale, aucune
+    lecture d'env var : chaque utilisateur doit fournir la sienne.
+    """
+    if name == "duckduckgo":
+        return True
+    svc = get_user_service_key(us, name)
+    return _provider_has_requirements(name, svc)
 
 
 async def _resolve_huntr_providers(
@@ -177,8 +190,9 @@ async def _resolve_huntr_providers(
         entry = user_flags.get(name)
         if isinstance(entry, dict):
             return bool(entry.get("enabled", True))  # présent = intentionnel
-        # Fallback : activation par défaut si l'user n'a rien configuré
-        return name in DEFAULT_ENABLED_PROVIDERS
+        # Défaut : DDG toujours on, autres providers on uniquement si l'user a
+        # déjà fourni sa propre clé (pas de faux positif UI).
+        return _default_enabled(name, us)
 
     out: list[tuple[str, object]] = []
     for name, spec in HUNTR_PROVIDER_SPECS.items():
@@ -213,7 +227,7 @@ async def _providers_status(user_id: int, session: AsyncSession) -> list[dict]:
         if isinstance(entry, dict) and "enabled" in entry:
             enabled = bool(entry["enabled"])
         else:
-            enabled = name in DEFAULT_ENABLED_PROVIDERS
+            enabled = _default_enabled(name, us)
         rows.append({
             "id": name,
             "label": spec["label"],
