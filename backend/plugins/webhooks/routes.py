@@ -58,6 +58,86 @@ def _user_webhook_logs_file(request: Request) -> Path:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Mirror integrations → mcp_server_configs (DB)
+# ══════════════════════════════════════════════════════════════════════════════
+# Pourquoi : la liste des intégrations est stockée en JSON per-user, mais le
+# manager MCP lit uniquement mcp_server_configs (DB) via ensure_user_started.
+# Sans mirror, une intégration démarrée survit en mémoire, mais au prochain
+# boot du backend elle serait oubliée. Le backup/restore exporte aussi depuis
+# la DB — donc écrire dedans garantit la persistence complète.
+
+async def _mirror_integration_to_db(
+    user_id: int,
+    server_name: str,
+    command: str,
+    args: list[str],
+    env: dict,
+    enabled: bool,
+) -> None:
+    """Upsert mcp_server_configs depuis une intégration webhooks. Les env vars
+    sensibles (key/secret/token/password) sont chiffrées avant stockage."""
+    if not user_id or not server_name or not command:
+        return
+    from backend.core.db.engine import get_session
+    from backend.core.db.models import MCPServerConfig as DBMCPServerConfig
+    from backend.core.config.settings import encrypt_value
+    from sqlalchemy import select, delete as _sqldelete
+
+    env_to_store: dict = {}
+    for k, v in (env or {}).items():
+        if not isinstance(v, str) or not v:
+            env_to_store[k] = v
+            continue
+        sensitive = any(t in k.lower() for t in ("key", "secret", "token", "password"))
+        if sensitive and not v.startswith(("FERNET:", "enc:")):
+            env_to_store[k] = encrypt_value(v)
+        else:
+            env_to_store[k] = v
+
+    async for sess in get_session():
+        try:
+            await sess.execute(_sqldelete(DBMCPServerConfig).where(
+                DBMCPServerConfig.user_id == user_id,
+                DBMCPServerConfig.name == server_name,
+            ))
+            sess.add(DBMCPServerConfig(
+                user_id=user_id,
+                name=server_name,
+                command=command,
+                args_json=list(args or []),
+                env_json=env_to_store,
+                enabled=bool(enabled),
+            ))
+            await sess.commit()
+            logger.info(f"MCP mirrored to DB: user={user_id} name={server_name} enabled={enabled}")
+        except Exception as e:
+            await sess.rollback()
+            logger.warning(f"MCP mirror failed: {e}")
+        break
+
+
+async def _remove_integration_from_db(user_id: int, server_name: str) -> None:
+    """Supprime l'entrée mcp_server_configs correspondante si elle existe."""
+    if not user_id or not server_name:
+        return
+    from backend.core.db.engine import get_session
+    from backend.core.db.models import MCPServerConfig as DBMCPServerConfig
+    from sqlalchemy import delete as _sqldelete
+
+    async for sess in get_session():
+        try:
+            await sess.execute(_sqldelete(DBMCPServerConfig).where(
+                DBMCPServerConfig.user_id == user_id,
+                DBMCPServerConfig.name == server_name,
+            ))
+            await sess.commit()
+        except Exception as e:
+            await sess.rollback()
+            logger.warning(f"MCP DB delete failed: {e}")
+        break
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Data Persistence
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -453,6 +533,9 @@ async def remove_integration(integration_id: str, request: Request):
             server_name = removed.get("mcp_server_name") or integration_id
             if await mcp_manager.stop_client_for_user(_uid, server_name):
                 logger.info(f"Stopped MCP server for integration: {integration_id}")
+            # Supprime aussi l'entrée DB miroir — sinon ensure_user_started
+            # tenterait encore de la relancer au prochain boot.
+            await _remove_integration_from_db(_uid, server_name)
         except Exception as e:
             logger.warning(f"Error stopping MCP for {integration_id}: {e}")
 
@@ -495,6 +578,18 @@ async def start_integration_mcp(integration_id: str, request: Request):
             env_values,
         )
 
+        # Mirror dans mcp_server_configs : garantit que le serveur redémarre au
+        # prochain chat si le backend reboot, et qu'il est inclus dans les
+        # exports de backup.
+        await _mirror_integration_to_db(
+            user_id=_uid,
+            server_name=server_name,
+            command=mcp_command,
+            args=mcp_args + extra_args,
+            env=env_values,
+            enabled=True,
+        )
+
         logger.info(f"MCP started for integration '{integration_id}' (user={_uid}): {len(client.tools)} tools")
         return {
             "ok": True,
@@ -521,6 +616,21 @@ async def stop_integration_mcp(integration_id: str, request: Request):
         server_name = (integ.get("mcp_server_name") if integ else None) or integration_id
 
         if await mcp_manager.stop_client_for_user(_uid, server_name):
+            # Passe l'entrée DB en enabled=False pour qu'elle ne soit plus
+            # auto-redémarrée par ensure_user_started au prochain boot.
+            try:
+                from backend.core.db.models import MCPServerConfig as DBMCPServerConfig
+                from backend.core.db.engine import get_session
+                from sqlalchemy import select, update as _sqlupdate
+                async for sess in get_session():
+                    await sess.execute(_sqlupdate(DBMCPServerConfig).where(
+                        DBMCPServerConfig.user_id == _uid,
+                        DBMCPServerConfig.name == server_name,
+                    ).values(enabled=False))
+                    await sess.commit()
+                    break
+            except Exception as e:
+                logger.warning(f"MCP disable-in-db failed: {e}")
             return {"ok": True, "stopped": server_name}
         return {"ok": False, "error": "Serveur non actif"}
     except Exception as e:

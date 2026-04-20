@@ -6,7 +6,7 @@ import {
   Settings as SettingsIcon, Globe, Palette, Key, Mic, RefreshCw,
   HeartPulse, HardDrive, Download, Upload, Trash2, CheckCircle, AlertCircle, Type, User,
   Server, Database, Cloud, MessageSquare, GitBranch, Zap, Search as SearchIcon, Loader2, Plus,
-  Stethoscope, Pipette, ChevronDown, ChevronRight
+  Stethoscope, Pipette, ChevronDown, ChevronRight, Boxes, Play, Square, X as XIcon
 } from 'lucide-react'
 import InfoButton from '../components/InfoButton'
 import { PageHeader } from '../components/ui'
@@ -141,6 +141,37 @@ export default function Settings() {
   const [serviceTesting, setServiceTesting] = useState<string | null>(null)
   const [serviceTestResult, setServiceTestResult] = useState<Record<string, { ok: boolean; message?: string; error?: string }>>({})
   const [serviceSaving, setServiceSaving] = useState(false)
+
+  // ── MCP servers (Model Context Protocol) — per-user ─────────────────────
+  const [mcpServers, setMcpServers] = useState<Array<{
+    name: string
+    command: string
+    args: string[]
+    env: Record<string, string>  // valeurs masquées ('***') pour les secrets
+    enabled: boolean
+  }>>([])
+  const [mcpStatus, setMcpStatus] = useState<Array<{
+    name: string
+    running: boolean
+    tools: number
+    tool_names: string[]
+  }>>([])
+  const [mcpAllowedCommands] = useState<string[]>([
+    'npx', 'node', 'python', 'python3', 'pip', 'pipx', 'uvx',
+    'docker', 'deno', 'bun', 'tsx', 'ts-node',
+  ])
+  const [mcpAddForm, setMcpAddForm] = useState<{
+    name: string
+    command: string
+    argsRaw: string
+    envPairs: Array<{ key: string; value: string }>
+    enabled: boolean
+  }>({
+    name: '', command: 'npx', argsRaw: '', envPairs: [{ key: '', value: '' }],
+    enabled: true,
+  })
+  const [mcpBusy, setMcpBusy] = useState<string | null>(null)
+  const [mcpFlash, setMcpFlash] = useState<{ level: 'ok' | 'err'; msg: string } | null>(null)
 
   // Catégories de services repliées (persist localStorage). Par défaut, tout
   // est replié sauf la catégorie qui contient au moins un service déjà
@@ -549,6 +580,114 @@ export default function Settings() {
     setServiceTesting(null)
   }
 
+  // ── MCP handlers ──────────────────────────────────────────────────────
+  const loadMcp = async () => {
+    try {
+      const resp = await apiFetch('/api/config/mcp/servers')
+      const data = await resp.json()
+      setMcpServers(data.servers || [])
+      setMcpStatus(data.status || [])
+    } catch (err) { console.warn('MCP fetch error:', err) }
+  }
+
+  const handleAddMcpServer = async () => {
+    const f = mcpAddForm
+    const name = f.name.trim()
+    const command = f.command.trim()
+    if (!name || !command) {
+      setMcpFlash({ level: 'err', msg: 'Nom et commande requis' })
+      return
+    }
+    // argsRaw = espace-séparé, user-friendly ; on split en ignorant vides
+    const args = f.argsRaw.trim().split(/\s+/).filter(Boolean)
+    const env: Record<string, string> = {}
+    for (const { key, value } of f.envPairs) {
+      const k = key.trim()
+      if (k && value.trim()) env[k] = value.trim()
+    }
+    setMcpBusy('__add__')
+    setMcpFlash(null)
+    try {
+      const resp = await apiFetch('/api/config/mcp/servers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, command, args, env, enabled: f.enabled }),
+      })
+      const data = await resp.json()
+      if (!resp.ok || data.error) {
+        setMcpFlash({ level: 'err', msg: data.error || `HTTP ${resp.status}` })
+      } else if (data.ok) {
+        const tools = data.tools_discovered ?? null
+        setMcpFlash({
+          level: 'ok',
+          msg: tools !== null
+            ? `Serveur '${name}' démarré — ${tools} outil(s) découvert(s)`
+            : `Serveur '${name}' enregistré`,
+        })
+        setMcpAddForm({
+          name: '', command: 'npx', argsRaw: '', envPairs: [{ key: '', value: '' }], enabled: true,
+        })
+        await loadMcp()
+      } else {
+        setMcpFlash({ level: 'err', msg: data.error || 'Échec inconnu' })
+      }
+    } catch (err: any) {
+      setMcpFlash({ level: 'err', msg: err?.message || 'Erreur réseau' })
+    } finally {
+      setMcpBusy(null)
+      setTimeout(() => setMcpFlash(null), 5000)
+    }
+  }
+
+  const handleRemoveMcpServer = async (name: string) => {
+    if (!confirm(`Supprimer le serveur MCP '${name}' ? Le process sera arrêté.`)) return
+    setMcpBusy(name)
+    try {
+      await apiFetch(`/api/config/mcp/servers/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      })
+      await loadMcp()
+    } catch (err: any) {
+      setMcpFlash({ level: 'err', msg: err?.message || 'Erreur' })
+      setTimeout(() => setMcpFlash(null), 4000)
+    } finally {
+      setMcpBusy(null)
+    }
+  }
+
+  const handleToggleMcpServer = async (srv: typeof mcpServers[number]) => {
+    // Re-submit via /mcp/servers qui est un upsert (replace) : on toggle enabled
+    // et on renvoie l'entrée. Les secrets masqués '***' sont préservés
+    // côté backend (il revalide les args+command avant de relancer).
+    setMcpBusy(srv.name)
+    try {
+      const envForSend: Record<string, string> = {}
+      for (const [k, v] of Object.entries(srv.env || {})) {
+        if (v !== '***') envForSend[k] = v
+        // Les valeurs masquées ne peuvent pas être renvoyées en clair — le
+        // backend les préserve via upsert: s'il voit qu'une clé manque, il
+        // re-lit l'ancienne. On ne les inclut donc pas volontairement.
+      }
+      await apiFetch('/api/config/mcp/servers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: srv.name,
+          command: srv.command,
+          args: srv.args,
+          env: envForSend,
+          enabled: !srv.enabled,
+        }),
+      })
+      await loadMcp()
+    } catch (err: any) {
+      setMcpFlash({ level: 'err', msg: err?.message || 'Erreur' })
+      setTimeout(() => setMcpFlash(null), 4000)
+    } finally {
+      setMcpBusy(null)
+    }
+  }
+
   // Doctor
   const runDoctor = async () => {
     setDoctorLoading(true)
@@ -589,6 +728,7 @@ export default function Settings() {
     if (activeTab === 'heartbeat') loadHeartbeat()
     if (activeTab === 'backup') loadBackup()
     if (activeTab === 'services') loadServices()
+    if (activeTab === 'mcp') loadMcp()
     if (activeTab === 'doctor') runDoctor()
   }, [activeTab])
 
@@ -706,6 +846,7 @@ export default function Settings() {
     { id: 'providers', label: t('settings.providers'), icon: Key },
     { id: 'voice', label: t('settings.voice'), icon: Mic },
     { id: 'services', label: t('settings.services'), icon: Server },
+    { id: 'mcp', label: 'MCP', icon: Boxes },
     { id: 'heartbeat', label: t('settings.heartbeat'), icon: HeartPulse },
     { id: 'backup', label: t('settings.backup'), icon: HardDrive },
     { id: 'doctor', label: t('settings.doctor'), icon: Stethoscope },
@@ -1820,6 +1961,263 @@ export default function Settings() {
                   </div>
                 )
               })}
+            </div>
+          )}
+
+          {/* -- MCP (Model Context Protocol) -------------------------- */}
+          {activeTab === 'mcp' && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <Boxes className="w-5 h-5" style={{ color: 'var(--accent-primary)' }} />
+                <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Serveurs MCP</h2>
+                <InfoButton>
+                  <strong>MCP — Model Context Protocol</strong><br />
+                  Les serveurs MCP sont des sous-processus qui exposent des outils à l'agent (fichiers, APIs, DB…). Ils tournent en local via stdio JSON-RPC — leurs outils sont fusionnés avec les wolf tools à chaque chat.
+                  <br /><br />
+                  <strong>Exemples :</strong> <code>@modelcontextprotocol/server-filesystem</code> pour lire/écrire des fichiers, <code>@modelcontextprotocol/server-github</code> pour GitHub, <code>@supabase/mcp-server-supabase</code> pour Supabase…
+                  <br /><br />
+                  <span style={{ color: 'var(--text-muted)' }}>Les env vars contenant <code>key/secret/token/password</code> sont chiffrées FERNET avant stockage, et masquées en UI (•••).</span>
+                </InfoButton>
+              </div>
+
+              {/* Flash message */}
+              {mcpFlash && (
+                <div className="text-xs p-2 rounded" style={{
+                  background: mcpFlash.level === 'ok'
+                    ? 'color-mix(in srgb, var(--accent-success) 15%, transparent)'
+                    : 'color-mix(in srgb, var(--accent-error) 15%, transparent)',
+                  color: mcpFlash.level === 'ok' ? 'var(--accent-success)' : 'var(--accent-error)',
+                }}>
+                  {mcpFlash.msg}
+                </div>
+              )}
+
+              {/* Liste des serveurs */}
+              <div className="space-y-2">
+                {mcpServers.length === 0 && (
+                  <div className="text-sm p-3 rounded-lg" style={{
+                    background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                    color: 'var(--text-muted)',
+                  }}>
+                    Aucun serveur MCP configuré pour le moment.
+                  </div>
+                )}
+                {mcpServers.map(srv => {
+                  const runtime = mcpStatus.find(s => s.name === srv.name)
+                  const busy = mcpBusy === srv.name
+                  return (
+                    <div key={srv.name} className="rounded-lg p-3" style={{
+                      background: 'var(--bg-secondary)',
+                      border: srv.enabled ? '1px solid color-mix(in srgb, var(--accent-primary) 30%, var(--border))' : '1px solid var(--border)',
+                    }}>
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className={`w-2 h-2 rounded-full ${runtime?.running ? 'bg-green-400' : srv.enabled ? 'bg-yellow-400' : 'bg-gray-500'}`} />
+                        <span className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>
+                          {srv.name}
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{
+                          background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
+                          fontFamily: 'monospace',
+                        }}>
+                          {srv.command} {srv.args.join(' ')}
+                        </span>
+                        {runtime?.running && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{
+                            background: 'color-mix(in srgb, var(--accent-success) 15%, transparent)',
+                            color: 'var(--accent-success)',
+                          }}>
+                            {runtime.tools} outil{runtime.tools > 1 ? 's' : ''}
+                          </span>
+                        )}
+                        <div className="flex items-center gap-1 ml-auto">
+                          <button
+                            onClick={() => handleToggleMcpServer(srv)}
+                            disabled={busy}
+                            className="p-1.5 rounded-md text-xs transition-colors hover:bg-[var(--bg-tertiary)]"
+                            title={srv.enabled ? 'Désactiver' : 'Activer'}
+                          >
+                            {busy
+                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                              : srv.enabled
+                                ? <Square className="w-3.5 h-3.5" style={{ color: 'var(--accent-primary)' }} />
+                                : <Play className="w-3.5 h-3.5" style={{ color: 'var(--accent-success)' }} />}
+                          </button>
+                          <button
+                            onClick={() => handleRemoveMcpServer(srv.name)}
+                            disabled={busy}
+                            className="p-1.5 rounded-md text-xs transition-colors hover:bg-[var(--bg-tertiary)]"
+                            title="Supprimer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" style={{ color: 'var(--accent-error, #ef4444)' }} />
+                          </button>
+                        </div>
+                      </div>
+                      {/* Env vars résumé */}
+                      {Object.keys(srv.env || {}).length > 0 && (
+                        <div className="text-[11px] flex flex-wrap gap-1" style={{ color: 'var(--text-muted)' }}>
+                          {Object.entries(srv.env).map(([k, v]) => (
+                            <span key={k} style={{
+                              background: 'var(--bg-tertiary)', padding: '1px 6px',
+                              borderRadius: 4, fontFamily: 'monospace',
+                            }}>
+                              {k}={v}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {/* Tools découverts */}
+                      {runtime?.tool_names && runtime.tool_names.length > 0 && (
+                        <div className="text-[11px] mt-2 flex flex-wrap gap-1" style={{ color: 'var(--text-secondary)' }}>
+                          {runtime.tool_names.slice(0, 8).map(tn => (
+                            <span key={tn} style={{
+                              background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)',
+                              color: 'var(--accent-primary)',
+                              padding: '1px 6px', borderRadius: 4, fontFamily: 'monospace',
+                            }}>
+                              {tn}
+                            </span>
+                          ))}
+                          {runtime.tool_names.length > 8 && (
+                            <span style={{ color: 'var(--text-muted)' }}>
+                              +{runtime.tool_names.length - 8}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Form d'ajout */}
+              <div className="rounded-lg p-4 space-y-3" style={{
+                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+              }}>
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Ajouter un serveur MCP
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Nom</label>
+                    <input
+                      value={mcpAddForm.name}
+                      onChange={e => setMcpAddForm(f => ({ ...f, name: e.target.value }))}
+                      placeholder="github"
+                      className="w-full px-3 py-2 rounded-md text-sm outline-none"
+                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
+                      Commande <span style={{ color: 'var(--text-muted)' }}>(allowlist)</span>
+                    </label>
+                    <select
+                      value={mcpAddForm.command}
+                      onChange={e => setMcpAddForm(f => ({ ...f, command: e.target.value }))}
+                      className="w-full px-3 py-2 rounded-md text-sm outline-none"
+                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                    >
+                      {mcpAllowedCommands.map(cmd => (
+                        <option key={cmd} value={cmd}>{cmd}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
+                    Arguments <span>(espace-séparés)</span>
+                  </label>
+                  <input
+                    value={mcpAddForm.argsRaw}
+                    onChange={e => setMcpAddForm(f => ({ ...f, argsRaw: e.target.value }))}
+                    placeholder="-y @modelcontextprotocol/server-github"
+                    className="w-full px-3 py-2 rounded-md text-sm font-mono outline-none"
+                    style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
+                    Variables d'environnement
+                  </label>
+                  <div className="space-y-2">
+                    {mcpAddForm.envPairs.map((pair, idx) => (
+                      <div key={idx} className="flex gap-2">
+                        <input
+                          value={pair.key}
+                          onChange={e => {
+                            const next = [...mcpAddForm.envPairs]
+                            next[idx] = { ...pair, key: e.target.value }
+                            setMcpAddForm(f => ({ ...f, envPairs: next }))
+                          }}
+                          placeholder="GITHUB_TOKEN"
+                          className="flex-1 px-2 py-1.5 rounded-md text-sm font-mono outline-none"
+                          style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        />
+                        <input
+                          type={/key|secret|token|password/i.test(pair.key) ? 'password' : 'text'}
+                          value={pair.value}
+                          onChange={e => {
+                            const next = [...mcpAddForm.envPairs]
+                            next[idx] = { ...pair, value: e.target.value }
+                            setMcpAddForm(f => ({ ...f, envPairs: next }))
+                          }}
+                          placeholder="valeur"
+                          className="flex-1 px-2 py-1.5 rounded-md text-sm font-mono outline-none"
+                          style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        />
+                        <button
+                          onClick={() => {
+                            const next = mcpAddForm.envPairs.filter((_, i) => i !== idx)
+                            setMcpAddForm(f => ({
+                              ...f,
+                              envPairs: next.length ? next : [{ key: '', value: '' }],
+                            }))
+                          }}
+                          className="p-1.5 rounded-md text-xs transition-colors hover:bg-[var(--bg-tertiary)]"
+                          title="Retirer"
+                        >
+                          <XIcon className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => setMcpAddForm(f => ({
+                        ...f, envPairs: [...f.envPairs, { key: '', value: '' }],
+                      }))}
+                      className="text-xs flex items-center gap-1"
+                      style={{ color: 'var(--accent-primary)' }}
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Ajouter une variable
+                    </button>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={mcpAddForm.enabled}
+                    onChange={e => setMcpAddForm(f => ({ ...f, enabled: e.target.checked }))}
+                    className="w-4 h-4 accent-[var(--accent-primary)]"
+                  />
+                  <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    Démarrer immédiatement après l'ajout
+                  </span>
+                </label>
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleAddMcpServer}
+                    disabled={mcpBusy === '__add__' || !mcpAddForm.name.trim()}
+                    className="px-4 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50"
+                    style={{ background: 'var(--accent-primary)', color: '#fff' }}
+                  >
+                    {mcpBusy === '__add__' ? 'Ajout…' : 'Ajouter'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 

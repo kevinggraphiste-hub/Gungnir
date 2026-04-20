@@ -75,6 +75,48 @@ class MCPStdioClient:
                 self.process.kill()
             logger.info(f"MCP server '{self.name}' stopped")
 
+    def is_alive(self) -> bool:
+        """Check rapide : le process tourne-t-il ? N'émet aucune requête."""
+        return bool(self.process and self.process.returncode is None)
+
+    async def ping(self, timeout: float = 5.0) -> bool:
+        """Check approfondi : JSON-RPC tools/list round-trip. Détecte les
+        process zombies (alive=True côté OS mais stdio bloqué)."""
+        if not self.is_alive():
+            return False
+        try:
+            await asyncio.wait_for(
+                self._send_request("tools/list", {}),
+                timeout=timeout,
+            )
+            return True
+        except Exception as e:
+            logger.debug(f"MCP '{self.name}' ping failed: {e}")
+            return False
+
+    async def restart(self) -> bool:
+        """Redémarre le subprocess avec la même config (command/args/env).
+
+        Utilisé par le healthcheck auto quand un process est mort. Retourne
+        True si la reconnexion a réussi. Détruit proprement l'ancien avant
+        de relancer pour éviter les PID zombies."""
+        try:
+            if self.process:
+                try:
+                    await self.stop()
+                except Exception:
+                    pass
+        finally:
+            self.process = None
+            self.tools = []
+            self._request_id = 0
+        try:
+            await self.start()
+            return True
+        except Exception as e:
+            logger.warning(f"MCP '{self.name}' restart failed: {e}")
+            return False
+
     async def call_tool(self, tool_name: str, arguments: dict) -> Any:
         """Call a tool on the MCP server."""
         result = await self._send_request("tools/call", {
@@ -289,6 +331,48 @@ class MCPManager:
             }
             for name, client in self.clients.get(int(user_id), {}).items()
         ]
+
+    async def health_check_all(self, ping_timeout: float = 5.0) -> list[dict]:
+        """Scanne tous les clients en mémoire, détecte les process morts ou
+        non-responsives, et les redémarre automatiquement.
+
+        Retourne une liste de dicts {user_id, name, was_alive, pinged,
+        restarted, ok_after_restart} pour chaque client évalué. Utilisé par
+        la boucle healthcheck en arrière-plan (voir
+        _mcp_health_check_loop dans main.py)."""
+        report = []
+        for user_id, slot in list(self.clients.items()):
+            for name, client in list(slot.items()):
+                alive = client.is_alive()
+                # Process mort : restart direct, pas la peine de ping
+                if not alive:
+                    ok = await client.restart()
+                    report.append({
+                        "user_id": user_id, "name": name,
+                        "was_alive": False, "pinged": False,
+                        "restarted": True, "ok_after_restart": ok,
+                    })
+                    if not ok:
+                        logger.warning(f"MCP healthcheck: failed to restart {name} for user {user_id}")
+                    continue
+                # Process vivant : on vérifie qu'il réponde encore (zombie stdio)
+                responsive = await client.ping(timeout=ping_timeout)
+                if responsive:
+                    report.append({
+                        "user_id": user_id, "name": name,
+                        "was_alive": True, "pinged": True,
+                        "restarted": False, "ok_after_restart": True,
+                    })
+                    continue
+                # Vivant mais non-responsive → restart
+                logger.warning(f"MCP healthcheck: {name} for user {user_id} unresponsive, restarting")
+                ok = await client.restart()
+                report.append({
+                    "user_id": user_id, "name": name,
+                    "was_alive": True, "pinged": False,
+                    "restarted": True, "ok_after_restart": ok,
+                })
+        return report
 
 
 def _make_mcp_executor(client: MCPStdioClient, tool_name: str):

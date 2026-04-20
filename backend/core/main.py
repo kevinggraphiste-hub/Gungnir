@@ -461,6 +461,13 @@ async def lifespan(app: FastAPI):
     # 5. Start auto-backup scheduler
     auto_backup_task = asyncio.create_task(_auto_backup_loop())
 
+    # 5b. Start MCP healthcheck loop
+    # Scans active MCP clients every 5 min, ping tools/list, restart les morts.
+    # Les restarts se font avec la command/args/env en mémoire du client ;
+    # si un process crash silencieux (OOM, segfault…) on le récupère sans
+    # attendre un call user.
+    mcp_health_task = asyncio.create_task(_mcp_health_check_loop())
+
     # 6. Start the heartbeat master scanner loop (always — it's a base service).
     # The loop is cheap and per-user logic is handled internally: each user's
     # config decides whether they actually beat. _autostart_scan flips
@@ -486,6 +493,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     auto_backup_task.cancel()
+    mcp_health_task.cancel()
     await mcp_manager.stop_all()
     for manifest in _loaded_plugins:
         await call_plugin_lifecycle(manifest, "on_shutdown")
@@ -533,6 +541,46 @@ async def _auto_backup_loop():
                         )
         except Exception as e:
             logger.warning(f"Auto-backup loop error: {e}")
+
+
+MCP_HEALTH_CHECK_INTERVAL_SECONDS = 300  # 5 min
+
+
+async def _mcp_health_check_loop():
+    """Boucle healthcheck MCP : toutes les 5 min, ping tous les clients
+    actifs et redémarre les morts/non-responsifs.
+
+    Design : totalement indépendant du heartbeat per-user (qui a sa propre
+    logique d'intervalle). Les MCP servers ne sont pas réveillés par cette
+    loop (elle n'appelle `ensure_user_started` pour personne) — on teste
+    seulement les clients déjà en mémoire. Si un user n'a pas encore ouvert
+    le chat depuis le restart, ses MCP ne sont pas démarrés, donc rien à
+    ping — c'est normal.
+    """
+    # Petit délai initial pour laisser le backend se stabiliser
+    await asyncio.sleep(60)
+    logger.info(f"MCP healthcheck loop started (every {MCP_HEALTH_CHECK_INTERVAL_SECONDS}s)")
+    while True:
+        try:
+            report = await mcp_manager.health_check_all()
+            if report:
+                restarted = [r for r in report if r.get("restarted")]
+                if restarted:
+                    for r in restarted:
+                        status = "ok" if r.get("ok_after_restart") else "ECHEC"
+                        logger.info(
+                            f"MCP healthcheck: user={r['user_id']} name={r['name']} "
+                            f"alive_before={r['was_alive']} pinged={r['pinged']} "
+                            f"restart={status}"
+                        )
+                else:
+                    logger.debug(f"MCP healthcheck: {len(report)} client(s) OK")
+        except asyncio.CancelledError:
+            logger.info("MCP healthcheck loop cancelled")
+            break
+        except Exception as e:
+            logger.warning(f"MCP healthcheck loop error: {e}")
+        await asyncio.sleep(MCP_HEALTH_CHECK_INTERVAL_SECONDS)
 
 
 # ── App ──────────────────────────────────────────────────────────────────────
