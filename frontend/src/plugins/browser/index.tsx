@@ -1274,7 +1274,7 @@ export default function HuntRPlugin() {
                   {/* Promo providers si aucune clé payante configurée */}
                   {caps && !caps.has_any_search_key && (
                     <div style={{
-                      marginTop: 16, padding: '12px 16px', borderRadius: 10,
+                      marginTop: 16, padding: '12px 16px', borderRadius: 12,
                       background: 'color-mix(in srgb, var(--accent-primary) 8%, transparent)',
                       border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent)',
                       fontSize: 12, color: 'var(--text-secondary)', textAlign: 'left',
@@ -1323,7 +1323,7 @@ export default function HuntRPlugin() {
                     onKeyDown={e => e.key === 'Enter' && doSearch()}
                     placeholder="Posez votre question..."
                     style={{
-                      width: '100%', padding: '11px 14px 11px 40px', borderRadius: 10,
+                      width: '100%', padding: '11px 14px 11px 40px', borderRadius: 8,
                       border: '1px solid var(--border)', background: 'var(--bg-secondary)',
                       color: 'var(--text-primary)', fontSize: 14, outline: 'none',
                     }}
@@ -1340,7 +1340,7 @@ export default function HuntRPlugin() {
                     : 'Configurez un provider LLM (Paramètres → Providers) pour activer le mode Pro'}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 5,
-                    padding: '11px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600,
+                    padding: '11px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
                     background: proSearch
                       ? 'linear-gradient(135deg, var(--amber-light, rgba(245,158,11,0.15)), var(--ember-light, rgba(234,88,12,0.1)))'
                       : 'var(--bg-secondary)',
@@ -1389,7 +1389,7 @@ export default function HuntRPlugin() {
                       title={t.desc}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '7px 12px', borderRadius: 999, fontSize: 12,
+                        padding: '7px 12px', borderRadius: 8, fontSize: 12,
                         fontWeight: active ? 600 : 500,
                         background: active
                           ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
@@ -1413,7 +1413,7 @@ export default function HuntRPlugin() {
                     style={{
                       marginLeft: 'auto',
                       display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '7px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                      padding: '7px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600,
                       background: customFormat
                         ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
                         : 'var(--bg-secondary)',
@@ -1428,7 +1428,7 @@ export default function HuntRPlugin() {
                     Format
                     {customFormat && (
                       <span style={{
-                        fontSize: 9, padding: '1px 6px', borderRadius: 999,
+                        fontSize: 9, padding: '1px 6px', borderRadius: 4,
                         background: 'var(--scarlet)', color: '#fff', fontWeight: 700,
                       }}>ON</span>
                     )}
@@ -1448,7 +1448,7 @@ export default function HuntRPlugin() {
                       style={{
                         marginLeft: customFormat ? 0 : 'auto',
                         display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '7px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                        padding: '7px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600,
                         background: showON
                           ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
                           : 'var(--bg-secondary)',
@@ -1465,7 +1465,7 @@ export default function HuntRPlugin() {
                       </svg>
                       Sources
                       <span style={{
-                        fontSize: 9, padding: '1px 6px', borderRadius: 999,
+                        fontSize: 9, padding: '1px 6px', borderRadius: 4,
                         background: showON ? 'var(--scarlet)' : 'var(--bg-tertiary)',
                         color: showON ? '#fff' : 'var(--text-muted)',
                         fontWeight: 700,
@@ -1487,7 +1487,7 @@ export default function HuntRPlugin() {
                       title="Filtres de fiabilité des sources"
                       style={{
                         display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '7px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                        padding: '7px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600,
                         background: hasFilters
                           ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
                           : 'var(--bg-secondary)',
@@ -1502,7 +1502,7 @@ export default function HuntRPlugin() {
                       Filtres
                       {counts > 0 && (
                         <span style={{
-                          fontSize: 9, padding: '1px 6px', borderRadius: 999,
+                          fontSize: 9, padding: '1px 6px', borderRadius: 4,
                           background: 'var(--scarlet)', color: '#fff', fontWeight: 700,
                         }}>{counts}</span>
                       )}
@@ -1533,7 +1533,7 @@ export default function HuntRPlugin() {
                 <div style={{
                   marginTop: 10,
                   padding: 14,
-                  borderRadius: 10,
+                  borderRadius: 12,
                   background: 'var(--bg-secondary)',
                   border: '1px solid var(--border)',
                   width: '100%',
@@ -1620,7 +1620,7 @@ export default function HuntRPlugin() {
                               onClick={e => { e.preventDefault(); e.stopPropagation(); setProSearch(true) }}
                               title="Passer en mode Pro pour utiliser ce provider"
                               style={{
-                                padding: '3px 8px', borderRadius: 999, fontSize: 10, fontWeight: 600,
+                                padding: '3px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
                                 background: 'color-mix(in srgb, var(--amber, #f59e0b) 15%, transparent)',
                                 color: 'var(--amber, #f59e0b)',
                                 border: '1px solid color-mix(in srgb, var(--amber, #f59e0b) 40%, transparent)',
@@ -1650,7 +1650,7 @@ export default function HuntRPlugin() {
                 <div style={{
                   marginTop: 10,
                   padding: 14,
-                  borderRadius: 10,
+                  borderRadius: 12,
                   background: 'var(--bg-secondary)',
                   border: '1px solid var(--border)',
                   width: '100%',
@@ -1754,7 +1754,7 @@ export default function HuntRPlugin() {
                       {sourceFilters.blocklist.map(d => (
                         <span key={d} style={{
                           display: 'inline-flex', alignItems: 'center', gap: 4,
-                          padding: '3px 8px', borderRadius: 999,
+                          padding: '3px 8px', borderRadius: 6,
                           background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
                           border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
                           fontSize: 11, fontFamily: 'monospace',
@@ -1833,7 +1833,7 @@ export default function HuntRPlugin() {
                       {sourceFilters.allowlist.map(d => (
                         <span key={d} style={{
                           display: 'inline-flex', alignItems: 'center', gap: 4,
-                          padding: '3px 8px', borderRadius: 999,
+                          padding: '3px 8px', borderRadius: 6,
                           background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
                           border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
                           fontSize: 11, fontFamily: 'monospace',
@@ -1891,7 +1891,7 @@ export default function HuntRPlugin() {
             {/* Status + progress bar */}
             {status && (
               <div style={{
-                padding: '10px 14px', borderRadius: 10, margin: '6px 0',
+                padding: '10px 14px', borderRadius: 12, margin: '6px 0',
                 background: 'var(--bg-secondary)', border: '1px solid var(--border)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: totalSteps > 1 ? 8 : 0 }}>
@@ -1931,7 +1931,7 @@ export default function HuntRPlugin() {
             {/* Live sources during search */}
             {searching && liveSources.length > 0 && !result?.answer && (
               <div style={{
-                padding: 12, borderRadius: 10, margin: '6px 0',
+                padding: 12, borderRadius: 12, margin: '6px 0',
                 background: 'var(--bg-secondary)', border: '1px solid var(--border)',
               }}>
                 <div style={{
@@ -1980,7 +1980,7 @@ export default function HuntRPlugin() {
             {/* Error */}
             {error && (
               <div style={{
-                padding: '10px 14px', borderRadius: 10, margin: '6px 0',
+                padding: '10px 14px', borderRadius: 12, margin: '6px 0',
                 background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.25)',
               }}>
                 <p style={{ fontWeight: 600, fontSize: 12, color: '#ef4444', margin: '0 0 2px' }}>Erreur</p>
@@ -1998,7 +1998,7 @@ export default function HuntRPlugin() {
                     {result.pro_search && (
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: 3,
-                        padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                        padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
                         background: 'var(--amber-light, rgba(245,158,11,0.15))',
                         color: 'var(--amber, #f59e0b)',
                         border: '1px solid var(--amber, #f59e0b)',
@@ -2010,7 +2010,7 @@ export default function HuntRPlugin() {
                     {result.topic && (
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: 4,
-                        padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                        padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
                         background: 'rgba(220,38,38,0.1)', color: 'var(--scarlet)',
                         border: '1px solid var(--scarlet)',
                       }}>
@@ -2020,7 +2020,7 @@ export default function HuntRPlugin() {
                     )}
                     {result.engines.map(e => (
                       <span key={e} style={{
-                        padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 500,
+                        padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 500,
                         background: 'var(--bg-tertiary)', color: ENGINE_COLORS[e] || 'var(--text-muted)',
                         border: '1px solid var(--border)',
                       }}>
@@ -2031,7 +2031,7 @@ export default function HuntRPlugin() {
                       <span
                         title={`Sources bloquées :\n${lastFilterReport.blocked_domains.map(b => `• ${b.domain} — ${b.reason}`).join('\n')}`}
                         style={{
-                          padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                          padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
                           background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
                           color: 'var(--scarlet)',
                           border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
@@ -2048,7 +2048,7 @@ export default function HuntRPlugin() {
                       <span
                         title={`Mode strict : ${lastFilterReport.strict_dropped} résultat(s) hors de l'allowlist écarté(s)`}
                         style={{
-                          padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                          padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
                           background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
                           color: 'var(--accent-success, #10b981)',
                           border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
@@ -2060,7 +2060,7 @@ export default function HuntRPlugin() {
                     {lastFilterReport && lastFilterReport.mode === 'boost' && typeof lastFilterReport.boosted_count === 'number' && lastFilterReport.boosted_count > 0 && (
                       <span
                         style={{
-                          padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                          padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
                           background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
                           color: 'var(--accent-success, #10b981)',
                           border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
@@ -2070,7 +2070,7 @@ export default function HuntRPlugin() {
                     )}
                     {result.model && (
                       <span style={{
-                        padding: '2px 8px', borderRadius: 20, fontSize: 10,
+                        padding: '2px 8px', borderRadius: 6, fontSize: 10,
                         background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
                         border: '1px solid var(--border)',
                       }}>
@@ -2433,7 +2433,7 @@ function CitationBadge({ idx, citation, onClick }: {
       {hover && citation && (
         <div style={{
           position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
-          marginBottom: 6, width: 280, padding: '10px 12px', borderRadius: 10,
+          marginBottom: 6, width: 280, padding: '10px 12px', borderRadius: 12,
           background: 'var(--bg-secondary)', border: '1px solid var(--border)',
           boxShadow: '0 8px 24px rgba(0,0,0,0.25)', zIndex: 100,
           pointerEvents: 'none', animation: 'huntr-fadeIn 0.15s ease-out',
@@ -2891,7 +2891,7 @@ function WysiwygEditor({
     <div style={{
       marginTop: 10, width: '100%',
       maxWidth: !hasResults ? 780 : undefined,
-      borderRadius: 10, background: 'var(--bg-secondary)',
+      borderRadius: 12, background: 'var(--bg-secondary)',
       border: '1px solid var(--border)',
       boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
       overflow: 'hidden',
@@ -2997,7 +2997,7 @@ function WysiwygEditor({
           Modèle de réponse — WYSIWYG
           {isDirty && (
             <span style={{
-              fontSize: 9, padding: '1px 6px', borderRadius: 999,
+              fontSize: 9, padding: '1px 6px', borderRadius: 4,
               background: 'color-mix(in srgb, var(--scarlet) 18%, transparent)',
               color: 'var(--scarlet)', fontWeight: 700, letterSpacing: 0.3,
             }}>MODIFIÉ</span>
@@ -3235,7 +3235,7 @@ function WysiwygEditor({
           }}>
           <div style={{
             background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-            borderRadius: 10, padding: 18, width: 420,
+            borderRadius: 12, padding: 18, width: 420,
             boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
           }}>
             <h3 style={{ margin: '0 0 12px', fontSize: 15, color: 'var(--scarlet)', fontWeight: 700 }}>
