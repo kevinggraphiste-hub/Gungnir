@@ -413,19 +413,35 @@ async def list_services(request: Request, session: AsyncSession = Depends(get_se
         except Exception:
             pass
 
+    # Pour rester cohérent avec les autres endpoints (HuntR providers, MCP…)
+    # on utilise les valeurs DÉCHIFFRÉES pour les flags has_api_key/enabled.
+    # Si une clé ne se déchiffre pas (changement de clé Fernet, corruption),
+    # Settings doit refuser de l'afficher comme "connectée" — sinon l'user
+    # voit un point vert mais le provider ne fonctionne pas ailleurs.
+    user_settings_obj = None
+    if uid > 0:
+        try:
+            user_settings_obj = await get_user_settings(uid, session)
+        except Exception:
+            pass
+
     services = {}
     for name, s in settings.services.items():
-        user_entry = user_service_keys.get(name) or {}
+        user_entry_raw = user_service_keys.get(name) or {}
+        decrypted = get_user_service_key(user_settings_obj, name) if user_settings_obj else None
+        effective_entry = decrypted or user_entry_raw
+        # Synthèse des prérequis = clé déchiffrée non-vide OU URL user custom
+        # (selon le service). Utilisé pour has_api_key et _effective_enabled.
         services[name] = {
             **s.model_dump(),
             "label": SERVICE_LABELS.get(name, name),
-            "api_key": "***" if user_entry.get("api_key") else None,
-            "token": "***" if user_entry.get("token") else None,
-            "enabled": _effective_enabled(user_entry, s.base_url or "", name),
-            "enabled_explicit": user_entry.get("enabled"),  # pour distinguer auto vs user-set
-            "has_api_key": bool(user_entry.get("api_key")),
-            "has_token": bool(user_entry.get("token")),
-            "base_url": user_entry.get("base_url") or s.base_url,
+            "api_key": "***" if (decrypted or {}).get("api_key") else None,
+            "token": "***" if (decrypted or {}).get("token") else None,
+            "enabled": _effective_enabled(effective_entry, s.base_url or "", name),
+            "enabled_explicit": user_entry_raw.get("enabled"),
+            "has_api_key": bool((decrypted or {}).get("api_key")),
+            "has_token": bool((decrypted or {}).get("token")),
+            "base_url": user_entry_raw.get("base_url") or s.base_url,
         }
     return {"services": services, "categories": SERVICE_CATEGORIES, "labels": SERVICE_LABELS}
 
@@ -439,21 +455,24 @@ async def get_service(service_name: str, request: Request, session: AsyncSession
         return JSONResponse({"error": f"Service '{service_name}' non trouvé"}, status_code=404)
 
     uid = getattr(request.state, "user_id", None) or 0
-    user_entry: dict = {}
+    user_entry_raw: dict = {}
+    decrypted: dict | None = None
     if uid > 0:
         try:
             user_settings_row = await get_user_settings(uid, session)
-            user_entry = (user_settings_row.service_keys or {}).get(service_name) or {}
+            user_entry_raw = (user_settings_row.service_keys or {}).get(service_name) or {}
+            decrypted = get_user_service_key(user_settings_row, service_name)
         except Exception:
             pass
+    effective_entry = decrypted or user_entry_raw
 
     data = svc.model_dump()
-    data["api_key"] = "***" if user_entry.get("api_key") else None
-    data["token"] = "***" if user_entry.get("token") else None
-    data["enabled"] = _effective_enabled(user_entry, svc.base_url or "", service_name)
-    data["enabled_explicit"] = user_entry.get("enabled")
-    data["has_api_key"] = bool(user_entry.get("api_key"))
-    data["has_token"] = bool(user_entry.get("token"))
+    data["api_key"] = "***" if (decrypted or {}).get("api_key") else None
+    data["token"] = "***" if (decrypted or {}).get("token") else None
+    data["enabled"] = _effective_enabled(effective_entry, svc.base_url or "", service_name)
+    data["enabled_explicit"] = user_entry_raw.get("enabled")
+    data["has_api_key"] = bool((decrypted or {}).get("api_key"))
+    data["has_token"] = bool((decrypted or {}).get("token"))
     data["base_url"] = user_entry.get("base_url") or svc.base_url
     data["label"] = SERVICE_LABELS.get(service_name, service_name)
     return data

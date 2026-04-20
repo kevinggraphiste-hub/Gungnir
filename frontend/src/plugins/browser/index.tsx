@@ -1558,47 +1558,78 @@ export default function HuntRPlugin() {
                     gap: 8,
                   }}>
                     {providersStatus.map(p => {
-                      const usable = p.has_requirements && (proSearch || p.supports_classic)
-                      const reason = !p.has_requirements
-                        ? (p.needs_key ? 'Clé API manquante' : 'URL manquante')
-                        : (!proSearch && !p.supports_classic)
-                          ? 'Réservé au mode Pro'
-                          : ''
+                      // Règles :
+                      // - checkbox TOUJOURS cochable si la clé/URL est là —
+                      //   l'user peut pré-sélectionner Tavily en Classique, et
+                      //   le toggle sera effectif dès qu'il passera en Pro.
+                      // - greyé + not-allowed SEULEMENT si pas de credentials.
+                      // - en Classique, les providers Pro-only affichent un
+                      //   badge "Inactif en Classique" avec un raccourci vers
+                      //   le bouton Pro.
+                      const missingReqs = !p.has_requirements
+                      const activeNow = p.enabled && p.has_requirements && (proSearch || p.supports_classic)
+                      const inactiveInClassic = p.enabled && p.has_requirements && !proSearch && !p.supports_classic
+                      const subtitle = missingReqs
+                        ? (p.needs_key ? 'Clé API manquante — Paramètres → Services' : 'URL manquante — Paramètres → Services')
+                        : inactiveInClassic
+                          ? 'Inactif en Classique'
+                          : (p.supports_classic ? 'Gratuit' : 'Pro uniquement')
                       return (
                         <label
                           key={p.id}
-                          title={reason || `Poids de consensus : ${p.weight.toFixed(1)}`}
+                          title={missingReqs ? subtitle : `Poids de consensus : ${p.weight.toFixed(1)}`}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 8,
                             padding: '8px 10px', borderRadius: 8,
                             background: 'var(--bg-tertiary)',
-                            border: usable && p.enabled
+                            border: activeNow
                               ? '1px solid var(--scarlet)'
-                              : '1px solid var(--border)',
-                            cursor: usable ? 'pointer' : 'not-allowed',
-                            opacity: usable ? 1 : 0.5,
+                              : inactiveInClassic
+                                ? '1px dashed color-mix(in srgb, var(--scarlet) 40%, var(--border))'
+                                : '1px solid var(--border)',
+                            cursor: missingReqs ? 'not-allowed' : 'pointer',
+                            opacity: missingReqs ? 0.5 : 1,
                             transition: 'border-color 0.15s',
                           }}
                         >
                           <input
                             type="checkbox"
-                            checked={p.enabled && usable}
-                            disabled={!usable || savingProviders}
+                            checked={p.enabled && p.has_requirements}
+                            disabled={missingReqs || savingProviders}
                             onChange={e => toggleProvider(p.id, e.target.checked)}
                             style={{ accentColor: 'var(--scarlet)' }}
                           />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{
                               fontSize: 12, fontWeight: 600,
-                              color: usable ? 'var(--text-primary)' : 'var(--text-muted)',
+                              color: missingReqs ? 'var(--text-muted)' : 'var(--text-primary)',
                               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                             }}>
                               {p.label}
                             </div>
-                            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                              {reason || (p.supports_classic ? 'Gratuit' : 'Pro uniquement')}
+                            <div style={{
+                              fontSize: 10,
+                              color: inactiveInClassic ? 'color-mix(in srgb, var(--scarlet) 70%, var(--text-muted))' : 'var(--text-muted)',
+                            }}>
+                              {subtitle}
                             </div>
                           </div>
+                          {inactiveInClassic && canPro && (
+                            <button
+                              type="button"
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); setProSearch(true) }}
+                              title="Passer en mode Pro pour utiliser ce provider"
+                              style={{
+                                padding: '3px 8px', borderRadius: 999, fontSize: 10, fontWeight: 600,
+                                background: 'color-mix(in srgb, var(--amber, #f59e0b) 15%, transparent)',
+                                color: 'var(--amber, #f59e0b)',
+                                border: '1px solid color-mix(in srgb, var(--amber, #f59e0b) 40%, transparent)',
+                                cursor: 'pointer', flexShrink: 0,
+                              }}
+                            >
+                              Activer Pro →
+                            </button>
+                          )}
                         </label>
                       )
                     })}
