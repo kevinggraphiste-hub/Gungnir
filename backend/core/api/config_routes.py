@@ -512,9 +512,12 @@ async def delete_service(service_name: str, request: Request, session: AsyncSess
 
 @router.post("/config/services/{service_name}/test")
 async def test_service(service_name: str, request: Request, session: AsyncSession = Depends(get_session)):
-    """Test connectivity to a service using the CALLER's per-user credentials."""
-    import asyncio
-    import aiohttp
+    """Test connectivity to a service using the CALLER's per-user credentials.
+
+    Chaque service a son propre handler dans service_tests.py (vrai endpoint
+    de santé + bon schéma d'auth). Aucun fallback générique qui fait semblant
+    de marcher."""
+    from backend.core.api.service_tests import run_service_test
 
     settings = Settings.load()
     meta = settings.services.get(service_name)
@@ -536,67 +539,15 @@ async def test_service(service_name: str, request: Request, session: AsyncSessio
     if not _effective_enabled(user_svc, meta.base_url or "", service_name):
         return {"ok": False, "error": "Service non configuré (ni clé ni URL custom)"}
 
-    # Basic connectivity test per service type
-    try:
-        if service_name == "redis":
-            url = base_url or "redis://localhost:6379"
-            host = url.replace("redis://", "").split(":")[0]
-            port = int(url.replace("redis://", "").split(":")[-1]) if ":" in url.replace("redis://", "") else 6379
-            _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5)
-            writer.close()
-            await writer.wait_closed()
-            return {"ok": True, "service": service_name, "message": "Connexion Redis OK"}
-
-        elif service_name == "postgresql":
-            url = base_url or "postgresql://localhost:5432"
-            host = url.split("@")[-1].split("/")[0].split(":")[0] if "@" in url else url.replace("postgresql://", "").split(":")[0]
-            port_str = url.split(":")[-1].split("/")[0]
-            port = int(port_str) if port_str.isdigit() else 5432
-            _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5)
-            writer.close()
-            await writer.wait_closed()
-            return {"ok": True, "service": service_name, "message": "Connexion PostgreSQL OK"}
-
-        elif service_name == "qdrant":
-            if not base_url:
-                return {"ok": False, "error": "URL non configurée"}
-            # Qdrant Cloud : /healthz en GET, éventuel header api-key sur les
-            # instances authentifiées. L'endpoint est cheap et public.
-            healthz = base_url.rstrip("/") + "/healthz"
-            headers = {}
-            if api_key:
-                headers["api-key"] = api_key
-            async with aiohttp.ClientSession() as session_http:
-                async with session_http.get(healthz, headers=headers,
-                                             timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    ok = resp.status < 400
-                    msg = "Connexion Qdrant OK" if ok else f"HTTP {resp.status}"
-                    return {"ok": ok, "service": service_name, "status": resp.status, "message": msg}
-
-        elif service_name == "n8n":
-            if not base_url:
-                return {"ok": False, "error": "URL non configurée"}
-            async with aiohttp.ClientSession() as session_http:
-                async with session_http.get(base_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    return {"ok": resp.status < 400, "service": service_name, "status": resp.status}
-
-        else:
-            if not base_url:
-                return {"ok": False, "error": "URL non configurée"}
-            headers = {}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-            async with aiohttp.ClientSession() as session_http:
-                async with session_http.get(base_url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    return {"ok": resp.status < 400, "service": service_name, "status": resp.status}
-
-    except asyncio.TimeoutError:
-        return {"ok": False, "service": service_name, "error": "Timeout — service injoignable"}
-    except Exception as e:
-        import logging; logging.getLogger("gungnir").error(f"Service test error ({service_name}): {e}")
-        return {"ok": False, "service": service_name, "error": "Erreur de connexion au service"}
+    result = await run_service_test(
+        service_name=service_name,
+        base_url=base_url or "",
+        api_key=api_key,
+        token=token,
+        extra=user_svc,
+    )
+    result["service"] = service_name
+    return result
 
 
 # ── Per-User API Keys ────────────────────────────────────────────────────────
