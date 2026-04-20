@@ -11,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, Pencil, Check, X, Key,
   Paperclip, Image as ImageIcon, Copy, ListTodo, Folder, FolderMinus, GripVertical,
   Calendar, Play, Pause, CheckCircle2, AlertCircle, Clock,
-  RefreshCw, ThumbsUp, ThumbsDown, Zap
+  RefreshCw, ThumbsUp, ThumbsDown, Zap, Wand2, Volume2, VolumeX, Loader2
 } from 'lucide-react'
 import { SecondaryButton } from '../components/ui'
 import VoiceModal from '../components/VoiceModal'
@@ -665,6 +665,113 @@ export default function Chat() {
   const [pttStatus, setPttStatus] = useState<'idle' | 'recording' | 'processing'>('idle')
   const recognitionRef = useRef<any>(null)
 
+  // ── Prompt improvement : LLM réécrit le draft avant envoi ──────────
+  const [improving, setImproving] = useState(false)
+  const [originalBeforeImprove, setOriginalBeforeImprove] = useState<string | null>(null)
+
+  const improvePrompt = useCallback(async () => {
+    const draft = input.trim()
+    if (!draft || improving || isLoading) return
+    // Sauvegarde du draft pour Undo (Escape) avant le call
+    setOriginalBeforeImprove(draft)
+    setImproving(true)
+    try {
+      const res = await apiFetch('/api/chat/improve-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: draft,
+          provider: selectedProvider,
+          model: selectedModel,
+        }),
+      })
+      const data = await res.json()
+      if (data?.ok && data.prompt) {
+        setInput(data.prompt)
+        setTimeout(() => inputRef.current?.focus(), 30)
+      } else {
+        console.warn('Improve prompt failed:', data?.error)
+        setOriginalBeforeImprove(null)  // pas de undo si rien n'a changé
+      }
+    } catch (e) {
+      console.error('Improve prompt error:', e)
+      setOriginalBeforeImprove(null)
+    } finally {
+      setImproving(false)
+    }
+  }, [input, improving, isLoading, selectedProvider, selectedModel])
+
+  // ── TTS : lecture vocale des réponses LLM (Web Speech API) ──────────
+  // Toggle persisté en localStorage. Utilise speechSynthesis natif du
+  // navigateur — zéro backend, fonctionne offline, voix OS-dépendantes.
+  const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem('chat.ttsEnabled') === '1' } catch { return false }
+  })
+  const [ttsSpeaking, setTtsSpeaking] = useState(false)
+  const toggleTts = useCallback(() => {
+    setTtsEnabled(v => {
+      const next = !v
+      try { localStorage.setItem('chat.ttsEnabled', next ? '1' : '0') } catch { /* ignore */ }
+      // Si on désactive pendant une lecture, on coupe tout de suite.
+      if (!next && typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel()
+        setTtsSpeaking(false)
+      }
+      return next
+    })
+  }, [])
+
+  const speakText = useCallback((text: string) => {
+    if (!text || typeof window === 'undefined' || !window.speechSynthesis) return
+    // Strip markdown basique avant d'envoyer au TTS — sinon le synthétiseur
+    // lit les `*`, `#`, les liens URL, le code… littéralement.
+    const plain = text
+      .replace(/```[\s\S]*?```/g, '')        // blocs de code
+      .replace(/`([^`]+)`/g, '$1')           // code inline
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // liens
+      .replace(/^#{1,6}\s+/gm, '')           // titres
+      .replace(/\*\*([^*]+)\*\*/g, '$1')     // bold
+      .replace(/\*([^*]+)\*/g, '$1')         // italic
+      .replace(/^[-*]\s+/gm, '')             // bullets
+      .replace(/\n{2,}/g, '. ')              // paragraphes → pause
+      .trim()
+    if (!plain) return
+    window.speechSynthesis.cancel()  // arrête la lecture en cours s'il y en a une
+    const utter = new SpeechSynthesisUtterance(plain)
+    // Langue : suit i18n (fr, en, etc.). Les voix sont choisies par le navigateur.
+    utter.lang = i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`
+    utter.rate = 1.05
+    utter.pitch = 1.0
+    utter.onstart = () => setTtsSpeaking(true)
+    utter.onend = () => setTtsSpeaking(false)
+    utter.onerror = () => setTtsSpeaking(false)
+    window.speechSynthesis.speak(utter)
+  }, [])
+
+  // Déclenche le TTS à la fin du stream d'une réponse assistant — on
+  // guette la transition isLoading: true → false, et on lit le dernier
+  // message assistant en date s'il n'est pas vide.
+  const prevLoadingRef = useRef(isLoading)
+  useEffect(() => {
+    const wasLoading = prevLoadingRef.current
+    prevLoadingRef.current = isLoading
+    if (!ttsEnabled) return
+    if (wasLoading && !isLoading) {
+      const last = [...messages].reverse().find(m => m.role === 'assistant')
+      const content = (last?.content || '').trim()
+      if (content) speakText(content)
+    }
+  }, [isLoading, ttsEnabled, messages, speakText])
+
+  // Stop TTS si l'utilisateur quitte la page ou change de conversation
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel()
+      }
+    }
+  }, [currentConversation])
+
   const startPTT = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SpeechRecognition) return
@@ -1227,6 +1334,13 @@ export default function Chat() {
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+    // Escape annule la dernière amélioration de prompt (restaure le draft
+    // original). Utile si le user n'aime pas la reformulation.
+    if (e.key === 'Escape' && originalBeforeImprove !== null && !improving) {
+      e.preventDefault()
+      setInput(originalBeforeImprove)
+      setOriginalBeforeImprove(null)
+    }
   }
 
   const formatModelName = (modelId: string) => { if (!modelId) return '—'; const parts = modelId.split('/'); return parts[parts.length - 1] || modelId }
@@ -1994,14 +2108,45 @@ export default function Chat() {
                   <span className="font-mono opacity-60">/</span>
                 </div>
 
+                {/* Améliorer le prompt — LLM réécrit le draft */}
+                <button onClick={improvePrompt}
+                  disabled={!input.trim() || improving || isLoading}
+                  className="ml-auto flex items-center justify-center rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  style={improving
+                    ? { width: '30px', height: '30px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
+                    : originalBeforeImprove !== null
+                      ? { width: '30px', height: '30px', background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)', color: 'var(--accent-success, #10b981)' }
+                      : { width: '30px', height: '30px', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+                  title={originalBeforeImprove !== null
+                    ? 'Prompt amélioré — Escape pour annuler'
+                    : 'Améliorer le prompt (LLM reformule le draft)'}>
+                  {improving
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <Wand2 className="w-3.5 h-3.5" />}
+                </button>
+
                 {/* Mic PTT */}
                 <button onClick={() => pttStatus === 'recording' ? stopPTT() : startPTT()}
-                  className="ml-auto flex items-center justify-center rounded-lg transition-colors"
+                  className="flex items-center justify-center rounded-lg transition-colors"
                   style={pttStatus === 'recording'
                     ? { width: '30px', height: '30px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
                     : { width: '30px', height: '30px', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
                   title={t('chat.speak')}>
                   {pttStatus === 'recording' ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                </button>
+
+                {/* TTS toggle — lit les réponses LLM à voix haute via Web Speech API */}
+                <button onClick={toggleTts}
+                  className="flex items-center justify-center rounded-lg transition-colors"
+                  style={ttsEnabled
+                    ? { width: '30px', height: '30px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
+                    : { width: '30px', height: '30px', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+                  title={ttsEnabled
+                    ? (ttsSpeaking ? 'Lecture en cours — cliquer pour couper' : 'Lecture vocale activée')
+                    : 'Activer la lecture vocale des réponses'}>
+                  {ttsEnabled
+                    ? <Volume2 className={`w-3.5 h-3.5 ${ttsSpeaking ? 'animate-pulse' : ''}`} />
+                    : <VolumeX className="w-3.5 h-3.5" />}
                 </button>
 
                 {/* Voice modal (realtime) */}

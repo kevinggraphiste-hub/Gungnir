@@ -1629,3 +1629,74 @@ async def chat_stream(convo_id: int, data: dict, request: Request):
         model or provider_config.default_model,
     ):
         yield {"chunk": chunk}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Prompt improvement — reformule un draft utilisateur avant envoi
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.post("/chat/improve-prompt")
+async def improve_prompt(data: dict, request: Request):
+    """Réécrit le prompt draft pour le rendre plus clair et structuré.
+
+    Usage : le frontend appelle ça quand l'utilisateur clique le bouton
+    "Améliorer" à côté de sa zone de saisie. Retourne le prompt amélioré —
+    pas de réponse à la question, juste une reformulation.
+
+    Utilise le LLM configuré par l'utilisateur (même provider/modèle que
+    son chat courant). Respecte per-user : aucune clé globale.
+    """
+    from backend.core.services.llm_invoker import invoke_llm_for_user
+
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+
+    draft = str(data.get("prompt") or "").strip()
+    if not draft:
+        return {"ok": False, "error": "Prompt vide"}
+    if len(draft) > 6000:
+        return {"ok": False, "error": "Prompt trop long (max 6000 caractères)"}
+
+    # Override possible depuis le frontend (le chat panel envoie déjà son
+    # provider/model actifs, on s'aligne pour garder la cohérence UX).
+    override_provider = data.get("provider") or None
+    override_model = data.get("model") or None
+
+    system_prompt = (
+        "Tu es un assistant de reformulation de prompts. Tu reçois un "
+        "brouillon écrit par l'utilisateur et tu le réécris pour qu'il soit "
+        "PLUS CLAIR, PLUS PRÉCIS et PLUS ACTIONNABLE — mais sans en changer "
+        "l'intention, la langue ou le ton général.\n\n"
+        "RÈGLES STRICTES :\n"
+        "- Conserve la langue d'origine (français → français, anglais → anglais).\n"
+        "- Ne réponds PAS au prompt — tu le réécris seulement.\n"
+        "- Pas de préambule type 'Voici la version améliorée' — renvoie UNIQUEMENT "
+        "le texte du prompt reformulé.\n"
+        "- Structure quand ça aide (listes numérotées, contraintes explicites), "
+        "mais reste fidèle au style du user (direct si direct, détaillé si détaillé).\n"
+        "- Si le draft est déjà clair, fais des micro-améliorations seulement.\n"
+        "- Ne reformule pas en première personne si le draft est à la 2e.\n"
+        "- Ne transforme JAMAIS une question factuelle en une question ouverte."
+    )
+
+    result = await invoke_llm_for_user(
+        uid,
+        draft,
+        system_prompt=system_prompt,
+        provider=override_provider,
+        model=override_model,
+    )
+
+    if not result.get("ok"):
+        err = result.get("error") or "Échec inconnu"
+        return {"ok": False, "error": err[:300]}
+
+    improved = (result.get("content") or "").strip()
+    # Enlève les guillemets d'enrobage éventuels ("..." entourant le texte)
+    if len(improved) >= 2 and improved[0] in ('"', '«', '"') and improved[-1] in ('"', '»', '"'):
+        improved = improved[1:-1].strip()
+    if not improved:
+        return {"ok": False, "error": "Le LLM a renvoyé une réponse vide"}
+
+    return {"ok": True, "prompt": improved, "original": draft}
