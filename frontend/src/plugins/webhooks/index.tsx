@@ -102,24 +102,62 @@ export default function WebhooksPlugin() {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({})
 
+  // ── Custom MCP (serveurs hors catalog) ──────────────────────────────
+  // Les MCPs du catalog vivent dans `integrations` (config JSON). Les MCPs
+  // custom vivent UNIQUEMENT dans la table DB mcp_server_configs. Pour
+  // éviter la duplication, on filtre ici tout ce qui matche un integration id.
+  const [allDbMcps, setAllDbMcps] = useState<Array<{
+    name: string
+    command: string
+    args: string[]
+    env: Record<string, string>
+    enabled: boolean
+  }>>([])
+  const [allDbMcpStatus, setAllDbMcpStatus] = useState<Array<{
+    name: string; running: boolean; tools: number; tool_names: string[]
+  }>>([])
+  const [showCustomMcp, setShowCustomMcp] = useState(false)
+  const [mcpAddForm, setMcpAddForm] = useState<{
+    name: string; command: string; argsRaw: string
+    envPairs: Array<{ key: string; value: string }>; enabled: boolean
+  }>({
+    name: '', command: 'npx', argsRaw: '',
+    envPairs: [{ key: '', value: '' }], enabled: true,
+  })
+  const [mcpFlash, setMcpFlash] = useState<{ level: 'ok' | 'err'; msg: string } | null>(null)
+  const MCP_ALLOWED_COMMANDS = [
+    'npx', 'node', 'python', 'python3', 'pip', 'pipx', 'uvx',
+    'docker', 'deno', 'bun', 'tsx', 'ts-node',
+  ]
+
   // ── Data loading ───────────────────────────────────────────────────
 
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [catRes, integRes, whRes, mcpRes] = await Promise.all([
+      const [catRes, integRes, whRes, mcpRes, dbMcpRes] = await Promise.all([
         fetch(`${API}/catalog`).then(r => r.json()),
         fetch(`${API}/integrations`).then(r => r.json()),
         fetch(`${API}/webhooks`).then(r => r.json()),
         fetch(`${API}/mcp/status`).then(r => r.json()),
+        fetch('/api/config/mcp/servers').then(r => r.json()).catch(() => ({})),
       ])
       setCatalog(catRes.integrations || {})
       setIntegrations(integRes.integrations || [])
       setWebhooks(whRes.webhooks || [])
       setMcpStatus(mcpRes)
+      setAllDbMcps(dbMcpRes.servers || [])
+      setAllDbMcpStatus(dbMcpRes.status || [])
     } catch (err) { console.error('Load error:', err) }
     setLoading(false)
   }, [])
+
+  // Filtrage : on affiche uniquement les MCPs DB qui ne correspondent PAS
+  // à une intégration du catalog (par nom ou par mcp_server_name).
+  const catalogMcpNames = new Set(
+    integrations.map(i => i.id).concat(integrations.map(i => (i as any).mcp_server_name).filter(Boolean))
+  )
+  const customMcps = allDbMcps.filter(m => !catalogMcpNames.has(m.name))
 
   const loadLogs = useCallback(async () => {
     try {
@@ -133,6 +171,94 @@ export default function WebhooksPlugin() {
   useEffect(() => { if (activeTab === 'logs') loadLogs() }, [activeTab, loadLogs])
 
   // ── Actions ────────────────────────────────────────────────────────
+
+  // ── Custom MCP handlers ───────────────────────────────────────────
+  const addCustomMcp = async () => {
+    const f = mcpAddForm
+    const name = f.name.trim()
+    const command = f.command.trim()
+    if (!name || !command) {
+      setMcpFlash({ level: 'err', msg: 'Nom et commande requis' })
+      return
+    }
+    const args = f.argsRaw.trim().split(/\s+/).filter(Boolean)
+    const env: Record<string, string> = {}
+    for (const { key, value } of f.envPairs) {
+      const k = key.trim()
+      if (k && value.trim()) env[k] = value.trim()
+    }
+    setActionLoading('mcp-custom-add')
+    setMcpFlash(null)
+    try {
+      const resp = await fetch('/api/config/mcp/servers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, command, args, env, enabled: f.enabled }),
+      })
+      const data = await resp.json()
+      if (!resp.ok || data.error) {
+        setMcpFlash({ level: 'err', msg: data.error || `HTTP ${resp.status}` })
+      } else if (data.ok) {
+        const tools = data.tools_discovered ?? null
+        setMcpFlash({
+          level: 'ok',
+          msg: tools !== null
+            ? `Serveur '${name}' démarré — ${tools} outil(s) découvert(s)`
+            : `Serveur '${name}' enregistré`,
+        })
+        setMcpAddForm({
+          name: '', command: 'npx', argsRaw: '',
+          envPairs: [{ key: '', value: '' }], enabled: true,
+        })
+        await loadAll()
+      } else {
+        setMcpFlash({ level: 'err', msg: data.error || 'Échec inconnu' })
+      }
+    } catch (err: any) {
+      setMcpFlash({ level: 'err', msg: err?.message || 'Erreur réseau' })
+    } finally {
+      setActionLoading(null)
+      setTimeout(() => setMcpFlash(null), 5000)
+    }
+  }
+
+  const removeCustomMcp = async (name: string) => {
+    if (!confirm(`Supprimer le serveur MCP '${name}' ? Le process sera arrêté.`)) return
+    setActionLoading(`mcp-${name}`)
+    try {
+      await fetch(`/api/config/mcp/servers/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      await loadAll()
+    } catch (err: any) {
+      setMcpFlash({ level: 'err', msg: err?.message || 'Erreur' })
+      setTimeout(() => setMcpFlash(null), 4000)
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const toggleCustomMcp = async (srv: typeof allDbMcps[number]) => {
+    setActionLoading(`mcp-${srv.name}`)
+    try {
+      const envForSend: Record<string, string> = {}
+      for (const [k, v] of Object.entries(srv.env || {})) {
+        if (v !== '***') envForSend[k] = v
+      }
+      await fetch('/api/config/mcp/servers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: srv.name, command: srv.command, args: srv.args,
+          env: envForSend, enabled: !srv.enabled,
+        }),
+      })
+      await loadAll()
+    } catch (err: any) {
+      setMcpFlash({ level: 'err', msg: err?.message || 'Erreur' })
+      setTimeout(() => setMcpFlash(null), 4000)
+    } finally {
+      setActionLoading(null)
+    }
+  }
 
   const addIntegration = async (id: string) => {
     const entry = catalog[id]
@@ -384,6 +510,217 @@ export default function WebhooksPlugin() {
                     )
                   })
                 )}
+
+                {/* ── Serveur MCP custom (hors catalog) ──────────── */}
+                <div className="mt-6 border rounded-xl" style={{ borderColor: 'var(--border)', background: 'var(--bg-secondary)' }}>
+                  <button
+                    onClick={() => setShowCustomMcp(v => !v)}
+                    className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors hover:bg-[var(--bg-primary)]"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {showCustomMcp
+                      ? <ChevronDown className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                      : <ChevronRight className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />}
+                    <Wrench className="w-4 h-4" style={{ color: 'var(--accent-primary)' }} />
+                    <span className="flex-1 text-left">Serveur MCP custom</span>
+                    <span className="text-xs" style={{ color: customMcps.length > 0 ? 'var(--accent-success)' : 'var(--text-muted)' }}>
+                      {customMcps.length > 0 ? `${customMcps.length} configuré${customMcps.length > 1 ? 's' : ''}` : 'avancé'}
+                    </span>
+                  </button>
+
+                  {showCustomMcp && (
+                    <div className="p-4 space-y-3 border-t" style={{ borderColor: 'var(--border)' }}>
+                      <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                        Ajoute un serveur MCP qui n'est pas dans le catalogue — un package custom (ex: <code>@yourorg/mcp-server-xyz</code>), un binaire Python local, un script Node privé. Tout ce qui peut être lancé avec l'une des commandes autorisées et qui parle JSON-RPC stdio.
+                      </p>
+
+                      {mcpFlash && (
+                        <div className="text-xs p-2 rounded" style={{
+                          background: mcpFlash.level === 'ok'
+                            ? 'color-mix(in srgb, var(--accent-success) 15%, transparent)'
+                            : 'color-mix(in srgb, var(--accent-error) 15%, transparent)',
+                          color: mcpFlash.level === 'ok' ? 'var(--accent-success)' : 'var(--accent-error)',
+                        }}>
+                          {mcpFlash.msg}
+                        </div>
+                      )}
+
+                      {/* Liste des MCPs custom existants */}
+                      {customMcps.length > 0 && (
+                        <div className="space-y-2">
+                          {customMcps.map(srv => {
+                            const rt = allDbMcpStatus.find(s => s.name === srv.name)
+                            const busy = actionLoading === `mcp-${srv.name}`
+                            return (
+                              <div key={srv.name} className="rounded-lg p-3" style={{
+                                background: 'var(--bg-primary)',
+                                border: srv.enabled ? '1px solid color-mix(in srgb, var(--accent-primary) 30%, var(--border))' : '1px solid var(--border)',
+                              }}>
+                                <div className="flex items-center gap-3 mb-2">
+                                  <div className={`w-2 h-2 rounded-full ${rt?.running ? 'bg-green-400' : srv.enabled ? 'bg-yellow-400' : 'bg-gray-500'}`} />
+                                  <span className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>{srv.name}</span>
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-mono" style={{ background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
+                                    {srv.command} {srv.args.join(' ')}
+                                  </span>
+                                  {rt?.running && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded" style={{
+                                      background: 'color-mix(in srgb, var(--accent-success) 15%, transparent)',
+                                      color: 'var(--accent-success)',
+                                    }}>
+                                      {rt.tools} outil{rt.tools > 1 ? 's' : ''}
+                                    </span>
+                                  )}
+                                  <div className="flex items-center gap-1 ml-auto">
+                                    <button onClick={() => toggleCustomMcp(srv)} disabled={busy}
+                                      className="p-1.5 rounded-md transition-colors hover:bg-[var(--bg-secondary)]"
+                                      title={srv.enabled ? 'Désactiver' : 'Activer'}>
+                                      {busy
+                                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                                        : srv.enabled
+                                          ? <Square className="w-3.5 h-3.5" style={{ color: 'var(--accent-primary)' }} />
+                                          : <Play className="w-3.5 h-3.5" style={{ color: 'var(--accent-success)' }} />}
+                                    </button>
+                                    <button onClick={() => removeCustomMcp(srv.name)} disabled={busy}
+                                      className="p-1.5 rounded-md transition-colors hover:bg-[var(--bg-secondary)]" title="Supprimer">
+                                      <Trash2 className="w-3.5 h-3.5" style={{ color: 'var(--accent-error, #ef4444)' }} />
+                                    </button>
+                                  </div>
+                                </div>
+                                {Object.keys(srv.env || {}).length > 0 && (
+                                  <div className="text-[11px] flex flex-wrap gap-1" style={{ color: 'var(--text-muted)' }}>
+                                    {Object.entries(srv.env).map(([k, v]) => (
+                                      <span key={k} style={{ background: 'var(--bg-secondary)', padding: '1px 6px', borderRadius: 4, fontFamily: 'monospace' }}>
+                                        {k}={v}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {rt?.tool_names && rt.tool_names.length > 0 && (
+                                  <div className="text-[11px] mt-2 flex flex-wrap gap-1">
+                                    {rt.tool_names.slice(0, 8).map(tn => (
+                                      <span key={tn} style={{
+                                        background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)',
+                                        color: 'var(--accent-primary)',
+                                        padding: '1px 6px', borderRadius: 4, fontFamily: 'monospace',
+                                      }}>
+                                        {tn}
+                                      </span>
+                                    ))}
+                                    {rt.tool_names.length > 8 && (
+                                      <span style={{ color: 'var(--text-muted)' }}>+{rt.tool_names.length - 8}</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+
+                      {/* Formulaire d'ajout */}
+                      <div className="rounded-lg p-3 space-y-3" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
+                        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Ajouter un serveur</h3>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Nom</label>
+                            <input
+                              value={mcpAddForm.name}
+                              onChange={e => setMcpAddForm(f => ({ ...f, name: e.target.value }))}
+                              placeholder="mon-mcp-custom"
+                              className="w-full px-3 py-2 rounded-md text-sm outline-none"
+                              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Commande <span style={{ color: 'var(--text-muted)' }}>(allowlist)</span></label>
+                            <select
+                              value={mcpAddForm.command}
+                              onChange={e => setMcpAddForm(f => ({ ...f, command: e.target.value }))}
+                              className="w-full px-3 py-2 rounded-md text-sm outline-none"
+                              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                            >
+                              {MCP_ALLOWED_COMMANDS.map(cmd => <option key={cmd} value={cmd}>{cmd}</option>)}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Arguments (espace-séparés)</label>
+                          <input
+                            value={mcpAddForm.argsRaw}
+                            onChange={e => setMcpAddForm(f => ({ ...f, argsRaw: e.target.value }))}
+                            placeholder="-y @yourorg/mcp-server-xyz"
+                            className="w-full px-3 py-2 rounded-md text-sm font-mono outline-none"
+                            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Variables d'environnement</label>
+                          <div className="space-y-2">
+                            {mcpAddForm.envPairs.map((pair, idx) => (
+                              <div key={idx} className="flex gap-2">
+                                <input
+                                  value={pair.key}
+                                  onChange={e => {
+                                    const next = [...mcpAddForm.envPairs]
+                                    next[idx] = { ...pair, key: e.target.value }
+                                    setMcpAddForm(f => ({ ...f, envPairs: next }))
+                                  }}
+                                  placeholder="API_KEY"
+                                  className="flex-1 px-2 py-1.5 rounded-md text-sm font-mono outline-none"
+                                  style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                                />
+                                <input
+                                  type={/key|secret|token|password/i.test(pair.key) ? 'password' : 'text'}
+                                  value={pair.value}
+                                  onChange={e => {
+                                    const next = [...mcpAddForm.envPairs]
+                                    next[idx] = { ...pair, value: e.target.value }
+                                    setMcpAddForm(f => ({ ...f, envPairs: next }))
+                                  }}
+                                  placeholder="valeur"
+                                  className="flex-1 px-2 py-1.5 rounded-md text-sm font-mono outline-none"
+                                  style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                                />
+                                <button
+                                  onClick={() => {
+                                    const next = mcpAddForm.envPairs.filter((_, i) => i !== idx)
+                                    setMcpAddForm(f => ({ ...f, envPairs: next.length ? next : [{ key: '', value: '' }] }))
+                                  }}
+                                  className="p-1.5 rounded-md transition-colors hover:bg-[var(--bg-secondary)]" title="Retirer">
+                                  <X className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              onClick={() => setMcpAddForm(f => ({ ...f, envPairs: [...f.envPairs, { key: '', value: '' }] }))}
+                              className="text-xs flex items-center gap-1" style={{ color: 'var(--accent-primary)' }}>
+                              <Plus className="w-3.5 h-3.5" /> Ajouter une variable
+                            </button>
+                          </div>
+                        </div>
+
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={mcpAddForm.enabled}
+                            onChange={e => setMcpAddForm(f => ({ ...f, enabled: e.target.checked }))}
+                            className="w-4 h-4 accent-[var(--accent-primary)]" />
+                          <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                            Démarrer immédiatement après l'ajout
+                          </span>
+                        </label>
+
+                        <div className="flex justify-end">
+                          <PrimaryButton size="sm" onClick={addCustomMcp}
+                            disabled={actionLoading === 'mcp-custom-add' || !mcpAddForm.name.trim()}>
+                            {actionLoading === 'mcp-custom-add' ? 'Ajout…' : 'Ajouter le serveur'}
+                          </PrimaryButton>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
