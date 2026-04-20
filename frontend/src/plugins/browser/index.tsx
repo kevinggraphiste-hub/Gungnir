@@ -370,7 +370,30 @@ function markdownToHtml(md: string, citations: Citation[]): string {
   return out.join('\n')
 }
 
-function exportAsPdf(query: string, result: SearchResult) {
+// ── Export helpers ────────────────────────────────────────────────────────
+
+type ExportFormat = 'pdf' | 'html' | 'md' | 'json' | 'txt'
+
+function slugify(s: string): string {
+  return (s || 'huntr-export')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    .slice(0, 60) || 'huntr-export'
+}
+
+function downloadBlob(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+
+function buildHuntRHtml(query: string, result: SearchResult): string {
   const body = markdownToHtml(result.answer || '', result.citations || [])
   const sources = (result.citations || []).map(c => {
     const host = (() => { try { return new URL(c.url).hostname.replace('www.', '') } catch { return c.url } })()
@@ -386,7 +409,7 @@ function exportAsPdf(query: string, result: SearchResult) {
     new Date().toLocaleString('fr-FR'),
   ].filter(Boolean).map(escapeHtml).join(' • ')
 
-  const html = `<!doctype html>
+  return `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><title>HuntR — ${escapeHtml(query)}</title>
 <style>
   @page { margin: 18mm; }
@@ -421,9 +444,115 @@ function exportAsPdf(query: string, result: SearchResult) {
 <main>${body}</main>
 <section class="sources"><h2>Sources (${(result.citations || []).length})</h2><ol>${sources}</ol></section>
 <footer>Généré par HuntR — Gungnir</footer>
-<script>window.addEventListener('load', () => setTimeout(() => window.print(), 250));</script>
 </body></html>`
+}
 
+function buildHuntRMarkdown(query: string, result: SearchResult): string {
+  const answer = (result.answer || '').trim()
+  const sources = (result.citations || []).map(c => {
+    const title = c.title || c.url
+    return `[${c.index}] ${title} — ${c.url}`
+  }).join('\n')
+  const topicLbl = TOPIC_LABELS[(result.topic || 'web') as Topic] || 'Web'
+  const metaLine = [
+    result.pro_search ? 'Pro' : 'Classique',
+    topicLbl,
+    result.model || '',
+    `${result.search_count} sources`,
+    new Date().toLocaleString('fr-FR'),
+  ].filter(Boolean).join(' · ')
+  return (
+    `# ${query}\n\n` +
+    `> ${metaLine}\n\n` +
+    `${answer}\n\n` +
+    (sources ? `---\n\n## Sources\n\n${sources}\n` : '')
+  )
+}
+
+function buildHuntRJson(query: string, result: SearchResult): string {
+  const payload = {
+    query,
+    generated_at: new Date().toISOString(),
+    pro_search: !!result.pro_search,
+    topic: result.topic || 'web',
+    model: result.model || null,
+    engines: result.engines || [],
+    search_count: result.search_count || 0,
+    time_ms: result.time_ms || 0,
+    answer: result.answer || '',
+    citations: result.citations || [],
+    related_questions: result.related_questions || [],
+  }
+  return JSON.stringify(payload, null, 2)
+}
+
+function buildHuntRText(query: string, result: SearchResult): string {
+  // Conversion Markdown → texte brut : strip des marqueurs syntaxiques en
+  // gardant le texte utile. On NE remplace PAS les citations [n] : elles sont
+  // informatives dans un export texte aussi.
+  const md = (result.answer || '')
+  const stripped = md
+    .replace(/^#{1,6}\s+/gm, '')               // # titles → texte nu
+    .replace(/\*\*(.+?)\*\*/g, '$1')           // bold
+    .replace(/\*(.+?)\*/g, '$1')               // italic
+    .replace(/`([^`]+)`/g, '$1')               // inline code
+    .replace(/```[\s\S]*?```/g, m => m.replace(/```[a-z]*\n?|\n?```/g, '')) // fences
+    .replace(/^\s*[-*]\s+/gm, '- ')            // bullets (keep marker)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)') // links
+    .replace(/\n{3,}/g, '\n\n')                // compress excess blank lines
+  const sources = (result.citations || []).map(c => {
+    const title = c.title || c.url
+    return `[${c.index}] ${title}\n    ${c.url}`
+  }).join('\n\n')
+  const topicLbl = TOPIC_LABELS[(result.topic || 'web') as Topic] || 'Web'
+  const meta = [
+    result.pro_search ? 'Pro' : 'Classique',
+    topicLbl,
+    result.model || '',
+    `${result.search_count} sources`,
+    new Date().toLocaleString('fr-FR'),
+  ].filter(Boolean).join(' · ')
+  return (
+    `${query}\n` +
+    `${'='.repeat(Math.min(80, query.length))}\n` +
+    `${meta}\n\n` +
+    `${stripped.trim()}\n\n` +
+    (sources ? `----------\nSources\n\n${sources}\n` : '')
+  )
+}
+
+function exportAs(format: ExportFormat, query: string, result: SearchResult) {
+  const base = slugify(query)
+  if (format === 'pdf') {
+    exportAsPdf(query, result)
+    return
+  }
+  if (format === 'html') {
+    downloadBlob(buildHuntRHtml(query, result), `${base}.html`, 'text/html;charset=utf-8')
+    return
+  }
+  if (format === 'md') {
+    downloadBlob(buildHuntRMarkdown(query, result), `${base}.md`, 'text/markdown;charset=utf-8')
+    return
+  }
+  if (format === 'json') {
+    downloadBlob(buildHuntRJson(query, result), `${base}.json`, 'application/json;charset=utf-8')
+    return
+  }
+  if (format === 'txt') {
+    downloadBlob(buildHuntRText(query, result), `${base}.txt`, 'text/plain;charset=utf-8')
+    return
+  }
+}
+
+function exportAsPdf(query: string, result: SearchResult) {
+  // Réutilise le même HTML que l'export "HTML" mais injecte un script de
+  // print auto : le user obtient une boîte d'impression (→ PDF) sans avoir
+  // à le déclencher manuellement.
+  const html = buildHuntRHtml(query, result).replace(
+    '</body></html>',
+    '<script>window.addEventListener("load", () => setTimeout(() => window.print(), 250));</script></body></html>'
+  )
   const w = window.open('', '_blank', 'width=900,height=700')
   if (!w) {
     alert('Popup bloquée. Autorisez les popups pour exporter en PDF.')
@@ -432,6 +561,95 @@ function exportAsPdf(query: string, result: SearchResult) {
   w.document.open()
   w.document.write(html)
   w.document.close()
+}
+
+// ── Export Menu (dropdown) ────────────────────────────────────────────────
+
+const EXPORT_FORMATS: { id: ExportFormat; label: string; desc: string }[] = [
+  { id: 'pdf',  label: 'PDF',      desc: 'Impression navigateur → PDF' },
+  { id: 'html', label: 'HTML',     desc: 'Page web autonome (stylée)' },
+  { id: 'md',   label: 'Markdown', desc: 'Pour coller dans Obsidian, Notion…' },
+  { id: 'json', label: 'JSON',     desc: 'Données brutes (citations, méta…)' },
+  { id: 'txt',  label: 'Texte',    desc: 'Brut sans mise en forme' },
+]
+
+function ExportMenu({ query, result }: { query: string; result: SearchResult }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const pick = (f: ExportFormat) => {
+    setOpen(false)
+    exportAs(f, query, result)
+  }
+
+  return (
+    <div ref={ref} style={{ marginLeft: 'auto', position: 'relative' }}>
+      <SecondaryButton
+        size="sm"
+        icon={<Download size={11} />}
+        onClick={() => setOpen(v => !v)}
+        title="Exporter la réponse"
+        style={{
+          padding: '3px 10px',
+          fontSize: 10,
+          color: 'var(--scarlet)',
+          border: '1px solid var(--scarlet)',
+        }}
+      >
+        Exporter ▾
+      </SecondaryButton>
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: 'calc(100% + 4px)',
+            minWidth: 220,
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+            zIndex: 20,
+            padding: 4,
+          }}
+        >
+          {EXPORT_FORMATS.map(f => (
+            <button
+              key={f.id}
+              onClick={() => pick(f.id)}
+              role="menuitem"
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                padding: '6px 10px',
+                borderRadius: 6,
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-primary)',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <div style={{ fontSize: 12, fontWeight: 600 }}>{f.label}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{f.desc}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── Main Component ────────────────────────────────────────────────────────
@@ -1161,21 +1379,7 @@ export default function HuntRPlugin() {
                       {result.search_count} sources &middot; {result.time_ms}ms
                     </span>
                     {result.answer && !searching && (
-                      <SecondaryButton
-                        size="sm"
-                        icon={<Download size={11} />}
-                        onClick={() => exportAsPdf(query, result)}
-                        title="Exporter la réponse en PDF"
-                        style={{
-                          marginLeft: 'auto',
-                          padding: '3px 10px',
-                          fontSize: 10,
-                          color: 'var(--scarlet)',
-                          border: '1px solid var(--scarlet)',
-                        }}
-                      >
-                        PDF
-                      </SecondaryButton>
+                      <ExportMenu query={query} result={result} />
                     )}
                   </div>
                 )}
