@@ -607,6 +607,126 @@ async def list_tags(request: Request, session: AsyncSession = Depends(get_sessio
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Rappels (deadlines) — tous projets user confondus, non archivé, non done
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/reminders")
+async def list_reminders(request: Request,
+                          session: AsyncSession = Depends(get_session)):
+    """Retourne 3 buckets : overdue (retard), today, soon (≤ 7j).
+    Agrège sur tous les projets non-archivés de l'user."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    today = datetime.utcnow().date()
+    week_ahead = today + timedelta(days=7)
+    rs = await session.execute(
+        select(ValkyrieCard, ValkyrieProject.title)
+        .join(ValkyrieProject, ValkyrieProject.id == ValkyrieCard.project_id)
+        .where(
+            ValkyrieCard.user_id == uid,
+            ValkyrieCard.archived_at.is_(None),
+            ValkyrieCard.status_key != "done",
+            ValkyrieCard.due_date.isnot(None),
+            ValkyrieProject.archived.is_(False),
+        )
+        .order_by(ValkyrieCard.due_date)
+    )
+    overdue: list[dict] = []
+    today_list: list[dict] = []
+    soon: list[dict] = []
+    for card, proj_title in rs.all():
+        if not card.due_date:
+            continue
+        d = card.due_date.date() if isinstance(card.due_date, datetime) else card.due_date
+        item = {
+            "id": card.id,
+            "project_id": card.project_id,
+            "project_title": proj_title,
+            "title": card.title,
+            "status_key": card.status_key,
+            "due_date": d.isoformat(),
+            "days_diff": (d - today).days,
+        }
+        if d < today:
+            overdue.append(item)
+        elif d == today:
+            today_list.append(item)
+        elif d <= week_ahead:
+            soon.append(item)
+    return {
+        "overdue": overdue,
+        "today": today_list,
+        "soon": soon,
+        "total": len(overdue) + len(today_list) + len(soon),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Bulk operations (pour les UI multi-sélection)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class BulkIn(BaseModel):
+    card_ids: list[int]
+    action: str  # "archive" | "delete" | "set_status" | "add_tag" | "remove_tag"
+    status_key: Optional[str] = None
+    tag: Optional[str] = None
+
+
+@router.post("/cards/bulk")
+async def bulk_cards(payload: BulkIn, request: Request,
+                      session: AsyncSession = Depends(get_session)):
+    """Applique une action à un batch de cartes possédées par l'user.
+    Retourne le nombre de cartes affectées."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    ids = [int(x) for x in (payload.card_ids or []) if isinstance(x, int) or (isinstance(x, str) and x.isdigit())]
+    if not ids:
+        return {"ok": True, "affected": 0}
+    action = (payload.action or "").strip()
+    # Filtre strict : seules les cartes de l'user sont touchées.
+    rs = await session.execute(
+        select(ValkyrieCard).where(
+            ValkyrieCard.id.in_(ids), ValkyrieCard.user_id == uid,
+        )
+    )
+    rows = rs.scalars().all()
+    now = datetime.utcnow()
+    if action == "archive":
+        for r in rows:
+            if r.archived_at is None:
+                r.archived_at = now
+    elif action == "restore":
+        for r in rows:
+            r.archived_at = None
+    elif action == "delete":
+        for r in rows:
+            await session.delete(r)
+    elif action == "set_status":
+        target = (payload.status_key or "todo").strip()[:60] or "todo"
+        for r in rows:
+            r.status_key = target
+    elif action == "add_tag":
+        tag = (payload.tag or "").strip()[:40]
+        if tag:
+            for r in rows:
+                existing = list(r.tags_json or [])
+                if tag.lower() not in [t.lower() for t in existing if isinstance(t, str)]:
+                    existing.append(tag)
+                    r.tags_json = _sanitize_tags(existing)
+                    flag_modified(r, "tags_json")
+    elif action == "remove_tag":
+        tag = (payload.tag or "").strip()[:40]
+        if tag:
+            for r in rows:
+                r.tags_json = [t for t in (r.tags_json or []) if isinstance(t, str) and t.lower() != tag.lower()]
+                flag_modified(r, "tags_json")
+    else:
+        raise HTTPException(status_code=400, detail=f"Action inconnue: {action}")
+    await session.commit()
+    return {"ok": True, "affected": len(rows), "action": action}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Archive / Restore / Duplicate (actions sur une carte existante)
 # ═══════════════════════════════════════════════════════════════════════════
 

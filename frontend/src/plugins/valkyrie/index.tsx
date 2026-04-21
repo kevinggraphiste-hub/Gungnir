@@ -16,7 +16,7 @@ import {
   LayoutGrid, Plus, Trash2, Archive, Save, ChevronDown, ChevronRight,
   X, Check, Loader2, Edit3, GripVertical, Search, Download, Tag as TagIcon,
   Calendar, Copy, AlertTriangle, Sparkles, Eye, FileText, BarChart3,
-  RotateCcw,
+  RotateCcw, Bell, Keyboard, CheckSquare, Undo2,
 } from 'lucide-react'
 import InfoButton from '@core/components/InfoButton'
 import manifest from './manifest.json'
@@ -103,6 +103,31 @@ interface StatsT {
   subtasks_done: number
 }
 
+interface ReminderItemT {
+  id: number
+  project_id: number
+  project_title: string
+  title: string
+  status_key: string
+  due_date: string
+  days_diff: number
+}
+
+interface RemindersT {
+  overdue: ReminderItemT[]
+  today: ReminderItemT[]
+  soon: ReminderItemT[]
+  total: number
+}
+
+// Représentation d'une action annulable — stockée en pile.
+type UndoEntry =
+  | { type: 'delete'; card: CardT }
+  | { type: 'archive'; cardId: number }
+  | { type: 'bulk_archive'; cardIds: number[] }
+  | { type: 'bulk_delete'; cards: CardT[] }
+  | { type: 'status_change'; cardId: number; previous: string }
+
 // Palette de couleurs pour les tags : dérivée du hash du label → index stable
 const TAG_COLORS = [
   '#dc2626', '#ef4444', '#f97316', '#f59e0b',
@@ -176,6 +201,36 @@ export default function ValkyriePlugin() {
   const [showConscienceModal, setShowConscienceModal] = useState(false)
   const [conscienceLoading, setConscienceLoading] = useState(false)
   const [mdPreview, setMdPreview] = useState(true) // render markdown in descriptions
+
+  // Rappels (deadlines) — tous projets user confondus.
+  const [reminders, setReminders] = useState<RemindersT | null>(null)
+  const [remindersOpen, setRemindersOpen] = useState(false)
+  const [remindersDismissed, setRemindersDismissed] = useState(() => {
+    try {
+      const key = `valkyrie_reminders_dismissed_${new Date().toISOString().slice(0, 10)}`
+      return localStorage.getItem(key) === '1'
+    } catch { return false }
+  })
+
+  // Bulk ops (multi-sélection)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedCardIds, setSelectedCardIds] = useState<Set<number>>(new Set())
+
+  // Undo stack (limité à 30 entrées)
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([])
+  const pushUndo = useCallback((entry: UndoEntry) => {
+    setUndoStack(prev => {
+      const next = [...prev, entry]
+      return next.length > 30 ? next.slice(next.length - 30) : next
+    })
+  }, [])
+
+  // Raccourcis clavier
+  const [showShortcuts, setShowShortcuts] = useState(false)
+
+  // Refs pour focus shortcuts (recherche / nouvelle carte)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const newCardInputRef = useRef<HTMLInputElement | null>(null)
 
   const activeProject = useMemo(
     () => projects.find(p => p.id === activeProjectId) || null,
@@ -262,6 +317,30 @@ export default function ValkyriePlugin() {
     return () => { cancelled = true }
   }, [showArchived, activeProjectId])
 
+  // ── Rappels : fetch au démarrage + après chaque mutation sur les cartes.
+  const refreshReminders = useCallback(async () => {
+    try {
+      const r = await jget<RemindersT>(`${API}/reminders`)
+      setReminders(r)
+      // Si >0 rappels urgents (overdue + today) et pas encore dismissed,
+      // on ouvre le panneau automatiquement à la première passe.
+      if ((r.overdue.length + r.today.length) > 0 && !remindersDismissed) {
+        setRemindersOpen(true)
+      }
+    } catch { /* silencieux */ }
+  }, [remindersDismissed])
+
+  useEffect(() => { refreshReminders() }, [refreshReminders, cards.length])
+
+  const dismissReminders = useCallback(() => {
+    setRemindersDismissed(true)
+    setRemindersOpen(false)
+    try {
+      const key = `valkyrie_reminders_dismissed_${new Date().toISOString().slice(0, 10)}`
+      localStorage.setItem(key, '1')
+    } catch { /* ignore */ }
+  }, [])
+
   // ── Project mutations ──────────────────────────────────────────────
   const saveProject = useCallback(async (updates: Partial<ProjectT>) => {
     if (!activeProject) return
@@ -343,21 +422,25 @@ export default function ValkyriePlugin() {
 
   const deleteCard = useCallback(async (cardId: number) => {
     if (!confirm('Supprimer cette carte ?')) return
+    const snapshot = cards.find(c => c.id === cardId) || archivedCards.find(c => c.id === cardId)
     try {
       await jsend(`${API}/cards/${cardId}`, 'DELETE')
       setCards(prev => prev.filter(c => c.id !== cardId))
+      setArchivedCards(prev => prev.filter(c => c.id !== cardId))
+      if (snapshot) pushUndo({ type: 'delete', card: snapshot })
     } catch (err) {
       console.warn('deleteCard failed:', err)
     }
-  }, [])
+  }, [cards, archivedCards, pushUndo])
 
   const archiveCard = useCallback(async (cardId: number) => {
     try {
       const r = await jsend<{ card: CardT }>(`${API}/cards/${cardId}/archive`, 'POST')
       setCards(prev => prev.filter(c => c.id !== cardId))
       setArchivedCards(prev => [r.card, ...prev.filter(c => c.id !== cardId)])
+      pushUndo({ type: 'archive', cardId })
     } catch (err) { console.warn('archiveCard failed:', err) }
-  }, [])
+  }, [pushUndo])
 
   const restoreCard = useCallback(async (cardId: number) => {
     try {
@@ -425,6 +508,118 @@ export default function ValkyriePlugin() {
     }
   }, [activeProjectId])
 
+  // ── Bulk ops (multi-sélection) ──────────────────────────────────
+  const toggleCardSelected = useCallback((cardId: number) => {
+    setSelectedCardIds(prev => {
+      const next = new Set(prev)
+      if (next.has(cardId)) next.delete(cardId); else next.add(cardId)
+      return next
+    })
+  }, [])
+  const clearSelection = useCallback(() => {
+    setSelectedCardIds(new Set())
+    setSelectMode(false)
+  }, [])
+
+  const bulkRun = useCallback(async (
+    action: 'archive' | 'delete' | 'set_status' | 'add_tag' | 'remove_tag' | 'restore',
+    extra?: { status_key?: string; tag?: string },
+  ) => {
+    const ids = Array.from(selectedCardIds)
+    if (ids.length === 0) return
+    // Snapshot pour undo (archive/delete)
+    const snapshot = cards.filter(c => selectedCardIds.has(c.id))
+    try {
+      await jsend(`${API}/cards/bulk`, 'POST', { card_ids: ids, action, ...extra })
+      if (action === 'archive') {
+        setCards(prev => prev.filter(c => !selectedCardIds.has(c.id)))
+        pushUndo({ type: 'bulk_archive', cardIds: ids })
+      } else if (action === 'delete') {
+        setCards(prev => prev.filter(c => !selectedCardIds.has(c.id)))
+        setArchivedCards(prev => prev.filter(c => !selectedCardIds.has(c.id)))
+        pushUndo({ type: 'bulk_delete', cards: snapshot })
+      } else if (action === 'restore') {
+        // refetch normal cards and clear archived list
+        if (activeProjectId) {
+          const cs = await jget<{ cards: CardT[] }>(`${API}/projects/${activeProjectId}/cards`)
+          setCards(cs.cards || [])
+        }
+        setArchivedCards(prev => prev.filter(c => !selectedCardIds.has(c.id)))
+      } else {
+        // set_status / add_tag / remove_tag : simple refetch
+        if (activeProjectId) {
+          const cs = await jget<{ cards: CardT[] }>(`${API}/projects/${activeProjectId}/cards`)
+          setCards(cs.cards || [])
+        }
+      }
+      clearSelection()
+    } catch (err) {
+      console.warn('bulk failed:', err)
+    }
+  }, [selectedCardIds, cards, activeProjectId, pushUndo, clearSelection])
+
+  // ── Undo : inverse la dernière action sur la pile ─────────────
+  const undoLast = useCallback(async () => {
+    setUndoStack(prev => {
+      const stack = [...prev]
+      const last = stack.pop()
+      if (!last) return prev
+      ;(async () => {
+        try {
+          if (last.type === 'archive') {
+            const r = await jsend<{ card: CardT }>(`${API}/cards/${last.cardId}/restore`, 'POST')
+            setArchivedCards(p => p.filter(c => c.id !== last.cardId))
+            setCards(p => [...p, r.card])
+          } else if (last.type === 'bulk_archive') {
+            await Promise.all(last.cardIds.map(id =>
+              jsend<{ card: CardT }>(`${API}/cards/${id}/restore`, 'POST')
+            ))
+            if (activeProjectId) {
+              const cs = await jget<{ cards: CardT[] }>(`${API}/projects/${activeProjectId}/cards`)
+              setCards(cs.cards || [])
+            }
+          } else if (last.type === 'delete' || last.type === 'bulk_delete') {
+            // Recrée les cartes (best-effort — nouveaux IDs). On informe l'user.
+            const srcCards = last.type === 'delete' ? [last.card] : last.cards
+            for (const c of srcCards) {
+              try {
+                await jsend(`${API}/projects/${c.project_id}/cards`, 'POST', {
+                  title: c.title, subtitle: c.subtitle, description: c.description,
+                  status_key: c.status_key, position: c.position,
+                  subtasks: c.subtasks, subtasks2: c.subtasks2,
+                  subtasks2_title: c.subtasks2_title, tags: c.tags,
+                  due_date: c.due_date || undefined,
+                })
+              } catch { /* best effort */ }
+            }
+            if (activeProjectId) {
+              const cs = await jget<{ cards: CardT[] }>(`${API}/projects/${activeProjectId}/cards`)
+              setCards(cs.cards || [])
+            }
+          } else if (last.type === 'status_change') {
+            await jsend(`${API}/cards/${last.cardId}`, 'PUT', { status_key: last.previous })
+            setCards(p => p.map(c => c.id === last.cardId ? { ...c, status_key: last.previous } : c))
+          }
+        } catch (err) { console.warn('undo failed:', err) }
+      })()
+      return stack
+    })
+  }, [activeProjectId])
+
+  // ── Navigation depuis un rappel : change de projet + scroll / expand ──
+  const gotoCard = useCallback(async (projectId: number, cardId: number) => {
+    setShowArchived(false)
+    setActiveProjectId(projectId)
+    setRemindersOpen(false)
+    // Expand la carte ciblée après un petit délai (le temps du refetch)
+    setTimeout(async () => {
+      try {
+        await jsend(`${API}/cards/${cardId}`, 'PUT', { expanded: true })
+        setCards(prev => prev.map(c => c.id === cardId ? { ...c, expanded: true } : c))
+      } catch { /* ignore */ }
+    }, 400)
+  }, [])
+
   const reorderCards = useCallback(async (items: { id: number; position: number; status_key?: string }[]) => {
     try {
       await jsend(`${API}/cards/reorder`, 'POST', { items })
@@ -458,6 +653,57 @@ export default function ValkyriePlugin() {
       console.warn('deleteStatus failed:', err)
     }
   }, [activeProjectId])
+
+  // ── Raccourcis clavier ──────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Ignore quand on tape dans un input/textarea (sauf Escape/Ctrl+Z)
+      const target = e.target as HTMLElement | null
+      const inField = target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)
+      const modal = showStatusModal || showNewProjectModal || showConscienceModal || showShortcuts
+      // Escape : ferme modals / vide sélection / sort du mode select
+      if (e.key === 'Escape') {
+        if (modal) return // les modals gèrent leur propre Escape via onClick
+        if (selectMode) { clearSelection(); e.preventDefault(); return }
+        if (searchQuery) { setSearchQuery(''); e.preventDefault(); return }
+        if (filter != null) { setFilter(null); e.preventDefault(); return }
+      }
+      if (inField) return
+      // N : focus la saisie nouvelle carte
+      if (e.key === 'n' || e.key === 'N') {
+        if (!modal && activeProjectId) {
+          newCardInputRef.current?.focus(); e.preventDefault()
+        }
+      }
+      // / : focus recherche
+      else if (e.key === '/') {
+        if (!modal) { searchInputRef.current?.focus(); e.preventDefault() }
+      }
+      // S : toggle select mode
+      else if ((e.key === 's' || e.key === 'S') && !modal && activeProjectId) {
+        setSelectMode(v => { if (v) clearSelection(); return !v })
+        e.preventDefault()
+      }
+      // A : toggle archive view
+      else if ((e.key === 'a' || e.key === 'A') && !modal && activeProjectId) {
+        setShowArchived(v => !v); e.preventDefault()
+      }
+      // ? : help
+      else if (e.key === '?') {
+        setShowShortcuts(v => !v); e.preventDefault()
+      }
+      // Ctrl/Cmd+Z : undo
+      else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        if (undoStack.length > 0) { undoLast(); e.preventDefault() }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [
+    showStatusModal, showNewProjectModal, showConscienceModal, showShortcuts,
+    selectMode, searchQuery, filter, activeProjectId, undoStack.length,
+    clearSelection, undoLast,
+  ])
 
   // ── Drag & drop state ──────────────────────────────────────────────
   const [draggedId, setDraggedId] = useState<number | null>(null)
@@ -665,6 +911,56 @@ export default function ValkyriePlugin() {
                 />
               </div>
               <div className="flex items-center gap-1 flex-shrink-0 flex-wrap justify-end">
+                {/* Bell : rappels deadlines (tout projet confondu) */}
+                <button onClick={() => { setRemindersOpen(v => !v); refreshReminders() }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                  style={{
+                    position: 'relative',
+                    background: (reminders?.overdue.length || 0) > 0
+                      ? 'rgba(239,68,68,0.12)' : 'var(--bg-tertiary)',
+                    border: `1px solid ${(reminders?.overdue.length || 0) > 0
+                      ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
+                    color: (reminders?.overdue.length || 0) > 0
+                      ? '#ef4444' : 'var(--text-secondary)',
+                  }}
+                  title="Rappels (deadlines)">
+                  <Bell className="w-3.5 h-3.5" /> Rappels
+                  {reminders && reminders.total > 0 && (
+                    <span style={{
+                      fontSize: 9, fontWeight: 700,
+                      padding: '1px 5px', borderRadius: 4,
+                      background: reminders.overdue.length > 0 ? '#ef4444' : 'var(--scarlet)',
+                      color: '#fff',
+                    }}>{reminders.total}</span>
+                  )}
+                </button>
+                <button onClick={() => { setSelectMode(v => !v); if (selectMode) clearSelection() }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                  style={{
+                    background: selectMode ? 'color-mix(in srgb, var(--scarlet) 14%, var(--bg-tertiary))' : 'var(--bg-tertiary)',
+                    border: '1px solid var(--border)',
+                    color: selectMode ? 'var(--scarlet)' : 'var(--text-secondary)',
+                  }}
+                  title="Sélection multiple (S)">
+                  <CheckSquare className="w-3.5 h-3.5" /> Sélection
+                </button>
+                <button onClick={undoLast}
+                  disabled={undoStack.length === 0}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-40"
+                  style={{
+                    background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border)',
+                    color: undoStack.length > 0 ? 'var(--text-secondary)' : 'var(--text-muted)',
+                    cursor: undoStack.length > 0 ? 'pointer' : 'not-allowed',
+                  }}
+                  title={`Annuler (Ctrl+Z) — ${undoStack.length} action(s) annulables`}>
+                  <Undo2 className="w-3.5 h-3.5" /> Undo
+                </button>
+                <button onClick={() => setShowShortcuts(true)}
+                  className="p-2 rounded-lg transition-colors hover:bg-[var(--bg-tertiary)]"
+                  title="Raccourcis clavier (?)">
+                  <Keyboard className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                </button>
                 <button onClick={() => setShowStats(v => !v)}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
                   style={{
@@ -724,10 +1020,11 @@ export default function ValkyriePlugin() {
             <div className="mt-4 pt-4" style={{ borderTop: '1px dashed var(--border)' }}>
               <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 180px auto' }}>
                 <input
+                  ref={newCardInputRef}
                   value={newCardTitle}
                   onChange={e => setNewCardTitle(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && createCard()}
-                  placeholder="Nouvelle carte — titre de la tâche…"
+                  placeholder="Nouvelle carte — titre de la tâche… (N)"
                   className="px-3 py-2 rounded-lg text-sm outline-none transition-colors"
                   style={{
                     background: 'var(--bg-primary)', border: '1px solid var(--border)',
@@ -769,9 +1066,10 @@ export default function ValkyriePlugin() {
                 color: 'var(--text-muted)', pointerEvents: 'none',
               }} />
               <input
+                ref={searchInputRef}
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Rechercher dans les cartes (titre, description, sous-tâches, tags…)"
+                placeholder="Rechercher (/ pour focus, titre, description, sous-tâches, tags…)"
                 className="w-full rounded-lg text-sm outline-none"
                 style={{
                   background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -879,6 +1177,33 @@ export default function ValkyriePlugin() {
           </div>
         )}
 
+        {/* ── Panneau rappels ───────────────────────────────────── */}
+        {activeProject && remindersOpen && reminders && reminders.total > 0 && (
+          <RemindersPanel
+            reminders={reminders}
+            onGotoCard={gotoCard}
+            onClose={() => setRemindersOpen(false)}
+            onDismiss={dismissReminders}
+          />
+        )}
+
+        {/* ── Barre d'actions bulk (apparaît quand multi-sélection active) ── */}
+        {activeProject && selectMode && selectedCardIds.size > 0 && (
+          <BulkActionsBar
+            count={selectedCardIds.size}
+            archivedMode={showArchived}
+            statuses={statuses}
+            onArchive={() => bulkRun('archive')}
+            onRestore={() => bulkRun('restore')}
+            onDelete={() => {
+              if (confirm(`Supprimer définitivement ${selectedCardIds.size} carte(s) ?`)) bulkRun('delete')
+            }}
+            onSetStatus={key => bulkRun('set_status', { status_key: key })}
+            onAddTag={tag => bulkRun('add_tag', { tag })}
+            onClear={clearSelection}
+          />
+        )}
+
         {/* ── Grid board ───────────────────────────────────────── */}
         {activeProject && (
           <div className="rounded-xl p-4" style={{
@@ -912,6 +1237,9 @@ export default function ValkyriePlugin() {
                     allTags={allTags}
                     mdPreview={mdPreview}
                     archivedMode={showArchived}
+                    selectMode={selectMode}
+                    selected={selectedCardIds.has(card.id)}
+                    onToggleSelected={() => toggleCardSelected(card.id)}
                     isDragged={draggedId === card.id}
                     isDropTarget={dropTargetIdx === idx}
                     onDragStart={e => handleDragStart(e, card.id)}
@@ -981,6 +1309,11 @@ export default function ValkyriePlugin() {
           onImport={syncConscienceGoals}
         />
       )}
+
+      {/* ── Shortcuts help modal ───────────────────────────────── */}
+      {showShortcuts && (
+        <ShortcutsModal onClose={() => setShowShortcuts(false)} />
+      )}
     </div>
   )
 }
@@ -1046,6 +1379,7 @@ function StatusChip({
 
 function CardTile({
   card, status, statuses, allTags, mdPreview, archivedMode,
+  selectMode, selected, onToggleSelected,
   isDragged, isDropTarget,
   onDragStart, onDragOver, onDrop, onDragEnd,
   onUpdate, onDelete, onArchive, onRestore, onDuplicate,
@@ -1056,6 +1390,9 @@ function CardTile({
   allTags: TagEntryT[]
   mdPreview: boolean
   archivedMode: boolean
+  selectMode: boolean
+  selected: boolean
+  onToggleSelected: () => void
   isDragged: boolean
   isDropTarget: boolean
   onDragStart: (e: React.DragEvent) => void
@@ -1144,33 +1481,53 @@ function CardTile({
 
   return (
     <div
-      draggable={!card.expanded}
+      draggable={!card.expanded && !selectMode}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
+      onClick={selectMode ? (e) => { e.stopPropagation(); onToggleSelected() } : undefined}
       style={{
         gridColumn: card.expanded ? 'span 2' : undefined,
         gridRow: card.expanded ? 'span 2' : undefined,
         background: 'var(--bg-tertiary)',
         border: `1px solid ${
-          dueInfo.overdue
-            ? '#ef4444'
-            : card.expanded
-              ? 'color-mix(in srgb, var(--scarlet) 35%, var(--border))'
-              : isDropTarget ? 'var(--scarlet)' : 'var(--border)'}`,
+          selected
+            ? 'var(--scarlet)'
+            : dueInfo.overdue
+              ? '#ef4444'
+              : card.expanded
+                ? 'color-mix(in srgb, var(--scarlet) 35%, var(--border))'
+                : isDropTarget ? 'var(--scarlet)' : 'var(--border)'}`,
         borderRadius: 12,
         overflow: 'hidden',
+        position: 'relative',
         transition: 'transform 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s',
-        cursor: card.expanded ? 'default' : 'grab',
+        cursor: selectMode ? 'pointer' : (card.expanded ? 'default' : 'grab'),
         opacity: isDragged ? 0.3 : (archivedMode ? 0.75 : 1),
-        boxShadow: card.expanded
-          ? '0 12px 40px rgba(0,0,0,0.4), 0 0 0 1px color-mix(in srgb, var(--scarlet) 10%, transparent)'
-          : isDropTarget ? '0 0 0 2px var(--scarlet)'
-          : dueInfo.overdue ? '0 0 0 1px rgba(239,68,68,0.25)' : 'none',
+        boxShadow: selected
+          ? '0 0 0 2px var(--scarlet), 0 8px 24px rgba(220,38,38,0.2)'
+          : card.expanded
+            ? '0 12px 40px rgba(0,0,0,0.4), 0 0 0 1px color-mix(in srgb, var(--scarlet) 10%, transparent)'
+            : isDropTarget ? '0 0 0 2px var(--scarlet)'
+            : dueInfo.overdue ? '0 0 0 1px rgba(239,68,68,0.25)' : 'none',
         display: 'flex', flexDirection: 'column',
       }}
     >
+      {/* Overlay checkbox en mode sélection multiple */}
+      {selectMode && (
+        <div style={{
+          position: 'absolute', top: 8, left: 8, zIndex: 3,
+          width: 20, height: 20, borderRadius: 4,
+          border: `2px solid ${selected ? 'var(--scarlet)' : 'var(--border)'}`,
+          background: selected ? 'var(--scarlet)' : 'var(--bg-secondary)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          pointerEvents: 'none',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+        }}>
+          {selected && <Check className="w-3 h-3" style={{ color: '#fff' }} strokeWidth={3} />}
+        </div>
+      )}
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'flex-start', gap: 8,
@@ -2700,6 +3057,322 @@ function ConscienceGoalsModal({
             Importer {selectedCount > 0 ? `(${selectedCount})` : ''}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// RemindersPanel — panneau deadlines (overdue + today + soon)
+// ════════════════════════════════════════════════════════════════════════
+
+function RemindersPanel({
+  reminders, onGotoCard, onClose, onDismiss,
+}: {
+  reminders: RemindersT
+  onGotoCard: (projectId: number, cardId: number) => void
+  onClose: () => void
+  onDismiss: () => void
+}) {
+  const Section = ({ title, items, tone }: {
+    title: string; items: ReminderItemT[]; tone: 'danger' | 'warn' | 'ok'
+  }) => {
+    if (items.length === 0) return null
+    const color = tone === 'danger' ? '#ef4444' : tone === 'warn' ? '#f59e0b' : '#10b981'
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{
+          fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+          textTransform: 'uppercase', letterSpacing: 2,
+          color, display: 'flex', alignItems: 'center', gap: 4,
+        }}>
+          <AlertTriangle className="w-3 h-3" /> {title} · {items.length}
+        </div>
+        {items.map(r => (
+          <button key={r.id}
+            onClick={() => onGotoCard(r.project_id, r.id)}
+            style={{
+              textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8,
+              padding: '6px 10px', borderRadius: 6,
+              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+              color: 'var(--text-primary)', cursor: 'pointer', fontSize: 12,
+            }}
+            onMouseOver={e => { e.currentTarget.style.borderColor = color }}
+            onMouseOut={e => { e.currentTarget.style.borderColor = 'var(--border)' }}>
+            <span style={{
+              fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
+              background: `color-mix(in srgb, ${color} 18%, transparent)`, color,
+              fontFamily: 'JetBrains Mono, monospace', minWidth: 74, textAlign: 'center',
+            }}>
+              {r.days_diff < 0 ? `+${Math.abs(r.days_diff)}j retard`
+                : r.days_diff === 0 ? "aujourd'hui"
+                : `dans ${r.days_diff}j`}
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>{r.title}</div>
+              <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                {r.project_title} · {r.due_date}
+              </div>
+            </div>
+            <ChevronRight className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+          </button>
+        ))}
+      </div>
+    )
+  }
+  return (
+    <div className="rounded-xl p-4" style={{
+      background: 'var(--bg-secondary)',
+      border: `1px solid ${reminders.overdue.length > 0 ? 'rgba(239,68,68,0.4)' : 'var(--border)'}`,
+      position: 'relative',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Bell className="w-4 h-4" style={{ color: reminders.overdue.length > 0 ? '#ef4444' : 'var(--scarlet)' }} />
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+            Rappels deadlines
+          </span>
+          <span style={{
+            fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+            color: 'var(--text-muted)',
+          }}>
+            {reminders.total} carte{reminders.total > 1 ? 's' : ''}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={onDismiss}
+            style={{
+              fontSize: 10.5, padding: '4px 10px', borderRadius: 6,
+              background: 'transparent', border: '1px solid var(--border)',
+              color: 'var(--text-muted)', cursor: 'pointer',
+            }}
+            title="Ne plus afficher aujourd'hui">
+            Ne plus afficher aujourd'hui
+          </button>
+          <button onClick={onClose}
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 4 }}
+            title="Fermer"><X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} /></button>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <Section title="En retard" items={reminders.overdue} tone="danger" />
+        <Section title="Aujourd'hui" items={reminders.today} tone="warn" />
+        <Section title="Cette semaine" items={reminders.soon} tone="ok" />
+      </div>
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// BulkActionsBar — barre flottante en bas en mode multi-sélection
+// ════════════════════════════════════════════════════════════════════════
+
+function BulkActionsBar({
+  count, archivedMode, statuses,
+  onArchive, onRestore, onDelete, onSetStatus, onAddTag, onClear,
+}: {
+  count: number
+  archivedMode: boolean
+  statuses: StatusT[]
+  onArchive: () => void
+  onRestore: () => void
+  onDelete: () => void
+  onSetStatus: (key: string) => void
+  onAddTag: (tag: string) => void
+  onClear: () => void
+}) {
+  const [statusOpen, setStatusOpen] = useState(false)
+  const [tagInput, setTagInput] = useState('')
+  return (
+    <div style={{
+      position: 'sticky', top: 12, zIndex: 10,
+      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+      padding: '8px 12px', borderRadius: 10,
+      background: 'color-mix(in srgb, var(--scarlet) 8%, var(--bg-secondary))',
+      border: '1px solid color-mix(in srgb, var(--scarlet) 40%, var(--border))',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+    }}>
+      <span style={{
+        fontSize: 12, fontWeight: 700, color: 'var(--scarlet)',
+        padding: '2px 8px', borderRadius: 4,
+        background: 'color-mix(in srgb, var(--scarlet) 14%, transparent)',
+      }}>
+        {count} sélectionné{count > 1 ? 's' : ''}
+      </span>
+      {!archivedMode && (
+        <>
+          <div style={{ position: 'relative' }}>
+            <button onClick={() => setStatusOpen(v => !v)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+                color: 'var(--text-primary)', cursor: 'pointer',
+              }}>
+              Changer statut <ChevronDown className="w-3 h-3" />
+            </button>
+            {statusOpen && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+                minWidth: 160, background: 'var(--bg-secondary)',
+                border: '1px solid var(--border)', borderRadius: 8,
+                padding: 4, zIndex: 20,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+              }}>
+                {statuses.map(s => (
+                  <button key={s.key}
+                    onClick={() => { onSetStatus(s.key); setStatusOpen(false) }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      width: '100%', textAlign: 'left',
+                      padding: '5px 8px', borderRadius: 6,
+                      background: 'transparent', color: 'var(--text-primary)',
+                      border: 'none', cursor: 'pointer', fontSize: 11,
+                    }}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.color }} />
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input
+              value={tagInput}
+              onChange={e => setTagInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && tagInput.trim()) {
+                  onAddTag(tagInput.trim()); setTagInput('')
+                }
+              }}
+              placeholder="Ajouter tag…"
+              style={{
+                fontSize: 11, padding: '4px 8px', borderRadius: 6,
+                background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+                color: 'var(--text-primary)', outline: 'none', width: 120,
+              }}
+            />
+            <button
+              onClick={() => { if (tagInput.trim()) { onAddTag(tagInput.trim()); setTagInput('') } }}
+              disabled={!tagInput.trim()}
+              style={{
+                fontSize: 11, padding: '4px 8px', borderRadius: 6,
+                background: tagInput.trim() ? 'var(--scarlet)' : 'var(--bg-tertiary)',
+                border: '1px solid var(--border)',
+                color: tagInput.trim() ? '#fff' : 'var(--text-muted)',
+                cursor: tagInput.trim() ? 'pointer' : 'not-allowed',
+              }}>
+              <Plus className="w-3 h-3" />
+            </button>
+          </div>
+          <button onClick={onArchive}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontSize: 11, padding: '4px 10px', borderRadius: 6,
+              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+              color: '#f59e0b', cursor: 'pointer',
+            }}>
+            <Archive className="w-3 h-3" /> Archiver
+          </button>
+        </>
+      )}
+      {archivedMode && (
+        <button onClick={onRestore}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            fontSize: 11, padding: '4px 10px', borderRadius: 6,
+            background: 'var(--bg-tertiary)',
+            border: '1px solid color-mix(in srgb, var(--scarlet) 35%, var(--border))',
+            color: 'var(--scarlet)', cursor: 'pointer', fontWeight: 600,
+          }}>
+          <RotateCcw className="w-3 h-3" /> Restaurer
+        </button>
+      )}
+      <button onClick={onDelete}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 4,
+          fontSize: 11, padding: '4px 10px', borderRadius: 6,
+          background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+          color: '#ef4444', cursor: 'pointer',
+        }}>
+        <Trash2 className="w-3 h-3" /> Supprimer
+      </button>
+      <button onClick={onClear}
+        style={{
+          marginLeft: 'auto',
+          fontSize: 11, padding: '4px 10px', borderRadius: 6,
+          background: 'transparent', border: '1px solid var(--border)',
+          color: 'var(--text-muted)', cursor: 'pointer',
+        }}>
+        Annuler
+      </button>
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// ShortcutsModal — cheat-sheet des raccourcis clavier
+// ════════════════════════════════════════════════════════════════════════
+
+function ShortcutsModal({ onClose }: { onClose: () => void }) {
+  const rows: [string, string][] = [
+    ['N',         "Focus la saisie « nouvelle carte »"],
+    ['/',         'Focus la recherche'],
+    ['S',         'Active/désactive la sélection multiple'],
+    ['A',         'Bascule vers la vue archives'],
+    ['Escape',    'Ferme la recherche / sort du mode sélection / annule les filtres'],
+    ['?',         "Affiche ce panneau d'aide"],
+    ['Ctrl+Z',    'Annule la dernière action (archive, suppression, changement de statut)'],
+  ]
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)', borderRadius: 12,
+        padding: 20, minWidth: 420, maxWidth: 520, width: '90%',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <h2 style={{
+            fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0,
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            <Keyboard className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
+            Raccourcis clavier
+          </h2>
+          <button onClick={onClose} style={{
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'var(--text-muted)', padding: 4,
+          }}><X className="w-4 h-4" /></button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {rows.map(([k, desc]) => (
+            <div key={k} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '6px 10px', borderRadius: 6,
+              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+            }}>
+              <kbd style={{
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: 11, padding: '2px 8px', borderRadius: 4,
+                background: 'var(--bg-primary)', border: '1px solid var(--border)',
+                color: 'var(--scarlet)', fontWeight: 700, minWidth: 64, textAlign: 'center',
+              }}>{k}</kbd>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{desc}</span>
+            </div>
+          ))}
+        </div>
+        <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 12, textAlign: 'center' }}>
+          Les raccourcis s'activent en dehors des champs de saisie.
+        </p>
       </div>
     </div>
   )

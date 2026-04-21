@@ -3078,6 +3078,14 @@ async def _finalize_onboarding(
 
 # ── Registre final ─────────────────────────────────────────────────────────────
 
+# Outils Valkyrie (plugin task-board). Importés ici pour que leurs schémas
+# soient exposés au LLM et leurs exécuteurs routés par _call_tool.
+from .valkyrie_tools import (  # noqa: E402
+    VALKYRIE_TOOL_SCHEMAS, VALKYRIE_EXECUTORS,
+)
+WOLF_TOOL_SCHEMAS.extend(VALKYRIE_TOOL_SCHEMAS)
+
+
 WOLF_EXECUTORS: dict[str, Any] = {
     # Web fetch léger (PRIORITAIRE — fonctionne sans Playwright)
     "web_fetch":             _web_fetch,
@@ -3151,6 +3159,8 @@ WOLF_EXECUTORS: dict[str, Any] = {
     # Service connections (API directes)
     "service_connect":            _service_connect,
     "service_call":               _service_call,
+    # Valkyrie (plugin task-board per-user)
+    **VALKYRIE_EXECUTORS,
 }
 
 # Outils en lecture seule (autorisés même en mode restreint)
