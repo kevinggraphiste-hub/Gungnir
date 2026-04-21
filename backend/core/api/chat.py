@@ -524,13 +524,13 @@ async def _auto_score_response(user_id: int, user_msg: str, assistant_msg: str, 
     if not user_id or not (assistant_msg or "").strip():
         return
     try:
-        from backend.plugins.consciousness.engine import consciousness_manager
+        from backend.core.plugin_registry import get_consciousness_engine
         from backend.core.services.llm_invoker import invoke_llm_for_user
         import json as _json
         import re as _re
 
-        engine = consciousness_manager.get(user_id)
-        if not engine.enabled:
+        engine = get_consciousness_engine(user_id)
+        if engine is None or not engine.enabled:
             return
         reward_cfg = (engine.config or {}).get("reward", {}) or {}
         if not reward_cfg.get("auto_score", True):
@@ -1241,9 +1241,9 @@ Tu operes en mode **demande**. Comportement :
         # ══════════════════════════════════════════════════════════════════
         consciousness_block = ""
         try:
-            from backend.plugins.consciousness.engine import consciousness_manager as _cm
-            _user_consciousness = _cm.get(user_id or 0)
-            if _user_consciousness.enabled:
+            from backend.core.plugin_registry import get_consciousness_engine
+            _user_consciousness = get_consciousness_engine(user_id or 0)
+            if _user_consciousness is not None and _user_consciousness.enabled:
                 consciousness_block = _user_consciousness.get_consciousness_prompt_block()
                 _user_consciousness.record_interaction()
         except Exception:

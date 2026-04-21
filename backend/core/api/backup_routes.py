@@ -158,15 +158,39 @@ _USER_DATA_ROOTS = [
 ]
 
 
+def _discover_user_data_roots(uid: int) -> list[str]:
+    """Auto-détecte tout dossier `data/<root>/<uid>/` existant, y compris ceux
+    créés par un plugin tiers.
+
+    Convention : tout plugin qui stocke des données par-user doit les placer
+    à `data/<root>/<uid>/...`. Le backup les inclut automatiquement sans
+    nécessiter de modification du core. Retourne l'union de la liste connue
+    (`_USER_DATA_ROOTS`) et de tout dossier supplémentaire détecté.
+    """
+    uid_str = str(uid)
+    detected: set[str] = set(_USER_DATA_ROOTS)
+    if DATA_DIR.exists():
+        for child in DATA_DIR.iterdir():
+            if not child.is_dir():
+                continue
+            if (child / uid_str).is_dir():
+                detected.add(child.name)
+    return sorted(detected)
+
+
 def _user_files_to_archive(uid: int) -> list[tuple[Path, str]]:
     """Return (abs_path, arcname) pairs for every file belonging to this user.
 
     ``arcname`` is relative to ``files/`` inside the zip; restore uses it to
     know where to put the file back under ``data/``.
+
+    Couvre automatiquement `data/plugins_external/<plugin>/<uid>/` via la
+    convention de discovery : tout top-level folder sous `data/` qui contient
+    un sous-dossier `<uid>/` est inclus.
     """
     out: list[tuple[Path, str]] = []
     uid_str = str(uid)
-    for root in _USER_DATA_ROOTS:
+    for root in _discover_user_data_roots(uid):
         root_dir = DATA_DIR / root / uid_str
         if not root_dir.exists() or not root_dir.is_dir():
             continue
@@ -788,8 +812,8 @@ async def restore_backup(data: dict, request: Request, session: AsyncSession = D
             logger.warning(f"Restore: MCP stop for user {uid} failed: {_mcp_err}")
 
         try:
-            from backend.plugins.consciousness.engine import consciousness_manager as _cm_post
-            _cm_post.evict(uid)
+            from backend.core.plugin_registry import evict_consciousness
+            evict_consciousness(uid)
         except Exception as _cm_err:
             logger.warning(f"Restore: consciousness evict for user {uid} failed: {_cm_err}")
 

@@ -39,3 +39,7 @@ croniter>=2.0.0
 # PDF export
 reportlab>=4.2.0
 slowapi>=0.1.9
+
+# Tests (smoke / CI)
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

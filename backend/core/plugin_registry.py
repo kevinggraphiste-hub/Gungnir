@@ -94,3 +94,77 @@ def get_plugin_capabilities(plugin_name: str) -> Optional[dict]:
 
 def all_plugin_capabilities() -> dict[str, dict]:
     return dict(_plugin_capabilities)
+
+
+# ── Consciousness accessor (plugin optionnel) ────────────────────────────
+# Le core a besoin de lire/écrire l'état de la conscience à plusieurs
+# endroits (chat, heartbeat, bootstrap, backup). Pour éviter un hard-import
+# `from backend.plugins.consciousness.engine import consciousness_manager`
+# qui casserait si le plugin est désactivé ou absent (ex: plugin tiers qui
+# remplace la conscience), on passe par un provider enregistré au load.
+
+_consciousness_provider: Optional[Callable] = None
+
+
+def register_consciousness_provider(fn: Callable) -> None:
+    """fn(user_id: int) -> ConsciousnessEngine | None"""
+    global _consciousness_provider
+    _consciousness_provider = fn
+    logger.info(f"Consciousness provider registered: {fn.__module__}.{fn.__name__}")
+
+
+def get_consciousness_engine(user_id: int):
+    """Retourne l'engine Conscience pour cet user (créé à la demande), ou
+    None si la conscience n'est pas chargée. Tolère toute erreur du provider.
+    Pour ne pas créer d'instance et interroger uniquement les existants,
+    voir `get_existing_consciousness_engine`."""
+    if _consciousness_provider is None:
+        return None
+    try:
+        return _consciousness_provider(int(user_id))
+    except Exception as e:
+        logger.debug(f"get_consciousness_engine failed for uid={user_id}: {e}")
+        return None
+
+
+_consciousness_existing_provider: Optional[Callable] = None
+
+
+def register_existing_consciousness_provider(fn: Callable) -> None:
+    """fn(user_id: int) -> ConsciousnessEngine | None, ne crée pas d'instance
+    si elle n'existe pas encore (usage : heartbeat, lectures passives)."""
+    global _consciousness_existing_provider
+    _consciousness_existing_provider = fn
+
+
+def get_existing_consciousness_engine(user_id: int):
+    """Comme get_consciousness_engine mais sans création implicite."""
+    if _consciousness_existing_provider is None:
+        return None
+    try:
+        return _consciousness_existing_provider(int(user_id))
+    except Exception:
+        return None
+
+
+def is_consciousness_available() -> bool:
+    return _consciousness_provider is not None
+
+
+_consciousness_evict_provider: Optional[Callable] = None
+
+
+def register_consciousness_evict_provider(fn: Callable) -> None:
+    """fn(user_id: int) -> None, appelé quand un user est supprimé."""
+    global _consciousness_evict_provider
+    _consciousness_evict_provider = fn
+
+
+def evict_consciousness(user_id: int) -> None:
+    """Libère les ressources conscience liées à un user (sur suppression)."""
+    if _consciousness_evict_provider is None:
+        return
+    try:
+        _consciousness_evict_provider(int(user_id))
+    except Exception as e:
+        logger.debug(f"evict_consciousness failed for uid={user_id}: {e}")

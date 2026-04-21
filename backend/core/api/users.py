@@ -257,8 +257,8 @@ async def delete_user(user_id: int, request: Request, session: AsyncSession = De
         except Exception:
             pass
         try:
-            from backend.plugins.consciousness.engine import consciousness_manager as _cm
-            _cm.evict(user_id)
+            from backend.core.plugin_registry import evict_consciousness
+            evict_consciousness(user_id)
         except Exception:
             pass
         try:

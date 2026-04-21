@@ -103,8 +103,10 @@ def _seed_consciousness(user_id: int) -> bool:
     Idempotent — existing files are preserved.
     """
     try:
-        from backend.plugins.consciousness.engine import consciousness_manager
-        engine = consciousness_manager.get(user_id)
+        from backend.core.plugin_registry import get_consciousness_engine
+        engine = get_consciousness_engine(user_id)
+        if engine is None:
+            return False  # Plugin non chargé — skip silencieux
         engine.save_all()
         return True
     except Exception as e:

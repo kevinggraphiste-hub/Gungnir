@@ -159,8 +159,8 @@ async def _beat_user(user_id: int, data: dict, eff_cfg: dict, now: datetime):
 
     # Tag ONLY this user's consciousness instance
     try:
-        from backend.plugins.consciousness.engine import consciousness_manager
-        instance = consciousness_manager._instances.get(user_id)
+        from backend.core.plugin_registry import get_existing_consciousness_engine
+        instance = get_existing_consciousness_engine(user_id)
         if instance and instance.enabled:
             instance._state["last_heartbeat"] = now_iso
             stats = instance._state.setdefault("stats", {})

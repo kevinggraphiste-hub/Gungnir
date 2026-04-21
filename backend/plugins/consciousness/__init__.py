@@ -17,6 +17,23 @@ from typing import Any, Optional
 
 logger = logging.getLogger("gungnir.consciousness.daemon")
 
+# Enregistre l'accessor dans le plugin_registry dès l'import du package.
+# Le core utilisera `get_consciousness_engine(uid)` au lieu d'un
+# `from backend.plugins.consciousness.engine import consciousness_manager`
+# — ça permet de désactiver la conscience sans casser le core.
+try:
+    from backend.core.plugin_registry import (
+        register_consciousness_provider,
+        register_existing_consciousness_provider,
+        register_consciousness_evict_provider,
+    )
+    from .engine import consciousness_manager as _cm
+    register_consciousness_provider(lambda uid: _cm.get(uid))
+    register_existing_consciousness_provider(lambda uid: _cm._instances.get(uid))
+    register_consciousness_evict_provider(lambda uid: _cm.evict(uid))
+except Exception as e:
+    logger.debug(f"Consciousness provider registration deferred: {e}")
+
 DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 CONSCIOUSNESS_USERS_DIR = DATA_DIR / "consciousness" / "users"
 TICK_INTERVAL_SECONDS = 60
