@@ -6,11 +6,11 @@ import {
   Settings as SettingsIcon, Globe, Palette, Key, Mic, RefreshCw,
   HeartPulse, HardDrive, Download, Upload, Trash2, CheckCircle, AlertCircle, Type, User,
   Server, Database, Cloud, MessageSquare, GitBranch, Zap, Search as SearchIcon, Loader2, Plus,
-  Stethoscope, Pipette, ChevronDown, ChevronRight, Sparkles, ExternalLink
+  Stethoscope, Pipette, ChevronDown, ChevronRight, Sparkles, ExternalLink, Clock
 } from 'lucide-react'
 import InfoButton from '../components/InfoButton'
 import { PageHeader } from '../components/ui'
-import { useUIPreferences } from '../hooks/useUIPreferences'
+import { useUIPreferences, detectBrowserTimezone } from '../hooks/useUIPreferences'
 
 // Défauts pour les prefs TTS/PTT — utilisés en fallback si rien n'est
 // encore en localStorage ou si un champ manque (ajout rétrocompatible).
@@ -1048,6 +1048,102 @@ export default function Settings() {
                   )}
                 </div>
               </div>
+              {/* Fuseau horaire (pour le bloc `CONTEXTE TEMPOREL` du system prompt) */}
+              <div>
+                <label className="flex items-center gap-3 text-[var(--text-secondary)] mb-3">
+                  <Clock className="w-4 h-4" />Fuseau horaire
+                </label>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={uiPrefs.timezone || 'Europe/Paris'}
+                    onChange={e => updateUIPrefs({ timezone: e.target.value })}
+                    className="flex-1 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-3 focus:outline-none"
+                    style={{ color: 'var(--text-primary)' }}>
+                    {/* Les entrées les plus courantes + la détection navigateur.
+                        L'utilisateur peut en choisir une autre via le bouton
+                        "Détecter" qui repose sur Intl.DateTimeFormat. */}
+                    <optgroup label="Europe">
+                      <option value="Europe/Paris">Europe/Paris (CET/CEST)</option>
+                      <option value="Europe/London">Europe/London (GMT/BST)</option>
+                      <option value="Europe/Berlin">Europe/Berlin</option>
+                      <option value="Europe/Madrid">Europe/Madrid</option>
+                      <option value="Europe/Rome">Europe/Rome</option>
+                      <option value="Europe/Amsterdam">Europe/Amsterdam</option>
+                      <option value="Europe/Brussels">Europe/Brussels</option>
+                      <option value="Europe/Zurich">Europe/Zurich</option>
+                      <option value="Europe/Lisbon">Europe/Lisbon</option>
+                      <option value="Europe/Athens">Europe/Athens</option>
+                      <option value="Europe/Moscow">Europe/Moscow</option>
+                    </optgroup>
+                    <optgroup label="Amériques">
+                      <option value="America/New_York">America/New_York (EST/EDT)</option>
+                      <option value="America/Chicago">America/Chicago (CST/CDT)</option>
+                      <option value="America/Denver">America/Denver (MST/MDT)</option>
+                      <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT)</option>
+                      <option value="America/Toronto">America/Toronto</option>
+                      <option value="America/Montreal">America/Montreal</option>
+                      <option value="America/Mexico_City">America/Mexico_City</option>
+                      <option value="America/Sao_Paulo">America/Sao_Paulo</option>
+                      <option value="America/Buenos_Aires">America/Buenos_Aires</option>
+                    </optgroup>
+                    <optgroup label="Asie / Océanie">
+                      <option value="Asia/Tokyo">Asia/Tokyo</option>
+                      <option value="Asia/Shanghai">Asia/Shanghai</option>
+                      <option value="Asia/Hong_Kong">Asia/Hong_Kong</option>
+                      <option value="Asia/Singapore">Asia/Singapore</option>
+                      <option value="Asia/Seoul">Asia/Seoul</option>
+                      <option value="Asia/Dubai">Asia/Dubai</option>
+                      <option value="Asia/Kolkata">Asia/Kolkata</option>
+                      <option value="Asia/Jakarta">Asia/Jakarta</option>
+                      <option value="Australia/Sydney">Australia/Sydney</option>
+                      <option value="Australia/Melbourne">Australia/Melbourne</option>
+                      <option value="Pacific/Auckland">Pacific/Auckland</option>
+                    </optgroup>
+                    <optgroup label="Afrique">
+                      <option value="Africa/Casablanca">Africa/Casablanca</option>
+                      <option value="Africa/Algiers">Africa/Algiers</option>
+                      <option value="Africa/Tunis">Africa/Tunis</option>
+                      <option value="Africa/Cairo">Africa/Cairo</option>
+                      <option value="Africa/Johannesburg">Africa/Johannesburg</option>
+                      <option value="Africa/Lagos">Africa/Lagos</option>
+                    </optgroup>
+                    <optgroup label="Autre">
+                      <option value="UTC">UTC</option>
+                    </optgroup>
+                    {/* Si la TZ courante n'est dans aucune optgroup, on
+                        l'ajoute quand même en fin pour qu'elle s'affiche. */}
+                    {uiPrefs.timezone && ![
+                      'Europe/Paris','Europe/London','Europe/Berlin','Europe/Madrid','Europe/Rome',
+                      'Europe/Amsterdam','Europe/Brussels','Europe/Zurich','Europe/Lisbon',
+                      'Europe/Athens','Europe/Moscow','America/New_York','America/Chicago',
+                      'America/Denver','America/Los_Angeles','America/Toronto','America/Montreal',
+                      'America/Mexico_City','America/Sao_Paulo','America/Buenos_Aires',
+                      'Asia/Tokyo','Asia/Shanghai','Asia/Hong_Kong','Asia/Singapore','Asia/Seoul',
+                      'Asia/Dubai','Asia/Kolkata','Asia/Jakarta','Australia/Sydney','Australia/Melbourne',
+                      'Pacific/Auckland','Africa/Casablanca','Africa/Algiers','Africa/Tunis',
+                      'Africa/Cairo','Africa/Johannesburg','Africa/Lagos','UTC',
+                    ].includes(uiPrefs.timezone) && (
+                      <option value={uiPrefs.timezone}>{uiPrefs.timezone}</option>
+                    )}
+                  </select>
+                  <button type="button"
+                    onClick={() => updateUIPrefs({ timezone: detectBrowserTimezone() })}
+                    className="flex items-center gap-1.5 px-3 py-3 rounded-lg border text-sm"
+                    style={{
+                      background: 'var(--bg-primary)', borderColor: 'var(--border)',
+                      color: 'var(--text-secondary)',
+                    }}
+                    title="Détecter depuis le navigateur">
+                    <RefreshCw className="w-3.5 h-3.5" /> Auto
+                  </button>
+                </div>
+                <p className="text-[var(--text-muted)] text-xs mt-1">
+                  Utilisé par l'agent pour connaître la date et l'heure
+                  courantes. Détecté automatiquement au login — tu peux
+                  forcer une autre valeur ici (ex: si tu voyages).
+                </p>
+              </div>
+
               <div>
                 <label className="flex items-center gap-3 text-[var(--text-secondary)] mb-3"><Palette className="w-4 h-4" />{t('settings.theme')}</label>
                 {/* 4 preset themes in 2x2 grid */}

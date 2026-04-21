@@ -22,6 +22,7 @@ export type UIPrefs = {
   word_spacing: 'normal' | 'wide' | 'wider'
   reduced_motion: boolean
   high_contrast: boolean
+  timezone: string  // IANA TZ (ex: 'Europe/Paris', 'America/New_York')
 }
 
 export const DEFAULT_UI_PREFS: UIPrefs = {
@@ -33,6 +34,17 @@ export const DEFAULT_UI_PREFS: UIPrefs = {
   word_spacing: 'normal',
   reduced_motion: false,
   high_contrast: false,
+  timezone: 'Europe/Paris',
+}
+
+/** Lit la TZ IANA du navigateur (ex: 'Europe/Paris', 'America/Los_Angeles').
+ *  Fallback 'Europe/Paris' si l'API Intl est bizarre (vieux navigateur). */
+export function detectBrowserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Paris'
+  } catch {
+    return 'Europe/Paris'
+  }
 }
 
 const STORAGE_KEY = 'gungnir_ui_prefs'
@@ -83,6 +95,25 @@ export function useUIPreferences() {
         setPrefs(merged)
         applyToDOM(merged)
         localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
+
+        // Auto-détection TZ navigateur : si le serveur retourne la TZ
+        // par défaut (`Europe/Paris`) alors que le navigateur en donne
+        // une différente, on pousse celle du navigateur en silence.
+        // L'user peut toujours l'override manuellement dans Settings.
+        try {
+          const detected = detectBrowserTimezone()
+          const serverTz = (data.timezone as string | undefined) || 'Europe/Paris'
+          if (detected && detected !== serverTz && detected !== 'Europe/Paris') {
+            await apiFetch('/api/config/user/ui', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ timezone: detected }),
+            })
+            const next = { ...merged, timezone: detected }
+            if (!cancelled) setPrefs(next)
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+          }
+        } catch { /* fail silencieux — la TZ par défaut reste */ }
       } catch {
         // backend pas prêt → on reste sur le localStorage
       } finally {

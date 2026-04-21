@@ -832,6 +832,7 @@ _UI_DEFAULTS = {
     "word_spacing": "normal",     # normal | wide | wider
     "reduced_motion": False,      # bool
     "high_contrast": False,       # bool
+    "timezone": "Europe/Paris",   # IANA TZ (ex: America/New_York, Asia/Tokyo)
 }
 
 _UI_ALLOWED = {
@@ -843,7 +844,21 @@ _UI_ALLOWED = {
     "word_spacing": {"normal", "wide", "wider"},
     "reduced_motion": {True, False},
     "high_contrast": {True, False},
+    # `timezone` n'est pas dans les whitelists énumérées — validation
+    # dynamique via zoneinfo.ZoneInfo() dans le save handler.
 }
+
+
+def _is_valid_tz(value) -> bool:
+    """Vérifie qu'une string est bien une TZ IANA reconnue."""
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(value)
+        return True
+    except Exception:
+        return False
 
 
 @router.get("/config/user/ui")
@@ -857,7 +872,9 @@ async def get_user_ui_prefs(request: Request, session: AsyncSession = Depends(ge
     # Merge avec les defaults — si un champ est manquant ou invalide on reprend le défaut
     out = dict(_UI_DEFAULTS)
     for k, v in prefs.items():
-        if k in _UI_ALLOWED and v in _UI_ALLOWED[k]:
+        if k == "timezone" and _is_valid_tz(v):
+            out[k] = v
+        elif k in _UI_ALLOWED and v in _UI_ALLOWED[k]:
             out[k] = v
     return out
 
@@ -879,7 +896,11 @@ async def save_user_ui_prefs(request: Request, session: AsyncSession = Depends(g
     user_settings = await get_user_settings(user_id, session)
     prefs = dict(user_settings.ui_preferences or {})
     for k, v in (body or {}).items():
-        if k in _UI_ALLOWED and v in _UI_ALLOWED[k]:
+        if k == "timezone":
+            # Validation dynamique IANA (pas de whitelist statique).
+            if _is_valid_tz(v):
+                prefs[k] = v
+        elif k in _UI_ALLOWED and v in _UI_ALLOWED[k]:
             prefs[k] = v
     from sqlalchemy.orm.attributes import flag_modified
     user_settings.ui_preferences = prefs
