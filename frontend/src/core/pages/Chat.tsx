@@ -2093,13 +2093,11 @@ export default function Chat() {
                     </div>
                   )
                   return (
-                    <div className={`flex items-start gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                      {bubble}
+                    <div className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                       {hasTokens && (
-                        <div className="pt-1 flex-shrink-0">
-                          <TokenBadge tokens={headerTokens as number} />
-                        </div>
+                        <TokenBadge tokens={headerTokens as number} />
                       )}
+                      {bubble}
                     </div>
                   )
                 })()}
