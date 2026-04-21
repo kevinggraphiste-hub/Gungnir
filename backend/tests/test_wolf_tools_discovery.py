@@ -25,6 +25,27 @@ def test_valkyrie_tools_are_loaded():
             assert name in WOLF_EXECUTORS, f"Tool {name} has schema but no executor"
 
 
+def test_spearcode_tools_are_loaded():
+    """Les outils SpearCode doivent être auto-chargés dans WOLF (plugin code
+    expose agent_tools.py avec TOOL_SCHEMAS + EXECUTORS)."""
+    from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS, WOLF_EXECUTORS
+    names = {
+        s.get("function", {}).get("name") for s in WOLF_TOOL_SCHEMAS
+        if isinstance(s, dict)
+    }
+    # Surface minimale attendue
+    for expected in (
+        "spearcode_list_files", "spearcode_read_file", "spearcode_write_file",
+        "spearcode_search", "spearcode_run", "spearcode_git_status",
+    ):
+        assert expected in names, f"Schema {expected} manquant"
+        assert expected in WOLF_EXECUTORS, f"Executor {expected} manquant"
+    # Cohérence schema ↔ executor pour toute la surface
+    for name in names:
+        if name and name.startswith("spearcode_"):
+            assert name in WOLF_EXECUTORS, f"Tool {name} has schema but no executor"
+
+
 def test_core_tools_still_present():
     from backend.core.agents.wolf_tools import WOLF_EXECUTORS
     # Quelques outils centraux qui ne doivent jamais disparaître
