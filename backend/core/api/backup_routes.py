@@ -662,14 +662,33 @@ async def create_user_backup(session: AsyncSession, uid: int) -> dict:
         user_row = export["users"][0] if export.get("users") else {}
         username = user_row.get("username") or f"user{uid}"
 
+        # Fingerprint de la clé de chiffrement courante (fix sécu H6) : hash
+        # du secret (PAS le secret lui-même) pour détecter à la restauration
+        # si la clé a changé entre le backup et le restore — auquel cas les
+        # valeurs chiffrées (api_key, etc.) ne seront pas déchiffrables et on
+        # peut alerter l'utilisateur explicitement plutôt que de lui rendre
+        # silencieusement des clés vides.
+        import os as _os
+        secret_now = _os.getenv("GUNGNIR_SECRET_KEY", "")
+        import hashlib as _hl
+        key_fp = _hl.sha256(secret_now.encode()).hexdigest()[:16] if secret_now else "fallback"
+
         manifest = {
-            "version": "4.0",
+            "version": "4.1",
             "kind": "per_user",
             "user_id": uid,
             "username": username,
             "created_at": datetime.utcnow().isoformat() + "Z",
             "row_counts": row_counts,
             "file_count": len(file_entries),
+            # Sécu H6 : fingerprint clé + version format chiffrement
+            "encryption": {
+                "format_version": "v2",          # cf. settings._CURRENT_KEY_VERSION
+                "key_fingerprint": key_fp,        # sha256(SECRET_KEY)[:16]
+                "note": "Si GUNGNIR_SECRET_KEY change entre backup et restore, "
+                        "mettre l'ancienne clé dans GUNGNIR_SECRET_KEY_PREV pour "
+                        "que la restauration puisse déchiffrer les api_key.",
+            },
             "covers": {
                 "db_tables": sorted(row_counts.keys()),
                 "file_roots": list(_USER_DATA_ROOTS) + ["code_configs"],
@@ -773,6 +792,30 @@ async def restore_backup(data: dict, request: Request, session: AsyncSession = D
                     "error": "Ce backup appartient à un autre utilisateur",
                 }
 
+            # Sécu H6 : check du fingerprint de la clé de chiffrement.
+            # Si le fingerprint du backup diffère de celui de GUNGNIR_SECRET_KEY
+            # courante, on prévient l'user. La restauration continue — la
+            # logique de decrypt (avec GUNGNIR_SECRET_KEY_PREV) tentera
+            # plusieurs clés avant d'abandonner.
+            key_warning = None
+            enc_meta = manifest.get("encryption") or {}
+            backup_fp = enc_meta.get("key_fingerprint")
+            if backup_fp and backup_fp != "fallback":
+                import os as _os, hashlib as _hl
+                secret_now = _os.getenv("GUNGNIR_SECRET_KEY", "")
+                current_fp = _hl.sha256(secret_now.encode()).hexdigest()[:16] if secret_now else "fallback"
+                prev_secret = _os.getenv("GUNGNIR_SECRET_KEY_PREV", "")
+                prev_fp = _hl.sha256(prev_secret.encode()).hexdigest()[:16] if prev_secret else None
+                if backup_fp != current_fp and backup_fp != prev_fp:
+                    key_warning = (
+                        "⚠️ GUNGNIR_SECRET_KEY a changé depuis ce backup. Les clés "
+                        "API chiffrées pourraient ne pas être récupérables. Pour "
+                        "restaurer proprement, mettre l'ancienne valeur de "
+                        "GUNGNIR_SECRET_KEY dans GUNGNIR_SECRET_KEY_PREV puis redémarrer."
+                    )
+                    logger.warning(f"Restore {filename}: key fingerprint mismatch "
+                                   f"(backup={backup_fp}, current={current_fp})")
+
             try:
                 export_bytes = zf.read("db_export.json")
                 export = json.loads(export_bytes.decode("utf-8"))
@@ -823,13 +866,16 @@ async def restore_backup(data: dict, request: Request, session: AsyncSession = D
         except Exception as _mp_err:
             logger.warning(f"Restore: mode_pool evict for user {uid} failed: {_mp_err}")
 
-        return {
+        result = {
             "ok": True,
             "message": f"Restauration de {filename} réussie.",
             "row_counts": counts,
             "files_restored": extracted,
             "reloaded": ["mcp", "consciousness", "mode_pool"],
         }
+        if key_warning:
+            result["warning"] = key_warning
+        return result
     except Exception as e:
         logger.error(f"Per-user restore failed for uid={uid}: {e}", exc_info=True)
         try:

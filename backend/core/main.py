@@ -645,6 +645,36 @@ async def security_headers(request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Fix sécu M6 : Content-Security-Policy conservateur.
+    # - 'self' pour scripts/styles/fonts (le build Vite est servi par nous)
+    # - 'unsafe-inline' sur style-src : Tailwind + composants React injectent
+    #   beaucoup de styles inline. Retirer demanderait un gros refactor.
+    # - 'wasm-unsafe-eval' : certaines libs (ex: pdf.js) utilisent WASM.
+    # - img-src 'self' data: https: : avatars, captures HuntR, images LLM.
+    # - connect-src 'self' https: wss: : appels API providers (OpenRouter,
+    #   Anthropic, etc.) + WebSocket voice.
+    # - frame-ancestors 'none' : pas embeddable en iframe (double-check vs
+    #   X-Frame-Options DENY, qui est déjà posé).
+    # - object-src 'none' : bloque plugins Flash/Java.
+    # On pose le header UNIQUEMENT sur les réponses HTML (pas les JSON API)
+    # pour ne pas impacter les clients programmatiques qui ne rendent pas de
+    # CSS/JS.
+    content_type = response.headers.get("content-type", "")
+    if content_type.startswith("text/html"):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'wasm-unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob: https:; "
+            "font-src 'self' data:; "
+            "connect-src 'self' https: wss: ws:; "
+            "media-src 'self' blob: data:; "
+            "worker-src 'self' blob:; "
+            "frame-ancestors 'none'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
     return response
 
 

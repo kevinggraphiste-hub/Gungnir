@@ -17,49 +17,109 @@ DATA_DIR.mkdir(exist_ok=True)
 PLUGINS_DIR = BASE_DIR / "backend" / "plugins"
 
 # ── API Key encryption (at rest) ──────────────────────────────────────────────
-# Uses GUNGNIR_SECRET_KEY env var if set (stable across Docker rebuilds),
-# otherwise falls back to machine identity (hostname + path).
-# Set GUNGNIR_SECRET_KEY once in docker-compose.yml or .env and never change it.
+# Fernet (AES-128-CBC + HMAC) avec rotation de clé supportée (fix sécu H4).
+#
+# Formats de valeur stockés sur disque / DB :
+#   "FERNET:v2:<token>"   — format versionné (à partir de v2.48.0)
+#   "FERNET:<token>"      — format legacy sans version (avant v2.48.0)
+#   "enc:<b64>"           — XOR legacy (avant Fernet)
+#
+# Clé courante : GUNGNIR_SECRET_KEY (env)
+# Rotation : pour tourner la clé, on met l'ancienne dans GUNGNIR_SECRET_KEY_PREV
+# et la nouvelle dans GUNGNIR_SECRET_KEY. Au decrypt, on essaie d'abord la
+# courante puis l'ancienne ; au encrypt, on utilise TOUJOURS la courante.
+# Les valeurs legacy (sans version) sont toujours lues avec GUNGNIR_SECRET_KEY
+# (pas la prev) — ça fait qu'on peut tourner la clé en douceur : les nouvelles
+# écritures prennent "v2:", et un second tour de clé pourra lire les deux.
 _ENCRYPTION_SALT = b"gungnir-scarletwolf-2026"
+_CURRENT_KEY_VERSION = "v2"
 
-def _derive_key() -> bytes:
-    """Derive a 32-byte encryption key. Prefers GUNGNIR_SECRET_KEY env var for stability."""
-    secret = os.getenv("GUNGNIR_SECRET_KEY", "")
-    if secret:
-        identity = secret.encode()
-    else:
+
+def _derive_key_from_secret(secret: str) -> bytes:
+    """Dérive une clé 32 bytes depuis un secret texte (PBKDF2-HMAC-SHA256)."""
+    if not secret:
+        # Fallback machine identity — instable mais évite un crash au boot
+        # d'un setup non configuré.
+        secret = f"{platform.node()}:{BASE_DIR}"
         import logging
         logging.getLogger("gungnir").warning(
             "GUNGNIR_SECRET_KEY not set — using fallback key derived from hostname. "
             "Set this env var in production for proper encryption!"
         )
-        identity = f"{platform.node()}:{BASE_DIR}".encode()
-    return hashlib.pbkdf2_hmac("sha256", identity, _ENCRYPTION_SALT, 100_000)
+    return hashlib.pbkdf2_hmac("sha256", secret.encode(), _ENCRYPTION_SALT, 100_000)
+
+
+def _derive_key() -> bytes:
+    """Back-compat : dérive la clé courante (depuis GUNGNIR_SECRET_KEY)."""
+    return _derive_key_from_secret(os.getenv("GUNGNIR_SECRET_KEY", ""))
+
 
 from cryptography.fernet import Fernet, InvalidToken
 
-def _get_fernet() -> Fernet:
-    key = _derive_key()
-    # Fernet needs a 32-byte url-safe base64 key
+
+def _fernet_for_secret(secret: str) -> Fernet:
+    """Construit un Fernet depuis un secret texte arbitraire."""
+    key = _derive_key_from_secret(secret)
     fernet_key = base64.urlsafe_b64encode(hashlib.sha256(key).digest())
     return Fernet(fernet_key)
 
+
+def _get_fernet() -> Fernet:
+    """Fernet utilisant GUNGNIR_SECRET_KEY (clé courante — pour encrypt)."""
+    return _fernet_for_secret(os.getenv("GUNGNIR_SECRET_KEY", ""))
+
+
+def _candidate_fernets() -> list[tuple[str, Fernet]]:
+    """Liste ordonnée (version, Fernet) utilisée pour essayer le decrypt.
+    Ordre : clé courante d'abord (la plus probable), puis ancienne si définie."""
+    out: list[tuple[str, Fernet]] = [(_CURRENT_KEY_VERSION, _get_fernet())]
+    prev = os.getenv("GUNGNIR_SECRET_KEY_PREV", "").strip()
+    if prev:
+        out.append(("v1", _fernet_for_secret(prev)))
+    return out
+
+
 def encrypt_value(value: str) -> str:
-    """Encrypt a string value using Fernet (AES-128-CBC + HMAC)."""
+    """Encrypt a string value using Fernet (AES-128-CBC + HMAC).
+    Émet le nouveau format versionné `FERNET:v2:<token>`."""
     if not value or value.startswith("FERNET:"):
         return value
     token = _get_fernet().encrypt(value.encode())
-    return "FERNET:" + token.decode()
+    return f"FERNET:{_CURRENT_KEY_VERSION}:" + token.decode()
+
 
 def decrypt_value(value: str) -> str:
-    """Decrypt a Fernet-encrypted value. Handles legacy XOR values too."""
+    """Decrypt a Fernet-encrypted value. Handles legacy XOR values too.
+    Ordre d'essai : v2 avec clé courante, v1 avec clé prev si dispo,
+    legacy sans version avec clé courante (compat ancien format)."""
     if not value:
         return value
-    if value.startswith("FERNET:"):
+    # Nouveau format versionné
+    if value.startswith("FERNET:v"):
+        # FERNET:v2:<token> ou FERNET:v1:<token>
         try:
-            return _get_fernet().decrypt(value[7:].encode()).decode()
-        except (InvalidToken, Exception):
+            _, version, token = value.split(":", 2)
+        except ValueError:
             return ""
+        # Essaie d'abord la clé correspondant à la version déclarée
+        candidates = _candidate_fernets()
+        matched = [f for v, f in candidates if v == version]
+        others = [f for v, f in candidates if v != version]
+        for f in matched + others:
+            try:
+                return f.decrypt(token.encode()).decode()
+            except (InvalidToken, Exception):
+                continue
+        return ""
+    # Format legacy sans version (FERNET:<token>)
+    if value.startswith("FERNET:"):
+        token = value[7:]
+        for _, f in _candidate_fernets():
+            try:
+                return f.decrypt(token.encode()).decode()
+            except (InvalidToken, Exception):
+                continue
+        return ""
     if value.startswith("enc:"):
         # Legacy XOR — decrypt then re-encrypt on next save
         try:
