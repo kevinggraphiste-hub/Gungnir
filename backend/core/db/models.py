@@ -338,6 +338,9 @@ async def init_db(engine):
         ("ALTER TABLE valkyrie_cards ADD COLUMN subtasks2_json JSONB DEFAULT '[]'::jsonb", "subtasks2_json -> valkyrie_cards"),
         ("ALTER TABLE valkyrie_cards ADD COLUMN tags_json JSONB DEFAULT '[]'::jsonb", "tags_json -> valkyrie_cards"),
         ("ALTER TABLE valkyrie_cards ADD COLUMN subtasks2_title VARCHAR(60) DEFAULT ''", "subtasks2_title -> valkyrie_cards"),
+        ("ALTER TABLE valkyrie_cards ADD COLUMN due_date TIMESTAMP NULL", "due_date -> valkyrie_cards"),
+        ("ALTER TABLE valkyrie_cards ADD COLUMN archived_at TIMESTAMP NULL", "archived_at -> valkyrie_cards"),
+        ("ALTER TABLE valkyrie_cards ADD COLUMN origin VARCHAR(80) DEFAULT ''", "origin -> valkyrie_cards"),
     ]
     for sql, label in migrations:
         try:

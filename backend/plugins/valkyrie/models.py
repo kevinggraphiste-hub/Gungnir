@@ -78,6 +78,14 @@ class ValkyrieCard(Base):
     status_key = Column(String(60), nullable=False, default="todo")
     position = Column(Integer, default=0)  # rang dans la grille
     expanded = Column(Boolean, default=False)
+    # Deadline optionnelle (date pure — pas d'heure pour éviter les fuseaux).
+    due_date = Column(DateTime, nullable=True)
+    # Archive logique : quand != NULL, la carte n'apparaît plus sur le board
+    # par défaut. On garde la ligne en DB pour ne rien perdre.
+    archived_at = Column(DateTime, nullable=True)
+    # D'où vient la carte (manuel, conscience:goal:<id>, template, etc.).
+    # Permet de dédupliquer les imports Conscience et d'afficher un badge.
+    origin = Column(String(80), default="")
     # Deux listes de sous-tâches côte à côte (ex: "livrables" + "preuves").
     # Format commun : [{id, label, done}]
     subtasks_json = Column(JSON, default=list)

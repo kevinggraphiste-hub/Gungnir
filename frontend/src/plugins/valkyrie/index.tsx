@@ -15,9 +15,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   LayoutGrid, Plus, Trash2, Archive, Save, ChevronDown, ChevronRight,
   X, Check, Loader2, Edit3, GripVertical, Search, Download, Tag as TagIcon,
+  Calendar, Copy, AlertTriangle, Sparkles, Eye, FileText, BarChart3,
+  RotateCcw,
 } from 'lucide-react'
 import InfoButton from '@core/components/InfoButton'
 import manifest from './manifest.json'
+import { MarkdownBlock } from './markdown'
 
 const API = '/api/plugins/valkyrie'
 const PLUGIN_VERSION = (manifest as { version?: string }).version || '?'
@@ -63,11 +66,42 @@ interface CardT {
   subtasks2: SubtaskT[]
   subtasks2_title: string
   tags: string[]
+  due_date: string | null    // ISO YYYY-MM-DD ou null
+  archived_at: string | null // ISO datetime ou null
+  origin: string             // "", "duplicate", "conscience:goal:<id>", "template:<key>"
   created_at: string | null
   updated_at: string | null
 }
 
 interface TagEntryT { label: string; count: number }
+
+interface TemplateT {
+  key: string
+  title: string
+  description: string
+  card_count: number
+}
+
+interface ConscienceGoalT {
+  id: string
+  title: string
+  description: string
+  status: string
+  progress: number
+  imported: boolean
+  origin_key: string
+}
+
+interface StatsT {
+  total: number
+  by_status: Record<string, number>
+  overdue: number
+  due_this_week: number
+  done_this_week: number
+  archived: number
+  subtasks_total: number
+  subtasks_done: number
+}
 
 // Palette de couleurs pour les tags : dérivée du hash du label → index stable
 const TAG_COLORS = [
@@ -131,6 +165,18 @@ export default function ValkyriePlugin() {
   const [allTags, setAllTags] = useState<TagEntryT[]>([])
   const [showExportMenu, setShowExportMenu] = useState(false)
 
+  // Archive / stats / templates / conscience
+  const [showArchived, setShowArchived] = useState(false)
+  const [archivedCards, setArchivedCards] = useState<CardT[]>([])
+  const [stats, setStats] = useState<StatsT | null>(null)
+  const [showStats, setShowStats] = useState(false)
+  const [templates, setTemplates] = useState<TemplateT[]>([])
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false)
+  const [conscienceGoals, setConscienceGoals] = useState<ConscienceGoalT[]>([])
+  const [showConscienceModal, setShowConscienceModal] = useState(false)
+  const [conscienceLoading, setConscienceLoading] = useState(false)
+  const [mdPreview, setMdPreview] = useState(true) // render markdown in descriptions
+
   const activeProject = useMemo(
     () => projects.find(p => p.id === activeProjectId) || null,
     [projects, activeProjectId]
@@ -141,15 +187,17 @@ export default function ValkyriePlugin() {
     let cancelled = false
     ;(async () => {
       try {
-        const [pRes, sRes, palRes] = await Promise.all([
+        const [pRes, sRes, palRes, tRes] = await Promise.all([
           jget<{ projects: ProjectT[] }>(`${API}/projects`),
           jget<{ statuses: StatusT[] }>(`${API}/statuses`),
           jget<{ colors: string[] }>(`${API}/palette`),
+          jget<{ templates: TemplateT[] }>(`${API}/templates`).catch(() => ({ templates: [] })),
         ])
         if (cancelled) return
         setProjects(pRes.projects || [])
         setStatuses(sRes.statuses || [])
         setPalette(palRes.colors || [])
+        setTemplates(tRes.templates || [])
         const first = (pRes.projects || [])[0]
         if (first) setActiveProjectId(first.id)
       } catch (err) {
@@ -185,6 +233,34 @@ export default function ValkyriePlugin() {
     } catch { /* silencieux */ }
   }, [])
   useEffect(() => { refreshTags() }, [refreshTags, cards.length])
+
+  // ── Stats : rafraîchies quand on change de projet ou qu'on ouvre le panel.
+  const refreshStats = useCallback(async () => {
+    if (!activeProjectId) return
+    try {
+      const r = await jget<StatsT>(`${API}/projects/${activeProjectId}/stats`)
+      setStats(r)
+    } catch { /* silencieux */ }
+  }, [activeProjectId])
+  useEffect(() => {
+    if (!activeProjectId) return
+    refreshStats()
+  }, [activeProjectId, cards.length, refreshStats])
+
+  // ── Archived cards : chargées quand on active la vue.
+  useEffect(() => {
+    if (!showArchived || !activeProjectId) { setArchivedCards([]); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await jget<{ cards: CardT[] }>(
+          `${API}/projects/${activeProjectId}/cards?archived_only=true`
+        )
+        if (!cancelled) setArchivedCards(r.cards || [])
+      } catch (err) { console.warn('archived load failed:', err) }
+    })()
+    return () => { cancelled = true }
+  }, [showArchived, activeProjectId])
 
   // ── Project mutations ──────────────────────────────────────────────
   const saveProject = useCallback(async (updates: Partial<ProjectT>) => {
@@ -275,6 +351,80 @@ export default function ValkyriePlugin() {
     }
   }, [])
 
+  const archiveCard = useCallback(async (cardId: number) => {
+    try {
+      const r = await jsend<{ card: CardT }>(`${API}/cards/${cardId}/archive`, 'POST')
+      setCards(prev => prev.filter(c => c.id !== cardId))
+      setArchivedCards(prev => [r.card, ...prev.filter(c => c.id !== cardId)])
+    } catch (err) { console.warn('archiveCard failed:', err) }
+  }, [])
+
+  const restoreCard = useCallback(async (cardId: number) => {
+    try {
+      const r = await jsend<{ card: CardT }>(`${API}/cards/${cardId}/restore`, 'POST')
+      setArchivedCards(prev => prev.filter(c => c.id !== cardId))
+      setCards(prev => [...prev, r.card])
+    } catch (err) { console.warn('restoreCard failed:', err) }
+  }, [])
+
+  const duplicateCard = useCallback(async (cardId: number) => {
+    try {
+      const r = await jsend<{ card: CardT }>(`${API}/cards/${cardId}/duplicate`, 'POST')
+      // Re-fetch pour récupérer les positions décalées
+      if (activeProjectId) {
+        const cs = await jget<{ cards: CardT[] }>(`${API}/projects/${activeProjectId}/cards`)
+        setCards(cs.cards || [])
+      } else {
+        setCards(prev => [...prev, r.card])
+      }
+    } catch (err) { console.warn('duplicateCard failed:', err) }
+  }, [activeProjectId])
+
+  // ── Templates : création depuis un modèle ─────────────────────────
+  const createProjectFromTemplate = useCallback(async (templateKey: string, title?: string) => {
+    try {
+      const r = await jsend<{ project: ProjectT }>(`${API}/projects`, 'POST', {
+        template: templateKey,
+        title: title || undefined,
+      })
+      setProjects(prev => [...prev, r.project])
+      setActiveProjectId(r.project.id)
+      setShowNewProjectModal(false)
+      setShowProjectMenu(false)
+    } catch (err) {
+      console.warn('createProjectFromTemplate failed:', err)
+    }
+  }, [])
+
+  // ── Conscience : fetch goals + import sélectif ───────────────────
+  const openConscienceModal = useCallback(async () => {
+    if (!activeProjectId) return
+    setShowConscienceModal(true)
+    setConscienceLoading(true)
+    try {
+      const r = await jget<{ goals: ConscienceGoalT[] }>(
+        `${API}/projects/${activeProjectId}/conscience-goals`
+      )
+      setConscienceGoals(r.goals || [])
+    } catch (err) {
+      console.warn('load conscience goals failed:', err)
+      setConscienceGoals([])
+    } finally { setConscienceLoading(false) }
+  }, [activeProjectId])
+
+  const syncConscienceGoals = useCallback(async (goalIds: string[]) => {
+    if (!activeProjectId) return
+    try {
+      await jsend(`${API}/projects/${activeProjectId}/sync-goals`, 'POST', { goal_ids: goalIds })
+      // Refetch cards
+      const cs = await jget<{ cards: CardT[] }>(`${API}/projects/${activeProjectId}/cards`)
+      setCards(cs.cards || [])
+      setShowConscienceModal(false)
+    } catch (err) {
+      console.warn('sync goals failed:', err)
+    }
+  }, [activeProjectId])
+
   const reorderCards = useCallback(async (items: { id: number; position: number; status_key?: string }[]) => {
     try {
       await jsend(`${API}/cards/reorder`, 'POST', { items })
@@ -357,10 +507,12 @@ export default function ValkyriePlugin() {
 
   // ── Render ──────────────────────────────────────────────────────────
   const visibleCards = useMemo(() => {
+    // En mode archive, on affiche les archivedCards sans filtre
+    const source = showArchived ? archivedCards : cards
     const q = searchQuery.trim().toLowerCase()
     const tags = tagFilter.map(t => t.toLowerCase())
-    const filtered = cards.filter(c => {
-      if (filter != null && c.status_key !== filter) return false
+    const filtered = source.filter(c => {
+      if (!showArchived && filter != null && c.status_key !== filter) return false
       if (tags.length > 0) {
         const cardTagsLower = (c.tags || []).map(t => t.toLowerCase())
         // Match ANY des tags sélectionnés (plus permissif qu'un ET)
@@ -378,7 +530,7 @@ export default function ValkyriePlugin() {
       return true
     })
     return [...filtered].sort((a, b) => a.position - b.position)
-  }, [cards, filter, searchQuery, tagFilter])
+  }, [cards, archivedCards, showArchived, filter, searchQuery, tagFilter])
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -464,7 +616,8 @@ export default function ValkyriePlugin() {
                   </button>
                 ))}
                 <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
-                <button onClick={createProject}
+                <button
+                  onClick={() => { setShowProjectMenu(false); setShowNewProjectModal(true) }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6,
                     width: '100%', textAlign: 'left',
@@ -472,7 +625,7 @@ export default function ValkyriePlugin() {
                     background: 'transparent', color: 'var(--scarlet)',
                     border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
                   }}>
-                  <Plus className="w-3.5 h-3.5" /> Nouveau tableau
+                  <Plus className="w-3.5 h-3.5" /> Nouveau tableau…
                 </button>
               </div>
             )}
@@ -511,7 +664,42 @@ export default function ValkyriePlugin() {
                   style={{ color: 'var(--text-secondary)', maxWidth: 820, lineHeight: 1.55 }}
                 />
               </div>
-              <div className="flex items-center gap-1 flex-shrink-0">
+              <div className="flex items-center gap-1 flex-shrink-0 flex-wrap justify-end">
+                <button onClick={() => setShowStats(v => !v)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                  style={{
+                    background: showStats ? 'color-mix(in srgb, var(--scarlet) 14%, var(--bg-tertiary))' : 'var(--bg-tertiary)',
+                    border: '1px solid var(--border)',
+                    color: showStats ? 'var(--scarlet)' : 'var(--text-secondary)',
+                  }}
+                  title="Afficher/masquer le mini-dashboard">
+                  <BarChart3 className="w-3.5 h-3.5" /> Stats
+                </button>
+                <button onClick={() => setShowArchived(v => !v)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                  style={{
+                    background: showArchived ? 'color-mix(in srgb, var(--scarlet) 14%, var(--bg-tertiary))' : 'var(--bg-tertiary)',
+                    border: '1px solid var(--border)',
+                    color: showArchived ? 'var(--scarlet)' : 'var(--text-secondary)',
+                  }}
+                  title="Voir les cartes archivées">
+                  <Archive className="w-3.5 h-3.5" /> Archives {stats?.archived ? `(${stats.archived})` : ''}
+                </button>
+                <button onClick={openConscienceModal}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                  style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                  title="Importer des objectifs depuis la Conscience">
+                  <Sparkles className="w-3.5 h-3.5" /> Conscience
+                </button>
+                <button onClick={() => setMdPreview(v => !v)}
+                  className="p-2 rounded-lg transition-colors hover:bg-[var(--bg-tertiary)]"
+                  title={mdPreview ? 'Afficher le markdown brut' : 'Afficher le rendu markdown'}>
+                  {mdPreview ? (
+                    <Eye className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
+                  ) : (
+                    <FileText className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                  )}
+                </button>
                 <button onClick={deleteProject}
                   className="p-2 rounded-lg transition-colors hover:bg-[var(--bg-tertiary)]"
                   title="Supprimer le projet">
@@ -520,10 +708,17 @@ export default function ValkyriePlugin() {
                 <button onClick={archiveProject}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
                   style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
-                  <Archive className="w-3.5 h-3.5" /> Archiver
+                  <Archive className="w-3.5 h-3.5" /> Archiver projet
                 </button>
               </div>
             </div>
+
+            {/* Mini-dashboard de stats (affichable via bouton) */}
+            {showStats && stats && (
+              <div className="mt-4 pt-4" style={{ borderTop: '1px dashed var(--border)' }}>
+                <StatsPanel stats={stats} statuses={statuses} />
+              </div>
+            )}
 
             {/* Ligne nouvelle carte intégrée */}
             <div className="mt-4 pt-4" style={{ borderTop: '1px dashed var(--border)' }}>
@@ -715,6 +910,8 @@ export default function ValkyriePlugin() {
                     status={getStatus(card.status_key)}
                     statuses={statuses}
                     allTags={allTags}
+                    mdPreview={mdPreview}
+                    archivedMode={showArchived}
                     isDragged={draggedId === card.id}
                     isDropTarget={dropTargetIdx === idx}
                     onDragStart={e => handleDragStart(e, card.id)}
@@ -723,13 +920,16 @@ export default function ValkyriePlugin() {
                     onDragEnd={handleDragEnd}
                     onUpdate={updates => updateCard(card.id, updates)}
                     onDelete={() => deleteCard(card.id)}
+                    onArchive={() => archiveCard(card.id)}
+                    onRestore={() => restoreCard(card.id)}
+                    onDuplicate={() => duplicateCard(card.id)}
                   />
                 ))}
                 {/* Emplacements vides avec "+" — ajouter une carte à la volée.
                     On ajoute plusieurs slots pour combler visuellement la grille
                     même quand elle est quasi-pleine. N'apparaît pas quand un
                     filtre est actif (la grille est "filtrée", pas vide). */}
-                {filter == null && !searchQuery && tagFilter.length === 0 && (
+                {!showArchived && filter == null && !searchQuery && tagFilter.length === 0 && (
                   Array.from({ length: Math.max(3, 8 - visibleCards.length % 8) }).map((_, i) => (
                     <EmptySlot
                       key={`empty-${i}`}
@@ -760,6 +960,25 @@ export default function ValkyriePlugin() {
           palette={palette}
           onCancel={() => setShowStatusModal(false)}
           onCreate={createStatus}
+        />
+      )}
+
+      {/* ── New project modal (avec templates) ─────────────────── */}
+      {showNewProjectModal && (
+        <NewProjectModal
+          templates={templates}
+          onCancel={() => setShowNewProjectModal(false)}
+          onCreate={createProjectFromTemplate}
+        />
+      )}
+
+      {/* ── Conscience goals modal ─────────────────────────────── */}
+      {showConscienceModal && (
+        <ConscienceGoalsModal
+          goals={conscienceGoals}
+          loading={conscienceLoading}
+          onCancel={() => setShowConscienceModal(false)}
+          onImport={syncConscienceGoals}
         />
       )}
     </div>
@@ -826,14 +1045,17 @@ function StatusChip({
 // ════════════════════════════════════════════════════════════════════════
 
 function CardTile({
-  card, status, statuses, allTags, isDragged, isDropTarget,
+  card, status, statuses, allTags, mdPreview, archivedMode,
+  isDragged, isDropTarget,
   onDragStart, onDragOver, onDrop, onDragEnd,
-  onUpdate, onDelete,
+  onUpdate, onDelete, onArchive, onRestore, onDuplicate,
 }: {
   card: CardT
   status: StatusT
   statuses: StatusT[]
   allTags: TagEntryT[]
+  mdPreview: boolean
+  archivedMode: boolean
   isDragged: boolean
   isDropTarget: boolean
   onDragStart: (e: React.DragEvent) => void
@@ -842,6 +1064,9 @@ function CardTile({
   onDragEnd: () => void
   onUpdate: (updates: Partial<CardT>) => void
   onDelete: () => void
+  onArchive: () => void
+  onRestore: () => void
+  onDuplicate: () => void
 }) {
   const [statusMenuOpen, setStatusMenuOpen] = useState(false)
   const [newSubtaskLabel, setNewSubtaskLabel] = useState('')
@@ -852,6 +1077,25 @@ function CardTile({
   const doneCount = allSubs.filter(s => s.done).length
   const totalSubtasks = allSubs.length
   const progress = totalSubtasks > 0 ? doneCount / totalSubtasks : 0
+
+  // Date limite : overdue si passée et la carte n'est pas "done".
+  const dueInfo = useMemo(() => {
+    if (!card.due_date) return { overdue: false, soon: false, label: '' }
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    const due = new Date(card.due_date + 'T00:00:00')
+    const diffDays = Math.floor((due.getTime() - today.getTime()) / 86400000)
+    const overdue = diffDays < 0 && card.status_key !== 'done'
+    const soon = diffDays >= 0 && diffDays <= 3 && card.status_key !== 'done'
+    const label = overdue
+      ? `En retard — ${Math.abs(diffDays)} j`
+      : diffDays === 0 ? "Aujourd'hui"
+      : diffDays === 1 ? 'Demain'
+      : diffDays > 0 ? `Dans ${diffDays} j`
+      : due.toLocaleDateString('fr-FR')
+    return { overdue, soon, label }
+  }, [card.due_date, card.status_key])
+
+  const isConscienceCard = (card.origin || '').startsWith('conscience:goal:')
 
   const toggleExpanded = () => onUpdate({ expanded: !card.expanded })
 
@@ -909,17 +1153,21 @@ function CardTile({
         gridColumn: card.expanded ? 'span 2' : undefined,
         gridRow: card.expanded ? 'span 2' : undefined,
         background: 'var(--bg-tertiary)',
-        border: `1px solid ${card.expanded
-          ? 'color-mix(in srgb, var(--scarlet) 35%, var(--border))'
-          : isDropTarget ? 'var(--scarlet)' : 'var(--border)'}`,
+        border: `1px solid ${
+          dueInfo.overdue
+            ? '#ef4444'
+            : card.expanded
+              ? 'color-mix(in srgb, var(--scarlet) 35%, var(--border))'
+              : isDropTarget ? 'var(--scarlet)' : 'var(--border)'}`,
         borderRadius: 12,
         overflow: 'hidden',
         transition: 'transform 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s',
         cursor: card.expanded ? 'default' : 'grab',
-        opacity: isDragged ? 0.3 : 1,
+        opacity: isDragged ? 0.3 : (archivedMode ? 0.75 : 1),
         boxShadow: card.expanded
           ? '0 12px 40px rgba(0,0,0,0.4), 0 0 0 1px color-mix(in srgb, var(--scarlet) 10%, transparent)'
-          : isDropTarget ? '0 0 0 2px var(--scarlet)' : 'none',
+          : isDropTarget ? '0 0 0 2px var(--scarlet)'
+          : dueInfo.overdue ? '0 0 0 1px rgba(239,68,68,0.25)' : 'none',
         display: 'flex', flexDirection: 'column',
       }}
     >
@@ -1035,13 +1283,70 @@ function CardTile({
               onRemove={removeTag}
             />
 
-            {/* Description éditable */}
+            {/* Date limite + origine */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <label style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                fontSize: 10, color: 'var(--text-muted)',
+                fontFamily: 'JetBrains Mono, monospace',
+                textTransform: 'uppercase', letterSpacing: 1.5,
+              }}>
+                <Calendar className="w-3 h-3" />
+                <input
+                  type="date"
+                  value={card.due_date || ''}
+                  onChange={e => onUpdate({ due_date: e.target.value || '' })}
+                  style={{
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 4, padding: '2px 4px',
+                    fontSize: 10.5, color: 'var(--text-primary)',
+                    fontFamily: 'inherit', outline: 'none',
+                  }}
+                />
+                {card.due_date && (
+                  <button
+                    onClick={() => onUpdate({ due_date: '' })}
+                    style={{
+                      background: 'transparent', border: 'none', padding: 2,
+                      cursor: 'pointer', color: 'var(--text-muted)', opacity: 0.6,
+                    }}
+                    title="Retirer la date"><X className="w-3 h-3" /></button>
+                )}
+              </label>
+              {card.due_date && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '2px 6px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                  background: dueInfo.overdue ? 'rgba(239,68,68,0.15)' :
+                    dueInfo.soon ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.12)',
+                  color: dueInfo.overdue ? '#ef4444' :
+                    dueInfo.soon ? '#f59e0b' : '#10b981',
+                }}>
+                  {dueInfo.overdue && <AlertTriangle className="w-3 h-3" />}
+                  {dueInfo.label}
+                </span>
+              )}
+              {isConscienceCard && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '2px 6px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                  background: 'color-mix(in srgb, var(--scarlet) 12%, transparent)',
+                  color: 'var(--scarlet)',
+                }}>
+                  <Sparkles className="w-3 h-3" /> Conscience
+                </span>
+              )}
+            </div>
+
+            {/* Description éditable avec rendu markdown optionnel */}
             <EditableText
               value={card.description}
               onSave={v => onUpdate({ description: v })}
-              placeholder="Description (clique pour éditer)…"
+              placeholder="Description (clique pour éditer, supporte le markdown)…"
               className="text-xs"
               style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}
+              renderValue={mdPreview ? (v => <MarkdownBlock text={v} />) : undefined}
             />
 
             {/* Zone sous-tâches scrollable : 2 listes côte à côte ou empilées */}
@@ -1091,11 +1396,48 @@ function CardTile({
               </div>
             )}
 
-            {/* Footer actions */}
+            {/* Footer actions : duplicate + archive/restore + delete */}
             <div style={{
-              display: 'flex', justifyContent: 'flex-end', paddingTop: 6,
-              borderTop: '1px solid var(--border)',
+              display: 'flex', justifyContent: 'flex-end', gap: 4,
+              paddingTop: 6, borderTop: '1px solid var(--border)', flexWrap: 'wrap',
             }}>
+              {archivedMode ? (
+                <button onClick={onRestore}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    padding: '3px 8px', borderRadius: 6,
+                    background: 'transparent',
+                    border: '1px solid color-mix(in srgb, var(--scarlet) 40%, transparent)',
+                    color: 'var(--scarlet)', fontSize: 10, cursor: 'pointer', fontWeight: 600,
+                  }}>
+                  <RotateCcw className="w-3 h-3" /> Restaurer
+                </button>
+              ) : (
+                <>
+                  <button onClick={onDuplicate}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '3px 8px', borderRadius: 6,
+                      background: 'transparent', border: '1px solid var(--border)',
+                      color: 'var(--text-muted)', fontSize: 10, cursor: 'pointer',
+                    }}
+                    onMouseOver={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--text-muted)' }}
+                    onMouseOut={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)' }}>
+                    <Copy className="w-3 h-3" /> Dupliquer
+                  </button>
+                  <button onClick={onArchive}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '3px 8px', borderRadius: 6,
+                      background: 'transparent', border: '1px solid var(--border)',
+                      color: 'var(--text-muted)', fontSize: 10, cursor: 'pointer',
+                    }}
+                    onMouseOver={e => { e.currentTarget.style.color = '#f59e0b'; e.currentTarget.style.borderColor = '#f59e0b' }}
+                    onMouseOut={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)' }}>
+                    <Archive className="w-3 h-3" /> Archiver
+                  </button>
+                </>
+              )}
               <button onClick={onDelete}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 4,
@@ -1118,6 +1460,34 @@ function CardTile({
                 overflow: 'hidden',
               }}>
                 {card.description}
+              </div>
+            )}
+            {/* Date limite badge + Conscience badge en mode replié */}
+            {(card.due_date || isConscienceCard) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {card.due_date && (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 3,
+                    padding: '1px 6px', borderRadius: 4, fontSize: 9.5, fontWeight: 600,
+                    background: dueInfo.overdue ? 'rgba(239,68,68,0.15)' :
+                      dueInfo.soon ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.12)',
+                    color: dueInfo.overdue ? '#ef4444' :
+                      dueInfo.soon ? '#f59e0b' : '#10b981',
+                  }}>
+                    {dueInfo.overdue ? <AlertTriangle className="w-2.5 h-2.5" /> : <Calendar className="w-2.5 h-2.5" />}
+                    {dueInfo.label}
+                  </span>
+                )}
+                {isConscienceCard && (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 3,
+                    padding: '1px 6px', borderRadius: 4, fontSize: 9.5, fontWeight: 600,
+                    background: 'color-mix(in srgb, var(--scarlet) 12%, transparent)',
+                    color: 'var(--scarlet)',
+                  }}>
+                    <Sparkles className="w-2.5 h-2.5" /> Conscience
+                  </span>
+                )}
               </div>
             )}
             {/* Tags repliés — max 3 visibles + compteur "+N" */}
@@ -1768,7 +2138,7 @@ function buildHtml(project: ProjectT, cards: CardT[], statuses: StatusT[], forPd
 // ════════════════════════════════════════════════════════════════════════
 
 function EditableText({
-  value, onSave, placeholder, className, style, singleLine,
+  value, onSave, placeholder, className, style, singleLine, renderValue,
 }: {
   value: string
   onSave: (v: string) => void
@@ -1776,6 +2146,9 @@ function EditableText({
   className?: string
   style?: React.CSSProperties
   singleLine?: boolean
+  // Si fourni, utilisé pour afficher la valeur quand on n'est pas en
+  // édition (ex: rendu markdown). L'édition reste une textarea brute.
+  renderValue?: (v: string) => React.ReactNode
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
@@ -1843,7 +2216,9 @@ function EditableText({
       onMouseOut={e => { e.currentTarget.style.background = 'transparent' }}
       title="Cliquer pour éditer"
     >
-      {value || placeholder || ' '}
+      {value
+        ? (renderValue ? renderValue(value) : value)
+        : (placeholder || ' ')}
     </div>
   )
 }
@@ -1932,6 +2307,397 @@ function StatusModal({
               cursor: label.trim() ? 'pointer' : 'not-allowed',
             }}>
             Créer l'état
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// StatsPanel — mini-dashboard du projet actif
+// ════════════════════════════════════════════════════════════════════════
+
+function StatsPanel({ stats, statuses }: { stats: StatsT; statuses: StatusT[] }) {
+  const statusPct = (key: string) => stats.total > 0
+    ? Math.round(((stats.by_status[key] || 0) / stats.total) * 100)
+    : 0
+  const subPct = stats.subtasks_total > 0
+    ? Math.round((stats.subtasks_done / stats.subtasks_total) * 100)
+    : 0
+  return (
+    <div>
+      <div className="text-[10px] font-mono uppercase tracking-[2px] mb-2"
+        style={{ color: 'var(--text-muted)' }}>
+        Dashboard
+      </div>
+      {/* 4 KPI cards */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+        gap: 8, marginBottom: 10,
+      }}>
+        <Kpi icon={<LayoutGrid className="w-3 h-3" />} label="Total" value={stats.total} />
+        <Kpi icon={<AlertTriangle className="w-3 h-3" />} label="En retard"
+          value={stats.overdue} tone={stats.overdue > 0 ? 'danger' : undefined} />
+        <Kpi icon={<Calendar className="w-3 h-3" />} label="À faire cette semaine"
+          value={stats.due_this_week} tone={stats.due_this_week > 0 ? 'warn' : undefined} />
+        <Kpi icon={<Check className="w-3 h-3" />} label="Terminé cette semaine"
+          value={stats.done_this_week} tone={stats.done_this_week > 0 ? 'ok' : undefined} />
+      </div>
+      {/* Répartition par statut */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {statuses.map(s => {
+          const count = stats.by_status[s.key] || 0
+          if (count === 0) return null
+          return (
+            <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0,
+              }} />
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 100 }}>
+                {s.label}
+              </span>
+              <div style={{
+                flex: 1, height: 4, borderRadius: 2, background: 'var(--bg-primary)', overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%', width: `${statusPct(s.key)}%`,
+                  background: s.color, transition: 'width 0.3s',
+                }} />
+              </div>
+              <span style={{
+                fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+                color: 'var(--text-muted)', minWidth: 60, textAlign: 'right',
+              }}>{count} · {statusPct(s.key)}%</span>
+            </div>
+          )
+        })}
+        {stats.subtasks_total > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <Check className="w-2.5 h-2.5" style={{ color: 'var(--text-muted)' }} />
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 100 }}>
+              Sous-tâches
+            </span>
+            <div style={{
+              flex: 1, height: 4, borderRadius: 2, background: 'var(--bg-primary)', overflow: 'hidden',
+            }}>
+              <div style={{
+                height: '100%', width: `${subPct}%`,
+                background: 'var(--scarlet)', transition: 'width 0.3s',
+              }} />
+            </div>
+            <span style={{
+              fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+              color: 'var(--text-muted)', minWidth: 60, textAlign: 'right',
+            }}>{stats.subtasks_done}/{stats.subtasks_total}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Kpi({
+  icon, label, value, tone,
+}: {
+  icon: React.ReactNode
+  label: string
+  value: number
+  tone?: 'ok' | 'warn' | 'danger'
+}) {
+  const color = tone === 'danger' ? '#ef4444'
+    : tone === 'warn' ? '#f59e0b'
+    : tone === 'ok' ? '#10b981'
+    : 'var(--text-primary)'
+  return (
+    <div style={{
+      padding: '8px 10px', borderRadius: 8,
+      background: 'var(--bg-primary)',
+      border: '1px solid var(--border)',
+      display: 'flex', alignItems: 'center', gap: 8,
+    }}>
+      <span style={{ color }}>{icon}</span>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{
+          fontSize: 9, color: 'var(--text-muted)',
+          fontFamily: 'JetBrains Mono, monospace',
+          textTransform: 'uppercase', letterSpacing: 1,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>{label}</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color, lineHeight: 1.2 }}>{value}</div>
+      </div>
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// NewProjectModal — création avec choix de template
+// ════════════════════════════════════════════════════════════════════════
+
+function NewProjectModal({
+  templates, onCancel, onCreate,
+}: {
+  templates: TemplateT[]
+  onCancel: () => void
+  onCreate: (templateKey: string, title?: string) => void
+}) {
+  const [selectedKey, setSelectedKey] = useState('blank')
+  const [customTitle, setCustomTitle] = useState('')
+  const active = templates.find(t => t.key === selectedKey)
+  return (
+    <div onClick={onCancel} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)', borderRadius: 12,
+        padding: 20, minWidth: 480, maxWidth: 620, width: '90%',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+            Nouveau tableau
+          </h2>
+          <button onClick={onCancel} style={{
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'var(--text-muted)', padding: 4,
+          }}><X className="w-4 h-4" /></button>
+        </div>
+        <div className="text-[10px] font-mono uppercase tracking-[2px] mb-2"
+          style={{ color: 'var(--text-muted)' }}>
+          Modèle de départ
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+          {templates.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              Aucun modèle disponible.
+            </div>
+          )}
+          {templates.map(t => (
+            <button key={t.key}
+              onClick={() => setSelectedKey(t.key)}
+              style={{
+                textAlign: 'left', padding: '10px 12px', borderRadius: 8,
+                background: selectedKey === t.key
+                  ? 'color-mix(in srgb, var(--scarlet) 10%, var(--bg-tertiary))'
+                  : 'var(--bg-tertiary)',
+                border: `1px solid ${selectedKey === t.key
+                  ? 'color-mix(in srgb, var(--scarlet) 40%, transparent)'
+                  : 'var(--border)'}`,
+                color: 'var(--text-primary)', cursor: 'pointer',
+              }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>
+                {t.title}
+                <span style={{
+                  marginLeft: 8, padding: '1px 6px', borderRadius: 4,
+                  fontSize: 9.5, fontWeight: 600,
+                  background: 'var(--bg-primary)', color: 'var(--text-muted)',
+                  fontFamily: 'JetBrains Mono, monospace',
+                }}>
+                  {t.card_count} cartes
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                {t.description || '—'}
+              </div>
+            </button>
+          ))}
+        </div>
+        <div className="text-[10px] font-mono uppercase tracking-[2px] mb-1"
+          style={{ color: 'var(--text-muted)' }}>
+          Titre (optionnel)
+        </div>
+        <input
+          value={customTitle}
+          onChange={e => setCustomTitle(e.target.value)}
+          placeholder={active?.title || 'Nouveau projet'}
+          className="w-full mb-4 outline-none"
+          style={{
+            background: 'var(--bg-primary)', border: '1px solid var(--border)',
+            color: 'var(--text-primary)', borderRadius: 8, padding: '8px 10px', fontSize: 13,
+          }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button onClick={onCancel}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium"
+            style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+            Annuler
+          </button>
+          <button onClick={() => onCreate(selectedKey, customTitle.trim() || undefined)}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+            style={{
+              background: 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))',
+              color: '#fff', border: 'none',
+            }}>
+            Créer
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// ConscienceGoalsModal — import sélectif depuis les goals Conscience
+// ════════════════════════════════════════════════════════════════════════
+
+function ConscienceGoalsModal({
+  goals, loading, onCancel, onImport,
+}: {
+  goals: ConscienceGoalT[]
+  loading: boolean
+  onCancel: () => void
+  onImport: (ids: string[]) => void
+}) {
+  const [selected, setSelected] = useState<Set<string>>(() => {
+    // Par défaut, on coche les goals non encore importés
+    return new Set(goals.filter(g => !g.imported).map(g => g.id))
+  })
+  useEffect(() => {
+    // Resynchro si les goals changent (chargement tardif)
+    setSelected(new Set(goals.filter(g => !g.imported).map(g => g.id)))
+  }, [goals])
+
+  const toggle = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  const selectable = goals.filter(g => !g.imported)
+  const selectedCount = Array.from(selected).filter(id =>
+    selectable.some(g => g.id === id)
+  ).length
+
+  return (
+    <div onClick={onCancel} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)', borderRadius: 12,
+        padding: 20, minWidth: 520, maxWidth: 720, width: '90%',
+        maxHeight: '80vh', display: 'flex', flexDirection: 'column',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', margin: 0,
+            display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Sparkles className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
+            Importer des objectifs Conscience
+          </h2>
+          <button onClick={onCancel} style={{
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'var(--text-muted)', padding: 4,
+          }}><X className="w-4 h-4" /></button>
+        </div>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
+          Chaque objectif sélectionné devient une carte dans le projet actif, avec le
+          tag <code style={{ color: 'var(--scarlet)' }}>conscience</code>. Les imports
+          sont dédupliqués — un même objectif ne crée pas de doublon.
+        </p>
+        <div style={{
+          flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6,
+          paddingRight: 4, marginBottom: 12,
+        }}>
+          {loading && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
+              <Loader2 className="w-4 h-4 inline-block animate-spin" /> Chargement…
+            </div>
+          )}
+          {!loading && goals.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
+              Aucun objectif dans la Conscience — génère-en depuis le panneau Conscience.
+            </div>
+          )}
+          {!loading && goals.map(g => {
+            const sel = selected.has(g.id)
+            return (
+              <button key={g.id}
+                onClick={() => !g.imported && toggle(g.id)}
+                disabled={g.imported}
+                style={{
+                  textAlign: 'left', padding: '10px 12px', borderRadius: 8,
+                  background: g.imported
+                    ? 'color-mix(in srgb, var(--text-muted) 8%, transparent)'
+                    : sel ? 'color-mix(in srgb, var(--scarlet) 10%, var(--bg-tertiary))'
+                    : 'var(--bg-tertiary)',
+                  border: `1px solid ${g.imported ? 'var(--border)'
+                    : sel ? 'color-mix(in srgb, var(--scarlet) 40%, transparent)'
+                    : 'var(--border)'}`,
+                  color: 'var(--text-primary)',
+                  cursor: g.imported ? 'not-allowed' : 'pointer', opacity: g.imported ? 0.55 : 1,
+                }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{
+                    width: 14, height: 14, borderRadius: 4, flexShrink: 0,
+                    border: `1.5px solid ${sel ? 'var(--scarlet)' : 'var(--border)'}`,
+                    background: sel ? 'var(--scarlet)' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {sel && <Check className="w-2.5 h-2.5" style={{ color: '#fff' }} strokeWidth={3} />}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 13, fontWeight: 600, marginBottom: 2,
+                      color: 'var(--text-primary)',
+                    }}>
+                      {g.title}
+                      <span style={{
+                        marginLeft: 8, padding: '1px 6px', borderRadius: 4,
+                        fontSize: 9, fontWeight: 600, textTransform: 'uppercase',
+                        background: 'var(--bg-primary)', color: 'var(--text-muted)',
+                        fontFamily: 'JetBrains Mono, monospace',
+                      }}>
+                        {g.status}
+                      </span>
+                      {g.imported && (
+                        <span style={{
+                          marginLeft: 4, padding: '1px 6px', borderRadius: 4,
+                          fontSize: 9, fontWeight: 600,
+                          background: 'color-mix(in srgb, var(--scarlet) 12%, transparent)',
+                          color: 'var(--scarlet)',
+                        }}>
+                          Déjà importé
+                        </span>
+                      )}
+                    </div>
+                    {g.description && (
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                        {g.description}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 'auto' }}>
+            {selectedCount} / {selectable.length} sélectionné{selectedCount > 1 ? 's' : ''}
+          </span>
+          <button onClick={onCancel}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium"
+            style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+            Annuler
+          </button>
+          <button
+            onClick={() => onImport(Array.from(selected))}
+            disabled={selectedCount === 0}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-40"
+            style={{
+              background: 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))',
+              color: '#fff', border: 'none',
+              cursor: selectedCount > 0 ? 'pointer' : 'not-allowed',
+            }}>
+            Importer {selectedCount > 0 ? `(${selectedCount})` : ''}
           </button>
         </div>
       </div>
