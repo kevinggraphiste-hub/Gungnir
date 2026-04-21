@@ -1427,13 +1427,20 @@ Tu operes en mode **demande**. Comportement :
                 # Gate : mode-based tool access control
                 _current_mode = mode_manager.current_mode.value
 
-                # Onboarding exemption: finalize_onboarding is a one-shot setup
-                # tool that MUST run regardless of the active autonomy mode
-                # during an active welcome conversation. Without this exemption
-                # ask_permission mode silently blocks the call and the LLM
-                # silently gives up, leaving onboarding as cosmetic chat only.
+                # Onboarding exemption (fix sécu H2) : finalize_onboarding est
+                # un outil à effet de bord majeur (reset agent_name / soul /
+                # mode / formality), donc on n'exempte le gate QUE si :
+                #   1) tool_name == "finalize_onboarding"
+                #   2) la conversation courante est bien celle d'onboarding
+                #   3) l'user n'est PAS déjà onboarded (_is_onboarding_convo
+                #      implique cette condition côté chat.py, mais on double-check
+                #      via le flag DB côté _finalize_onboarding — idempotent)
+                # Hors de ce tunnel, l'outil passe par le gate normal comme
+                # n'importe quel outil d'écriture.
                 _is_onboarding_finalize = (
-                    tool_name == "finalize_onboarding" and _is_onboarding_convo
+                    tool_name == "finalize_onboarding"
+                    and _is_onboarding_convo
+                    and bool(_current_uid)
                 )
 
                 # RESTRAINED : vérifier que l'utilisateur a explicitement demandé cette action

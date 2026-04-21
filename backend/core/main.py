@@ -586,17 +586,28 @@ async def _mcp_health_check_loop():
 # ── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Gungnir API", version=__version__, lifespan=lifespan)
 
+# CORS (fix sécu H3) : on liste explicitement methods/headers au lieu de '*'.
+# Avec `allow_credentials=True`, le wildcard est déconseillé (OWASP) — même
+# si les navigateurs le refusent silencieusement dans ce cas, on préfère être
+# strict côté serveur. Origines ajoutables via env GUNGNIR_CORS_ORIGINS
+# (liste séparée par virgules) pour les déploiements custom.
+import os as _os_cors
+_cors_origins = [
+    "http://localhost:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+]
+_extra_origins = _os_cors.getenv("GUNGNIR_CORS_ORIGINS", "").strip()
+if _extra_origins:
+    _cors_origins.extend([o.strip() for o in _extra_origins.split(",") if o.strip()])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:8000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:8000",
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 # ── Rate limiting ────────────────────────────────────────────────────────────
@@ -688,6 +699,15 @@ async def token_auth_middleware(request, call_next):
             user = result.scalar()
             if not user:
                 return JSONResponse({"error": "Token invalide ou utilisateur désactivé"}, status_code=401)
+            # Token expiration check (fix sécu M1). `token_expires_at` = NULL
+            # → durée illimitée (compat arrière pour les users créés avant le
+            # fix). Tout nouveau login écrit une date d'expiration.
+            from datetime import datetime as _dt
+            if user.token_expires_at is not None and user.token_expires_at < _dt.utcnow():
+                return JSONResponse(
+                    {"error": "Session expirée, reconnecte-toi."},
+                    status_code=401,
+                )
             # Inject user info into request state for downstream use
             request.state.user_id = user.id
             request.state.username = user.username

@@ -23,6 +23,11 @@ async def open_mode_fallback_user_id(session: AsyncSession) -> int | None:
     lone admin was calling. Returns None as soon as a second user exists, so
     unauthenticated calls can no longer read or write credentials belonging
     to the first user (cross-user leak prevention).
+
+    Sécurité (fix M2) : on utilise `SELECT ... FOR UPDATE` pour poser un
+    row-lock Postgres sur l'user #1 pendant que la décision est prise.
+    Évite une race condition où un second user est inséré entre le
+    count() et le return de l'user #1.
     """
     count_row = await session.execute(select(func.count()).select_from(User))
     user_count = count_row.scalar() or 0
@@ -33,7 +38,10 @@ async def open_mode_fallback_user_id(session: AsyncSession) -> int | None:
                 user_count,
             )
         return None
-    row = await session.execute(select(User).order_by(User.id).limit(1))
+    # Lock explicite sur la ligne User #1 pour la durée de la transaction.
+    # `with_for_update()` est un no-op sur SQLite (tests) et effectif sur Pg.
+    stmt = select(User).order_by(User.id).limit(1).with_for_update()
+    row = await session.execute(stmt)
     user = row.scalar()
     return user.id if user else None
 

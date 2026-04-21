@@ -74,6 +74,7 @@ async def list_users(request: Request, session: AsyncSession = Depends(get_sessi
 
 
 @router.post("/users")
+@limiter.limit("5/minute")
 async def create_user(request: Request, session: AsyncSession = Depends(get_session)):
     """Crée un nouvel utilisateur."""
     body = await request.json()
@@ -306,7 +307,7 @@ async def get_current_user(request: Request, session: AsyncSession = Depends(get
 
 
 @router.post("/users/login")
-@limiter.limit("10/minute")
+@limiter.limit("5/minute")
 async def login_user(request: Request, session: AsyncSession = Depends(get_session)):
     """Vérifie les identifiants d'un utilisateur."""
     body = await request.json()
@@ -330,13 +331,17 @@ async def login_user(request: Request, session: AsyncSession = Depends(get_sessi
         # Users are encouraged to set a password in Settings for better security.
 
     # Toujours générer un nouveau token (rotation — invalide les anciennes sessions)
+    # Expiration 30j (fix sécu M1). L'utilisateur devra se reconnecter après.
+    from datetime import datetime as _dt, timedelta as _td
     raw_token = secrets.token_hex(32)
     user.api_token = _hash_token(raw_token)
+    user.token_expires_at = _dt.utcnow() + _td(days=30)
     await session.commit()
 
     return {
         "ok": True,
         "token": raw_token,
+        "expires_at": user.token_expires_at.isoformat() + "Z",
         "user": {
             "id": user.id,
             "username": user.username,
@@ -344,4 +349,43 @@ async def login_user(request: Request, session: AsyncSession = Depends(get_sessi
             "avatar_url": user.avatar_url,
             "is_admin": bool(user.is_admin),
         }
+    }
+
+
+@router.post("/users/logout")
+async def logout_user(request: Request, session: AsyncSession = Depends(get_session)):
+    """Révoque le token de la session courante côté serveur (fix sécu M1).
+    Sans ça, un token volé restait valide jusqu'à son expiration naturelle."""
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return {"ok": True}  # Déjà logout
+    result = await session.execute(select(User).where(User.id == uid))
+    user = result.scalar()
+    if user:
+        user.api_token = None
+        user.token_expires_at = None
+        await session.commit()
+    return {"ok": True}
+
+
+@router.post("/users/refresh-token")
+async def refresh_token(request: Request, session: AsyncSession = Depends(get_session)):
+    """Prolonge la session : rotate le token + nouvelle expiration 30j.
+    L'appelant doit présenter un token encore valide (middleware auth)."""
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+    result = await session.execute(select(User).where(User.id == uid))
+    user = result.scalar()
+    if not user:
+        return JSONResponse({"error": "Utilisateur introuvable"}, status_code=404)
+    from datetime import datetime as _dt, timedelta as _td
+    raw_token = secrets.token_hex(32)
+    user.api_token = _hash_token(raw_token)
+    user.token_expires_at = _dt.utcnow() + _td(days=30)
+    await session.commit()
+    return {
+        "ok": True,
+        "token": raw_token,
+        "expires_at": user.token_expires_at.isoformat() + "Z",
     }

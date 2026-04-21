@@ -112,6 +112,10 @@ class User(Base):
     display_name = Column(String(200), default="")
     password_hash = Column(String(256), nullable=True)
     api_token = Column(String(128), nullable=True, unique=True)
+    # Expiration du token (fix sécu M1). Si NULL, le token est valide
+    # indéfiniment (compat arrière — les users existants ne sont pas
+    # déconnectés). Un nouveau login pose 30 jours par défaut.
+    token_expires_at = Column(DateTime, nullable=True)
     avatar_url = Column(Text, default="")
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
@@ -334,6 +338,7 @@ async def init_db(engine):
         ("ALTER TABLE user_settings ADD COLUMN voice_config JSONB DEFAULT '{}'::jsonb", "voice_config -> user_settings"),
         ("ALTER TABLE user_settings ADD COLUMN huntr_config JSONB DEFAULT '{}'::jsonb", "huntr_config -> user_settings"),
         ("ALTER TABLE user_settings ADD COLUMN ui_preferences JSONB DEFAULT '{}'::jsonb", "ui_preferences -> user_settings"),
+        ("ALTER TABLE users ADD COLUMN token_expires_at TIMESTAMP NULL", "token_expires_at -> users"),
     ]
 
     # Migrations plugin : chaque plugin expose optionnellement sa propre liste

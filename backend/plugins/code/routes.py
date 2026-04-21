@@ -181,11 +181,36 @@ def _workspace() -> Path:
 
 
 def _safe_path(rel: str) -> Path:
-    """Resolve relative path inside workspace. Prevents directory traversal."""
-    ws = _workspace()
-    resolved = (ws / rel).resolve()
-    if not str(resolved).startswith(str(ws.resolve())):
+    """Resolve relative path inside workspace. Prevents directory traversal
+    AND symlink escape (fix sécu M3).
+
+    `.resolve()` suit les symlinks et retourne le chemin réel — donc un
+    symlink pointant hors workspace est détecté. On vérifie aussi chaque
+    composant intermédiaire au cas où un symlink serait créé en cours de
+    route (ex: via bash_exec) puis exploité par un autre call.
+    """
+    ws = _workspace().resolve()
+    candidate = (ws / rel)
+    # resolve(strict=False) : accepte les paths qui n'existent pas encore
+    # (create file case) tout en suivant les symlinks existants.
+    resolved = candidate.resolve(strict=False)
+    if not str(resolved).startswith(str(ws)):
         raise HTTPException(403, "Acces interdit: chemin hors du workspace")
+    # Vérifie qu'aucun composant du path n'est un symlink qui pointerait
+    # hors du workspace (detection tardive des escape via symlink).
+    current = ws
+    try:
+        rel_parts = resolved.relative_to(ws).parts
+    except ValueError:
+        raise HTTPException(403, "Acces interdit: chemin hors du workspace")
+    for part in rel_parts:
+        current = current / part
+        if current.is_symlink():
+            target = current.resolve(strict=False)
+            if not str(target).startswith(str(ws)):
+                raise HTTPException(403, "Acces interdit: symlink vers l'extérieur du workspace")
+        if not current.exists():
+            break  # Pas la peine de scanner les parts non-créées
     return resolved
 
 
