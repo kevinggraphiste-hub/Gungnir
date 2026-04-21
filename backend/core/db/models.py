@@ -341,6 +341,7 @@ async def init_db(engine):
         ("ALTER TABLE valkyrie_cards ADD COLUMN due_date TIMESTAMP NULL", "due_date -> valkyrie_cards"),
         ("ALTER TABLE valkyrie_cards ADD COLUMN archived_at TIMESTAMP NULL", "archived_at -> valkyrie_cards"),
         ("ALTER TABLE valkyrie_cards ADD COLUMN origin VARCHAR(80) DEFAULT ''", "origin -> valkyrie_cards"),
+        ("ALTER TABLE valkyrie_cards ADD COLUMN recurrence_rule VARCHAR(40) DEFAULT ''", "recurrence_rule -> valkyrie_cards"),
     ]
     for sql, label in migrations:
         try:

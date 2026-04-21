@@ -86,6 +86,7 @@ class CardIn(BaseModel):
     # Date limite ISO "YYYY-MM-DD" ou vide/null pour retirer. On ne gère pas
     # d'heure ni de fuseau — une carte est due "pour le jour X".
     due_date: Optional[str] = None
+    recurrence_rule: Optional[str] = None  # "", "daily", "weekly[:1,3,5]", "monthly"
 
 
 class CardReorder(BaseModel):
@@ -136,6 +137,7 @@ def _serialize_card(c: ValkyrieCard) -> dict:
         "due_date": c.due_date.date().isoformat() if c.due_date else None,
         "archived_at": c.archived_at.isoformat() if c.archived_at else None,
         "origin": c.origin or "",
+        "recurrence_rule": c.recurrence_rule or "",
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "updated_at": c.updated_at.isoformat() if c.updated_at else None,
     }
@@ -439,6 +441,7 @@ async def create_card(project_id: int, payload: CardIn, request: Request,
         subtasks2_title=(payload.subtasks2_title or "").strip()[:60],
         tags_json=_sanitize_tags(payload.tags or []),
         due_date=_parse_due_date(payload.due_date),
+        recurrence_rule=_sanitize_recurrence(payload.recurrence_rule),
     )
     session.add(row)
     await session.commit()
@@ -478,8 +481,22 @@ async def update_card(card_id: int, payload: CardIn, request: Request,
     if payload.due_date is not None:
         # Chaîne vide → on vide la date. Sinon on parse.
         row.due_date = _parse_due_date(payload.due_date) if payload.due_date else None
+    if payload.recurrence_rule is not None:
+        row.recurrence_rule = _sanitize_recurrence(payload.recurrence_rule)
+
+    # ── Récurrence : si la carte vient de passer à "done" et qu'elle a une
+    # règle de récurrence, on crée la prochaine occurrence (avec la due_date
+    # décalée) et on archive la carte actuelle pour garder l'historique.
+    spawned = None
+    if (payload.status_key is not None and row.status_key == "done"
+            and (row.recurrence_rule or "").strip()):
+        spawned = await _spawn_next_recurrence(session, row)
+
     await session.commit()
-    return {"card": _serialize_card(row)}
+    result = {"card": _serialize_card(row)}
+    if spawned:
+        result["spawned"] = _serialize_card(spawned)
+    return result
 
 
 @router.delete("/cards/{card_id}")
@@ -556,6 +573,99 @@ def _sanitize_subtasks(items) -> list[dict]:
         sid = str(it.get("id") or "").strip() or f"s_{uuid.uuid4().hex[:8]}"
         out.append({"id": sid[:32], "label": label, "done": bool(it.get("done", False))})
     return out
+
+
+_VALID_RECURRENCE_PREFIXES = ("daily", "weekly", "monthly")
+
+def _sanitize_recurrence(v: Optional[str]) -> str:
+    """Valide/normalise une règle de récurrence. Retourne '' si invalide."""
+    if not v:
+        return ""
+    s = str(v).strip().lower()[:40]
+    if not s:
+        return ""
+    base = s.split(":", 1)[0]
+    if base not in _VALID_RECURRENCE_PREFIXES:
+        return ""
+    # weekly:1,3 etc. — on garde tel quel (parsé au spawn).
+    return s
+
+
+async def _spawn_next_recurrence(session: AsyncSession, src: ValkyrieCard) -> Optional[ValkyrieCard]:
+    """Calcule la prochaine due_date selon la règle puis insère une nouvelle
+    carte identique dans le même projet. Retourne la nouvelle carte ou None
+    si la règle est invalide ou la source n'a pas de due_date."""
+    rule = (src.recurrence_rule or "").strip()
+    if not rule:
+        return None
+    base_date = src.due_date.date() if src.due_date else datetime.utcnow().date()
+    prefix, _, spec = rule.partition(":")
+    next_date = None
+    if prefix == "daily":
+        next_date = base_date + timedelta(days=1)
+    elif prefix == "weekly":
+        if spec:
+            # Liste de jours (1=lun..7=dim). Prochaine occurrence après base_date.
+            wanted: list[int] = []
+            for tok in spec.split(","):
+                try:
+                    n = int(tok.strip())
+                    if 1 <= n <= 7:
+                        wanted.append(n)
+                except ValueError:
+                    continue
+            wanted = sorted(set(wanted))
+            if not wanted:
+                next_date = base_date + timedelta(days=7)
+            else:
+                # Cherche le prochain jour >= base_date+1 qui match
+                for delta in range(1, 15):
+                    cand = base_date + timedelta(days=delta)
+                    iso_w = cand.isoweekday()
+                    if iso_w in wanted:
+                        next_date = cand
+                        break
+        else:
+            next_date = base_date + timedelta(days=7)
+    elif prefix == "monthly":
+        # Même jour de mois, mois suivant. Gère les bords (31 → dernier jour).
+        y, m, d = base_date.year, base_date.month + 1, base_date.day
+        if m > 12:
+            y += 1; m = 1
+        # Clamp au dernier jour du mois cible
+        import calendar as _cal
+        last = _cal.monthrange(y, m)[1]
+        next_date = datetime(y, m, min(d, last)).date()
+    if next_date is None:
+        return None
+    # Crée la nouvelle carte (même projet, subtasks re-décochées)
+    def _reset_done(items):
+        out = []
+        for it in (items or []):
+            if isinstance(it, dict):
+                out.append({**it, "done": False})
+        return out
+    clone = ValkyrieCard(
+        project_id=src.project_id, user_id=src.user_id,
+        title=src.title or "",
+        subtitle=src.subtitle or "",
+        description=src.description or "",
+        status_key="todo",
+        position=(src.position or 0),
+        expanded=False,
+        subtasks_json=_reset_done(src.subtasks_json),
+        subtasks2_json=_reset_done(src.subtasks2_json),
+        subtasks2_title=src.subtasks2_title or "",
+        tags_json=list(src.tags_json or []),
+        due_date=datetime(next_date.year, next_date.month, next_date.day),
+        recurrence_rule=rule,
+        origin=f"recurrence:{src.id}",
+    )
+    session.add(clone)
+    # Archive la carte source complétée pour ne pas polluer le board.
+    if src.archived_at is None:
+        src.archived_at = datetime.utcnow()
+    return clone
 
 
 def _sanitize_tags(items) -> list[str]:
@@ -664,6 +774,154 @@ async def list_reminders(request: Request,
 # ═══════════════════════════════════════════════════════════════════════════
 # Bulk operations (pour les UI multi-sélection)
 # ═══════════════════════════════════════════════════════════════════════════
+
+class ImportIn(BaseModel):
+    format: str  # "json" | "csv" | "markdown"
+    data: str    # contenu brut
+    default_status: Optional[str] = "todo"
+
+
+@router.post("/projects/{project_id}/import")
+async def import_cards(project_id: int, payload: ImportIn, request: Request,
+                        session: AsyncSession = Depends(get_session)):
+    """Import de cartes depuis un contenu texte brut.
+
+    Formats supportés :
+    - JSON : soit un export Valkyrie (`{cards: [...]}`), soit un array
+      de dicts `[{title, description?, status_key?, tags?, due_date?, subtasks?}, ...]`.
+    - CSV : première ligne = header ; colonnes reconnues : title, subtitle,
+      description, status, tags (séparés par `|`), due_date (YYYY-MM-DD).
+    - Markdown : les `# Heading` deviennent des statuts (best-effort via
+      label), les `- item` en dessous deviennent des cartes. Les sous-items
+      indentés deviennent des sous-tâches.
+    """
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    await _get_project_owned(session, uid, project_id)
+    default_status = (payload.default_status or "todo").strip()[:60] or "todo"
+    fmt = (payload.format or "").strip().lower()
+    raw = payload.data or ""
+    if not raw.strip():
+        return {"ok": True, "created": 0, "items": []}
+
+    # Position de départ = max + 1
+    pos_rs = await session.execute(
+        select(_sqlfunc.max(ValkyrieCard.position)).where(
+            ValkyrieCard.project_id == project_id, ValkyrieCard.user_id == uid,
+        )
+    )
+    next_pos = int(pos_rs.scalar() or 0) + 1
+    created: list[dict] = []
+
+    def _mk_card(d: dict) -> ValkyrieCard:
+        nonlocal next_pos
+        subs_raw = d.get("subtasks") or []
+        subs_clean: list[dict] = []
+        if isinstance(subs_raw, list):
+            for s in subs_raw:
+                if isinstance(s, str):
+                    subs_clean.append({"label": s.strip()[:200], "done": False})
+                elif isinstance(s, dict):
+                    subs_clean.append({
+                        "label": str(s.get("label", "")).strip()[:200],
+                        "done": bool(s.get("done", False)),
+                    })
+        subs_clean = _sanitize_subtasks(subs_clean)
+        # Accepte "status" ou "status_key"
+        raw_status = str(d.get("status_key") or d.get("status") or default_status).strip()[:60]
+        row = ValkyrieCard(
+            project_id=project_id, user_id=uid,
+            title=str(d.get("title") or "Importée").strip()[:300],
+            subtitle=str(d.get("subtitle") or "").strip()[:300],
+            description=str(d.get("description") or "").strip(),
+            status_key=raw_status or default_status,
+            position=next_pos,
+            subtasks_json=subs_clean,
+            tags_json=_sanitize_tags(d.get("tags") or []),
+            due_date=_parse_due_date(d.get("due_date")),
+            origin="import",
+        )
+        next_pos += 1
+        return row
+
+    try:
+        if fmt == "json":
+            import json as _json
+            parsed = _json.loads(raw)
+            items = parsed.get("cards") if isinstance(parsed, dict) else parsed
+            if not isinstance(items, list):
+                raise HTTPException(400, detail="JSON : attendu une liste ou {cards: [...]}")
+            for it in items:
+                if isinstance(it, dict):
+                    row = _mk_card(it)
+                    session.add(row)
+                    created.append({"title": row.title, "status_key": row.status_key})
+        elif fmt == "csv":
+            import csv as _csv
+            from io import StringIO
+            reader = _csv.DictReader(StringIO(raw))
+            for r in reader:
+                d = {
+                    "title": r.get("title") or r.get("Title") or "",
+                    "subtitle": r.get("subtitle") or "",
+                    "description": r.get("description") or r.get("desc") or "",
+                    "status_key": r.get("status_key") or r.get("status") or default_status,
+                    "due_date": r.get("due_date") or r.get("due") or "",
+                    "tags": [t.strip() for t in (r.get("tags") or "").split("|") if t.strip()],
+                }
+                if not d["title"]:
+                    continue
+                row = _mk_card(d)
+                session.add(row)
+                created.append({"title": row.title, "status_key": row.status_key})
+        elif fmt == "markdown":
+            # Parseur best-effort : # → statut courant ; - → carte ;
+            # sous-indentation "  - " → sous-tâche de la carte précédente.
+            current_status = default_status
+            current_card: dict | None = None
+            for line in raw.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("# "):
+                    label = stripped[2:].strip().lower()
+                    # On ne crée pas de statut custom — on mappe vers les
+                    # built-in communs puis fallback default_status.
+                    if label in ("à faire", "a faire", "todo"):
+                        current_status = "todo"
+                    elif label in ("en cours", "doing", "in progress"):
+                        current_status = "doing"
+                    elif label in ("fait", "done", "terminé", "termine"):
+                        current_status = "done"
+                    else:
+                        current_status = default_status
+                    current_card = None
+                elif stripped.startswith("- ") or stripped.startswith("* "):
+                    # Indentation : nombre d'espaces avant le tiret (2 = subtask)
+                    indent = len(line) - len(line.lstrip())
+                    text = stripped[2:].strip()
+                    if indent >= 2 and current_card is not None:
+                        current_card.setdefault("subtasks", []).append(text)
+                    else:
+                        if current_card:
+                            row = _mk_card(current_card)
+                            session.add(row)
+                            created.append({"title": row.title, "status_key": row.status_key})
+                        current_card = {"title": text, "status_key": current_status}
+            if current_card:
+                row = _mk_card(current_card)
+                session.add(row)
+                created.append({"title": row.title, "status_key": row.status_key})
+        else:
+            raise HTTPException(400, detail=f"Format inconnu : {fmt!r} (attendu json/csv/markdown)")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, detail=f"Erreur de parsing : {e}")
+
+    await session.commit()
+    return {"ok": True, "created": len(created), "items": created}
+
 
 class BulkIn(BaseModel):
     card_ids: list[int]

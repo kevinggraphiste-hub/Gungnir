@@ -86,6 +86,16 @@ class ValkyrieCard(Base):
     # D'où vient la carte (manuel, conscience:goal:<id>, template, etc.).
     # Permet de dédupliquer les imports Conscience et d'afficher un badge.
     origin = Column(String(80), default="")
+    # Règle de récurrence optionnelle. Format simple :
+    #   ""                       → pas de récurrence
+    #   "daily"                  → chaque jour
+    #   "weekly"                 → chaque semaine (même jour que due_date)
+    #   "weekly:1,3,5"           → lundi/mercredi/vendredi (1=lun, 7=dim)
+    #   "monthly"                → chaque mois (même jour de mois)
+    # Quand la carte est marquée "done", on crée automatiquement la
+    # prochaine occurrence avec la due_date suivante, puis on archive l'instance
+    # complétée pour garder l'historique.
+    recurrence_rule = Column(String(40), default="")
     # Deux listes de sous-tâches côte à côte (ex: "livrables" + "preuves").
     # Format commun : [{id, label, done}]
     subtasks_json = Column(JSON, default=list)

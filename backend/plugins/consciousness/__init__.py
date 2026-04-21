@@ -1350,6 +1350,18 @@ async def _tick_once():
             except Exception as e:
                 logger.exception(f"Goals pass crashed for user {user_id}: {e}")
 
+        # Snapshot Valkyrie (rappels deadlines) — cache léger dans l'état
+        # pour que get_consciousness_prompt_block() reste sync.
+        try:
+            from backend.plugins.valkyrie.reminders_probe import _probe_reminders_async
+            from backend.plugins.consciousness.engine import consciousness_manager
+            rem = await _probe_reminders_async(user_id)
+            if rem is not None:
+                eng = consciousness_manager.get(user_id)
+                eng._state["valkyrie_reminders"] = rem
+        except Exception as e:
+            logger.debug(f"Valkyrie reminders probe failed for user {user_id}: {e}")
+
 
 async def _consciousness_loop():
     logger.info(f"Consciousness background-think daemon started (tick every {TICK_INTERVAL_SECONDS}s)")

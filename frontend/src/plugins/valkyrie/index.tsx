@@ -16,7 +16,8 @@ import {
   LayoutGrid, Plus, Trash2, Archive, Save, ChevronDown, ChevronRight,
   X, Check, Loader2, Edit3, GripVertical, Search, Download, Tag as TagIcon,
   Calendar, Copy, AlertTriangle, Sparkles, Eye, FileText, BarChart3,
-  RotateCcw, Bell, Keyboard, CheckSquare, Undo2,
+  RotateCcw, Bell, Keyboard, CheckSquare, Undo2, Upload, ArrowUpDown,
+  CalendarDays, Repeat,
 } from 'lucide-react'
 import InfoButton from '@core/components/InfoButton'
 import manifest from './manifest.json'
@@ -69,6 +70,7 @@ interface CardT {
   due_date: string | null    // ISO YYYY-MM-DD ou null
   archived_at: string | null // ISO datetime ou null
   origin: string             // "", "duplicate", "conscience:goal:<id>", "template:<key>"
+  recurrence_rule: string    // "", "daily", "weekly[:1,3,5]", "monthly"
   created_at: string | null
   updated_at: string | null
 }
@@ -215,6 +217,23 @@ export default function ValkyriePlugin() {
   // Bulk ops (multi-sélection)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedCardIds, setSelectedCardIds] = useState<Set<number>>(new Set())
+
+  // Tri de la grille + vue (grille/calendrier) + toasts globaux
+  type SortKey = 'position' | 'due_asc' | 'due_desc' | 'title_asc' | 'progress_desc' | 'recent'
+  const [sortBy, setSortBy] = useState<SortKey>('position')
+  const [viewMode, setViewMode] = useState<'grid' | 'calendar'>('grid')
+  const [toast, setToast] = useState<{ message: string; action?: { label: string; run: () => void }; key: number } | null>(null)
+  const showToast = useCallback((message: string, action?: { label: string; run: () => void }) => {
+    setToast({ message, action, key: Date.now() })
+  }, [])
+  useEffect(() => {
+    if (!toast) return
+    const id = setTimeout(() => setToast(null), 6000)
+    return () => clearTimeout(id)
+  }, [toast])
+
+  // Import docs modal
+  const [showImportModal, setShowImportModal] = useState(false)
 
   // Undo stack (limité à 30 entrées)
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([])
@@ -409,16 +428,56 @@ export default function ValkyriePlugin() {
   }, [activeProjectId, newCardTitle, newCardStatus, cards.length])
 
   const updateCard = useCallback(async (cardId: number, updates: Partial<CardT>, optimistic = true) => {
+    const before = cards.find(c => c.id === cardId) || null
     if (optimistic) {
       setCards(prev => prev.map(c => c.id === cardId ? { ...c, ...updates } : c))
     }
     try {
-      const r = await jsend<{ card: CardT }>(`${API}/cards/${cardId}`, 'PUT', updates)
-      setCards(prev => prev.map(c => c.id === cardId ? r.card : c))
+      const r = await jsend<{ card: CardT; spawned?: CardT }>(`${API}/cards/${cardId}`, 'PUT', updates)
+      setCards(prev => {
+        // Si la carte a été auto-archivée par la récurrence, on la retire
+        if (r.card.archived_at) {
+          const next = prev.filter(c => c.id !== cardId)
+          if (r.spawned) next.push(r.spawned)
+          return next
+        }
+        return prev.map(c => c.id === cardId ? r.card : c)
+      })
+      if (r.spawned) {
+        showToast(
+          `Récurrence : nouvelle carte "${r.spawned.title}" créée pour le ${r.spawned.due_date || '?'}.`
+        )
+      }
+      // Auto-statut : toutes les sous-tâches cochées ⇒ propose de passer en Fait
+      if (before && r.card.status_key !== 'done') {
+        const all = [...(r.card.subtasks || []), ...(r.card.subtasks2 || [])]
+        const beforeAll = [...(before.subtasks || []), ...(before.subtasks2 || [])]
+        const nowComplete = all.length > 0 && all.every(s => s.done)
+        const wasComplete = beforeAll.length > 0 && beforeAll.every(s => s.done)
+        if (nowComplete && !wasComplete) {
+          const cid = r.card.id
+          const prev = r.card.status_key
+          showToast(
+            `Toutes les sous-tâches de "${r.card.title}" sont cochées.`,
+            {
+              label: 'Passer en Fait',
+              run: async () => {
+                pushUndo({ type: 'status_change', cardId: cid, previous: prev })
+                try {
+                  const rr = await jsend<{ card: CardT }>(
+                    `${API}/cards/${cid}`, 'PUT', { status_key: 'done' }
+                  )
+                  setCards(p => p.map(c => c.id === cid ? rr.card : c))
+                } catch { /* ignore */ }
+              },
+            }
+          )
+        }
+      }
     } catch (err) {
       console.warn('updateCard failed:', err)
     }
-  }, [])
+  }, [cards, pushUndo, showToast])
 
   const deleteCard = useCallback(async (cardId: number) => {
     if (!confirm('Supprimer cette carte ?')) return
@@ -775,8 +834,39 @@ export default function ValkyriePlugin() {
       }
       return true
     })
-    return [...filtered].sort((a, b) => a.position - b.position)
-  }, [cards, archivedCards, showArchived, filter, searchQuery, tagFilter])
+    const progressOf = (c: CardT) => {
+      const all = [...(c.subtasks || []), ...(c.subtasks2 || [])]
+      if (all.length === 0) return 0
+      return all.filter(s => s.done).length / all.length
+    }
+    const cmp = (a: CardT, b: CardT): number => {
+      switch (sortBy) {
+        case 'due_asc': {
+          // Sans date = en dernier
+          if (!a.due_date && !b.due_date) return a.position - b.position
+          if (!a.due_date) return 1
+          if (!b.due_date) return -1
+          return a.due_date.localeCompare(b.due_date)
+        }
+        case 'due_desc': {
+          if (!a.due_date && !b.due_date) return a.position - b.position
+          if (!a.due_date) return 1
+          if (!b.due_date) return -1
+          return b.due_date.localeCompare(a.due_date)
+        }
+        case 'title_asc':
+          return (a.title || '').localeCompare(b.title || '', 'fr', { sensitivity: 'base' })
+        case 'progress_desc':
+          return progressOf(b) - progressOf(a)
+        case 'recent':
+          return (b.updated_at || '').localeCompare(a.updated_at || '')
+        case 'position':
+        default:
+          return a.position - b.position
+      }
+    }
+    return [...filtered].sort(cmp)
+  }, [cards, archivedCards, showArchived, filter, searchQuery, tagFilter, sortBy])
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -933,6 +1023,25 @@ export default function ValkyriePlugin() {
                       color: '#fff',
                     }}>{reminders.total}</span>
                   )}
+                </button>
+                <button onClick={() => setViewMode(v => v === 'grid' ? 'calendar' : 'grid')}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                  style={{
+                    background: viewMode === 'calendar' ? 'color-mix(in srgb, var(--scarlet) 14%, var(--bg-tertiary))' : 'var(--bg-tertiary)',
+                    border: '1px solid var(--border)',
+                    color: viewMode === 'calendar' ? 'var(--scarlet)' : 'var(--text-secondary)',
+                  }}
+                  title={viewMode === 'grid' ? 'Passer en vue calendrier' : 'Repasser en vue grille'}>
+                  {viewMode === 'grid'
+                    ? (<><CalendarDays className="w-3.5 h-3.5" /> Calendrier</>)
+                    : (<><LayoutGrid className="w-3.5 h-3.5" /> Grille</>)}
+                </button>
+                <SortMenu sortBy={sortBy} onChange={setSortBy} />
+                <button onClick={() => setShowImportModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                  style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                  title="Importer des cartes (JSON / CSV / Markdown)">
+                  <Upload className="w-3.5 h-3.5" /> Importer
                 </button>
                 <button onClick={() => { setSelectMode(v => !v); if (selectMode) clearSelection() }}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
@@ -1204,8 +1313,32 @@ export default function ValkyriePlugin() {
           />
         )}
 
+        {/* ── Calendar view (alternative à la grille) ─────────── */}
+        {activeProject && viewMode === 'calendar' && (
+          <CalendarView
+            cards={showArchived ? archivedCards : cards}
+            statuses={statuses}
+            onOpenCard={(cid) => {
+              setCards(prev => prev.map(c => c.id === cid ? { ...c, expanded: true } : c))
+              jsend(`${API}/cards/${cid}`, 'PUT', { expanded: true }).catch(() => {})
+              setViewMode('grid')
+            }}
+            onQuickCreate={async (isoDate) => {
+              if (!activeProjectId) return
+              try {
+                const r = await jsend<{ card: CardT }>(
+                  `${API}/projects/${activeProjectId}/cards`, 'POST',
+                  { title: 'Nouvelle carte', status_key: newCardStatus,
+                    position: cards.length, due_date: isoDate, expanded: false }
+                )
+                setCards(prev => [...prev, r.card])
+              } catch (err) { console.warn('calendar create failed:', err) }
+            }}
+          />
+        )}
+
         {/* ── Grid board ───────────────────────────────────────── */}
-        {activeProject && (
+        {activeProject && viewMode === 'grid' && (
           <div className="rounded-xl p-4" style={{
             background: 'var(--bg-secondary)',
             border: '1px solid var(--border)',
@@ -1314,6 +1447,30 @@ export default function ValkyriePlugin() {
       {showShortcuts && (
         <ShortcutsModal onClose={() => setShowShortcuts(false)} />
       )}
+
+      {/* ── Import modal ───────────────────────────────────────── */}
+      {showImportModal && activeProjectId && (
+        <ImportModal
+          onCancel={() => setShowImportModal(false)}
+          onImport={async (format, data) => {
+            try {
+              const r = await jsend<{ created: number }>(
+                `${API}/projects/${activeProjectId}/import`, 'POST', { format, data }
+              )
+              // Refetch cards
+              const cs = await jget<{ cards: CardT[] }>(`${API}/projects/${activeProjectId}/cards`)
+              setCards(cs.cards || [])
+              showToast(`${r.created} carte${r.created > 1 ? 's' : ''} importée${r.created > 1 ? 's' : ''}.`)
+              setShowImportModal(false)
+            } catch (err) {
+              showToast(`Import échoué : ${String(err).slice(0, 120)}`)
+            }
+          }}
+        />
+      )}
+
+      {/* ── Toast (feedback global non bloquant) ──────────────── */}
+      {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
     </div>
   )
 }
@@ -1694,6 +1851,34 @@ function CardTile({
                   <Sparkles className="w-3 h-3" /> Conscience
                 </span>
               )}
+              {/* Récurrence : menu déroulant minimal */}
+              <label style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                fontSize: 10, color: 'var(--text-muted)',
+                fontFamily: 'JetBrains Mono, monospace',
+                textTransform: 'uppercase', letterSpacing: 1.5,
+              }}>
+                <Repeat className="w-3 h-3" />
+                <select
+                  value={card.recurrence_rule || ''}
+                  onChange={e => onUpdate({ recurrence_rule: e.target.value })}
+                  style={{
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 4, padding: '2px 4px',
+                    fontSize: 10.5, color: 'var(--text-primary)',
+                    fontFamily: 'inherit', outline: 'none',
+                  }}
+                  title="Récurrence — quand la carte passe en Fait, la suivante est auto-créée">
+                  <option value="">— (aucune)</option>
+                  <option value="daily">Tous les jours</option>
+                  <option value="weekly">Toutes les semaines</option>
+                  <option value="weekly:1">Chaque lundi</option>
+                  <option value="weekly:1,3,5">Lun/Mer/Ven</option>
+                  <option value="weekly:2,4">Mar/Jeu</option>
+                  <option value="monthly">Tous les mois</option>
+                </select>
+              </label>
             </div>
 
             {/* Description éditable avec rendu markdown optionnel */}
@@ -3374,6 +3559,429 @@ function ShortcutsModal({ onClose }: { onClose: () => void }) {
           Les raccourcis s'activent en dehors des champs de saisie.
         </p>
       </div>
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// SortMenu — choix du critère de tri de la grille
+// ════════════════════════════════════════════════════════════════════════
+
+function SortMenu({
+  sortBy, onChange,
+}: {
+  sortBy: 'position' | 'due_asc' | 'due_desc' | 'title_asc' | 'progress_desc' | 'recent'
+  onChange: (v: any) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!open) return
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('click', onClick)
+    return () => document.removeEventListener('click', onClick)
+  }, [open])
+  const options: Array<[typeof sortBy, string]> = [
+    ['position', 'Ordre manuel'],
+    ['due_asc', 'Deadline ↑'],
+    ['due_desc', 'Deadline ↓'],
+    ['title_asc', 'Titre A-Z'],
+    ['progress_desc', 'Progression ↓'],
+    ['recent', 'Récemment modifiées'],
+  ]
+  const current = options.find(o => o[0] === sortBy)?.[1] || 'Trier'
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+        style={{
+          background: sortBy !== 'position' ? 'color-mix(in srgb, var(--scarlet) 10%, var(--bg-tertiary))' : 'var(--bg-tertiary)',
+          border: '1px solid var(--border)',
+          color: sortBy !== 'position' ? 'var(--scarlet)' : 'var(--text-secondary)',
+        }}
+        title="Trier la grille">
+        <ArrowUpDown className="w-3.5 h-3.5" /> {current}
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', right: 0,
+          minWidth: 180, background: 'var(--bg-secondary)',
+          border: '1px solid var(--border)', borderRadius: 8,
+          padding: 4, zIndex: 20,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+        }}>
+          {options.map(([k, label]) => (
+            <button key={k}
+              onClick={() => { onChange(k); setOpen(false) }}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '6px 10px', borderRadius: 6,
+                background: k === sortBy ? 'color-mix(in srgb, var(--scarlet) 12%, transparent)' : 'transparent',
+                color: k === sortBy ? 'var(--scarlet)' : 'var(--text-primary)',
+                border: 'none', cursor: 'pointer', fontSize: 12,
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// CalendarView — mois courant, cartes placées par due_date
+// ════════════════════════════════════════════════════════════════════════
+
+function CalendarView({
+  cards, statuses, onOpenCard, onQuickCreate,
+}: {
+  cards: CardT[]
+  statuses: StatusT[]
+  onOpenCard: (cardId: number) => void
+  onQuickCreate: (isoDate: string) => void
+}) {
+  const [cursor, setCursor] = useState(() => {
+    const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() }
+  })
+  const monthLabel = new Date(cursor.y, cursor.m, 1).toLocaleDateString('fr-FR', {
+    month: 'long', year: 'numeric',
+  })
+  const firstDay = new Date(cursor.y, cursor.m, 1)
+  const lastDay = new Date(cursor.y, cursor.m + 1, 0)
+  // Semaine commence lundi (1 = lundi en fr) — getDay() retourne 0=dim..6=sam
+  const firstCol = ((firstDay.getDay() + 6) % 7) // 0=lun..6=dim
+  const daysInMonth = lastDay.getDate()
+  const totalCells = Math.ceil((firstCol + daysInMonth) / 7) * 7
+  // Index cartes par date ISO
+  const byDate = useMemo(() => {
+    const idx: Record<string, CardT[]> = {}
+    for (const c of cards) {
+      if (!c.due_date) continue
+      ;(idx[c.due_date] ||= []).push(c)
+    }
+    return idx
+  }, [cards])
+  const statusColor = (key: string) =>
+    statuses.find(s => s.key === key)?.color || 'var(--scarlet)'
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const todayIso = today.toISOString().slice(0, 10)
+  const cellIso = (day: number) =>
+    `${cursor.y}-${String(cursor.m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+
+  return (
+    <div className="rounded-xl p-4" style={{
+      background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        marginBottom: 10,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <CalendarDays className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+            {monthLabel}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={() => setCursor(({ y, m }) => m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 })}
+            style={{
+              padding: '4px 10px', borderRadius: 6, fontSize: 12,
+              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+              color: 'var(--text-secondary)', cursor: 'pointer',
+            }}>← Mois préc.</button>
+          <button onClick={() => { const n = new Date(); setCursor({ y: n.getFullYear(), m: n.getMonth() }) }}
+            style={{
+              padding: '4px 10px', borderRadius: 6, fontSize: 12,
+              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+              color: 'var(--text-secondary)', cursor: 'pointer',
+            }}>Aujourd'hui</button>
+          <button onClick={() => setCursor(({ y, m }) => m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 })}
+            style={{
+              padding: '4px 10px', borderRadius: 6, fontSize: 12,
+              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+              color: 'var(--text-secondary)', cursor: 'pointer',
+            }}>Mois suiv. →</button>
+        </div>
+      </div>
+      {/* Header jours */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4,
+        marginBottom: 4,
+      }}>
+        {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => (
+          <div key={d} style={{
+            fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+            textTransform: 'uppercase', letterSpacing: 2,
+            color: 'var(--text-muted)', textAlign: 'center', padding: '4px 0',
+          }}>{d}</div>
+        ))}
+      </div>
+      {/* Cells */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)',
+        gridAutoRows: 110, gap: 4,
+      }}>
+        {Array.from({ length: totalCells }).map((_, i) => {
+          const dayNum = i - firstCol + 1
+          const inMonth = dayNum >= 1 && dayNum <= daysInMonth
+          const iso = inMonth ? cellIso(dayNum) : ''
+          const dayCards = inMonth ? (byDate[iso] || []) : []
+          const isToday = iso === todayIso
+          return (
+            <div key={i} style={{
+              background: inMonth ? 'var(--bg-tertiary)' : 'transparent',
+              border: `1px solid ${isToday ? 'var(--scarlet)' : 'var(--border)'}`,
+              borderRadius: 6, padding: 4, opacity: inMonth ? 1 : 0.3,
+              display: 'flex', flexDirection: 'column', gap: 2,
+              minHeight: 0, overflow: 'hidden',
+              position: 'relative',
+            }}>
+              {inMonth && (
+                <>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+                    color: isToday ? 'var(--scarlet)' : 'var(--text-muted)',
+                    fontWeight: isToday ? 700 : 500,
+                  }}>
+                    <span>{dayNum}</span>
+                    <button onClick={() => onQuickCreate(iso)}
+                      style={{
+                        background: 'transparent', border: 'none', cursor: 'pointer',
+                        padding: 0, color: 'var(--text-muted)', opacity: 0.4,
+                      }}
+                      onMouseOver={e => { e.currentTarget.style.opacity = '1' }}
+                      onMouseOut={e => { e.currentTarget.style.opacity = '0.4' }}
+                      title="Créer une carte pour ce jour">
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div style={{
+                    flex: 1, display: 'flex', flexDirection: 'column', gap: 2,
+                    overflow: 'hidden',
+                  }}>
+                    {dayCards.slice(0, 3).map(c => {
+                      const c_color = statusColor(c.status_key)
+                      const isOverdue = c.status_key !== 'done' && iso < todayIso
+                      return (
+                        <button key={c.id}
+                          onClick={() => onOpenCard(c.id)}
+                          style={{
+                            textAlign: 'left', fontSize: 10, padding: '2px 4px',
+                            borderRadius: 3,
+                            background: isOverdue ? 'rgba(239,68,68,0.15)' : `color-mix(in srgb, ${c_color} 12%, transparent)`,
+                            borderLeft: `2px solid ${isOverdue ? '#ef4444' : c_color}`,
+                            border: 'none', borderLeftWidth: 2, borderLeftStyle: 'solid',
+                            color: 'var(--text-primary)', cursor: 'pointer',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          }}
+                          title={`${c.title} · ${statuses.find(s => s.key === c.status_key)?.label || c.status_key}`}>
+                          {c.title}
+                        </button>
+                      )
+                    })}
+                    {dayCards.length > 3 && (
+                      <span style={{
+                        fontSize: 9, color: 'var(--text-muted)',
+                        fontFamily: 'JetBrains Mono, monospace',
+                      }}>+{dayCards.length - 3} autre{dayCards.length - 3 > 1 ? 's' : ''}</span>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// ImportModal — upload / paste + choix de format
+// ════════════════════════════════════════════════════════════════════════
+
+function ImportModal({
+  onCancel, onImport,
+}: {
+  onCancel: () => void
+  onImport: (format: 'json' | 'csv' | 'markdown', data: string) => void | Promise<void>
+}) {
+  const [format, setFormat] = useState<'json' | 'csv' | 'markdown'>('json')
+  const [data, setData] = useState('')
+  const [busy, setBusy] = useState(false)
+  const onFile = (file: File) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const txt = String(reader.result || '')
+      setData(txt)
+      // Auto-détection simple via extension
+      const name = file.name.toLowerCase()
+      if (name.endsWith('.json')) setFormat('json')
+      else if (name.endsWith('.csv')) setFormat('csv')
+      else if (name.endsWith('.md') || name.endsWith('.markdown')) setFormat('markdown')
+    }
+    reader.readAsText(file)
+  }
+  const samples: Record<string, string> = {
+    json: '[{"title": "Tâche 1", "status_key": "todo", "tags": ["urgent"]}]',
+    csv: 'title,status,tags,due_date\nTâche 1,todo,urgent|perso,2026-04-25',
+    markdown: '# À faire\n- Première tâche\n  - sous-étape 1\n  - sous-étape 2\n- Deuxième tâche\n\n# Fait\n- Tâche déjà terminée',
+  }
+  return (
+    <div onClick={onCancel} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)', borderRadius: 12,
+        padding: 20, minWidth: 560, maxWidth: 720, width: '92%',
+        maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <h2 style={{
+            fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0,
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            <Upload className="w-4 h-4" style={{ color: 'var(--scarlet)' }} /> Importer des cartes
+          </h2>
+          <button onClick={onCancel}
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 4 }}
+            title="Fermer"><X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} /></button>
+        </div>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px', lineHeight: 1.5 }}>
+          Colle un contenu ou charge un fichier. Formats : <strong>JSON</strong> (array ou {`{cards: [...]}`}),
+          <strong> CSV</strong> (header attendu : title, status, tags, due_date…),
+          <strong> Markdown</strong> (<code># Statut</code> puis <code>- Carte</code>, <code>  - Sous-tâche</code>).
+        </p>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+          {(['json', 'csv', 'markdown'] as const).map(f => (
+            <button key={f}
+              onClick={() => setFormat(f)}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium"
+              style={{
+                background: format === f ? 'color-mix(in srgb, var(--scarlet) 14%, var(--bg-tertiary))' : 'var(--bg-tertiary)',
+                border: `1px solid ${format === f ? 'color-mix(in srgb, var(--scarlet) 40%, transparent)' : 'var(--border)'}`,
+                color: format === f ? 'var(--scarlet)' : 'var(--text-secondary)',
+                cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 1,
+              }}>
+              {f}
+            </button>
+          ))}
+          <button onClick={() => setData(samples[format])}
+            style={{
+              marginLeft: 'auto', fontSize: 11, padding: '4px 10px', borderRadius: 6,
+              background: 'transparent', border: '1px dashed var(--border)',
+              color: 'var(--text-muted)', cursor: 'pointer',
+            }}>
+            Coller un exemple
+          </button>
+          <label style={{
+            fontSize: 11, padding: '4px 10px', borderRadius: 6,
+            background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+            color: 'var(--text-secondary)', cursor: 'pointer',
+          }}>
+            Charger un fichier…
+            <input type="file"
+              accept=".json,.csv,.md,.markdown,.txt"
+              onChange={e => {
+                const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ''
+              }}
+              style={{ display: 'none' }}
+            />
+          </label>
+        </div>
+        <textarea
+          value={data}
+          onChange={e => setData(e.target.value)}
+          placeholder={samples[format]}
+          style={{
+            flex: 1, minHeight: 240, resize: 'vertical',
+            background: 'var(--bg-primary)', border: '1px solid var(--border)',
+            borderRadius: 8, padding: 10,
+            fontSize: 12, color: 'var(--text-primary)',
+            fontFamily: 'JetBrains Mono, monospace',
+            outline: 'none',
+          }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+          <button onClick={onCancel}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium"
+            style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+            Annuler
+          </button>
+          <button
+            onClick={async () => {
+              if (!data.trim() || busy) return
+              setBusy(true)
+              try { await onImport(format, data) } finally { setBusy(false) }
+            }}
+            disabled={!data.trim() || busy}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-40"
+            style={{
+              background: 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))',
+              color: '#fff', border: 'none',
+              cursor: data.trim() && !busy ? 'pointer' : 'not-allowed',
+            }}>
+            {busy
+              ? <><Loader2 className="w-3 h-3 animate-spin inline" /> Import…</>
+              : 'Importer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// Toast — feedback global non bloquant (bas de page)
+// ════════════════════════════════════════════════════════════════════════
+
+function Toast({
+  toast, onClose,
+}: {
+  toast: { message: string; action?: { label: string; run: () => void }; key: number }
+  onClose: () => void
+}) {
+  return (
+    <div style={{
+      position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 200, minWidth: 320, maxWidth: 520,
+      padding: '12px 16px', borderRadius: 10,
+      background: 'var(--bg-secondary)',
+      border: '1px solid color-mix(in srgb, var(--scarlet) 30%, var(--border))',
+      boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
+      display: 'flex', alignItems: 'center', gap: 12,
+      animation: 'none',
+    }}>
+      <span style={{ fontSize: 12, color: 'var(--text-primary)', flex: 1, lineHeight: 1.4 }}>
+        {toast.message}
+      </span>
+      {toast.action && (
+        <button
+          onClick={() => { toast.action!.run(); onClose() }}
+          style={{
+            fontSize: 11, padding: '4px 10px', borderRadius: 6,
+            background: 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))',
+            color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600,
+            whiteSpace: 'nowrap',
+          }}>
+          {toast.action.label}
+        </button>
+      )}
+      <button onClick={onClose}
+        style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 4 }}>
+        <X className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+      </button>
     </div>
   )
 }

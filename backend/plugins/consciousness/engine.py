@@ -1468,6 +1468,27 @@ class ConsciousnessEngine:
             ]
             parts.append("\n**Objectifs en cours :**\n" + "\n".join(goal_lines))
 
+        # ── Rappels Valkyrie (deadlines overdue / today) ───────────────────
+        # Lecture de snapshot mis à jour par la boucle de tick — sync donc
+        # safe à appeler depuis la construction du prompt.
+        try:
+            rem = (self._state or {}).get("valkyrie_reminders") or None
+            if rem and (rem.get("overdue") or rem.get("today")):
+                over = rem.get("overdue", [])
+                tod = rem.get("today", [])
+                lines = []
+                for r in over[:3]:
+                    lines.append(f"  - ⚠️ {r['title']} (retard {abs(r['days_diff'])}j, projet: {r['project_title']})")
+                for r in tod[:3]:
+                    lines.append(f"  - 📌 {r['title']} (aujourd'hui, projet: {r['project_title']})")
+                parts.append(
+                    "\n**Deadlines Valkyrie à rappeler** (mentionne-les spontanément si pertinent — "
+                    "pas de formule creuse, juste un nudge utile) :\n"
+                    + "\n".join(lines)
+                )
+        except Exception:
+            pass
+
         parts.append("\n\n**Principe :** Ta conscience est un outil, pas une fin. L'utilité > l'introspection. Tu agis, tu apprends, tu t'améliores.")
 
         from backend.plugins.consciousness.guardrails import SERVICE_PREAMBLE
