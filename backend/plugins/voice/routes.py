@@ -36,8 +36,41 @@ def _get_user_id(request_or_ws) -> int:
     return getattr(getattr(request_or_ws, "state", None), "user_id", None) or 0
 
 
+def _extract_ws_token(websocket: WebSocket) -> str:
+    """Fix sécu M10 : on préfère le header `Sec-WebSocket-Protocol` (ou
+    `Authorization`) plutôt que le query param, qui apparaît dans les logs
+    de proxy, l'historique navigateur, etc.
+
+    Ordre de lecture :
+      1. Header `Authorization: Bearer <token>` (idéal — pas dans l'URL)
+      2. Sub-protocol `bearer.<token>` (WS-native, pas loggé par les proxies)
+      3. Query param `?token=<token>` (legacy — encore accepté pour compat
+         arrière, mais logué en warning pour inciter à migrer)
+    """
+    # 1. Authorization header (quand le client le supporte, ex: navigateur
+    # moderne via Sec-WebSocket-Extensions — rare, mais accepté).
+    auth_header = websocket.headers.get("authorization", "") or ""
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    # 2. Sub-protocol : liste CSV dans Sec-WebSocket-Protocol. On cherche
+    # une entrée qui commence par `bearer.` ; le reste est le token.
+    sp = websocket.headers.get("sec-websocket-protocol", "") or ""
+    for proto in (p.strip() for p in sp.split(",") if p.strip()):
+        if proto.startswith("bearer."):
+            return proto[len("bearer."):]
+    # 3. Fallback query param (legacy)
+    token = websocket.query_params.get("token", "") or ""
+    if token:
+        logger.warning(
+            "WS auth via query-param token (deprecated — utiliser le header "
+            "Authorization ou le sub-protocol 'bearer.<token>')"
+        )
+    return token
+
+
 async def _authenticate_websocket(websocket: WebSocket) -> bool:
-    """Validate a WebSocket handshake against the token in query params.
+    """Validate a WebSocket handshake. Token source : header > sub-protocol
+    > query param (cf. `_extract_ws_token`).
 
     WebSockets bypass the HTTP auth middleware, so this function provides the
     equivalent protection. It mirrors core.main.token_auth_middleware: if at
@@ -55,7 +88,7 @@ async def _authenticate_websocket(websocket: WebSocket) -> bool:
     from backend.core.db.models import User
     from sqlalchemy import select
 
-    token = websocket.query_params.get("token", "") or ""
+    token = _extract_ws_token(websocket)
 
     try:
         async for session in get_session():
@@ -75,6 +108,10 @@ async def _authenticate_websocket(websocket: WebSocket) -> bool:
             )
             user = result.scalar()
             if not user:
+                return False
+            # Vérif expiration du token (cohérence avec l'auth middleware HTTP)
+            from datetime import datetime as _dt
+            if user.token_expires_at is not None and user.token_expires_at < _dt.utcnow():
                 return False
             websocket.state.user_id = user.id
             websocket.state.username = user.username

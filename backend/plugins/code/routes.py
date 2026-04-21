@@ -467,6 +467,31 @@ def _sanitize_upload_name(name: str) -> str:
     return base[:255]
 
 
+# Fix sécu M8 — magic-bytes detection pour les binaires exécutables.
+# On refuse l'upload direct de ces formats (ELF Linux, PE Windows, Mach-O
+# macOS, wasm, JAR) car ils peuvent être exécutés via bash_exec sans que
+# l'user ne le veuille. Si quelqu'un en a vraiment besoin, il peut les
+# renommer en .txt / .bin avant d'uploader (contournement assumé — le but
+# est de bloquer le piège par défaut, pas d'interdire les executables en
+# absolu).
+_EXEC_MAGIC_BYTES = (
+    (b"\x7fELF", "ELF binary (Linux)"),
+    (b"MZ", "PE binary (Windows)"),
+    (b"\xca\xfe\xba\xbe", "Mach-O fat binary"),
+    (b"\xcf\xfa\xed\xfe", "Mach-O 64-bit binary"),
+    (b"\xfe\xed\xfa\xce", "Mach-O 32-bit binary"),
+    (b"\x00asm", "WASM binary"),
+)
+
+
+def _detect_executable(first_bytes: bytes) -> str | None:
+    """Retourne le label du format binaire détecté ou None si safe."""
+    for magic, label in _EXEC_MAGIC_BYTES:
+        if first_bytes.startswith(magic):
+            return label
+    return None
+
+
 @router.post("/upload")
 async def upload_files(
     files: list[UploadFile] = File(...),
@@ -476,6 +501,7 @@ async def upload_files(
 
     ``dest`` is the workspace-relative destination directory (empty = root).
     Existing files are overwritten. Each file is capped at _MAX_UPLOAD_BYTES.
+    Les binaires exécutables (ELF/PE/Mach-O) sont refusés — cf. fix sécu M8.
     """
     dest_dir = _safe_path(dest) if dest else _workspace()
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -491,11 +517,27 @@ async def upload_files(
         target.parent.mkdir(parents=True, exist_ok=True)
 
         total = 0
+        first_chunk_checked = False
         with target.open("wb") as out:
             while True:
                 chunk = await up.read(1024 * 1024)
                 if not chunk:
                     break
+                # Fix sécu M8 : inspection du premier chunk pour bloquer les
+                # binaires exécutables (magic bytes), ne fait confiance ni à
+                # l'extension ni au Content-Type client.
+                if not first_chunk_checked:
+                    exec_kind = _detect_executable(chunk[:16])
+                    if exec_kind:
+                        out.close()
+                        target.unlink(missing_ok=True)
+                        raise HTTPException(
+                            415,
+                            f"Upload refusé : {name} est un binaire exécutable "
+                            f"({exec_kind}). Renomme-le en .bin/.dat si tu veux "
+                            f"vraiment le stocker.",
+                        )
+                    first_chunk_checked = True
                 total += len(chunk)
                 if total > _MAX_UPLOAD_BYTES:
                     out.close()

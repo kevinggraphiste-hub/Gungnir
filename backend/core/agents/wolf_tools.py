@@ -2310,20 +2310,79 @@ async def _bash_exec(command: str, timeout: int = 30, cwd: str = ".") -> dict:
     import re as _re
 
     # 1. Destructive system commands (wide patterns)
+    # Objectif : interdire STRICTEMENT tout ce qui touche à l'intégrité
+    # système ou serveur. L'agent garde son shell complet pour ses actions
+    # légitimes (git, python, npm, etc.) dans son workspace.
     destructive_patterns = [
-        r"rm\s+(-[a-z]*\s+)*(/|~|\$home)",  # rm -rf /
-        r"mkfs", r"dd\s+if=",                # disk format/overwrite
-        r"find\s+/\s+.*-delete",             # find / -delete
-        r"shred\s+", r"wipefs",              # secure erase
-        r">\s*/dev/sd[a-z]",                 # write to raw disk
-        r"chmod\s+(-[a-z]*\s+)*777\s+/",    # chmod 777 /
-        r"chown\s+.*\s+/etc",               # chown system dirs
-        r"systemctl\s+(stop|disable)\s+(docker|nginx|ssh)",  # kill critical services
-        r"reboot|shutdown|poweroff|init\s+[06]",             # system shutdown
+        # ── Destruction filesystem ─────────────────────────────────
+        r"rm\s+(-[a-z]*\s+)*(/|~|\$home)",      # rm -rf /
+        r"rm\s+(-[a-z]*\s+)*/(etc|root|boot|bin|sbin|lib|usr|var|proc|sys|dev)(/|\s|$)",
+        r"mkfs\b", r"\bdd\s+if=",                # disk format/overwrite
+        r"find\s+/\s+.*-delete",                 # find / -delete
+        r"\bshred\b", r"\bwipefs\b", r"\bsrm\b", # secure erase
+        r">\s*/dev/sd[a-z]",                     # write to raw disk
+        r">\s*/dev/(mem|kmem|null|zero|random)\b",  # write to kernel devices (sauf /dev/null en redirect)
+        # ── Permissions & propriété système ────────────────────────
+        r"chmod\s+(-[a-z]*\s+)*777\s+/",         # chmod 777 /
+        r"chmod\s+(-[a-z]*\s+)*\-?\-?recursive\s+/(etc|root|boot|bin|sbin|lib|usr|var)",
+        r"chown\s+.*\s+/(etc|root|boot|bin|sbin|lib|usr|var|proc|sys)",
+        r"chattr\s+[+\-][aiu]\s+/",
+        # ── Services critiques ─────────────────────────────────────
+        r"systemctl\s+(stop|disable|mask|restart|reload)\s+(docker|nginx|apache2|ssh|sshd|postgres|postgresql|mysql|redis)",
+        r"service\s+(docker|nginx|apache2|ssh|sshd|postgres|postgresql|mysql|redis)\s+(stop|restart|disable)",
+        r"\b(pkill|killall)\s+(docker|nginx|sshd|postgres|systemd)",
+        # ── Arrêt / reboot ─────────────────────────────────────────
+        r"\b(reboot|shutdown|halt|poweroff|telinit)\b",
+        r"\binit\s+[06]\b",
+        # ── Gestion des comptes / SSH ──────────────────────────────
+        r"\b(useradd|userdel|usermod|groupadd|groupdel|groupmod)\b",
+        r"\b(passwd|chpasswd|gpasswd)\b",
+        r"\b(ssh-keygen|ssh-copy-id)\b.*(/root|\.ssh/authorized_keys)",
+        r">>\s*.*authorized_keys",               # append à authorized_keys
+        r">\s*.*authorized_keys",                # overwrite authorized_keys
+        r"\bvisudo\b|/etc/sudoers",
+        # ── Firewall / réseau système ──────────────────────────────
+        r"\b(iptables|ip6tables|nft|ufw|firewall-cmd)\b\s+-?(F|X|D|flush|delete|disable)",
+        r"\bufw\s+(disable|reset)\b",
+        r"ip\s+(route|addr|link)\s+(del|flush)",
+        # ── Package managers niveau système ────────────────────────
+        r"\b(apt|apt-get|aptitude|dpkg)\s+(install|remove|purge|upgrade|dist-upgrade|autoremove)\b",
+        r"\b(yum|dnf)\s+(install|remove|update|upgrade)\b",
+        r"\b(apk)\s+(add|del|upgrade)\b",
+        r"\b(pacman)\s+\-(S|R|U|Syu)\b",
+        r"\bsnap\s+(install|remove|refresh)\b",
+        # ── Cron / scheduling système ──────────────────────────────
+        r"\bcrontab\s+(-[rleu]|\-remove)\b",
+        r">\s*/etc/cron",
+        r">\s*/var/spool/cron",
+        # ── Kernel / modules ───────────────────────────────────────
+        r"\b(insmod|rmmod|modprobe)\b",
+        r"\bsysctl\s+\-w\b",
+        r">\s*/proc/sys/",
+        # ── Évasion conteneur / privilèges ─────────────────────────
+        r"/var/run/docker\.sock",                # accès au socket Docker
+        r"/proc/1/root",                         # pivot hors conteneur
+        r"\bchroot\b", r"\bunshare\b", r"\bnsenter\b",
+        r"\bmount\s+", r"\bumount\s+",
+        r"\bdocker\s+(run|exec|kill|rm|rmi|stop|restart)\b",  # pilotage d'autres containers
+        r"\bkubectl\b", r"\bhelm\b",
+        # ── Exfiltration métadonnées cloud (169.254.169.254) ───────
+        r"169\.254\.169\.254",
+        r"metadata\.google\.internal",
+        # ── Accès direct secrets système ───────────────────────────
+        r"(cat|less|more|head|tail|grep|vi|vim|nano|awk|sed)\s+.*/etc/(shadow|gshadow|passwd|sudoers)\b",
+        r"(cat|less|more|head|tail|grep|vi|vim|nano|awk|sed)\s+.*/root/\.ssh/",
+        r"(cat|less|more|head|tail)\s+.*\.env(\s|$)",  # lecture .env (contient GUNGNIR_SECRET_KEY)
+        # ── Fork bomb & DoS évident ────────────────────────────────
+        r":\(\)\s*\{\s*:\|:",                    # :(){ :|:& };: classique
+        r"yes\s+\|",                             # yes | sth (flood)
+        # ── Réseau sortant non-contrôlé (tentative de backdoor) ────
+        r"\bnc\s+\-l", r"\bncat\s+\-l",          # écoute netcat (reverse shell)
+        r"bash\s+\-i\s+>&\s*/dev/tcp",           # reverse shell bash classique
     ]
     for pat in destructive_patterns:
         if _re.search(pat, cmd_lower):
-            return {"ok": False, "error": f"Commande bloquée: pattern destructif détecté"}
+            return {"ok": False, "error": f"Commande bloquée: pattern destructif détecté (intégrité système)"}
 
     # 2. Block any command that targets backups or .git
     protected_dirs = ["backups", ".git", ".claude"]

@@ -33,6 +33,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gungnir")
 
+# Fix sécu M9 : filtre de redaction sur le root logger pour masquer les
+# secrets (api_key=..., Bearer <token>, FERNET:..., hex 64+ chars, etc.)
+# avant qu'ils ne soient écrits dans les handlers.
+try:
+    from backend.core.logging_filters import install_redaction_filter
+    install_redaction_filter()
+except Exception as _e:
+    logger.warning(f"Log redaction filter not installed: {_e}")
+
 # ── Plugin state ─────────────────────────────────────────────────────────────
 _loaded_plugins = []
 

@@ -38,6 +38,9 @@ def _is_private_url(url: str) -> bool:
             parts = hostname.split(".")
             if len(parts) >= 2 and 16 <= int(parts[1]) <= 31:
                 return True
+        # Block cloud metadata endpoints par hostname (au cas où DNS reso)
+        if hostname in ("metadata.google.internal", "metadata", "metadata.aws"):
+            return True
         # DNS resolution check
         try:
             ip = socket.gethostbyname(hostname)
@@ -47,6 +50,42 @@ def _is_private_url(url: str) -> bool:
             return False
     except Exception:
         return False
+
+
+async def _safe_get_with_redirects(
+    session: "aiohttp.ClientSession", url: str, max_hops: int = 5,
+):
+    """Suit les redirects HTTP manuellement en re-validant l'IP cible à
+    chaque hop (fix sécu C2 — SSRF via redirect).
+
+    aiohttp suit automatiquement les 3xx par défaut, ce qui contourne
+    `_is_private_url()` si le site initial est public mais redirige vers
+    169.254.169.254 ou 127.0.0.1. On désactive les redirects auto et on
+    valide chaque Location avant de la suivre. Lève une exception
+    `ValueError` si une redirection pointe vers une IP privée.
+
+    Retourne une réponse aiohttp finale (context non-clos — l'appelant
+    gère le `async with`).
+    """
+    current_url = url
+    for hop in range(max_hops + 1):
+        resp = await session.get(current_url, allow_redirects=False).__aenter__()
+        # Non-redirect → on retourne telle quelle (l'appelant ferme)
+        if resp.status not in (301, 302, 303, 307, 308):
+            return resp
+        # Redirect → récupère Location et re-valide
+        location = resp.headers.get("Location")
+        await resp.__aexit__(None, None, None)
+        if not location:
+            raise ValueError("Redirect sans header Location")
+        # URL relative → résoudre par rapport à current_url
+        next_url = urljoin(current_url, location)
+        if _is_private_url(next_url):
+            raise ValueError(
+                f"Redirect bloqué vers URL interne ({urlparse(next_url).hostname})"
+            )
+        current_url = next_url
+    raise ValueError(f"Trop de redirects (> {max_hops})")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -235,7 +274,14 @@ async def web_fetch(url: str, extract: str = "text", timeout: int = 15) -> dict:
             headers=_HEADERS,
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as session:
-            async with session.get(url, allow_redirects=True, max_redirects=5) as resp:
+            # Fix sécu C2 : on suit les redirects manuellement en re-validant
+            # chaque IP cible pour empêcher un site public de nous rediriger
+            # vers 169.254.169.254 (métadonnées cloud) ou 127.0.0.1.
+            try:
+                resp = await _safe_get_with_redirects(session, url, max_hops=5)
+            except ValueError as ve:
+                return {"ok": False, "error": f"Securite SSRF : {ve}"}
+            try:
                 if resp.status >= 400:
                     return {
                         "ok": False,
@@ -258,6 +304,12 @@ async def web_fetch(url: str, extract: str = "text", timeout: int = 15) -> dict:
 
                 html = await resp.text(errors='replace')
                 final_url = str(resp.url)
+            finally:
+                # Libère la réponse ouverte manuellement par _safe_get_with_redirects
+                try:
+                    await resp.__aexit__(None, None, None)
+                except Exception:
+                    pass
 
         parsed = _extract_content(html, final_url)
 

@@ -126,14 +126,17 @@ def apply_tier_effects(engine: "ConsciousnessEngine", tier: int) -> bool:
 
     changed = previous != tier
 
-    if tier == TIER_SHUTDOWN:
-        # Purge l'impulsion pendante : pas question de laisser une action
-        # proposée pendant un état négatif rester active à la réactivation.
+    if tier >= TIER_SAFE_MODE:
+        # Purge l'impulsion pendante dès le safe-mode (fix sécu M11) : si
+        # l'user est mécontent au point de déclencher le palier, une action
+        # proposée récemment ne doit PAS rester activable. Applique aux
+        # tiers 2 et 3 (le tier 1 = simple warning, on laisse).
         vol = state.setdefault("volition", {})
         if vol.get("pending_impulse"):
             vol["pending_impulse"] = None
             changed = True
 
+    if tier == TIER_SHUTDOWN:
         # Rééquilibre les urgences au baseline pour repartir propre.
         try:
             engine.apply_natural_decay()
