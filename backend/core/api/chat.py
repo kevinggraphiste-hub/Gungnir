@@ -21,6 +21,48 @@ limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
 
 
+def _build_temporal_block(timezone_name: str = "Europe/Paris") -> str:
+    """Bloc injecté dans le system prompt pour donner à l'agent la conscience
+    du moment présent. Les LLM n'ont pas d'horloge interne — sans ce bloc,
+    ils hallucinent la date (souvent la date du cutoff de leur training).
+
+    Format bilingue (FR lisible + ISO 8601) pour que l'agent puisse choisir
+    ce qu'il renvoie à l'user.
+    """
+    from datetime import datetime, timezone as _tz
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(timezone_name)
+        now_local = datetime.now(tz)
+    except Exception:
+        # Fallback sur UTC si la TZ est invalide ou zoneinfo indispo
+        now_local = datetime.now(_tz.utc)
+        timezone_name = "UTC"
+    now_utc = datetime.now(_tz.utc)
+
+    # Traduction FR des jours/mois (plus fiable que locale système qui varie
+    # selon l'environnement Docker).
+    _jours = ["lundi", "mardi", "mercredi", "jeudi",
+              "vendredi", "samedi", "dimanche"]
+    _mois = ["", "janvier", "février", "mars", "avril", "mai", "juin",
+             "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+    jour_fr = _jours[now_local.weekday()]
+    mois_fr = _mois[now_local.month]
+    date_fr = f"{jour_fr} {now_local.day} {mois_fr} {now_local.year}"
+
+    return (
+        "\n\n## CONTEXTE TEMPOREL\n"
+        f"Nous sommes le **{date_fr}**.\n"
+        f"Date ISO : `{now_local.strftime('%Y-%m-%d')}`\n"
+        f"Heure locale : `{now_local.strftime('%H:%M')}` ({timezone_name})\n"
+        f"Heure UTC : `{now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}`\n"
+        "Utilise ces valeurs quand on te demande la date, l'heure, le jour "
+        "de la semaine, ou pour tout calcul temporel (âge d'une chose, "
+        "deadline, ancienneté d'un événement, etc.). Ne te fie JAMAIS à la "
+        "date de ton cutoff d'entraînement — elle est obsolète.\n"
+    )
+
+
 def _classify_llm_error(exc: Exception) -> str:
     """Return a user-friendly error message based on the LLM API exception."""
     # Validation errors (ValueError) ont un message déjà parlant : on le renvoie tel quel
@@ -1303,7 +1345,23 @@ Tu operes en mode **demande**. Comportement :
             "- Pas de murs de texte sans respiration.\n"
             "- Pas de titre factice juste pour faire joli (un titre = un vrai regroupement).\n"
         )
-        full_system = _soul_content.strip() + _personality_block + _skill_block + consciousness_block + tools_block + mode_block + onboarding_block + tasks_block + style_block
+        # Bloc temporel : donne à l'agent la date/heure courante (sinon il
+        # hallucine la date de son cutoff d'entraînement). TZ lue depuis
+        # ui_preferences.timezone si l'user l'a définie, défaut Europe/Paris.
+        _user_tz = "Europe/Paris"
+        try:
+            _us = locals().get("_user_settings_row")
+            _prefs = (_us.ui_preferences or {}) if _us else {}
+            _user_tz = str(_prefs.get("timezone") or "Europe/Paris")
+        except Exception:
+            pass
+        temporal_block = _build_temporal_block(_user_tz)
+
+        full_system = (
+            _soul_content.strip() + _personality_block + _skill_block
+            + temporal_block + consciousness_block + tools_block
+            + mode_block + onboarding_block + tasks_block + style_block
+        )
         chat_messages.insert(0, ChatMessage(role="system", content=full_system))
 
         # -- Boucle tool calling
