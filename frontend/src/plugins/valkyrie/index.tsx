@@ -61,6 +61,7 @@ interface CardT {
   expanded: boolean
   subtasks: SubtaskT[]
   subtasks2: SubtaskT[]
+  subtasks2_title: string
   tags: string[]
   created_at: string | null
   updated_at: string | null
@@ -703,10 +704,9 @@ export default function ValkyriePlugin() {
             ) : (
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, 260px)',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
                 gridAutoRows: 260,
                 gap: 14,
-                justifyContent: 'start',
               }}>
                 {visibleCards.map((card, idx) => (
                   <CardTile
@@ -1057,7 +1057,7 @@ function CardTile({
                 onRemove={sid => removeSubtask(sid, 1)}
               />
               <SubtaskList
-                label="Seconde liste"
+                label={card.subtasks2_title || 'Seconde liste'}
                 items={card.subtasks2 || []}
                 newLabel={newSubtask2Label}
                 setNewLabel={setNewSubtask2Label}
@@ -1065,6 +1065,8 @@ function CardTile({
                 onRename={(sid, label) => renameSubtask(sid, label, 2)}
                 onAdd={() => addSubtask(2)}
                 onRemove={sid => removeSubtask(sid, 2)}
+                editableLabel
+                onLabelChange={v => onUpdate({ subtasks2_title: v.slice(0, 60) })}
               />
             </div>
 
@@ -1185,6 +1187,7 @@ function CardTile({
 function SubtaskList({
   label, items, newLabel, setNewLabel,
   onToggle, onRename, onAdd, onRemove,
+  editableLabel, onLabelChange,
 }: {
   label: string
   items: SubtaskT[]
@@ -1194,14 +1197,20 @@ function SubtaskList({
   onRename: (sid: string, label: string) => void
   onAdd: () => void
   onRemove: (sid: string) => void
+  editableLabel?: boolean
+  onLabelChange?: (v: string) => void
 }) {
   return (
     <div>
-      {items.length > 0 && (
-        <div className="text-[9px] font-mono uppercase tracking-[2px] mb-1"
-          style={{ color: 'var(--text-muted)' }}>
-          {label}
-        </div>
+      {(items.length > 0 || editableLabel) && (
+        editableLabel && onLabelChange ? (
+          <EditableHeader value={label} onSave={onLabelChange} />
+        ) : (
+          <div className="text-[9px] font-mono uppercase tracking-[2px] mb-1"
+            style={{ color: 'var(--text-muted)' }}>
+            {label}
+          </div>
+        )
       )}
       {items.map(st => (
         <div key={st.id} style={{
@@ -1303,6 +1312,48 @@ function InlineEditableLabel({
     >
       {value}
     </span>
+  )
+}
+
+// En-tête éditable d'une liste : clic sur le titre → input.
+function EditableHeader({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+  const ref = useRef<HTMLInputElement | null>(null)
+  useEffect(() => setDraft(value), [value])
+  useEffect(() => { if (editing) ref.current?.focus() }, [editing])
+  if (editing) {
+    return (
+      <input
+        ref={ref}
+        value={draft}
+        maxLength={60}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => { setEditing(false); if (draft.trim() && draft !== value) onSave(draft.trim()) }}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur() }
+          if (e.key === 'Escape') { setDraft(value); setEditing(false) }
+        }}
+        className="text-[9px] font-mono uppercase tracking-[2px] mb-1"
+        style={{
+          width: '100%',
+          background: 'var(--bg-primary)',
+          border: '1px solid color-mix(in srgb, var(--scarlet) 35%, var(--border))',
+          borderRadius: 4, padding: '2px 6px',
+          color: 'var(--text-primary)', outline: 'none',
+        }}
+      />
+    )
+  }
+  return (
+    <div
+      onClick={() => setEditing(true)}
+      className="text-[9px] font-mono uppercase tracking-[2px] mb-1"
+      style={{ color: 'var(--text-muted)', cursor: 'text' }}
+      title="Cliquer pour renommer"
+    >
+      {value}
+    </div>
   )
 }
 
@@ -1588,7 +1639,7 @@ function buildMarkdown(project: ProjectT, cards: CardT[], statuses: StatusT[]): 
         for (const s of arr) lines.push(`- [${s.done ? 'x' : ' '}] ${s.label}`)
       }
       dumpList('Sous-tâches', c.subtasks || [])
-      dumpList('Seconde liste', c.subtasks2 || [])
+      dumpList(c.subtasks2_title || 'Seconde liste', c.subtasks2 || [])
     }
   }
   return lines.join('\n') + '\n'
@@ -1684,7 +1735,7 @@ function buildHtml(project: ProjectT, cards: CardT[], statuses: StatusT[], forPd
         ${c.subtitle ? `<div class="sub">${esc(c.subtitle)}</div>` : ''}
         ${c.description ? `<p>${esc(c.description).replace(/\n/g, '<br>')}</p>` : ''}
         ${(c.subtasks || []).length ? `<div class="list-title">Sous-tâches</div>${list(c.subtasks)}` : ''}
-        ${(c.subtasks2 || []).length ? `<div class="list-title">Seconde liste</div>${list(c.subtasks2)}` : ''}
+        ${(c.subtasks2 || []).length ? `<div class="list-title">${esc(c.subtasks2_title || 'Seconde liste')}</div>${list(c.subtasks2)}` : ''}
       </div>`
   }
 

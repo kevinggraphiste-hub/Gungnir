@@ -81,6 +81,7 @@ class ValkyrieCard(Base):
     # Deux listes de sous-tâches côte à côte (ex: "livrables" + "preuves").
     # Format commun : [{id, label, done}]
     subtasks_json = Column(JSON, default=list)
+    subtasks2_title = Column(String(60), default="")  # header éditable de la 2e liste
     subtasks2_json = Column(JSON, default=list)
     # Tags libres : liste de strings (couleur dérivée en UI via hash du label)
     tags_json = Column(JSON, default=list)

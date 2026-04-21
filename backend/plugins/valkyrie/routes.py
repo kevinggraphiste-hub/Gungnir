@@ -78,6 +78,7 @@ class CardIn(BaseModel):
     expanded: Optional[bool] = None
     subtasks: Optional[list] = None   # liste 1 de {id?, label, done}
     subtasks2: Optional[list] = None  # liste 2 — même shape
+    subtasks2_title: Optional[str] = None  # header éditable de la liste 2
     tags: Optional[list] = None       # liste de strings (labels libres)
 
 
@@ -124,6 +125,7 @@ def _serialize_card(c: ValkyrieCard) -> dict:
         "expanded": bool(c.expanded),
         "subtasks": list(c.subtasks_json or []),
         "subtasks2": list(c.subtasks2_json or []),
+        "subtasks2_title": (c.subtasks2_title or ""),
         "tags": list(c.tags_json or []),
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "updated_at": c.updated_at.isoformat() if c.updated_at else None,
@@ -383,6 +385,7 @@ async def create_card(project_id: int, payload: CardIn, request: Request,
         expanded=bool(payload.expanded or False),
         subtasks_json=_sanitize_subtasks(payload.subtasks or []),
         subtasks2_json=_sanitize_subtasks(payload.subtasks2 or []),
+        subtasks2_title=(payload.subtasks2_title or "").strip()[:60],
         tags_json=_sanitize_tags(payload.tags or []),
     )
     session.add(row)
@@ -415,6 +418,8 @@ async def update_card(card_id: int, payload: CardIn, request: Request,
     if payload.subtasks2 is not None:
         row.subtasks2_json = _sanitize_subtasks(payload.subtasks2)
         flag_modified(row, "subtasks2_json")
+    if payload.subtasks2_title is not None:
+        row.subtasks2_title = payload.subtasks2_title.strip()[:60]
     if payload.tags is not None:
         row.tags_json = _sanitize_tags(payload.tags)
         flag_modified(row, "tags_json")
