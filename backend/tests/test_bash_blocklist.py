@@ -19,7 +19,11 @@ CRITICAL_PATTERNS = [
     r"\bshutdown\b", r"\breboot\b", r"\bpoweroff\b",
     r"\b(useradd|userdel|usermod|groupadd|groupdel)\b",
     r">\s*.*authorized_keys",
-    r"\b(apt|apt-get|aptitude|dpkg)\s+(install|remove|purge|upgrade|dist-upgrade|autoremove)\b",
+    # Package managers système — couvre les formes courtes/longues
+    r"\b(apt|apt-get|aptitude)\s+.*\b(install|remove|purge|upgrade|dist-upgrade|autoremove|reinstall)\b",
+    r"\bdpkg\b[\s\S]*?\-{1,2}(install|remove|purge|unpack|i|r|P)\b",
+    # Docker : bloque les sous-commandes de gestion d'autres containers
+    r"\bdocker\s+(run|exec|kill|rm|rmi|stop|restart)\b",
     r"/var/run/docker\.sock",
     r"/proc/1/root",
     r"\bchroot\b", r"\bmount\s+",

@@ -2346,11 +2346,14 @@ async def _bash_exec(command: str, timeout: int = 30, cwd: str = ".") -> dict:
         r"\bufw\s+(disable|reset)\b",
         r"ip\s+(route|addr|link)\s+(del|flush)",
         # ── Package managers niveau système ────────────────────────
-        r"\b(apt|apt-get|aptitude|dpkg)\s+(install|remove|purge|upgrade|dist-upgrade|autoremove)\b",
-        r"\b(yum|dnf)\s+(install|remove|update|upgrade)\b",
-        r"\b(apk)\s+(add|del|upgrade)\b",
-        r"\b(pacman)\s+\-(S|R|U|Syu)\b",
-        r"\bsnap\s+(install|remove|refresh)\b",
+        # Couvre les variantes : `apt install`, `sudo apt -y install`,
+        # `dpkg -i`, `dpkg --install`, `apt-get install`, etc.
+        r"\b(apt|apt-get|aptitude)\s+.*\b(install|remove|purge|upgrade|dist-upgrade|autoremove|reinstall)\b",
+        r"\bdpkg\b[\s\S]*?\-{1,2}(install|remove|purge|unpack|i|r|P)\b",
+        r"\b(yum|dnf)\s+.*\b(install|remove|update|upgrade|erase|downgrade)\b",
+        r"\bapk\s+.*\b(add|del|upgrade)\b",
+        r"\bpacman\s+.*(\-S|\-R|\-U|\-Syu)\b",
+        r"\bsnap\s+.*\b(install|remove|refresh)\b",
         # ── Cron / scheduling système ──────────────────────────────
         r"\bcrontab\s+(-[rleu]|\-remove)\b",
         r">\s*/etc/cron",
