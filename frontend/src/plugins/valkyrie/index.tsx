@@ -980,27 +980,36 @@ export default function ValkyriePlugin() {
               position: 'absolute', top: 0, left: 0, width: 3, height: '100%',
               background: 'linear-gradient(180deg, var(--scarlet), var(--scarlet-dark, #b91c1c))',
             }} />
-            <div className="flex items-start justify-between gap-4">
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div className="text-[10px] font-mono uppercase tracking-[2px] mb-1" style={{ color: 'var(--text-muted)' }}>
-                  Projet actif
-                </div>
-                <EditableText
-                  value={activeProject.title}
-                  onSave={v => saveProject({ title: v })}
-                  className="text-2xl font-bold tracking-tight"
-                  style={{ color: 'var(--text-primary)' }}
-                  singleLine
-                />
-                <EditableText
-                  value={activeProject.description}
-                  onSave={v => saveProject({ description: v })}
-                  placeholder="Ajoute une description…"
-                  className="text-sm mt-2"
-                  style={{ color: 'var(--text-secondary)', maxWidth: 820, lineHeight: 1.55 }}
-                />
+            {/* Titre + description en pleine largeur (pas de toolbar à côté) */}
+            <div style={{ minWidth: 0 }}>
+              <div className="text-[10px] font-mono uppercase tracking-[2px] mb-1" style={{ color: 'var(--text-muted)' }}>
+                Projet actif
               </div>
-              <div className="flex items-center gap-1 flex-shrink-0 flex-wrap justify-end">
+              <EditableText
+                value={activeProject.title}
+                onSave={v => saveProject({ title: v })}
+                className="text-2xl font-bold tracking-tight"
+                style={{ color: 'var(--text-primary)' }}
+                singleLine
+              />
+              <EditableText
+                value={activeProject.description}
+                onSave={v => saveProject({ description: v })}
+                placeholder="Ajoute une description…"
+                className="text-sm mt-2"
+                style={{ color: 'var(--text-secondary)', maxWidth: 820, lineHeight: 1.55 }}
+              />
+            </div>
+
+            {/* Toolbar d'actions en ligne dédiée — évite le chevauchement
+                avec le titre quand la description est longue. */}
+            <div className="mt-3 pt-3"
+              style={{
+                borderTop: '1px dashed var(--border)',
+                display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+              }}>
+              {/* Groupe 1 : vue / navigation */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 {/* Bell : rappels deadlines (tout projet confondu) */}
                 <button onClick={() => { setRemindersOpen(v => !v); refreshReminders() }}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
@@ -1080,6 +1089,13 @@ export default function ValkyriePlugin() {
                   title="Afficher/masquer le mini-dashboard">
                   <BarChart3 className="w-3.5 h-3.5" /> Stats
                 </button>
+              </div>
+
+              {/* Spacer : pousse le groupe projet à droite sur grand écran */}
+              <div style={{ flex: 1, minWidth: 8 }} />
+
+              {/* Groupe 2 : archives / conscience / paramètres projet */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <button onClick={() => setShowArchived(v => !v)}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
                   style={{
