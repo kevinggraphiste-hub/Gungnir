@@ -1452,12 +1452,40 @@ Tu operes en mode **demande**. Comportement :
                                          "d'accord", "vas-y", "valide", "confirme", "je veux", "j'aimerais",
                                          "liste", "montre", "affiche", "donne", "met", "mets")
                     _user_confirmed = any(p in message.lower() for p in _confirm_patterns)
-                    if not _user_confirmed:
-                        tool_result = {"ok": False, "error": f"Mode 'Demande' actif : l'outil '{tool_name}' necessite la permission de l'utilisateur. Demande-lui confirmation avant de reessayer."}
-                        print(f"[Wolf] ASK_PERMISSION: blocked {tool_name} (needs user confirmation)")
-                        _blocked = True
+                    # Vérifie aussi une approbation par bouton UI : `request_permission` enregistrée
+                    # dans une tour précédente puis `approve_request` via POST depuis la carte.
+                    _ui_approved_ids = [
+                        rid for rid, req in list(mode_manager.pending_requests.items())
+                        if req.status == "approved" and req.details.get("tool_name") == tool_name
+                    ]
+                    if _user_confirmed or _ui_approved_ids:
+                        # Consomme l'approbation (une fois utilisée, on la nettoie)
+                        for rid in _ui_approved_ids:
+                            mode_manager.pending_requests.pop(rid, None)
+                        print(f"[Wolf] ASK_PERMISSION: allowed {tool_name} "
+                              f"(user_msg={_user_confirmed}, ui_approved={bool(_ui_approved_ids)})")
                     else:
-                        print(f"[Wolf] ASK_PERMISSION: allowed {tool_name} (user confirmed in message)")
+                        # Enregistre la demande pour que l'UI puisse afficher une carte
+                        # avec boutons Autoriser/Refuser. Le LLM reçoit l'erreur pour
+                        # répondre en texte comme avant (fallback Telegram/headless).
+                        _perm_id = str(_uuid.uuid4())[:12]
+                        try:
+                            await mode_manager.request_permission(
+                                _perm_id, action=f"exec:{tool_name}",
+                                details={"tool_name": tool_name, "args": args, "call_id": call_id},
+                            )
+                        except Exception:
+                            pass
+                        tool_result = {
+                            "ok": False,
+                            "error": f"Mode 'Demande' actif : l'outil '{tool_name}' necessite la permission de l'utilisateur. Demande-lui confirmation avant de reessayer.",
+                            "pending_approval": True,
+                            "permission_id": _perm_id,
+                            "tool_name": tool_name,
+                            "args": args,
+                        }
+                        print(f"[Wolf] ASK_PERMISSION: blocked {tool_name} (pending_id={_perm_id})")
+                        _blocked = True
 
                 if not _blocked:
                     # Check wolf executors first, then the user's MCP executors

@@ -11,7 +11,8 @@ import {
   ChevronLeft, ChevronRight, Pencil, Check, X, Key,
   Paperclip, Image as ImageIcon, Copy, ListTodo, Folder, FolderMinus, GripVertical,
   Calendar, Play, Pause, CheckCircle2, AlertCircle, Clock,
-  RefreshCw, ThumbsUp, ThumbsDown, Zap, Wand2, Volume2, VolumeX, Loader2
+  RefreshCw, ThumbsUp, ThumbsDown, Zap, Wand2, Volume2, VolumeX, Loader2,
+  ShieldCheck, ShieldAlert
 } from 'lucide-react'
 import { SecondaryButton } from '../components/ui'
 import VoiceModal from '../components/VoiceModal'
@@ -1311,8 +1312,9 @@ export default function Chat() {
     } catch (err) { console.error('New chat with summary error:', err) }
   }
 
-  const handleSend = async () => {
-    if ((!input.trim() && attachedFiles.length === 0) || isLoading) return
+  const handleSend = async (overrideText?: string) => {
+    const effectiveInput = overrideText ?? input
+    if ((!effectiveInput.trim() && attachedFiles.length === 0) || isLoading) return
 
     // Auto-create conversation if none selected
     let convoId: number | null = currentConversation
@@ -1341,7 +1343,7 @@ export default function Chat() {
       }
     }
 
-    const userMessage = input.trim()
+    const userMessage = effectiveInput.trim()
     const currentImages = attachedFiles.filter(f => f.type.startsWith('image/')).map(f => f.dataUrl)
     const currentDocs = attachedFiles.filter(f => !f.type.startsWith('image/'))
     // Pour les documents non-image, ajouter le contenu texte au message
@@ -2019,16 +2021,42 @@ export default function Chat() {
 
                 {msg.role === 'assistant' && (msg as any).tool_events?.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mb-1">
-                    {(msg as any).tool_events.map((evt: any, i: number) => (
-                      <div key={i} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium"
-                        style={{
-                          background: evt.result?.ok !== false ? 'color-mix(in srgb, var(--accent-success) 8%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 8%, transparent)',
-                          border: `1px solid ${evt.result?.ok !== false ? 'color-mix(in srgb, var(--accent-success) 20%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 20%, transparent)'}`,
-                          color: evt.result?.ok !== false ? 'var(--accent-success)' : 'var(--accent-danger, var(--accent-primary-light))',
-                        }}>
-                        <Sparkles className="w-2.5 h-2.5 flex-shrink-0" /><span>{evt.tool}</span>
-                      </div>
-                    ))}
+                    {(msg as any).tool_events.map((evt: any, i: number) => {
+                      // Permission card : affichée quand le backend a gating
+                      // l'outil en mode ask_permission (tool_event marqué avec
+                      // result.pending_approval = true).
+                      if (evt.result?.pending_approval) {
+                        return (
+                          <PermissionCard key={i}
+                            toolName={evt.result?.tool_name || evt.tool}
+                            args={evt.result?.args || evt.args}
+                            permissionId={evt.result?.permission_id}
+                            onApprove={async () => {
+                              try {
+                                await apiFetch(`/api/agent/permission/${evt.result.permission_id}/approve`, { method: 'POST' })
+                              } catch { /* ignore */ }
+                              handleSend(`Oui, je t'autorise à utiliser l'outil ${evt.result?.tool_name || evt.tool}.`)
+                            }}
+                            onDeny={async () => {
+                              try {
+                                await apiFetch(`/api/agent/permission/${evt.result.permission_id}/deny`, { method: 'POST' })
+                              } catch { /* ignore */ }
+                              handleSend(`Non, n'utilise pas l'outil ${evt.result?.tool_name || evt.tool}.`)
+                            }}
+                          />
+                        )
+                      }
+                      return (
+                        <div key={i} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium"
+                          style={{
+                            background: evt.result?.ok !== false ? 'color-mix(in srgb, var(--accent-success) 8%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 8%, transparent)',
+                            border: `1px solid ${evt.result?.ok !== false ? 'color-mix(in srgb, var(--accent-success) 20%, transparent)' : 'color-mix(in srgb, var(--accent-primary) 20%, transparent)'}`,
+                            color: evt.result?.ok !== false ? 'var(--accent-success)' : 'var(--accent-danger, var(--accent-primary-light))',
+                          }}>
+                          <Sparkles className="w-2.5 h-2.5 flex-shrink-0" /><span>{evt.tool}</span>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
 
@@ -2357,7 +2385,7 @@ export default function Chat() {
                 </button>
 
                 {/* Bouton Lancer (envoyer) */}
-                <button onClick={handleSend} disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
+                <button onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
                   className="flex items-center gap-1.5 px-3 rounded-lg disabled:opacity-30 transition-all text-xs font-medium"
                   style={{ height: '30px', background: (input.trim() || attachedFiles.length > 0) && !isLoading ? 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
                   <Send className="w-3 h-3" />
@@ -2574,6 +2602,130 @@ function AutomataTaskView({ task, history, onRefresh, onClose, onToggle, onRunNo
           })
         )}
       </div>
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// PermissionCard — carte de confirmation pour le mode ask_permission.
+// Affichée quand le backend a bloqué un tool d'écriture et demande l'aval
+// de l'user. Deux boutons : Autoriser / Refuser. En cliquant, on appelle
+// l'endpoint existant (/api/agent/permission/:id/approve|deny) + on envoie
+// un message "Oui/Non" qui relance la convo → le backend détecte le
+// keyword et exécute le tool au tour suivant.
+// Cohabite avec le canal text-only (Telegram etc.) : le LLM produit aussi
+// une question texte, donc un user qui ne voit pas les boutons peut
+// toujours répondre "oui" en texte.
+// ════════════════════════════════════════════════════════════════════════
+
+function PermissionCard({
+  toolName, args, permissionId, onApprove, onDeny,
+}: {
+  toolName: string
+  args: any
+  permissionId?: string
+  onApprove: () => void
+  onDeny: () => void
+}) {
+  const [state, setState] = useState<'pending' | 'approved' | 'denied'>('pending')
+  const argsPreview = (() => {
+    try {
+      const s = JSON.stringify(args ?? {}, null, 2)
+      return s.length > 320 ? s.slice(0, 320) + '…' : s
+    } catch { return String(args) }
+  })()
+  if (state !== 'pending') {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px]"
+        style={{
+          background: state === 'approved'
+            ? 'color-mix(in srgb, var(--accent-success) 8%, transparent)'
+            : 'color-mix(in srgb, var(--accent-danger, var(--accent-primary)) 8%, transparent)',
+          border: `1px solid ${state === 'approved'
+            ? 'color-mix(in srgb, var(--accent-success) 30%, transparent)'
+            : 'color-mix(in srgb, var(--accent-danger, var(--accent-primary)) 30%, transparent)'}`,
+          color: state === 'approved' ? 'var(--accent-success)' : 'var(--accent-danger, var(--accent-primary-light))',
+        }}>
+        {state === 'approved' ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+        <span style={{ fontWeight: 600 }}>{toolName}</span>
+        <span style={{ opacity: 0.7 }}>
+          {state === 'approved' ? 'autorisé' : 'refusé'}
+        </span>
+      </div>
+    )
+  }
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 8,
+      width: '100%', padding: 12, borderRadius: 10,
+      background: 'color-mix(in srgb, var(--scarlet) 6%, var(--bg-secondary))',
+      border: '1px solid color-mix(in srgb, var(--scarlet) 35%, var(--border))',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <ShieldAlert className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+          Confirmation requise
+        </span>
+        <span style={{
+          fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+          padding: '1px 6px', borderRadius: 4,
+          background: 'var(--bg-primary)', color: 'var(--scarlet)',
+        }}>
+          {toolName}
+        </span>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+        L'agent demande à exécuter cet outil. Vérifie les paramètres puis autorise ou refuse.
+      </div>
+      {args && Object.keys(args).length > 0 && (
+        <details>
+          <summary style={{
+            fontSize: 10.5, color: 'var(--text-muted)', cursor: 'pointer',
+            fontFamily: 'JetBrains Mono, monospace', textTransform: 'uppercase', letterSpacing: 1.5,
+          }}>
+            Paramètres
+          </summary>
+          <pre style={{
+            marginTop: 6, padding: 8, borderRadius: 6,
+            background: 'var(--bg-primary)', border: '1px solid var(--border)',
+            fontSize: 11, color: 'var(--text-secondary)',
+            fontFamily: 'JetBrains Mono, monospace',
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            maxHeight: 180, overflowY: 'auto',
+          }}>{argsPreview}</pre>
+        </details>
+      )}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 2 }}>
+        <button
+          onClick={() => { setState('denied'); onDeny() }}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--border)',
+            color: 'var(--text-muted)', cursor: 'pointer',
+          }}>
+          <X className="w-3 h-3" /> Refuser
+        </button>
+        <button
+          onClick={() => { setState('approved'); onApprove() }}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+          style={{
+            background: 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))',
+            color: '#fff', border: 'none', cursor: 'pointer',
+            boxShadow: '0 2px 8px color-mix(in srgb, var(--scarlet) 30%, transparent)',
+          }}>
+          <ShieldCheck className="w-3 h-3" /> Autoriser
+        </button>
+      </div>
+      {permissionId && (
+        <div style={{
+          fontSize: 9, color: 'var(--text-muted)',
+          fontFamily: 'JetBrains Mono, monospace', opacity: 0.5,
+        }}>
+          id: {permissionId}
+        </div>
+      )}
     </div>
   )
 }
