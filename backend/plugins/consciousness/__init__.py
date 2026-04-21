@@ -1350,17 +1350,17 @@ async def _tick_once():
             except Exception as e:
                 logger.exception(f"Goals pass crashed for user {user_id}: {e}")
 
-        # Snapshot Valkyrie (rappels deadlines) — cache léger dans l'état
-        # pour que get_consciousness_prompt_block() reste sync.
+        # Blocs providés par les plugins (Valkyrie deadlines, etc.)
+        # Chaque provider est async et met à jour son propre snapshot via
+        # `set_user_snapshot()`. On les appelle tous ici pour rafraîchir.
         try:
-            from backend.plugins.valkyrie.reminders_probe import _probe_reminders_async
-            from backend.plugins.consciousness.engine import consciousness_manager
-            rem = await _probe_reminders_async(user_id)
-            if rem is not None:
-                eng = consciousness_manager.get(user_id)
-                eng._state["valkyrie_reminders"] = rem
+            from backend.core.plugin_registry import gather_conscience_blocks
+            # L'appel a un effet de bord (cache snapshot) + retourne les
+            # blocs à jour. On n'a pas besoin de la valeur retour — le
+            # prompt block lira les snapshots cachés.
+            await gather_conscience_blocks(user_id)
         except Exception as e:
-            logger.debug(f"Valkyrie reminders probe failed for user {user_id}: {e}")
+            logger.debug(f"Plugin conscience blocks gather failed for user {user_id}: {e}")
 
 
 async def _consciousness_loop():

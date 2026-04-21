@@ -6,7 +6,7 @@ import {
   Settings as SettingsIcon, Globe, Palette, Key, Mic, RefreshCw,
   HeartPulse, HardDrive, Download, Upload, Trash2, CheckCircle, AlertCircle, Type, User,
   Server, Database, Cloud, MessageSquare, GitBranch, Zap, Search as SearchIcon, Loader2, Plus,
-  Stethoscope, Pipette, ChevronDown, ChevronRight
+  Stethoscope, Pipette, ChevronDown, ChevronRight, Sparkles, ExternalLink
 } from 'lucide-react'
 import InfoButton from '../components/InfoButton'
 import { PageHeader } from '../components/ui'
@@ -196,6 +196,28 @@ export default function Settings() {
   // Doctor
   const [doctorResult, setDoctorResult] = useState<any>(null)
   const [doctorLoading, setDoctorLoading] = useState(false)
+
+  // Version check (GitHub Releases)
+  const [versionInfo, setVersionInfo] = useState<{
+    current: string
+    latest: string | null
+    available: boolean
+    name?: string
+    html_url?: string
+    body?: string
+    published_at?: string
+    error?: string
+  } | null>(null)
+  const [versionLoading, setVersionLoading] = useState(false)
+  const checkVersion = useCallback(async () => {
+    setVersionLoading(true)
+    try {
+      const r = await apiFetch('/api/system/version-check')
+      if (r.ok) setVersionInfo(await r.json())
+    } catch { /* ignore */ }
+    finally { setVersionLoading(false) }
+  }, [])
+  useEffect(() => { checkVersion() }, [checkVersion])
 
   // ── Préférences TTS/PTT ──────────────────────────────────────────
   // Trois moteurs TTS possibles : navigateur (gratuit, défaut),
@@ -898,6 +920,89 @@ export default function Settings() {
           {/* -- General --------------------------------------------------- */}
           {activeTab === 'general' && (
             <div className="space-y-6">
+              {/* Version + update check */}
+              <div className="rounded-lg border p-4" style={{
+                background: versionInfo?.available
+                  ? 'color-mix(in srgb, var(--accent-primary) 10%, var(--bg-primary))'
+                  : 'var(--bg-primary)',
+                borderColor: versionInfo?.available
+                  ? 'color-mix(in srgb, var(--accent-primary) 40%, var(--border))'
+                  : 'var(--border)',
+              }}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <Sparkles className="w-4 h-4" style={{
+                      color: versionInfo?.available ? 'var(--accent-primary)' : 'var(--text-muted)',
+                    }} />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Gungnir v{versionInfo?.current || '…'}
+                        {versionInfo?.available && versionInfo.latest && (
+                          <span style={{
+                            marginLeft: 8, padding: '1px 8px', borderRadius: 4,
+                            fontSize: 10, fontWeight: 700,
+                            background: 'var(--accent-primary)', color: '#fff',
+                          }}>
+                            v{versionInfo.latest} disponible
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {versionLoading
+                          ? 'Vérification…'
+                          : versionInfo?.error
+                            ? versionInfo.error
+                            : versionInfo?.available
+                              ? `${versionInfo.name || 'Nouvelle release'} — ` +
+                                (versionInfo.published_at
+                                  ? new Date(versionInfo.published_at).toLocaleDateString('fr-FR')
+                                  : '')
+                              : 'Tu es à jour.'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={checkVersion}
+                      disabled={versionLoading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
+                      style={{
+                        background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                        color: 'var(--text-secondary)', cursor: versionLoading ? 'wait' : 'pointer',
+                      }}>
+                      {versionLoading
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <RefreshCw className="w-3 h-3" />}
+                      Vérifier
+                    </button>
+                    {versionInfo?.available && versionInfo.html_url && (
+                      <a href={versionInfo.html_url} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+                        style={{
+                          background: 'linear-gradient(135deg, var(--accent-primary), color-mix(in srgb, var(--accent-primary) 70%, #000))',
+                          color: '#fff',
+                        }}>
+                        <ExternalLink className="w-3 h-3" /> Changelog
+                      </a>
+                    )}
+                  </div>
+                </div>
+                {versionInfo?.available && versionInfo.body && (
+                  <details style={{ marginTop: 10 }}>
+                    <summary style={{
+                      fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer',
+                    }}>Voir les notes de version</summary>
+                    <pre style={{
+                      fontSize: 11, color: 'var(--text-secondary)', marginTop: 6,
+                      whiteSpace: 'pre-wrap', lineHeight: 1.5,
+                      maxHeight: 200, overflowY: 'auto',
+                      padding: 8, borderRadius: 6,
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border)',
+                    }}>{versionInfo.body}</pre>
+                  </details>
+                )}
+              </div>
+
               {/* Agent Name */}
               <div>
                 <label className="flex items-center gap-3 text-[var(--text-secondary)] mb-3"><User className="w-4 h-4" />{t('settings.agentName')}</label>

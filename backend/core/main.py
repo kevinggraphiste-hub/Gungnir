@@ -701,8 +701,22 @@ from backend.core.api.router import core_router
 app.include_router(core_router, prefix="/api")
 
 # ── Discover and mount plugins at module level (before catch-all) ────────────
+# Dossier tiers : `data/plugins_external/` — préservé entre rebuilds Docker
+# (bind-mount sur `./data`), permet d'installer un plugin sans rebuild.
+# On crée le dossier s'il n'existe pas et on l'ajoute au sys.path pour que
+# `import plugins_external.<name>` fonctionne.
+import sys as _sys
+from pathlib import Path as _Path
+_EXT_PLUGINS_DIR = _Path(__file__).resolve().parents[2] / "data" / "plugins_external"
+_EXT_PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
+# Ajoute le parent de `plugins_external` au sys.path → permet l'import
+# `plugins_external.<name>` sans polluer le package backend.
+_EXT_PARENT = str(_EXT_PLUGINS_DIR.parent)
+if _EXT_PARENT not in _sys.path:
+    _sys.path.insert(0, _EXT_PARENT)
+
 logger.info("Discovering plugins...")
-_manifests = discover_plugins(PLUGINS_DIR)
+_manifests = discover_plugins(PLUGINS_DIR, external_dir=_EXT_PLUGINS_DIR)
 for _manifest in _manifests:
     if _manifest.enabled_by_default:
         if mount_plugin_routes(app, _manifest):

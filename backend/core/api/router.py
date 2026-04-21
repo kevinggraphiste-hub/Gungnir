@@ -45,6 +45,69 @@ async def version():
     }
 
 
+# ── Version check (upstream GitHub Releases) ──────────────────────────────
+@core_router.get("/system/version-check")
+async def system_version_check():
+    """Interroge GitHub Releases pour savoir si une mise à jour est dispo.
+
+    Le repo est configurable via la variable d'env `GUNGNIR_UPDATE_REPO`
+    (format `owner/name`) — par défaut `kevinggraphiste-hub/Gungnir`.
+
+    Retourne toujours un 200 avec un payload structuré pour que l'UI ne
+    casse pas hors-ligne. En cas d'erreur, `available=false` et `error`
+    explique pourquoi.
+    """
+    import os
+    try:
+        import httpx  # dépendance déjà utilisée ailleurs dans le backend
+    except ImportError:
+        return {
+            "current": __version__,
+            "latest": None,
+            "available": False,
+            "error": "httpx indisponible côté backend",
+        }
+    repo = os.getenv("GUNGNIR_UPDATE_REPO", "kevinggraphiste-hub/Gungnir")
+    url = f"https://api.github.com/repos/{repo}/releases/latest"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            r = await client.get(url, headers={"Accept": "application/vnd.github+json"})
+        if r.status_code == 404:
+            return {
+                "current": __version__,
+                "latest": None,
+                "available": False,
+                "error": "Aucune release publiée sur ce repo.",
+            }
+        r.raise_for_status()
+        data = r.json()
+        tag = str(data.get("tag_name", "")).lstrip("v")
+        # Compare semver simple — major.minor.patch
+        def _parse(v: str) -> tuple[int, int, int]:
+            try:
+                parts = v.split(".")
+                return (int(parts[0]), int(parts[1]), int(parts[2]))
+            except Exception:
+                return (0, 0, 0)
+        available = _parse(tag) > _parse(__version__)
+        return {
+            "current": __version__,
+            "latest": tag or None,
+            "available": bool(available),
+            "name": data.get("name"),
+            "html_url": data.get("html_url"),
+            "body": data.get("body") or "",
+            "published_at": data.get("published_at"),
+        }
+    except Exception as e:
+        return {
+            "current": __version__,
+            "latest": None,
+            "available": False,
+            "error": f"Check impossible : {type(e).__name__}",
+        }
+
+
 # Doctor — diagnostic complet
 @core_router.get("/doctor")
 async def doctor(scope: str = "full", request: Request = None):

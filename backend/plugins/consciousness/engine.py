@@ -1468,11 +1468,13 @@ class ConsciousnessEngine:
             ]
             parts.append("\n**Objectifs en cours :**\n" + "\n".join(goal_lines))
 
-        # ── Rappels Valkyrie (deadlines overdue / today) ───────────────────
-        # Lecture de snapshot mis à jour par la boucle de tick — sync donc
-        # safe à appeler depuis la construction du prompt.
+        # ── Blocs fournis par les plugins (via plugin_registry) ────────
+        # Chaque plugin peut enregistrer un provider async pour injecter
+        # du contexte (deadlines, alertes, etc.). On lit ici leur snapshot
+        # sync mis en cache par la boucle de tick.
         try:
-            rem = (self._state or {}).get("valkyrie_reminders") or None
+            from backend.core.plugin_registry import get_user_snapshot
+            rem = get_user_snapshot(self.user_id, "valkyrie_reminders") if self.user_id else None
             if rem and (rem.get("overdue") or rem.get("today")):
                 over = rem.get("overdue", [])
                 tod = rem.get("today", [])

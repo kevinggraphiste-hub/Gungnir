@@ -324,25 +324,53 @@ async def init_db(engine):
     # PostgreSQL un échec (colonne déjà présente) poisonne la transaction et
     # les migrations suivantes sont silencieusement ignorées.
     _text = __import__("sqlalchemy").text
-    migrations = [
+
+    # Migrations core : tables du noyau (users, conversations, user_settings).
+    core_migrations: list[tuple[str, str]] = [
         ("ALTER TABLE conversations ADD COLUMN user_id INTEGER REFERENCES users(id)", "user_id -> conversations"),
         ("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE", "is_admin -> users"),
         ("ALTER TABLE conversations ADD COLUMN folder_id INTEGER REFERENCES conversation_folders(id)", "folder_id -> conversations"),
         ("ALTER TABLE user_settings ADD COLUMN language VARCHAR(10) DEFAULT 'fr'", "language -> user_settings"),
-        ("ALTER TABLE huntr_searches ADD COLUMN topic VARCHAR(20) DEFAULT 'web'", "topic -> huntr_searches"),
         ("ALTER TABLE user_settings ADD COLUMN voice_config JSONB DEFAULT '{}'::jsonb", "voice_config -> user_settings"),
         ("ALTER TABLE user_settings ADD COLUMN huntr_config JSONB DEFAULT '{}'::jsonb", "huntr_config -> user_settings"),
         ("ALTER TABLE user_settings ADD COLUMN ui_preferences JSONB DEFAULT '{}'::jsonb", "ui_preferences -> user_settings"),
-        # ── Plugin Valkyrie : extensions de carte (v1.1) ─────────────────
-        ("ALTER TABLE valkyrie_cards ADD COLUMN subtitle VARCHAR(300) DEFAULT ''", "subtitle -> valkyrie_cards"),
-        ("ALTER TABLE valkyrie_cards ADD COLUMN subtasks2_json JSONB DEFAULT '[]'::jsonb", "subtasks2_json -> valkyrie_cards"),
-        ("ALTER TABLE valkyrie_cards ADD COLUMN tags_json JSONB DEFAULT '[]'::jsonb", "tags_json -> valkyrie_cards"),
-        ("ALTER TABLE valkyrie_cards ADD COLUMN subtasks2_title VARCHAR(60) DEFAULT ''", "subtasks2_title -> valkyrie_cards"),
-        ("ALTER TABLE valkyrie_cards ADD COLUMN due_date TIMESTAMP NULL", "due_date -> valkyrie_cards"),
-        ("ALTER TABLE valkyrie_cards ADD COLUMN archived_at TIMESTAMP NULL", "archived_at -> valkyrie_cards"),
-        ("ALTER TABLE valkyrie_cards ADD COLUMN origin VARCHAR(80) DEFAULT ''", "origin -> valkyrie_cards"),
-        ("ALTER TABLE valkyrie_cards ADD COLUMN recurrence_rule VARCHAR(40) DEFAULT ''", "recurrence_rule -> valkyrie_cards"),
     ]
+
+    # Migrations plugin : chaque plugin expose optionnellement sa propre liste
+    # via `backend.plugins.<name>.migrations.MIGRATIONS`. Scan non-intrusif —
+    # un plugin sans fichier migrations.py est simplement ignoré.
+    plugin_migrations: list[tuple[str, str]] = []
+    try:
+        from pathlib import Path as _Path
+        import importlib as _il
+        _plugins_dir = _Path(__file__).resolve().parents[2] / "plugins"
+        external_dir = _Path(__file__).resolve().parents[3] / "data" / "plugins_external"
+        for base in (_plugins_dir, external_dir):
+            if not base.exists():
+                continue
+            for d in sorted(base.iterdir()):
+                if not d.is_dir():
+                    continue
+                mig_file = d / "migrations.py"
+                if not mig_file.exists():
+                    continue
+                # Résolution du module selon le path (core vs external)
+                if base == _plugins_dir:
+                    mod_name = f"backend.plugins.{d.name}.migrations"
+                else:
+                    mod_name = f"plugins_external.{d.name}.migrations"
+                try:
+                    mod = _il.import_module(mod_name)
+                    items = getattr(mod, "MIGRATIONS", []) or []
+                    for entry in items:
+                        if isinstance(entry, (tuple, list)) and len(entry) == 2:
+                            plugin_migrations.append((str(entry[0]), str(entry[1])))
+                except Exception as e:
+                    print(f"[DB] Plugin migration scan failed for {d.name}: {e}")
+    except Exception as e:
+        print(f"[DB] Plugin migration discovery failed: {e}")
+
+    migrations = core_migrations + plugin_migrations
     for sql, label in migrations:
         try:
             async with engine.begin() as conn:

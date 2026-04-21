@@ -3078,12 +3078,49 @@ async def _finalize_onboarding(
 
 # ── Registre final ─────────────────────────────────────────────────────────────
 
-# Outils Valkyrie (plugin task-board). Importés ici pour que leurs schémas
-# soient exposés au LLM et leurs exécuteurs routés par _call_tool.
-from .valkyrie_tools import (  # noqa: E402
-    VALKYRIE_TOOL_SCHEMAS, VALKYRIE_EXECUTORS,
-)
-WOLF_TOOL_SCHEMAS.extend(VALKYRIE_TOOL_SCHEMAS)
+# Auto-discovery des outils plugin : chaque plugin peut exposer
+# `TOOL_SCHEMAS` et `EXECUTORS` dans un module `agent_tools.py` à la racine
+# de son package. On les agrège ici pour rester 100% plugin-autonome (plus
+# besoin de modifier ce fichier quand on ajoute un nouveau plugin).
+_plugin_executors_discovered: dict[str, Any] = {}
+
+
+def _discover_plugin_tools() -> None:
+    """Scan backend/plugins/*/agent_tools.py et data/plugins_external/*/agent_tools.py
+    pour collecter les TOOL_SCHEMAS + EXECUTORS."""
+    import importlib as _il
+    from pathlib import Path as _Path
+    base_core = _Path(__file__).resolve().parents[2] / "plugins"
+    base_ext = _Path(__file__).resolve().parents[3] / "data" / "plugins_external"
+    for base in (base_core, base_ext):
+        if not base.exists():
+            continue
+        for d in sorted(base.iterdir()):
+            if not d.is_dir():
+                continue
+            at = d / "agent_tools.py"
+            if not at.exists():
+                continue
+            if base == base_core:
+                mod_name = f"backend.plugins.{d.name}.agent_tools"
+            else:
+                mod_name = f"plugins_external.{d.name}.agent_tools"
+            try:
+                mod = _il.import_module(mod_name)
+                schemas = getattr(mod, "TOOL_SCHEMAS", []) or []
+                execs = getattr(mod, "EXECUTORS", {}) or {}
+                if schemas:
+                    WOLF_TOOL_SCHEMAS.extend(schemas)
+                if execs:
+                    _plugin_executors_discovered.update(execs)
+            except Exception as e:
+                import logging as _log
+                _log.getLogger("gungnir.wolf_tools").warning(
+                    f"Failed to load agent tools from {d.name}: {e}"
+                )
+
+
+_discover_plugin_tools()
 
 
 WOLF_EXECUTORS: dict[str, Any] = {
@@ -3159,8 +3196,8 @@ WOLF_EXECUTORS: dict[str, Any] = {
     # Service connections (API directes)
     "service_connect":            _service_connect,
     "service_call":               _service_call,
-    # Valkyrie (plugin task-board per-user)
-    **VALKYRIE_EXECUTORS,
+    # Tools plugin auto-découverts (Valkyrie, et tout futur plugin ou tiers)
+    **_plugin_executors_discovered,
 }
 
 # Outils en lecture seule (autorisés même en mode restreint)

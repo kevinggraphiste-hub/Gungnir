@@ -31,32 +31,42 @@ class PluginManifest:
     enabled_by_default: bool = True
     dependencies: list[str] = field(default_factory=list)
     lifecycle_hooks: bool = False
+    # Injecté par discover_plugins : "core" (backend/plugins) ou "external"
+    # (data/plugins_external) — utilisé par mount_plugin_routes pour
+    # résoudre le module Python.
+    source: str = "core"
 
 
-def discover_plugins(plugins_dir: Path) -> list[PluginManifest]:
-    """Scan plugins/ directory for manifest.json files."""
-    manifests = []
+def discover_plugins(plugins_dir: Path,
+                      external_dir: Optional[Path] = None) -> list[PluginManifest]:
+    """Scan le dossier plugins/ (+ éventuellement data/plugins_external/ pour
+    les plugins tiers installés à chaud). Chaque manifest.json se voit tagué
+    de son `source` ("core" ou "external") pour que le loader sache où
+    chercher le module Python."""
+    manifests: list[PluginManifest] = []
 
-    if not plugins_dir.exists():
-        logger.warning(f"Plugins directory not found: {plugins_dir}")
-        return manifests
+    def _scan(base: Path, source: str):
+        if not base.exists():
+            return
+        for plugin_dir in sorted(base.iterdir()):
+            if not plugin_dir.is_dir():
+                continue
+            manifest_path = plugin_dir / "manifest.json"
+            if not manifest_path.exists():
+                logger.debug(f"Skipping {plugin_dir.name}: no manifest.json")
+                continue
+            try:
+                data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest = PluginManifest(**data)
+                manifest.source = source  # type: ignore[attr-defined]
+                manifests.append(manifest)
+                logger.info(f"Discovered plugin ({source}): {manifest.name} v{manifest.version}")
+            except Exception as e:
+                logger.error(f"Failed to load manifest for {plugin_dir.name}: {e}")
 
-    for plugin_dir in sorted(plugins_dir.iterdir()):
-        if not plugin_dir.is_dir():
-            continue
-
-        manifest_path = plugin_dir / "manifest.json"
-        if not manifest_path.exists():
-            logger.debug(f"Skipping {plugin_dir.name}: no manifest.json")
-            continue
-
-        try:
-            data = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest = PluginManifest(**data)
-            manifests.append(manifest)
-            logger.info(f"Discovered plugin: {manifest.name} v{manifest.version}")
-        except Exception as e:
-            logger.error(f"Failed to load manifest for {plugin_dir.name}: {e}")
+    _scan(plugins_dir, "core")
+    if external_dir is not None:
+        _scan(external_dir, "external")
 
     return sorted(manifests, key=lambda m: m.sidebar_position)
 
@@ -69,7 +79,10 @@ def mount_plugin_routes(app: FastAPI, manifest: PluginManifest) -> bool:
     if not manifest.backend_routes:
         return True
 
-    module_name = f"backend.plugins.{manifest.name}.routes"
+    if manifest.source == "external":
+        module_name = f"plugins_external.{manifest.name}.routes"
+    else:
+        module_name = f"backend.plugins.{manifest.name}.routes"
     try:
         module = importlib.import_module(module_name)
         router = getattr(module, "router", None)
@@ -98,7 +111,10 @@ async def call_plugin_lifecycle(manifest: PluginManifest, hook: str, **kwargs) -
     if not manifest.lifecycle_hooks:
         return None
 
-    module_name = f"backend.plugins.{manifest.name}"
+    if manifest.source == "external":
+        module_name = f"plugins_external.{manifest.name}"
+    else:
+        module_name = f"backend.plugins.{manifest.name}"
     try:
         module = importlib.import_module(module_name)
         hook_fn = getattr(module, hook, None)

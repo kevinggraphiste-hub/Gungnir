@@ -1,25 +1,25 @@
 """
-valkyrie_tools.py — Outils WOLF permettant à l'agent de piloter Valkyrie.
+Valkyrie — agent_tools.py : outils WOLF pilotant le plugin depuis le chat.
+
+Convention (auto-découverte par `backend/core/agents/wolf_tools.py`) : tout
+plugin qui expose `TOOL_SCHEMAS: list[dict]` + `EXECUTORS: dict[str, fn]`
+voit ses outils ajoutés au registre sans modif du core.
 
 Tous les accès sont per-user (via `get_user_context()`), stricts : l'agent
-ne peut toucher que les projets/cartes de l'user courant. Aucune admin.
-
-Convention des tools WOLF :
-- Fonctions async Python typées, retournent un dict avec {"ok": bool, ...}.
-- Schémas OpenAI-compatible à ajouter dans WOLF_TOOL_SCHEMAS et exécuteurs
-  à mapper dans WOLF_EXECUTORS (dans wolf_tools.py).
+ne peut toucher que les données de l'user courant. Aucune admin, aucun
+fallback global.
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from .wolf_tools import get_user_context
+from backend.core.agents.wolf_tools import get_user_context
 
 
 # ── Schemas exposés au LLM ─────────────────────────────────────────────────
 
-VALKYRIE_TOOL_SCHEMAS: list[dict] = [
+TOOL_SCHEMAS: list[dict] = [
     {
         "type": "function",
         "function": {
@@ -1188,7 +1188,7 @@ async def _valkyrie_list_tags() -> dict:
         return {"ok": True, "tags": [{"label": k, "count": v} for k, v in ranked]}
 
 
-VALKYRIE_EXECUTORS: dict[str, Any] = {
+EXECUTORS: dict[str, Any] = {
     "valkyrie_list_projects":   _valkyrie_list_projects,
     "valkyrie_list_cards":      _valkyrie_list_cards,
     "valkyrie_create_card":     _valkyrie_create_card,
