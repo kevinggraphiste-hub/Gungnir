@@ -755,6 +755,9 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
         provider_config = None
         model = None
         channel_owner_id = ch.get("user_id")
+        # Timezone du propriétaire du canal — utilisée pour le contexte temporel
+        # injecté dans le system prompt (fix dates hallucinées sur Valkyrie/scheduler).
+        user_timezone = "Europe/Paris"
 
         if channel_owner_id:
             try:
@@ -762,6 +765,14 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
                 from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
                 async with _ch_session_maker() as _us_session:
                     user_settings = await get_user_settings(channel_owner_id, _us_session)
+                    # Récupère la TZ depuis ui_preferences si l'user l'a configurée
+                    try:
+                        _prefs = user_settings.ui_preferences or {}
+                        _tz_from_prefs = _prefs.get("timezone")
+                        if _tz_from_prefs:
+                            user_timezone = str(_tz_from_prefs)
+                    except Exception:
+                        pass
                     # Use user's active provider/model
                     _user_prov_name = user_settings.active_provider or "openrouter"
                     _user_prov = get_user_provider_key(user_settings, _user_prov_name)
@@ -826,11 +837,17 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
             pass
 
         _lang = settings.app.language or "fr"
-        # Capacités outils — le LLM doit savoir qu'il peut appeler n'importe
-        # quel outil WOLF / MCP / plugin depuis ce canal, exactement comme
-        # depuis le chat web (option C : feature parity complète).
-        from backend.core.agents.agent_loop import build_tools_capability_block, run_agent_loop
+        # Capacités outils + contexte temporel — le LLM doit savoir qu'il peut
+        # appeler n'importe quel outil, ET connaître la date courante pour
+        # calculer correctement les dates relatives (demain, la semaine
+        # prochaine, etc.) qui partent sinon dans la date de son cutoff.
+        from backend.core.agents.agent_loop import (
+            build_tools_capability_block,
+            build_temporal_block,
+            run_agent_loop,
+        )
         tools_block = build_tools_capability_block()
+        temporal_block = build_temporal_block(user_timezone)
 
         system_prompt = (
             f"{soul}"
@@ -838,6 +855,7 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
             f" Quand on te demande quel modele tu es, reponds avec cet identifiant."
             f" Tu n'es PAS GPT-4o, PAS Claude, PAS un autre modele — tu es `{model}`."
             f"{personality_block}"
+            f"{temporal_block}"
             f"{consciousness_block}"
             f"{tools_block}"
             f"\n\n## Contexte canal"

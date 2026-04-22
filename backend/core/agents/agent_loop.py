@@ -79,6 +79,45 @@ def _parse_text_tool_calls(text: str) -> list[dict] | None:
     return parsed or None
 
 
+# ── System prompt (contexte temporel) ────────────────────────────────────────
+
+def build_temporal_block(timezone_name: str = "Europe/Paris") -> str:
+    """Bloc injecté dans le system prompt pour donner à l'agent la conscience
+    du moment présent. Sans ce bloc, le LLM hallucine la date (souvent celle
+    de son cutoff d'entraînement), ce qui casse la création de cartes
+    Valkyrie / scheduler / rappels avec des dates relatives ("demain", "la
+    semaine prochaine") qui se retrouvent ancrées en 2023-2024.
+    """
+    from datetime import datetime, timezone as _tz
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(timezone_name)
+        now_local = datetime.now(tz)
+    except Exception:
+        now_local = datetime.now(_tz.utc)
+        timezone_name = "UTC"
+    now_utc = datetime.now(_tz.utc)
+
+    _jours = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+    _mois = ["", "janvier", "février", "mars", "avril", "mai", "juin",
+             "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+    jour_fr = _jours[now_local.weekday()]
+    mois_fr = _mois[now_local.month]
+    date_fr = f"{jour_fr} {now_local.day} {mois_fr} {now_local.year}"
+
+    return (
+        "\n\n## CONTEXTE TEMPOREL\n"
+        f"Nous sommes le **{date_fr}**.\n"
+        f"Date ISO : `{now_local.strftime('%Y-%m-%d')}`\n"
+        f"Heure locale : `{now_local.strftime('%H:%M')}` ({timezone_name})\n"
+        f"Heure UTC : `{now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}`\n"
+        "Utilise ces valeurs quand on te demande la date, l'heure, le jour "
+        "de la semaine, ou pour tout calcul temporel (âge d'une chose, "
+        "deadline, ancienneté d'un événement, etc.). Ne te fie JAMAIS à la "
+        "date de ton cutoff d'entraînement — elle est obsolète.\n"
+    )
+
+
 # ── System prompt (capacités outils) ─────────────────────────────────────────
 
 def build_tools_capability_block(models_section: str = "") -> str:
