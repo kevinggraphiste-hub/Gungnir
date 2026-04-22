@@ -1,7 +1,7 @@
 {
   "name": "code",
   "display_name": "SpearCode",
-  "version": "2.6.5",
+  "version": "2.7.0",
   "icon": "Code",
   "route": "/code",
   "sidebar_position": 4,
