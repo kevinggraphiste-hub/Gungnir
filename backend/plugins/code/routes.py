@@ -2879,54 +2879,81 @@ def _scan_balanced_json(text: str, start: int) -> Optional[str]:
     return None
 
 
+_SMART_QUOTES = str.maketrans({
+    "‘": "'", "’": "'",  # single curly
+    "“": '"', "”": '"',  # double curly
+    "«": '"', "»": '"',  # guillemets
+})
+
+
+def _try_json_tool(candidate: str) -> Optional[dict]:
+    """Try every tolerant variant to parse `candidate` as a tool-call dict.
+
+    Returns the dict if it has a "tool" key, else None. Never raises.
+    """
+    if not candidate:
+        return None
+    normalised = candidate.translate(_SMART_QUOTES)
+    for attempt in (normalised, normalised.replace("'", '"')):
+        try:
+            data = json.loads(attempt)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(data, dict) and "tool" in data:
+            return data
+    return None
+
+
 def _extract_tool_call(text: str) -> Optional[dict]:
     """Extract a JSON tool call from an AI response, resilient to formatting.
 
     Accepts:
+    - a raw JSON object occupying the whole response (strict mode LLMs)
     - ```json {"tool": ..., "args": {...}} ``` fenced blocks
     - any fenced block whose payload parses as JSON with a "tool" key
     - a bare {"tool": ...} anywhere in the text, even if followed by prose
 
-    The parser is balanced-brace-aware (respects string literals) so content
-    with internal braces, quotes or backticks no longer breaks extraction.
+    The parser is balanced-brace-aware (respects string literals), tolerates
+    single-quoted keys and smart/curly quotes (LLMs sometimes produce them),
+    and logs a debug line when extraction fails but the text *looked* like a
+    tool call attempt — so mismatches are diagnosable without silent drift.
     """
     if not text:
         return None
+
+    # 0) Whole-text JSON (some models reply with JSON only, no fence/prose).
+    stripped = text.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        data = _try_json_tool(stripped)
+        if data:
+            return data
 
     # 1) Fenced blocks first (most explicit).
     for match in re.finditer(r"```[a-zA-Z0-9_-]*\s*(.*?)```", text, re.DOTALL):
         payload = match.group(1).strip()
         if not payload.startswith("{"):
             continue
-        try:
-            data = json.loads(payload)
-        except json.JSONDecodeError:
-            # try balanced scan from start of payload
-            candidate = _scan_balanced_json(payload, 0)
-            if not candidate:
-                continue
-            try:
-                data = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-        if isinstance(data, dict) and "tool" in data:
+        data = _try_json_tool(payload)
+        if data:
+            return data
+        # Payload had extra prose after the JSON — try a balanced scan.
+        candidate = _scan_balanced_json(payload, 0)
+        data = _try_json_tool(candidate) if candidate else None
+        if data:
             return data
 
     # 2) Bare inline JSON anywhere in the text.
     for m in re.finditer(r'\{\s*["\']tool["\']', text):
         candidate = _scan_balanced_json(text, m.start())
-        if not candidate:
-            continue
-        try:
-            data = json.loads(candidate)
-        except json.JSONDecodeError:
-            # tolerate single-quoted keys by normalising
-            try:
-                data = json.loads(candidate.replace("'", '"'))
-            except json.JSONDecodeError:
-                continue
-        if isinstance(data, dict) and "tool" in data:
+        data = _try_json_tool(candidate) if candidate else None
+        if data:
             return data
+
+    # Diagnostic: the response mentioned a tool but we couldn't parse it.
+    # Log a short preview so the mismatch is visible without leaking payload.
+    if "tool" in text.lower() and ("{" in text or "```" in text):
+        preview = text[:200].replace("\n", " ")
+        logger.debug("agent tool_call extraction failed; preview=%r", preview)
 
     return None
 
