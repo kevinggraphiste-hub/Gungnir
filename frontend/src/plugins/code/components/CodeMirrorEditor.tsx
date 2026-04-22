@@ -22,6 +22,7 @@ import { sql } from '@codemirror/lang-sql'
 import { yaml } from '@codemirror/lang-yaml'
 import { cpp } from '@codemirror/lang-cpp'
 import { oneDark } from '@codemirror/theme-one-dark'
+import { showMinimap } from '@replit/codemirror-minimap'
 import { MONO } from '../utils'
 
 // Map langage SpearCode → extension CodeMirror
@@ -132,7 +133,12 @@ export function CodeMirrorEditor({ value, language, onChange, onSave, onCursorCh
   ])), [onSave])
 
   const extensions = useMemo(() => {
-    const ext = [gungnirTheme, saveKeymap, keymap.of([indentWithTab]), EditorView.lineWrapping]
+    const minimap = showMinimap.compute(['doc'], () => ({
+      create: () => ({ dom: document.createElement('div') }),
+      displayText: 'blocks' as const,
+      showOverlay: 'always' as const,
+    }))
+    const ext = [gungnirTheme, saveKeymap, keymap.of([indentWithTab]), EditorView.lineWrapping, minimap]
     const l = langExt(language)
     if (l) ext.push(l)
     return ext

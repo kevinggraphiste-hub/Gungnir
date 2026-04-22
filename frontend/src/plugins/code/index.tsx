@@ -18,7 +18,7 @@ import { loadSession, saveSession } from './session'
 
 import { HBtn, TabBtn, Breadcrumbs, StatusBar, WelcomeScreen } from './components/common'
 import { CommandPalette } from './components/CommandPalette'
-import { CodeEditor, FindReplace, Minimap } from './components/Editor'
+import { CodeEditor, FindReplace } from './components/Editor'
 import { LivePreview, ImagePreview } from './components/Preview'
 import { FileExplorer, SearchPanel } from './components/FileExplorer'
 import { GitPanel } from './components/GitPanel'
@@ -386,12 +386,7 @@ export default function SpearCodePlugin() {
                   />
                 </div>
               ) : (
-                <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-                  <div style={{ flex: 1, overflow: 'hidden' }}>
-                    <CodeEditor file={activeFile} onChange={c => updateContent(activeFile.path, c)} onSave={() => saveFile(activeFile.path)} onRun={canRun ? () => setShowTerminal(true) : undefined} onCursorChange={(l, c) => updateCursor(activeFile.path, l, c)} />
-                  </div>
-                  <Minimap content={activeFile.content} language={activeFile.language} />
-                </div>
+                <CodeEditor file={activeFile} onChange={c => updateContent(activeFile.path, c)} onSave={() => saveFile(activeFile.path)} onRun={canRun ? () => setShowTerminal(true) : undefined} onCursorChange={(l, c) => updateCursor(activeFile.path, l, c)} />
               )
             ) : <WelcomeScreen onOpenPalette={() => setShowPalette(true)} />}
           </div>

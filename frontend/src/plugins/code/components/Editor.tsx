@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import type { OpenTab } from '../types'
 import { LC, S } from '../utils'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
@@ -44,44 +44,6 @@ export function FindReplace({ content, onChange }: { content: string; onChange: 
       <div style={{ flex: 1 }} />
       <button onClick={() => doReplace(false)} disabled={!find || matchCount === 0} style={{ ...S.badge('#3b82f6', true), border: 'none', opacity: find ? 1 : 0.4 }}>Remplacer</button>
       <button onClick={() => doReplace(true)} disabled={!find || matchCount === 0} style={{ ...S.badge('#f97316', true), border: 'none', opacity: find ? 1 : 0.4 }}>Tout</button>
-    </div>
-  )
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// MINIMAP
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export function Minimap({ content, language }: { content: string; language: string }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const lines = content.split('\n')
-  const lc = LC[language] || '#6b7280'
-
-  useEffect(() => {
-    const cv = canvasRef.current
-    if (!cv) return
-    const ctx = cv.getContext('2d')
-    if (!ctx) return
-    const w = 60
-    cv.width = w
-    cv.height = Math.max(200, lines.length * 2)
-    ctx.clearRect(0, 0, w, cv.height)
-
-    lines.forEach((line, i) => {
-      const trimmed = line.replace(/\s/g, '')
-      if (!trimmed) return
-      const indent = line.length - line.trimStart().length
-      const barW = Math.min(trimmed.length * 0.5, w - indent * 0.5 - 2)
-      const isKeyword = line.includes('function') || line.includes('class') || line.includes('def ') || line.includes('const ') || line.includes('import ')
-      const isComment = line.trimStart().startsWith('//') || line.trimStart().startsWith('#') || line.trimStart().startsWith('/*')
-      ctx.fillStyle = isKeyword ? lc + '90' : isComment ? '#6b728050' : '#c9d1d930'
-      ctx.fillRect(indent * 0.5 + 2, i * 2, Math.max(barW, 2), 1.5)
-    })
-  }, [content, language])
-
-  return (
-    <div style={{ width: 64, flexShrink: 0, overflow: 'hidden', borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-      <canvas ref={canvasRef} style={{ width: 60, display: 'block', opacity: 0.8 }} />
     </div>
   )
 }
