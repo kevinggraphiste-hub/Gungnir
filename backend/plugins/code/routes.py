@@ -29,6 +29,24 @@ from pydantic import BaseModel
 
 logger = logging.getLogger("gungnir.plugins.code")
 
+# ── Rate limiting for subprocess endpoints ──────────────────────────────────
+# Per-user cap (30/min) on /run and /terminal to prevent a compromised or
+# runaway client from saturating the container with subprocess.exec. The
+# RateLimitExceeded exception handler is registered globally by main.py.
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+
+def _code_rate_limit_key(request: Request) -> str:
+    """Prefer authenticated user_id; fall back to IP when auth is missing."""
+    uid = getattr(getattr(request, "state", None), "user_id", None)
+    if uid:
+        return f"user:{uid}"
+    return get_remote_address(request)
+
+
+limiter_code = Limiter(key_func=_code_rate_limit_key)
+
 # Hard upper bound for a single AI tool-calling loop (all variants).
 # If a provider is slow or the model keeps requesting tools, we bail rather
 # than let the request hang indefinitely. Per-round LLM calls still have
@@ -669,7 +687,8 @@ RUN_COMMANDS = {
 
 
 @router.post("/run")
-async def run_file(req: RunRequest):
+@limiter_code.limit("30/minute")
+async def run_file(request: Request, req: RunRequest):
     """Execute a file and return stdout/stderr. Uses subprocess_exec (no shell injection)."""
     target = _safe_path(req.path)
     if not target.exists():
@@ -732,7 +751,8 @@ class TerminalRequest(BaseModel):
 
 
 @router.post("/terminal")
-async def run_terminal(req: TerminalRequest):
+@limiter_code.limit("30/minute")
+async def run_terminal(request: Request, req: TerminalRequest):
     """Execute a shell command in the workspace directory.
     Uses create_subprocess_exec with explicit shell binary for safety."""
     if not req.command.strip():
