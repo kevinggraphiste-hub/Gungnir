@@ -46,6 +46,7 @@ export default function SpearCodePlugin() {
   const [showPalette, setShowPalette] = useState(false)
   const [showFind, setShowFind] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
+  const [splitPath, setSplitPath] = useState<string | null>(null)
   const [showCodeActions, setShowCodeActions] = useState(false)
   const [selectedCode, setSelectedCode] = useState('')
   const [codeActionLoading, setCodeActionLoading] = useState(false)
@@ -289,6 +290,16 @@ export default function SpearCodePlugin() {
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </HBtn>}
 
+        {activeFile && !isImage && (
+          <HBtn active={!!splitPath} onClick={() => {
+            if (splitPath) { setSplitPath(null); return }
+            const other = tabs.find(t => t.path !== activeFile.path && t.language !== '__image__')
+            setSplitPath(other ? other.path : activeFile.path)
+          }} title={splitPath ? 'Fermer le split' : 'Ouvrir en split (côte à côte)'}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+          </HBtn>
+        )}
+
         {activeFile?.modified && <>
           <HBtn active={showDiff} onClick={() => setShowDiff(d => !d)} title="Diff (Ctrl+D)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v18M3 12h18"/></svg>
@@ -385,7 +396,37 @@ export default function SpearCodePlugin() {
                     onClose={() => { setShowPreview(false); setPreviewCollapsed(false) }}
                   />
                 </div>
-              ) : (
+              ) : splitPath ? (() => {
+                const splitFile = tabs.find(t => t.path === splitPath && t.language !== '__image__') || null
+                return (
+                  <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+                      <CodeEditor file={activeFile} onChange={c => updateContent(activeFile.path, c)} onSave={() => saveFile(activeFile.path)} onRun={canRun ? () => setShowTerminal(true) : undefined} onCursorChange={(l, c) => updateCursor(activeFile.path, l, c)} />
+                    </div>
+                    <div style={{ width: 1, background: 'var(--border)' }} />
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0, fontSize: 10 }}>
+                        <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1 }}>SPLIT</span>
+                        <select
+                          value={splitPath}
+                          onChange={e => setSplitPath(e.target.value)}
+                          style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', flex: 1 }}
+                        >
+                          {tabs.filter(t => t.language !== '__image__').map(t => (
+                            <option key={t.path} value={t.path}>{t.name} — {t.path}</option>
+                          ))}
+                        </select>
+                        <button onClick={() => setSplitPath(null)} title="Fermer le split" style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, padding: '0 4px', lineHeight: 1 }}>×</button>
+                      </div>
+                      {splitFile ? (
+                        <CodeEditor file={splitFile} onChange={c => updateContent(splitFile.path, c)} onSave={() => saveFile(splitFile.path)} onCursorChange={(l, c) => updateCursor(splitFile.path, l, c)} />
+                      ) : (
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Aucun fichier disponible dans le split</div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })() : (
                 <CodeEditor file={activeFile} onChange={c => updateContent(activeFile.path, c)} onSave={() => saveFile(activeFile.path)} onRun={canRun ? () => setShowTerminal(true) : undefined} onCursorChange={(l, c) => updateCursor(activeFile.path, l, c)} />
               )
             ) : <WelcomeScreen onOpenPalette={() => setShowPalette(true)} />}
