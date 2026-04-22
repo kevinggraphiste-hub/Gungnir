@@ -35,6 +35,58 @@ LEGACY_LOGS_FILE = DATA_DIR / "channel_logs.json"
 MAX_LOGS = 500
 DEFAULT_ORPHAN_OWNER = 1  # kevin/admin — receives logs whose channel_id is unknown
 
+# ── Limites de taille de message par canal ──────────────────────────
+# Les sorties d'outils (bash, web_fetch, code_read_file…) peuvent facilement
+# dépasser ces limites. On les respecte pour éviter les 400 API, au prix d'un
+# split en plusieurs messages successifs côté canal.
+CHANNEL_MAX_LEN = {
+    "telegram": 4096,
+    "discord": 2000,
+    "slack": 40000,
+    "whatsapp": 4096,
+    "email": 100000,
+    "web_widget": 100000,
+    "api": 100000,
+}
+
+
+def _split_message(text: str, max_len: int) -> list[str]:
+    """Découpe un texte en morceaux ≤ max_len sans casser les mots ni les
+    blocs de code Markdown (``` ... ```). Préserve le texte tel quel côté
+    content — aucune réécriture, juste des breaks bien placés.
+    """
+    if not text:
+        return []
+    if len(text) <= max_len:
+        return [text]
+
+    parts: list[str] = []
+    remaining = text
+    while len(remaining) > max_len:
+        # Cherche un point de coupure propre : double-newline, puis newline,
+        # puis espace. Fallback dur au max_len si aucune option.
+        cut = remaining.rfind("\n\n", 0, max_len)
+        if cut < max_len // 2:
+            cut = remaining.rfind("\n", 0, max_len)
+        if cut < max_len // 2:
+            cut = remaining.rfind(" ", 0, max_len)
+        if cut <= 0:
+            cut = max_len
+        parts.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        parts.append(remaining)
+    return parts
+
+
+def _messages_for_channel(text: str, channel_type: str) -> list[str]:
+    """Helper haut-niveau : prend une réponse complète + le type de canal,
+    renvoie la liste de messages à envoyer séquentiellement."""
+    if not text:
+        return []
+    max_len = CHANNEL_MAX_LEN.get(channel_type, 4000)
+    return _split_message(text, max_len)
+
 
 def _user_channels_path(user_id: int) -> Path:
     p = CHANNELS_BASE / str(user_id) / "channels.json"
@@ -757,11 +809,13 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
         except Exception:
             pass
 
-        # Consciousness context (memories) — channels use user 0 (system/no-auth context)
+        # Consciousness context (memories) — per-user strict : on utilise le
+        # user_id propriétaire du canal, pas le contexte système (0).
+        consciousness_uid = int(channel_owner_id) if channel_owner_id else 0
         consciousness_block = ""
         try:
             from backend.plugins.consciousness.engine import consciousness_manager
-            _ch_consciousness = consciousness_manager.get(0)
+            _ch_consciousness = consciousness_manager.get(consciousness_uid)
             if _ch_consciousness.enabled:
                 memories = await _ch_consciousness.recall(text, limit=3)
                 if memories:
@@ -772,6 +826,12 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
             pass
 
         _lang = settings.app.language or "fr"
+        # Capacités outils — le LLM doit savoir qu'il peut appeler n'importe
+        # quel outil WOLF / MCP / plugin depuis ce canal, exactement comme
+        # depuis le chat web (option C : feature parity complète).
+        from backend.core.agents.agent_loop import build_tools_capability_block, run_agent_loop
+        tools_block = build_tools_capability_block()
+
         system_prompt = (
             f"{soul}"
             f"\n\n**Modele LLM actuel :** Tu tournes sur le modele `{model}` via le provider `{provider_name}`."
@@ -779,11 +839,12 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
             f" Tu n'es PAS GPT-4o, PAS Claude, PAS un autre modele — tu es `{model}`."
             f"{personality_block}"
             f"{consciousness_block}"
+            f"{tools_block}"
             f"\n\n## Contexte canal"
             f"\nTu réponds via le canal externe '{ch.get('name', ch['type'])}' (type: {ch.get('type', 'inconnu')})."
             f"\nExpéditeur : {sender_name} ({sender_id})."
             f"\nRéponds de manière concise et adaptée à une messagerie. Langue : {_lang}."
-            f"\nNe mentionne PAS tes outils internes (browser, bash, etc.) — tu es en mode conversation externe."
+            f"\nTu as accès à TOUS tes outils (WOLF, MCP, plugins) sur ce canal — utilise-les dès qu'ils sont pertinents."
         )
 
         messages = [
@@ -791,13 +852,27 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
             ChatMessage(role="user", content=text),
         ]
 
-        response = await provider.chat(messages, model=model)
-        response_text = response.content if hasattr(response, 'content') else str(response)
+        loop_result = await run_agent_loop(
+            provider=provider,
+            model=model,
+            messages=messages,
+            user_id=consciousness_uid,
+            conversation_id=None,
+        )
+        response_text = loop_result.content
+
+        # Log des outils exécutés pour traçabilité canal
+        for ev in loop_result.tool_events:
+            _add_log(
+                channel_id, ch.get("name", ""), "tool",
+                f"{ev.tool}({str(ev.args)[:80]}) → {str(ev.result)[:120]}",
+                "ok",
+            )
 
         # Store in consciousness
         try:
             from backend.plugins.consciousness.engine import consciousness_manager
-            _ch_consciousness = consciousness_manager.get(0)
+            _ch_consciousness = consciousness_manager.get(consciousness_uid)
             if _ch_consciousness.enabled:
                 await _ch_consciousness.store_interaction(
                     f"[{ch.get('type', 'channel')}:{sender_name}] {text}",
@@ -851,21 +926,23 @@ async def telegram_webhook(channel_id: str, request: Request):
 
     response_text = await _process_incoming(channel_id, text, sender_id, sender_name.strip())
 
-    # Répondre via l'API Telegram
+    # Répondre via l'API Telegram — split auto si > 4096 chars
     if response_text and chat_id:
         import httpx
         bot_token = ch.get("config", {}).get("bot_token", "")
+        parts = _messages_for_channel(str(response_text), "telegram")
         try:
             async with httpx.AsyncClient() as client:
-                # Try plain text first (safest), Markdown can break on LLM output
-                resp = await client.post(
-                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                    json={"chat_id": chat_id, "text": str(response_text)},
-                    timeout=30,
-                )
-                if resp.status_code != 200:
-                    _add_log(channel_id, ch.get("name", ""), "out",
-                             f"Telegram sendMessage error: {resp.text[:200]}", "error")
+                for part in parts:
+                    resp = await client.post(
+                        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                        json={"chat_id": chat_id, "text": part},
+                        timeout=30,
+                    )
+                    if resp.status_code != 200:
+                        _add_log(channel_id, ch.get("name", ""), "out",
+                                 f"Telegram sendMessage error: {resp.text[:200]}", "error")
+                        break
         except Exception as e:
             _add_log(channel_id, ch.get("name", ""), "out", f"Erreur envoi Telegram: {e}", "error")
 
@@ -929,10 +1006,15 @@ async def discord_webhook(channel_id: str, request: Request):
         sender_name = sender.get("username", "")
 
         response_text = await _process_incoming(channel_id, text, sender_id, sender_name)
-        return {
-            "type": 4,
-            "data": {"content": str(response_text) if response_text else "..."}
-        }
+        parts = _messages_for_channel(str(response_text) if response_text else "…", "discord")
+        # Discord interaction response ne peut porter qu'un seul message.
+        # On renvoie le premier chunk ; les suivants seraient à envoyer via
+        # follow-up webhook (TODO : support @followup si besoin de longues
+        # sorties Discord). En attendant, on ajoute un marqueur si tronqué.
+        first = parts[0] if parts else "…"
+        if len(parts) > 1:
+            first = first[: CHANNEL_MAX_LEN["discord"] - 24] + "\n\n… (suite tronquée)"
+        return {"type": 4, "data": {"content": first}}
 
     return {"ok": True}
 
@@ -942,18 +1024,20 @@ async def discord_webhook(channel_id: str, request: Request):
 # puis on traite le message en arrière-plan (asyncio.create_task).
 
 async def _slack_process_and_reply(channel_id: str, text: str, sender_id: str, slack_channel: str, bot_token: str, channel_name: str):
-    """Traitement Slack en background : LLM + envoi réponse."""
+    """Traitement Slack en background : LLM + envoi réponse (split auto)."""
     try:
         response_text = await _process_incoming(channel_id, text, sender_id, sender_id)
         if response_text:
             import httpx
+            parts = _messages_for_channel(str(response_text), "slack")
             async with httpx.AsyncClient() as client:
-                await client.post(
-                    "https://slack.com/api/chat.postMessage",
-                    headers={"Authorization": f"Bearer {bot_token}"},
-                    json={"channel": slack_channel, "text": str(response_text)},
-                    timeout=30,
-                )
+                for part in parts:
+                    await client.post(
+                        "https://slack.com/api/chat.postMessage",
+                        headers={"Authorization": f"Bearer {bot_token}"},
+                        json={"channel": slack_channel, "text": part},
+                        timeout=30,
+                    )
     except Exception as e:
         _add_log(channel_id, channel_name, "out", f"Erreur envoi Slack: {e}", "error")
 
@@ -1071,24 +1155,26 @@ async def whatsapp_webhook(channel_id: str, request: Request):
 
                 response_text = await _process_incoming(channel_id, text, sender_phone, sender_name or sender_phone)
 
-                # Répondre via WhatsApp Cloud API
+                # Répondre via WhatsApp Cloud API (split auto à 4096)
                 if response_text:
                     import httpx
                     access_token = ch.get("config", {}).get("access_token", "")
                     phone_number_id = ch.get("config", {}).get("phone_number_id", "")
+                    parts = _messages_for_channel(str(response_text), "whatsapp")
                     try:
                         async with httpx.AsyncClient() as client:
-                            await client.post(
-                                f"https://graph.facebook.com/v18.0/{phone_number_id}/messages",
-                                headers={"Authorization": f"Bearer {access_token}"},
-                                json={
-                                    "messaging_product": "whatsapp",
-                                    "to": sender_phone,
-                                    "type": "text",
-                                    "text": {"body": str(response_text)},
-                                },
-                                timeout=30,
-                            )
+                            for part in parts:
+                                await client.post(
+                                    f"https://graph.facebook.com/v18.0/{phone_number_id}/messages",
+                                    headers={"Authorization": f"Bearer {access_token}"},
+                                    json={
+                                        "messaging_product": "whatsapp",
+                                        "to": sender_phone,
+                                        "type": "text",
+                                        "text": {"body": part},
+                                    },
+                                    timeout=30,
+                                )
                     except Exception as e:
                         _add_log(channel_id, ch.get("name", ""), "out", f"Erreur envoi WhatsApp: {e}", "error")
 
