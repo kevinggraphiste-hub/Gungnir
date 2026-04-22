@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import uuid
 import zipfile
 from datetime import datetime
@@ -27,6 +28,12 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger("gungnir.plugins.code")
+
+# Hard upper bound for a single AI tool-calling loop (all variants).
+# If a provider is slow or the model keeps requesting tools, we bail rather
+# than let the request hang indefinitely. Per-round LLM calls still have
+# their own provider-level timeout; this caps the aggregate wall time.
+AI_LOOP_TIMEOUT_S = 60
 
 # ── Per-user workspace isolation ────────────────────────────────────────────
 # Each user gets their own workspace under data/workspace/{user_id}/
@@ -2303,7 +2310,16 @@ async def _run_ai_chat_tool_loop(provider, chosen_model, messages, max_rounds: i
         response = await provider.chat(messages, chosen_model)
         return response, actions
 
+    deadline = time.monotonic() + AI_LOOP_TIMEOUT_S
+    rounds_used = 0
     for _round in range(max_rounds):
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "ai_chat tool loop hit %ss wall-clock timeout at round %d/%d",
+                AI_LOOP_TIMEOUT_S, _round, max_rounds,
+            )
+            break
+        rounds_used = _round + 1
         try:
             response = await provider.chat(
                 messages, chosen_model,
@@ -2343,6 +2359,9 @@ async def _run_ai_chat_tool_loop(provider, chosen_model, messages, max_rounds: i
                 content=json.dumps(tresult, ensure_ascii=False),
                 tool_call_id=call_id,
             ))
+    else:
+        # for-else: the loop finished without `break` → max_rounds exhausted.
+        logger.warning("ai_chat tool loop exhausted max_rounds=%d", max_rounds)
 
     if response is not None and (getattr(response, "tool_calls", None) or []):
         try:
@@ -2596,7 +2615,16 @@ async def ai_code_chat_stream(req: AIChatRequest):
                 from backend.core.providers import ChatMessage
                 final_text_from_loop: Optional[str] = None
                 max_rounds = 5
+                deadline = time.monotonic() + AI_LOOP_TIMEOUT_S
+                loop_limit_reason: Optional[str] = None
                 for _round in range(max_rounds):
+                    if time.monotonic() >= deadline:
+                        loop_limit_reason = "timeout"
+                        logger.warning(
+                            "stream tool loop hit %ss wall-clock timeout at round %d/%d",
+                            AI_LOOP_TIMEOUT_S, _round, max_rounds,
+                        )
+                        break
                     try:
                         response = await provider.chat(
                             messages, chosen_model,
@@ -2640,6 +2668,18 @@ async def ai_code_chat_stream(req: AIChatRequest):
                             content=json.dumps(tresult, ensure_ascii=False),
                             tool_call_id=call_id,
                         ))
+                else:
+                    loop_limit_reason = "max_rounds"
+                    logger.warning("stream tool loop exhausted max_rounds=%d", max_rounds)
+
+                if loop_limit_reason:
+                    limit_evt = json.dumps({
+                        "type": "loop_limit",
+                        "reason": loop_limit_reason,
+                        "max_rounds": max_rounds,
+                        "timeout_s": AI_LOOP_TIMEOUT_S,
+                    }, ensure_ascii=False)
+                    yield f"data: {limit_evt}\n\n"
 
                 if final_text_from_loop is not None:
                     # Already have final text — re-chunk it for progressive UI.
@@ -2771,10 +2811,19 @@ async def ai_agent_run(req: AgentRequest):
     async def agent_stream():
         nonlocal conversation
         steps_done = 0
+        deadline = time.monotonic() + AI_LOOP_TIMEOUT_S
+        limit_reason: Optional[str] = None
 
-        yield f"data: {json.dumps({'type': 'start', 'task': req.task, 'max_steps': max_steps}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'start', 'task': req.task, 'max_steps': max_steps, 'timeout_s': AI_LOOP_TIMEOUT_S}, ensure_ascii=False)}\n\n"
 
         for step in range(max_steps):
+            if time.monotonic() >= deadline:
+                limit_reason = "timeout"
+                logger.warning(
+                    "agent stream hit %ss wall-clock timeout at step %d/%d",
+                    AI_LOOP_TIMEOUT_S, step, max_steps,
+                )
+                break
             steps_done = step + 1
 
             # Get AI response
@@ -2840,8 +2889,16 @@ async def ai_agent_run(req: AgentRequest):
                 # No tool call — AI is done
                 yield f"data: {json.dumps({'type': 'response', 'step': steps_done, 'content': ai_text}, ensure_ascii=False)}\n\n"
                 break
+        else:
+            # for-else: exhausted max_steps without hitting a `break` on a
+            # plain text response — the agent kept calling tools to the end.
+            limit_reason = "max_steps"
+            logger.warning("agent stream exhausted max_steps=%d", max_steps)
 
-        yield f"data: {json.dumps({'type': 'done', 'steps': steps_done}, ensure_ascii=False)}\n\n"
+        if limit_reason:
+            yield f"data: {json.dumps({'type': 'loop_limit', 'reason': limit_reason, 'max_steps': max_steps, 'timeout_s': AI_LOOP_TIMEOUT_S}, ensure_ascii=False)}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done', 'steps': steps_done, 'limit_reason': limit_reason}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(agent_stream(), media_type="text/event-stream")
 
