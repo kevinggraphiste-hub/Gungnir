@@ -149,18 +149,19 @@
 
 **Objectif** : passer d'un "éditeur maison simple" à un "IDE léger professionnel".
 
-| # | Tâche | Effort |
-|---|---|---|
-| 1.1 | Installer `@codemirror/view` + `@codemirror/lang-*` (Python, JS, TS, Go, Rust, etc.) | 2 h |
-| 1.2 | Composant `<CodeEditor>` avec CodeMirror 6 : syntax highlighting natif, fold, search/replace intégré, multi-cursor | 6 h |
-| 1.3 | Auto-indent + brackets matching | inclus dans 1.2 |
-| 1.4 | Minimap (via `@codemirror/minimap`) | 1 h |
-| 1.5 | Split view horizontal + vertical (diff, side-by-side) | 4 h |
-| 1.6 | Intégration d'un **LSP** léger via `@codemirror/lsp` + serveur `pyright` / `typescript-language-server` / `rust-analyzer` lancé côté backend via subprocess | 10 h |
-| 1.7 | Autocomplétion, go-to-definition, find-references, hover tooltips (via LSP) | inclus dans 1.6 |
-| 1.8 | Linting temps réel (via LSP diagnostics) | inclus dans 1.6 |
+| # | Tâche | Effort | État |
+|---|---|---|---|
+| 1.1 | Installer `@codemirror/view` + `@codemirror/lang-*` (Python, JS, TS, Go, Rust, etc.) | 2 h | ✅ 2026-04-22 |
+| 1.2 | Composant `<CodeEditor>` avec CodeMirror 6 : syntax highlighting natif, fold, search/replace intégré, multi-cursor | 6 h | ✅ 2026-04-22 |
+| 1.3 | Auto-indent + brackets matching | inclus dans 1.2 | ✅ 2026-04-22 |
+| 1.4 | Minimap (via `@replit/codemirror-minimap`) | 1 h | ✅ 2026-04-22 |
+| 1.5 | Split view horizontal (deux fichiers côte à côte, select de fichier) | 4 h | ✅ 2026-04-22 |
+| 1.6 | Intégration d'un **LSP** léger via `@codemirror/lsp` + serveur `pyright` / `typescript-language-server` / `rust-analyzer` lancé côté backend via subprocess | 10 h | ⏳ |
+| 1.7 | Autocomplétion, go-to-definition, find-references, hover tooltips (via LSP) | inclus dans 1.6 | ⏳ |
+| 1.8 | Linting temps réel (via LSP diagnostics) | inclus dans 1.6 | ⏳ |
 
 **Total Phase 1** : ~23 h. **Gros chantier**, plus grosse transformation UX.
+**État 2026-04-22** : 1.1 → 1.5 livrés (plugin 2.7.0 → 2.8.0). LSP (1.6-1.8) restant.
 
 ---
 
