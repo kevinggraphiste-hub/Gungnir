@@ -1124,8 +1124,36 @@ _GIT_HOST_USERNAME = {
 }
 
 
-async def _git_exec_env(*args: str, cwd: str | None = None, env: dict | None = None) -> tuple[bool, str]:
-    """Like _git_exec but accepts a custom environment (for credential injection)."""
+def _scrub_git_secrets(text: str, token: Optional[str]) -> str:
+    """Remove a PAT (raw and URL-encoded forms) and any inline creds from text.
+
+    Git can echo the authenticated URL in stderr on failures; the token may
+    appear raw, percent-encoded, or inside a `https://user:pass@host/` form.
+    This scrubber handles all three, so the result never leaks the secret.
+    """
+    if not text:
+        return text
+    if token:
+        text = text.replace(token, "***")
+        try:
+            from urllib.parse import quote
+            encoded = quote(token, safe="")
+            if encoded and encoded != token:
+                text = text.replace(encoded, "***")
+        except Exception:
+            pass
+    # Belt-and-suspenders: strip any inline `user:secret@host` creds that
+    # might have slipped through an encoding we didn't anticipate.
+    text = re.sub(r"(https?://)[^/\s:@]+:[^/\s@]+@", r"\1***:***@", text)
+    return text
+
+
+async def _git_exec_env(*args: str, cwd: str | None = None, env: dict | None = None, scrub_token: Optional[str] = None) -> tuple[bool, str]:
+    """Like _git_exec but accepts a custom environment (for credential injection).
+
+    If ``scrub_token`` is provided, the returned output (including any Python
+    exception message) is scrubbed so the PAT never leaks to callers.
+    """
     merged_env = os.environ.copy()
     # Disable any interactive prompt — we never want git to block waiting for
     # a password in a Docker container. Either the URL carries a PAT or the
@@ -1144,7 +1172,7 @@ async def _git_exec_env(*args: str, cwd: str | None = None, env: dict | None = N
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
         out = stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")
-        return proc.returncode == 0, out.strip()
+        return proc.returncode == 0, _scrub_git_secrets(out.strip(), scrub_token)
     except asyncio.TimeoutError:
         try:
             proc.kill()
@@ -1152,7 +1180,7 @@ async def _git_exec_env(*args: str, cwd: str | None = None, env: dict | None = N
             pass
         return False, "Timeout (60s) — verifie ton PAT ou la connectivite."
     except Exception as e:
-        return False, str(e)
+        return False, _scrub_git_secrets(str(e), scrub_token)
 
 
 def _git_host_of(url: str) -> Optional[str]:
@@ -1308,10 +1336,7 @@ async def git_push(req: GitPushPullRequest):
     if req.set_upstream:
         args += ["--set-upstream"]
     args += [req.remote, target_branch]
-    ok, out = await _git_exec_env(*args, cwd=ws)
-    # Never leak the PAT back to the UI, even if git echoed it in an error.
-    if token:
-        out = out.replace(token, "***")
+    ok, out = await _git_exec_env(*args, cwd=ws, scrub_token=token)
     return {"ok": ok, "output": out, "branch": target_branch, "remote": req.remote, "authenticated": bool(token)}
 
 
@@ -1332,9 +1357,7 @@ async def git_pull(req: GitPushPullRequest):
     name, email = await _user_git_identity()
     args += _apply_identity_args(name, email)
     args += ["pull", req.remote, target_branch]
-    ok, out = await _git_exec_env(*args, cwd=ws)
-    if token:
-        out = out.replace(token, "***")
+    ok, out = await _git_exec_env(*args, cwd=ws, scrub_token=token)
     return {"ok": ok, "output": out, "branch": target_branch, "remote": req.remote, "authenticated": bool(token)}
 
 
@@ -1350,9 +1373,7 @@ async def git_fetch(req: GitPushPullRequest):
     if authed != remote_url:
         args += ["-c", f"remote.{req.remote}.url={authed}"]
     args += ["fetch", "--prune", req.remote]
-    ok, out = await _git_exec_env(*args, cwd=ws)
-    if token:
-        out = out.replace(token, "***")
+    ok, out = await _git_exec_env(*args, cwd=ws, scrub_token=token)
     return {"ok": ok, "output": out, "remote": req.remote}
 
 
@@ -1383,9 +1404,7 @@ async def git_clone(req: GitCloneRequest):
     dest.parent.mkdir(parents=True, exist_ok=True)
     token = await _user_git_token_for_url(url)
     authed = _authed_url(url, token)
-    ok, out = await _git_exec_env("clone", authed, str(dest), cwd=str(ws))
-    if token:
-        out = out.replace(token, "***")
+    ok, out = await _git_exec_env("clone", authed, str(dest), cwd=str(ws), scrub_token=token)
     return {"ok": ok, "output": out, "target": sub, "authenticated": bool(token)}
 
 
