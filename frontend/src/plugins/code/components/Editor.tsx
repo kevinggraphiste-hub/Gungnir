@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { OpenTab } from '../types'
-import { LC, MONO, S } from '../utils'
+import { LC, S } from '../utils'
+import { CodeMirrorEditor } from './CodeMirrorEditor'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FIND & REPLACE
@@ -92,19 +93,8 @@ export function Minimap({ content, language }: { content: string; language: stri
 export function CodeEditor({ file, onChange, onSave, onRun, onCursorChange }: {
   file: OpenTab; onChange: (c: string) => void; onSave: () => void; onRun?: () => void; onCursorChange?: (line: number, col: number) => void
 }) {
-  const lineCountRef = useRef<HTMLDivElement>(null)
   const lines = file.content.split('\n')
   const langColor = LC[file.language] || '#6b7280'
-
-  const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => { if (lineCountRef.current) lineCountRef.current.scrollTop = e.currentTarget.scrollTop }
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Tab') { e.preventDefault(); const ta = e.currentTarget; const s = ta.selectionStart; const end = ta.selectionEnd; onChange(ta.value.substring(0, s) + '  ' + ta.value.substring(end)); requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 2 }) }
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); onSave() }
-  }
-  const handleCursor = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
-    const ta = e.currentTarget; const before = ta.value.substring(0, ta.selectionStart)
-    onCursorChange?.(before.split('\n').length, ta.selectionStart - before.lastIndexOf('\n'))
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -116,12 +106,13 @@ export function CodeEditor({ file, onChange, onSave, onRun, onCursorChange }: {
         {onRun && <button onClick={onRun} style={{ ...S.badge('#22c55e', true), border: 'none', cursor: 'pointer', fontSize: 8 }}>&#9654; Run</button>}
       </div>
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        <div ref={lineCountRef} style={{ width: 44, flexShrink: 0, overflow: 'hidden', padding: '10px 0', background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)', fontFamily: MONO, fontSize: 12, lineHeight: '20px', textAlign: 'right', userSelect: 'none', color: 'var(--text-muted)' }}>
-          {lines.map((_, i) => <div key={i} style={{ paddingRight: 8, height: 20, opacity: 0.3 }}>{i + 1}</div>)}
-        </div>
-        <textarea value={file.content} onChange={e => onChange(e.target.value)}
-          onScroll={handleScroll} onKeyDown={handleKeyDown} onClick={handleCursor} onKeyUp={handleCursor} spellCheck={false}
-          style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', padding: '10px 14px', fontFamily: MONO, fontSize: 12, lineHeight: '20px', tabSize: 2, background: 'var(--bg-primary)', color: 'var(--text-primary)', overflow: 'auto' }} />
+        <CodeMirrorEditor
+          value={file.content}
+          language={file.language}
+          onChange={onChange}
+          onSave={onSave}
+          onCursorChange={onCursorChange}
+        />
       </div>
     </div>
   )
