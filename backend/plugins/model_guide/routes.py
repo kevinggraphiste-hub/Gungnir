@@ -5,8 +5,10 @@ Catalog of available models across all configured providers.
 Fetches live pricing from OpenRouter API, enriches with metadata.
 Self-contained — reads core config (read-only), no mutations.
 """
+import json
 import logging
 import time
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -20,6 +22,7 @@ from backend.core.providers import get_provider
 
 logger = logging.getLogger("gungnir.plugins.model_guide")
 router = APIRouter()
+_PLUGIN_DIR = Path(__file__).parent
 
 
 # ── French descriptions for popular models ───────────────────────────────────
@@ -456,4 +459,105 @@ async def get_tiers():
         "premium":  {"symbol": "$$$",  "label": "Premium",       "description": "$10 - $30/M tokens en moyenne",          "color": "#dc2626"},
         "flagship": {"symbol": "$$$$", "label": "Flagship",      "description": "Plus de $30/M tokens en moyenne",        "color": "#7c2d12"},
         "unknown":  {"symbol": "?",    "label": "Inconnu",       "description": "Prix non disponible",                    "color": "#6b7280"},
+    }
+
+
+# ── Benchmarks ───────────────────────────────────────────────────────────────
+# Même pattern que le catalogue : chargement paresseux, cache mémoire, fetch
+# enrichi par la live data OpenRouter. Les scores benchmarks eux-mêmes sont
+# curés (snapshot JSON bundled) car aucune source publique ne les expose en
+# API gratuite (LMArena / Artificial Analysis → 401, HF datasets → auth).
+# Le snapshot peut être rafraîchi via un PR ou une mise à jour manuelle.
+
+_benchmarks_static: dict | None = None
+_benchmarks_static_ts: float = 0.0
+_BENCHMARKS_FILE_TTL = 60  # re-read JSON from disk every 60s (permet hot-swap)
+
+
+def _load_benchmarks_static() -> dict:
+    """Charge le snapshot JSON avec un petit cache pour éviter les reads
+    disque à chaque requête. Re-read toutes les 60s pour permettre un
+    hot-swap (édition manuelle du fichier sans redémarrage)."""
+    global _benchmarks_static, _benchmarks_static_ts
+    if _benchmarks_static and (time.time() - _benchmarks_static_ts) < _BENCHMARKS_FILE_TTL:
+        return _benchmarks_static
+    try:
+        data = json.loads((_PLUGIN_DIR / "benchmarks_static.json").read_text(encoding="utf-8"))
+        _benchmarks_static = data
+        _benchmarks_static_ts = time.time()
+        return data
+    except Exception as e:
+        logger.warning(f"Benchmarks static load failed: {e}")
+        return _benchmarks_static or {"schema_version": 0, "sources": [], "models": []}
+
+
+def _provider_from_id(model_id: str) -> str:
+    """Extrait le provider depuis un id 'provider/model' (ou 'unknown')."""
+    if "/" in model_id:
+        return model_id.split("/", 1)[0]
+    return "unknown"
+
+
+@router.get("/benchmarks")
+async def get_benchmarks():
+    """Retourne le snapshot des benchmarks enrichi avec le pricing et le
+    context_window récupérés live depuis OpenRouter. Les modèles absents
+    d'OpenRouter restent listés sans pricing (null).
+
+    Le frontend reçoit tout en un seul call et fait filtres/tri côté client
+    (même principe que /catalog)."""
+    static = _load_benchmarks_static()
+    or_models = await _fetch_openrouter_models()
+
+    metrics = [s["metric"] for s in static.get("sources", []) if s.get("metric")]
+    models_out: list[dict] = []
+    for row in static.get("models", []):
+        mid = row.get("id", "")
+        or_meta = or_models.get(mid, {})
+        input_1m = or_meta.get("input_1m")
+        output_1m = or_meta.get("output_1m")
+        avg_price = (input_1m + output_1m) / 2 if (input_1m is not None and output_1m is not None) else None
+
+        # Score d'efficacité (Arena Elo par $ moyen) — pratique pour trier sur
+        # « rapport perf/prix ». Null si pas de pricing ou pas de score arena.
+        lmarena = row.get("lmarena_elo")
+        efficiency = None
+        if lmarena and avg_price and avg_price > 0:
+            # Normalisation : Elo au-dessus de 1000 / prix moyen
+            efficiency = round(max(lmarena - 1000, 0) / avg_price, 2)
+        elif lmarena and avg_price == 0:
+            efficiency = round(max(lmarena - 1000, 0) * 100, 2)  # gratuit → bonus
+
+        entry = {
+            "id": mid,
+            "name": or_meta.get("name") or mid.split("/")[-1],
+            "provider": _provider_from_id(mid),
+            "context_window": or_meta.get("context_window") or None,
+            "input_1m": input_1m,
+            "output_1m": output_1m,
+            "avg_price": round(avg_price, 4) if avg_price is not None else None,
+            "price_tier": _price_tier(input_1m or 0, output_1m or 0) if (input_1m is not None and output_1m is not None) else "unknown",
+            "efficiency": efficiency,
+        }
+        # Copie les métriques présentes dans le static (scores benchmarks bruts)
+        for m in metrics:
+            entry[m] = row.get(m)
+        models_out.append(entry)
+
+    return {
+        "schema_version": static.get("schema_version", 1),
+        "last_updated": static.get("last_updated"),
+        "notes": static.get("notes"),
+        "metrics": metrics,
+        "models": models_out,
+    }
+
+
+@router.get("/benchmarks/sources")
+async def get_benchmarks_sources():
+    """Métadonnées des sources (URL, description, métrique)."""
+    static = _load_benchmarks_static()
+    return {
+        "last_updated": static.get("last_updated"),
+        "sources": static.get("sources", []),
     }

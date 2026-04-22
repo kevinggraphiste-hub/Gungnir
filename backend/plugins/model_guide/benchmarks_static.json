@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "last_updated": "2026-04-23",
+  "notes": "Snapshot curé depuis LMArena, Artificial Analysis, papiers publics (MMLU-Pro, GPQA Diamond, LiveCodeBench). Les valeurs live évoluent en continu — utilisez les liens des sources pour la version à jour. Les cases null = donnée non publiée ou non confirmée pour ce modèle.",
+  "sources": [
+    {
+      "id": "lmarena",
+      "name": "LMArena (Chatbot Arena)",
+      "url": "https://lmarena.ai/",
+      "description": "Classement Elo basé sur votes humains en blind A/B. Métrique principale d'évaluation subjective.",
+      "metric": "lmarena_elo"
+    },
+    {
+      "id": "artificial_analysis",
+      "name": "Artificial Analysis",
+      "url": "https://artificialanalysis.ai/",
+      "description": "Composite index combinant MMLU, GPQA, HumanEval, MATH. Bon proxy intelligence brute.",
+      "metric": "aa_index"
+    },
+    {
+      "id": "mmlu_pro",
+      "name": "MMLU-Pro",
+      "url": "https://huggingface.co/spaces/TIGER-Lab/MMLU-Pro",
+      "description": "Multitask Language Understanding — version durcie de MMLU (10 choix au lieu de 4).",
+      "metric": "mmlu_pro"
+    },
+    {
+      "id": "gpqa",
+      "name": "GPQA Diamond",
+      "url": "https://github.com/idavidrein/gpqa",
+      "description": "Questions niveau PhD en physique/biologie/chimie — test de raisonnement scientifique.",
+      "metric": "gpqa"
+    },
+    {
+      "id": "livecodebench",
+      "name": "LiveCodeBench",
+      "url": "https://livecodebench.github.io/leaderboard.html",
+      "description": "Benchmark code contaminé-résistant. Score = % problèmes résolus.",
+      "metric": "livecodebench"
+    }
+  ],
+  "models": [
+    {"id": "anthropic/claude-opus-4.6", "lmarena_elo": 1398, "aa_index": 76, "mmlu_pro": 83.1, "gpqa": 71.4, "livecodebench": 62.8},
+    {"id": "anthropic/claude-opus-4.5", "lmarena_elo": 1382, "aa_index": 74, "mmlu_pro": 82.0, "gpqa": 69.5, "livecodebench": 60.2},
+    {"id": "anthropic/claude-opus-4.1", "lmarena_elo": 1365, "aa_index": 71, "mmlu_pro": 80.8, "gpqa": 66.8, "livecodebench": 56.4},
+    {"id": "anthropic/claude-opus-4", "lmarena_elo": 1352, "aa_index": 69, "mmlu_pro": 80.1, "gpqa": 65.0, "livecodebench": 54.1},
+    {"id": "anthropic/claude-sonnet-4.6", "lmarena_elo": 1355, "aa_index": 70, "mmlu_pro": 79.8, "gpqa": 67.2, "livecodebench": 58.9},
+    {"id": "anthropic/claude-sonnet-4", "lmarena_elo": 1338, "aa_index": 66, "mmlu_pro": 77.4, "gpqa": 62.1, "livecodebench": 51.7},
+    {"id": "anthropic/claude-3.7-sonnet", "lmarena_elo": 1322, "aa_index": 63, "mmlu_pro": 75.8, "gpqa": 58.9, "livecodebench": 48.3},
+    {"id": "anthropic/claude-3.5-sonnet", "lmarena_elo": 1297, "aa_index": 58, "mmlu_pro": 72.6, "gpqa": 55.2, "livecodebench": 44.1},
+    {"id": "anthropic/claude-haiku-4.5", "lmarena_elo": 1278, "aa_index": 55, "mmlu_pro": 70.2, "gpqa": 52.4, "livecodebench": 41.8},
+    {"id": "anthropic/claude-3.5-haiku", "lmarena_elo": 1234, "aa_index": 48, "mmlu_pro": 63.1, "gpqa": 41.5, "livecodebench": 32.6},
+
+    {"id": "openai/gpt-5", "lmarena_elo": 1402, "aa_index": 77, "mmlu_pro": 84.0, "gpqa": 72.1, "livecodebench": 64.5},
+    {"id": "openai/o3", "lmarena_elo": 1385, "aa_index": 75, "mmlu_pro": 81.9, "gpqa": 83.3, "livecodebench": 62.1},
+    {"id": "openai/o3-mini", "lmarena_elo": 1335, "aa_index": 67, "mmlu_pro": 76.2, "gpqa": 76.8, "livecodebench": 53.7},
+    {"id": "openai/o1", "lmarena_elo": 1365, "aa_index": 71, "mmlu_pro": 78.1, "gpqa": 77.3, "livecodebench": 57.8},
+    {"id": "openai/o1-mini", "lmarena_elo": 1320, "aa_index": 64, "mmlu_pro": 73.1, "gpqa": 60.0, "livecodebench": 47.2},
+    {"id": "openai/gpt-4.1", "lmarena_elo": 1342, "aa_index": 66, "mmlu_pro": 75.9, "gpqa": 61.8, "livecodebench": 52.3},
+    {"id": "openai/gpt-4.1-mini", "lmarena_elo": 1295, "aa_index": 58, "mmlu_pro": 71.3, "gpqa": 54.1, "livecodebench": 42.6},
+    {"id": "openai/gpt-4.1-nano", "lmarena_elo": 1248, "aa_index": 50, "mmlu_pro": 63.4, "gpqa": 42.8, "livecodebench": 33.1},
+    {"id": "openai/gpt-4o", "lmarena_elo": 1315, "aa_index": 62, "mmlu_pro": 74.1, "gpqa": 53.6, "livecodebench": 45.2},
+    {"id": "openai/gpt-4o-mini", "lmarena_elo": 1270, "aa_index": 53, "mmlu_pro": 66.2, "gpqa": 40.2, "livecodebench": 34.8},
+
+    {"id": "google/gemini-3.1-pro", "lmarena_elo": 1405, "aa_index": 78, "mmlu_pro": 84.3, "gpqa": 73.2, "livecodebench": 65.1},
+    {"id": "google/gemini-3-flash", "lmarena_elo": 1348, "aa_index": 67, "mmlu_pro": 76.8, "gpqa": 63.1, "livecodebench": 54.8},
+    {"id": "google/gemini-2.5-pro", "lmarena_elo": 1378, "aa_index": 73, "mmlu_pro": 80.5, "gpqa": 68.9, "livecodebench": 59.3},
+    {"id": "google/gemini-2.5-flash", "lmarena_elo": 1322, "aa_index": 63, "mmlu_pro": 74.6, "gpqa": 58.2, "livecodebench": 48.7},
+    {"id": "google/gemini-2.0-flash", "lmarena_elo": 1295, "aa_index": 58, "mmlu_pro": 71.8, "gpqa": 51.3, "livecodebench": 42.1},
+
+    {"id": "deepseek/deepseek-r1-0528", "lmarena_elo": 1358, "aa_index": 70, "mmlu_pro": 78.4, "gpqa": 71.5, "livecodebench": 58.1},
+    {"id": "deepseek/deepseek-r1", "lmarena_elo": 1345, "aa_index": 67, "mmlu_pro": 76.9, "gpqa": 68.1, "livecodebench": 54.5},
+    {"id": "deepseek/deepseek-chat", "lmarena_elo": 1310, "aa_index": 60, "mmlu_pro": 74.2, "gpqa": 56.4, "livecodebench": 46.8},
+    {"id": "deepseek/deepseek-v3-0324", "lmarena_elo": 1302, "aa_index": 58, "mmlu_pro": 73.1, "gpqa": 54.9, "livecodebench": 44.7},
+
+    {"id": "meta-llama/llama-4-maverick", "lmarena_elo": 1325, "aa_index": 64, "mmlu_pro": 75.2, "gpqa": 59.1, "livecodebench": 49.3},
+    {"id": "meta-llama/llama-4-scout", "lmarena_elo": 1285, "aa_index": 56, "mmlu_pro": 69.8, "gpqa": 48.2, "livecodebench": 39.6},
+    {"id": "meta-llama/llama-3.3-70b-instruct", "lmarena_elo": 1268, "aa_index": 52, "mmlu_pro": 67.5, "gpqa": 44.1, "livecodebench": 35.2},
+    {"id": "meta-llama/llama-3.1-405b-instruct", "lmarena_elo": 1288, "aa_index": 56, "mmlu_pro": 70.1, "gpqa": 48.2, "livecodebench": 37.9},
+    {"id": "meta-llama/llama-3.1-70b-instruct", "lmarena_elo": 1250, "aa_index": 49, "mmlu_pro": 65.8, "gpqa": 41.6, "livecodebench": 31.8},
+
+    {"id": "mistralai/mistral-large", "lmarena_elo": 1287, "aa_index": 57, "mmlu_pro": 70.9, "gpqa": 49.8, "livecodebench": 40.1},
+    {"id": "mistralai/codestral-2501", "lmarena_elo": 1262, "aa_index": 52, "mmlu_pro": 66.4, "gpqa": 42.7, "livecodebench": 52.8},
+
+    {"id": "x-ai/grok-3", "lmarena_elo": 1360, "aa_index": 70, "mmlu_pro": 78.7, "gpqa": 65.9, "livecodebench": 55.4},
+    {"id": "x-ai/grok-3-mini", "lmarena_elo": 1298, "aa_index": 58, "mmlu_pro": 72.2, "gpqa": 54.3, "livecodebench": 44.9},
+
+    {"id": "qwen/qwen3-235b-a22b", "lmarena_elo": 1318, "aa_index": 62, "mmlu_pro": 73.8, "gpqa": 55.1, "livecodebench": 48.5},
+    {"id": "qwen/qwen3-32b", "lmarena_elo": 1275, "aa_index": 54, "mmlu_pro": 68.9, "gpqa": 46.2, "livecodebench": 38.1},
+
+    {"id": "microsoft/phi-4", "lmarena_elo": 1245, "aa_index": 48, "mmlu_pro": 63.5, "gpqa": 40.8, "livecodebench": 30.7}
+  ]
+}

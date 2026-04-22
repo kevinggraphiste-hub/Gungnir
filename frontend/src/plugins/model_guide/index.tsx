@@ -6,7 +6,8 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { PageHeader, SecondaryButton } from '@core/components/ui'
-import { Layers, RefreshCw, Search as SearchIcon } from 'lucide-react'
+import { Layers, RefreshCw, Search as SearchIcon, BarChart3 } from 'lucide-react'
+import { BenchmarksTab } from './BenchmarksTab'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -134,6 +135,7 @@ const COL = {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function ModelGuidePlugin() {
+  const [activeTab, setActiveTab] = useState<'models' | 'benchmarks'>('models')
   const [catalog, setCatalog] = useState<Record<string, ProviderGroup>>({})
   const [quickPicks, setQuickPicks] = useState<QuickPick[]>([])
   const [tiers, setTiers] = useState<Record<string, TierInfo>>({})
@@ -255,9 +257,11 @@ export default function ModelGuidePlugin() {
         <PageHeader
           icon={<Layers size={18} />}
           title="Guide des Modèles"
-          version="1.0.1"
-          subtitle={`${totalModels} modèle${totalModels > 1 ? 's' : ''} disponible${totalModels > 1 ? 's' : ''}`}
-          actions={(
+          version="1.1.0"
+          subtitle={activeTab === 'models'
+            ? `${totalModels} modèle${totalModels > 1 ? 's' : ''} disponible${totalModels > 1 ? 's' : ''}`
+            : 'Classements & comparatifs'}
+          actions={activeTab === 'models' ? (
             <>
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 8,
@@ -283,10 +287,37 @@ export default function ModelGuidePlugin() {
                 Rafraichir
               </SecondaryButton>
             </>
-          )}
+          ) : null}
         />
       </div>
 
+      {/* Onglets */}
+      <div style={{
+        padding: '8px 24px 0', display: 'flex', gap: 4, flexShrink: 0,
+        borderBottom: '1px solid var(--border)',
+      }}>
+        {([
+          ['models', 'Modèles', <Layers key="i" size={12} />],
+          ['benchmarks', 'Benchmarks', <BarChart3 key="i" size={12} />],
+        ] as const).map(([id, label, icon]) => (
+          <button key={id} onClick={() => setActiveTab(id as 'models' | 'benchmarks')}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '6px 14px', borderRadius: '6px 6px 0 0', border: 'none',
+              fontSize: 11, fontWeight: 600, cursor: 'pointer',
+              background: activeTab === id ? 'var(--bg-primary)' : 'transparent',
+              color: activeTab === id ? 'var(--scarlet)' : 'var(--text-muted)',
+              borderBottom: activeTab === id ? '2px solid var(--scarlet)' : '2px solid transparent',
+              transition: 'all 0.15s',
+            }}>
+            {icon} {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'benchmarks' && <BenchmarksTab />}
+
+      {activeTab === 'models' && <>
       {/* Filters bar */}
       <div style={{
         padding: '8px 24px', borderBottom: '1px solid var(--border)',
@@ -454,6 +485,7 @@ export default function ModelGuidePlugin() {
           </div>
         )}
       </div>
+      </>}
     </div>
   )
 }
