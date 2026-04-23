@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../i18n'
@@ -1330,6 +1330,15 @@ export default function Chat() {
     } catch (err) { console.error('New chat with summary error:', err) }
   }
 
+  // Set mémorisé des IDs de modèles image-gen — alimenté depuis imgGenCatalog.
+  // Sert à détecter quand l'utilisateur sélectionne un modèle image dans le
+  // dropdown du chat et à router automatiquement vers /api/chat/image.
+  const imageModelIds = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of imgGenCatalog) for (const m of p.models) s.add(m.id)
+    return s
+  }, [imgGenCatalog])
+
   const handleSend = async (overrideText?: string) => {
     const effectiveInput = overrideText ?? input
     if ((!effectiveInput.trim() && attachedFiles.length === 0) || isLoading) return
@@ -1383,6 +1392,44 @@ export default function Chat() {
     setAttachedFiles([])
     setLoading(true)
     setLoadingConvoId(convoId)
+    // ── Shortcut : modèle image-gen sélectionné dans le dropdown chat ─────
+    // Au lieu d'envoyer le prompt via /chat/stream (qui retournerait une
+    // bulle vide car chat streaming ne gère pas les output images), on
+    // route directement vers /api/chat/image avec le prompt comme texte.
+    if (imageModelIds.has(selectedModel)) {
+      const imageSetMessages = useStore.getState().setMessages
+      try {
+        const resp = await apiFetch('/api/chat/image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: fullMessage,
+            provider: selectedProvider,
+            model: selectedModel,
+            size: '1024x1024',
+            n: 1,
+            conversation_id: convoId,
+          }),
+        })
+        const data = await resp.json()
+        if (!data?.ok) {
+          addMessage({ id: Date.now(), role: 'user', content: fullMessage, created_at: new Date().toISOString() })
+          addMessage({ id: Date.now() + 1, role: 'assistant', content: `[Erreur génération image : ${data?.error || 'inconnue'}]`, created_at: new Date().toISOString() })
+        } else {
+          try {
+            const msgs = await api.getMessages(convoId!)
+            imageSetMessages(msgs)
+          } catch { /* ignore */ }
+        }
+      } catch (e: any) {
+        addMessage({ id: Date.now(), role: 'user', content: fullMessage, created_at: new Date().toISOString() })
+        addMessage({ id: Date.now() + 1, role: 'assistant', content: `[Erreur réseau : ${e?.message || 'inconnue'}]`, created_at: new Date().toISOString() })
+      }
+      setInput('')
+      setAttachedFiles([])
+      return
+    }
+
     // Afficher le message user avec miniatures des images jointes
     const displayContent = currentImages.length > 0
       ? userMessage + currentImages.map(() => '\n[Image jointe]').join('')
@@ -2549,8 +2596,11 @@ export default function Chat() {
       {/* Image generation modal — sélection explicite du modèle (DALL-E 3,
           GPT Image 1, Imagen 3, NanoBanana…), pas de détection auto. */}
       {showImageGenModal && (
+        <ImageGenEscCloser onClose={() => setShowImageGenModal(false)} />
+      )}
+      {showImageGenModal && (
         <div
-          onClick={() => !imgGenLoading && setShowImageGenModal(false)}
+          onClick={() => setShowImageGenModal(false)}
           style={{
             position: 'fixed', inset: 0, zIndex: 100,
             background: 'rgba(0,0,0,0.55)',
@@ -2573,7 +2623,8 @@ export default function Chat() {
                 Génération d'image
               </h3>
               <div style={{ flex: 1 }} />
-              <button onClick={() => !imgGenLoading && setShowImageGenModal(false)}
+              <button onClick={() => setShowImageGenModal(false)}
+                title="Fermer (Échap)"
                 style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 20 }}>
                 ×
               </button>
@@ -2671,14 +2722,13 @@ export default function Chat() {
 
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
               <button
-                disabled={imgGenLoading}
                 onClick={() => setShowImageGenModal(false)}
                 style={{
                   padding: '8px 16px', borderRadius: 6, fontSize: 13,
                   background: 'transparent', border: '1px solid var(--border)',
-                  color: 'var(--text-secondary)', cursor: imgGenLoading ? 'not-allowed' : 'pointer',
+                  color: 'var(--text-secondary)', cursor: 'pointer',
                 }}>
-                Annuler
+                {imgGenLoading ? 'Fermer (génération en cours)' : 'Annuler'}
               </button>
               <button
                 disabled={imgGenLoading || !imgGenPrompt.trim() || !imgGenProvider || !imgGenModel}
@@ -2734,6 +2784,18 @@ export default function Chat() {
       )}
     </div>
   )
+}
+
+
+// Écoute Escape pour fermer une modal — component helper pour éviter du useEffect
+// inline dans le gros composant Chat.
+function ImageGenEscCloser({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [onClose])
+  return null
 }
 
 
