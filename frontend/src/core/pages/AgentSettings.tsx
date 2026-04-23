@@ -599,7 +599,7 @@ export default function AgentSettings() {
               >
                 <SettingsIcon className="w-8 h-8 mb-2" style={{ color: currentMode === 'ask_permission' ? 'var(--accent-tertiary)' : 'var(--text-muted)' }} />
                 <div style={{ color: 'var(--text-primary)' }} className="font-medium">Demande</div>
-                <div style={{ color: 'var(--text-muted)' }} className="text-sm">Confirme avant actions sensibles</div>
+                <div style={{ color: 'var(--text-muted)' }} className="text-sm">Demande oralement, réponds « oui »</div>
               </button>
 
               <button
@@ -612,7 +612,7 @@ export default function AgentSettings() {
               >
                 <Lock className="w-8 h-8 mb-2" style={{ color: currentMode === 'restrained' ? 'var(--accent-success)' : 'var(--text-muted)' }} />
                 <div style={{ color: 'var(--text-primary)' }} className="font-medium">Restreint</div>
-                <div style={{ color: 'var(--text-muted)' }} className="text-sm">Attend confirmation</div>
+                <div style={{ color: 'var(--text-muted)' }} className="text-sm">Carte d'autorisation à valider</div>
               </button>
             </div>
 

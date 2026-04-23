@@ -1501,38 +1501,30 @@ Tu operes en mode **demande**. Comportement :
                     and bool(_current_uid)
                 )
 
-                # RESTRAINED : vérifier que l'utilisateur a explicitement demandé cette action
+                # Gating par mode — 2026-04-23 : swap des comportements UX.
+                # - Mode "Demande" (ask_permission)  : validation 100% conversationnelle.
+                #   L'agent verbalise sa demande, l'user répond "oui" en texte → autorise.
+                #   Aucune carte UI, pas de friction inutile. Idéal pour un flux rapide.
+                # - Mode "Restreint" (restrained)    : validation explicite par carte UI
+                #   (style Claude Code desktop). Si l'user n'a pas formulé le tool
+                #   dans sa demande, on génère pending_approval → la PermissionCard
+                #   apparaît inline dans le chat avec boutons Autoriser / Refuser.
                 _blocked = False
                 if _is_onboarding_finalize:
                     print(f"[Wolf] ONBOARDING: auto-approving finalize_onboarding for user={_current_uid}")
                 elif _current_mode == "restrained" and not _restrained_check_user_intent(tool_name, message):
-                    tool_result = {"ok": False, "error": f"Mode restreint : l'outil '{tool_name}' n'a pas ete demande explicitement par l'utilisateur. Reponds sans utiliser d'outils."}
-                    print(f"[Wolf] RESTRAINED: blocked {tool_name} (no explicit user intent in: '{message[:80]}...')")
-                    _blocked = True
-                elif _current_mode == "ask_permission" and tool_name not in READ_ONLY_TOOLS and tool_name not in mode_manager.config.auto_approve_tools:
-                    # En mode ask_permission, les outils d'écriture nécessitent confirmation.
-                    # Si le message utilisateur contient une confirmation explicite, on autorise.
-                    _confirm_patterns = ("oui", "yes", "ok", "go", "fais", "fait", "lance", "crée", "créer",
-                                         "connecte", "configure", "ajoute", "installe", "supprime", "active",
-                                         "d'accord", "vas-y", "valide", "confirme", "je veux", "j'aimerais",
-                                         "liste", "montre", "affiche", "donne", "met", "mets")
-                    _user_confirmed = any(p in message.lower() for p in _confirm_patterns)
-                    # Vérifie aussi une approbation par bouton UI : `request_permission` enregistrée
-                    # dans une tour précédente puis `approve_request` via POST depuis la carte.
+                    # Check approbation UI préalable (l'user a cliqué "Autoriser"
+                    # dans une carte précédente pour ce même tool).
                     _ui_approved_ids = [
                         rid for rid, req in list(mode_manager.pending_requests.items())
                         if req.status == "approved" and req.details.get("tool_name") == tool_name
                     ]
-                    if _user_confirmed or _ui_approved_ids:
-                        # Consomme l'approbation (une fois utilisée, on la nettoie)
+                    if _ui_approved_ids:
                         for rid in _ui_approved_ids:
                             mode_manager.pending_requests.pop(rid, None)
-                        print(f"[Wolf] ASK_PERMISSION: allowed {tool_name} "
-                              f"(user_msg={_user_confirmed}, ui_approved={bool(_ui_approved_ids)})")
+                        print(f"[Wolf] RESTRAINED: ui-approved {tool_name}")
                     else:
-                        # Enregistre la demande pour que l'UI puisse afficher une carte
-                        # avec boutons Autoriser/Refuser. Le LLM reçoit l'erreur pour
-                        # répondre en texte comme avant (fallback Telegram/headless).
+                        # Émet la demande → la PermissionCard s'affiche dans le chat
                         _perm_id = str(_uuid.uuid4())[:12]
                         try:
                             await mode_manager.request_permission(
@@ -1543,13 +1535,40 @@ Tu operes en mode **demande**. Comportement :
                             pass
                         tool_result = {
                             "ok": False,
-                            "error": f"Mode 'Demande' actif : l'outil '{tool_name}' necessite la permission de l'utilisateur. Demande-lui confirmation avant de reessayer.",
+                            "error": (
+                                f"Mode 'Restreint' : l'outil '{tool_name}' requiert une validation "
+                                f"explicite via la carte d'autorisation affichée dans le chat. "
+                                f"Explique brièvement à l'utilisateur ce que tu souhaites faire, "
+                                f"puis attends qu'il clique Autoriser."
+                            ),
                             "pending_approval": True,
                             "permission_id": _perm_id,
                             "tool_name": tool_name,
                             "args": args,
                         }
-                        print(f"[Wolf] ASK_PERMISSION: blocked {tool_name} (pending_id={_perm_id})")
+                        print(f"[Wolf] RESTRAINED: pending UI approval for {tool_name} (pending_id={_perm_id})")
+                        _blocked = True
+                elif _current_mode == "ask_permission" and tool_name not in READ_ONLY_TOOLS and tool_name not in mode_manager.config.auto_approve_tools:
+                    # Validation conversationnelle : l'agent verbalise la demande
+                    # au tour N, l'user répond oui/non au tour N+1, l'agent rejoue
+                    # le tool au tour N+1 et passe cette fois.
+                    _confirm_patterns = ("oui", "yes", "ok", "go", "fais", "fait", "lance", "crée", "créer",
+                                         "connecte", "configure", "ajoute", "installe", "supprime", "active",
+                                         "d'accord", "vas-y", "valide", "confirme", "je veux", "j'aimerais",
+                                         "liste", "montre", "affiche", "donne", "met", "mets")
+                    _user_confirmed = any(p in message.lower() for p in _confirm_patterns)
+                    if _user_confirmed:
+                        print(f"[Wolf] ASK_PERMISSION: verbal OK → {tool_name}")
+                    else:
+                        tool_result = {
+                            "ok": False,
+                            "error": (
+                                f"Mode 'Demande' : avant d'exécuter '{tool_name}' (args={args}), "
+                                f"pose une courte question de confirmation à l'utilisateur. "
+                                f"Sa réponse « oui » (ou équivalent) au tour suivant suffira à valider."
+                            ),
+                        }
+                        print(f"[Wolf] ASK_PERMISSION: verbal confirmation needed for {tool_name}")
                         _blocked = True
 
                 if not _blocked:

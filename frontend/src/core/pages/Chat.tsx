@@ -2019,8 +2019,10 @@ export default function Chat() {
                   <div className="flex flex-wrap gap-1.5 mb-1 self-start">
                     {(msg as any).tool_events.map((evt: any, i: number) => {
                       // Permission card : affichée quand le backend a gating
-                      // l'outil en mode ask_permission (tool_event marqué avec
-                      // result.pending_approval = true).
+                      // l'outil en mode "Restreint" (tool_event marqué avec
+                      // result.pending_approval = true — style Claude Code).
+                      // Le mode "Demande" fait une validation chat pure, sans
+                      // pending_approval, donc pas de carte ici.
                       if (evt.result?.pending_approval) {
                         return (
                           <PermissionCard key={i}
