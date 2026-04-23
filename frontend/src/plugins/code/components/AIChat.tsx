@@ -25,11 +25,11 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
   const [loading, setLoading] = useState(false)
   const [tokenStats, setTokenStats] = useState({ context: 0, total: 0, msgs: 0 })
   const [streamingText, setStreamingText] = useState('')
-  // Mode par défaut `chat` — la distinction Chat/Agent a été retirée du
-  // panneau (inutile : les deux mènent vers le LLM). Les states restent pour
-  // que la logique côté API/events conservée fonctionne ; ils ne sont juste
-  // plus togglables depuis l'UI.
-  const [mode, setMode] = useState<'chat' | 'agent'>('chat')
+  // Mode hardcodé sur `agent` — seul le flux agent (avec outils) est
+  // désormais exposé ; le bouton Chat a été retiré de l'UI. Le state reste
+  // pour éviter de toucher aux rendus conditionnels existants (placeholder,
+  // couleur send, icône, affichage agentSteps).
+  const [mode, setMode] = useState<'chat' | 'agent'>('agent')
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([])
   const [agentRunning, setAgentRunning] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
