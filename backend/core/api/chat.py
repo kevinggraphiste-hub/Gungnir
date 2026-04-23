@@ -124,33 +124,38 @@ _VISION_MODEL_PATTERNS = [
 async def _model_supports_vision(model_name: str) -> bool:
     """Le modèle supporte-t-il les images ?
 
-    Source de vérité : OpenRouter `architecture.input_modalities` (cache 5 min
-    déjà tenu par le plugin model_guide). Fallback sur la liste statique
-    `_VISION_MODEL_PATTERNS` si le catalogue est indisponible.
+    Sources combinées — on dit `True` si AU MOINS UNE dit True :
+    - OpenRouter `architecture.input_modalities` (source dynamique, cache 5 min)
+    - Liste statique `_VISION_MODEL_PATTERNS` (fallback, évite les faux négatifs
+      quand le catalog est périmé/indispo ou quand le modèle vient d'un provider
+      natif pas indexé OpenRouter).
+
+    Le but : ne JAMAIS dégrader les images à tort. Envoyer une image à un
+    modèle qui ne la supporte pas déclenche au pire une erreur API claire,
+    alors que la dégradation silencieuse en texte est un bug invisible.
     """
     name = (model_name or "").lower()
     if not name:
         return False
-    # 1) Source dynamique — cache OpenRouter du plugin model_guide
+    # Fallback statique (rapide, toujours disponible)
+    pattern_hit = any(p in name for p in _VISION_MODEL_PATTERNS)
+    # Source dynamique — cache OpenRouter du plugin model_guide
+    dynamic_hit = False
     try:
         from backend.plugins.model_guide.routes import _fetch_openrouter_models
         catalog = await _fetch_openrouter_models()
         if catalog:
-            # OpenRouter IDs sont en "provider/model" ; les providers natifs
-            # utilisent souvent juste "model". On teste les deux formes.
             entry = catalog.get(model_name) or catalog.get(name)
             if entry is None:
-                # match suffixe : "gpt-4o-mini" contre "openai/gpt-4o-mini"
                 for mid, info in catalog.items():
                     if mid.endswith("/" + model_name) or mid.endswith("/" + name):
                         entry = info
                         break
             if entry is not None:
-                return bool(entry.get("vision"))
+                dynamic_hit = bool(entry.get("vision"))
     except Exception as e:
         print(f"[Wolf] Vision dynamic check failed, falling back to patterns: {e}")
-    # 2) Fallback : liste statique
-    return any(p in name for p in _VISION_MODEL_PATTERNS)
+    return pattern_hit or dynamic_hit
 
 
 async def _describe_images_for_blind_model(
@@ -767,8 +772,15 @@ async def chat(
         # Artificial progressive streaming of the final content for UX feedback
         # (true token-level streaming would require restructuring the tool-call
         # loop — here we chunk the already-generated content quickly).
+        # Si le client a coupé (bouton Stop), on arrête d'envoyer les tokens
+        # restants pour ne pas continuer à remplir la bulle côté UI.
         _step = 4
         for _i in range(0, len(content), _step):
+            try:
+                if await request.is_disconnected():
+                    return
+            except Exception:
+                pass
             yield _sse("token", content[_i:_i + _step])
             await asyncio.sleep(0.006)
 
@@ -875,7 +887,18 @@ async def _chat_impl(
     # Extraire les images si présentes + fallback vision
     user_images = data.get("images", [])
     actual_model = model or provider_config.default_model or ""
-    if user_images and not await _model_supports_vision(actual_model):
+    # Log visible pour diagnostiquer les soucis de transmission d'images au LLM.
+    # Format : [Wolf Vision] provider=openrouter model=... images_count=1 sizes=[12345 bytes]
+    if user_images:
+        try:
+            _sizes = [len(img) for img in user_images if isinstance(img, str)]
+        except Exception:
+            _sizes = []
+        print(f"[Wolf Vision] provider={provider_name} model={actual_model} images_count={len(user_images)} sizes={_sizes}")
+    _vision_ok = await _model_supports_vision(actual_model) if user_images else True
+    if user_images:
+        print(f"[Wolf Vision] supports_vision({actual_model}) → {_vision_ok}")
+    if user_images and not _vision_ok:
         # Le modèle ne supporte pas la vision → décrire les images en texte.
         # Only the caller's own vision keys are used — no cross-user fallback.
         print(f"[Wolf] Model '{actual_model}' has no vision — using fallback description")

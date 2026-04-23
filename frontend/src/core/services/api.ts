@@ -185,8 +185,22 @@ export const api = {
     let streamedContent = ''
     let finalPayload: any = {}
     let errorPayload: string | null = null
+    // Double safety : certains environnements (proxy, navigateur, patch
+    // fetch global) ne coupent pas immédiatement le reader sur abort.
+    // On surveille aussi le signal ici pour ignorer les chunks tardifs et
+    // annuler le reader manuellement.
+    let stopped = false
+    const onAbort = () => {
+      stopped = true
+      try { reader.cancel().catch(() => {}) } catch { /* ignore */ }
+    }
+    if (signal) {
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+    }
 
     const dispatch = (event: string, dataStr: string) => {
+      if (stopped) return
       if (event === 'token') {
         let chunk: string
         try { chunk = JSON.parse(dataStr) } catch { chunk = dataStr }
@@ -204,8 +218,10 @@ export const api = {
 
     try {
       while (true) {
+        if (stopped) break
         const { done, value } = await reader.read()
         if (done) break
+        if (stopped) break
         buffer += decoder.decode(value, { stream: true })
         let idx: number
         while ((idx = buffer.indexOf('\n\n')) !== -1) {
@@ -223,12 +239,17 @@ export const api = {
     } catch (e: any) {
       // AbortError = l'user a cliqué Stop, pas une erreur applicative.
       // On retourne le contenu partiel déjà streamé + flag `aborted`.
-      if (e?.name === 'AbortError') {
+      if (e?.name === 'AbortError' || stopped) {
         return { ...finalPayload, content: finalPayload.content ?? streamedContent, aborted: true }
       }
       throw e
+    } finally {
+      if (signal) signal.removeEventListener('abort', onAbort)
     }
 
+    if (stopped) {
+      return { ...finalPayload, content: finalPayload.content ?? streamedContent, aborted: true }
+    }
     if (errorPayload) return { error: errorPayload }
     return { ...finalPayload, content: finalPayload.content ?? streamedContent }
   },
