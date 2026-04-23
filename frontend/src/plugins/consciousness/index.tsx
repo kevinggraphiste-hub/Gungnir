@@ -678,6 +678,28 @@ function VolitionTab({ data, resetVolition, updateConfig, refresh }: any) {
     finally { setProposing(false) }
   }
 
+  const fulfillNeed = async (need: string) => {
+    try {
+      await fetch(`${API}/volition/fulfill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ need, trigger: 'manual' }),
+      })
+      await refresh?.()
+    } catch {}
+  }
+
+  const triggerNeed = async (need: string, trigger: string) => {
+    try {
+      await fetch(`${API}/volition/trigger`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ need, trigger }),
+      })
+      await refresh?.()
+    } catch {}
+  }
+
   return (
     <div className="space-y-4">
       {/* Pyramid Visual */}
@@ -728,20 +750,31 @@ function VolitionTab({ data, resetVolition, updateConfig, refresh }: any) {
                     background: `linear-gradient(90deg, ${color}88, ${color})`
                   }} />
                 </div>
-                <div className="flex justify-between mt-1">
+                <div className="flex justify-between mt-1 items-center">
                   <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
                     Score: {d.score.toFixed(2)}
                   </span>
-                  <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
-                    {d.last_fulfilled ? `Satisfait ${timeAgo(d.last_fulfilled)}` : 'Jamais satisfait'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                      {d.last_fulfilled ? `Satisfait ${timeAgo(d.last_fulfilled)}` : 'Jamais satisfait'}
+                    </span>
+                    <button onClick={() => fulfillNeed(need)}
+                      title="Marquer ce besoin comme satisfait (reset l'urgence à 0)"
+                      className="text-[9px] px-1.5 py-0.5 rounded transition-colors"
+                      style={{ background: `color-mix(in srgb, ${color} 15%, transparent)`, color, border: `1px solid color-mix(in srgb, ${color} 30%, transparent)` }}>
+                      ✓ Satisfait
+                    </button>
+                  </div>
                 </div>
                 {d.triggers?.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-1.5">
                     {d.triggers.map((t: string) => (
-                      <span key={t} className="text-[8px] px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-primary)', color: 'var(--text-muted)' }}>
+                      <button key={t} onClick={() => triggerNeed(need, t)}
+                        title={`Déclencher manuellement : ${t} (pousse ce besoin de +0.15)`}
+                        className="text-[8px] px-1.5 py-0.5 rounded transition-colors cursor-pointer"
+                        style={{ background: 'var(--bg-primary)', color: 'var(--text-muted)', border: '1px solid transparent' }}>
                         {t}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 )}

@@ -81,6 +81,47 @@ async def _probe_reminders_async(user_id: int) -> Optional[dict]:
             except Exception as _e:
                 logger.debug("promise_unkept emit failed uid=%s: %s", user_id, _e)
 
+            # Émet `project_stalled` → besoin `progression` pour chaque projet
+            # non archivé avec AUCUNE activité depuis 14j ET au moins une carte
+            # non-done. Pas une alerte de retard (ça c'est promise_unkept) —
+            # ici c'est de l'inertie pure, des projets qui stagnent sans tirer
+            # la sonnette d'alarme. Cooldown 48h par projet pour ne pas spam.
+            try:
+                from datetime import datetime as _dt
+                from backend.plugins.consciousness.triggers import emit_trigger
+                stall_cutoff = _dt.utcnow() - timedelta(days=14)
+                proj_rs = await session.execute(
+                    select(ValkyrieProject)
+                    .where(
+                        ValkyrieProject.user_id == user_id,
+                        ValkyrieProject.archived.is_(False),
+                        ValkyrieProject.updated_at < stall_cutoff,
+                    )
+                )
+                stalled_projects = list(proj_rs.scalars().all())
+                for proj in stalled_projects:
+                    # Vérifie qu'il reste au moins une carte "à faire" (sinon
+                    # projet stalled mais terminé = pas un problème).
+                    open_rs = await session.execute(
+                        select(ValkyrieCard)
+                        .where(
+                            ValkyrieCard.project_id == proj.id,
+                            ValkyrieCard.user_id == user_id,
+                            ValkyrieCard.archived_at.is_(None),
+                            ValkyrieCard.status_key != "done",
+                        )
+                        .limit(1)
+                    )
+                    if open_rs.scalar_one_or_none() is None:
+                        continue
+                    await emit_trigger(
+                        user_id, "project_stalled",
+                        entity_id=f"valkyrie_project:{proj.id}",
+                        cooldown_seconds=48 * 3600,
+                    )
+            except Exception as _ps_err:
+                logger.debug("project_stalled emit failed uid=%s: %s", user_id, _ps_err)
+
             return {
                 "overdue": overdue,
                 "today": today_list,

@@ -82,6 +82,20 @@ DEFAULT_CONFIG = {
             "enabled": False,
             "check_interval_minutes": 15,
         },
+        # Auto-tuning du seuil : ajuste impulse_threshold en continu selon
+        # les décisions user sur les 20 dernières impulses. Si l'user approuve
+        # souvent → on baisse le seuil (plus proactif) ; si refuse souvent →
+        # on remonte (plus prudent). Bornes dures pour éviter les extrêmes.
+        "auto_tuning": {
+            "enabled": True,
+            "window": 20,            # dernières impulses analysées
+            "min_samples": 5,        # n'ajuste rien avant ce nb d'impulses
+            "step": 0.03,            # pas d'ajustement par évaluation
+            "low_ratio": 0.30,       # < 30% approved → seuil +step
+            "high_ratio": 0.70,      # > 70% approved → seuil -step
+            "min_threshold": 0.35,   # jamais en-dessous (évite le bruit)
+            "max_threshold": 0.85,   # jamais au-dessus (évite le blocage total)
+        },
         # Decay naturel : les bumps (score pressure, trigger_need, auto-impulses)
         # font grimper state.urgency. Sans décroissance, tout sature à 1.0.
         # Chaque tick, on interpole vers baseline avec half_life_hours.
@@ -819,8 +833,71 @@ class ConsciousnessEngine:
             stats["impulses_denied"] = stats.get("impulses_denied", 0) + 1
             self.deny_need(pending["need"])
 
+        # Auto-tuning du seuil d'impulse selon les feedbacks user récents
+        self._auto_tune_impulse_threshold()
+
         self.save_state()
         return pending
+
+    def _auto_tune_impulse_threshold(self) -> Optional[float]:
+        """Ajuste `volition.impulse_threshold` selon les dernières décisions.
+
+        Idée : si l'user approve souvent les impulses proposées, c'est qu'on
+        peut proposer plus tôt (baisser le seuil). S'il refuse souvent, on
+        est trop proactif (remonter). Deferred compte comme "pas adhéré
+        mais pas refusé" → neutre.
+
+        Retourne le nouveau seuil si ajusté, None sinon.
+        """
+        vol_cfg = self._config.get("volition", {}) or {}
+        tune_cfg = vol_cfg.get("auto_tuning", {}) or {}
+        if not tune_cfg.get("enabled", True):
+            return None
+
+        window = int(tune_cfg.get("window", 20))
+        min_samples = int(tune_cfg.get("min_samples", 5))
+        step = float(tune_cfg.get("step", 0.03))
+        low_ratio = float(tune_cfg.get("low_ratio", 0.30))
+        high_ratio = float(tune_cfg.get("high_ratio", 0.70))
+        min_t = float(tune_cfg.get("min_threshold", 0.35))
+        max_t = float(tune_cfg.get("max_threshold", 0.85))
+
+        history = (self._state.get("volition") or {}).get("impulse_history", [])[-window:]
+        # On ne compte que approved/denied (les deferred ne signalent rien)
+        evaluated = [h for h in history if h.get("status") in ("approved", "denied")]
+        if len(evaluated) < min_samples:
+            return None
+
+        approved = sum(1 for h in evaluated if h.get("status") == "approved")
+        ratio = approved / len(evaluated)
+
+        current = float(vol_cfg.get("impulse_threshold", 0.6))
+        new_threshold = current
+        if ratio > high_ratio and current > min_t:
+            new_threshold = max(min_t, round(current - step, 3))
+        elif ratio < low_ratio and current < max_t:
+            new_threshold = min(max_t, round(current + step, 3))
+
+        if new_threshold != current:
+            # On modifie la config via save_config pour persister — pas juste
+            # une mutation en mémoire qui se perdrait au reload.
+            try:
+                self._config["volition"]["impulse_threshold"] = new_threshold
+                self.save_config()
+                self._state.setdefault("auto_tuning_log", []).append({
+                    "timestamp": _now(),
+                    "ratio": round(ratio, 2),
+                    "from": round(current, 3),
+                    "to": round(new_threshold, 3),
+                    "samples": len(evaluated),
+                })
+                # Garde 20 dernières entrées max pour éviter la croissance
+                if len(self._state["auto_tuning_log"]) > 20:
+                    self._state["auto_tuning_log"] = self._state["auto_tuning_log"][-20:]
+                return new_threshold
+            except Exception:
+                return None
+        return None
 
     # ── Thought Buffer ──────────────────────────────────────────────────
 
@@ -1082,6 +1159,19 @@ class ConsciousnessEngine:
 
         _save_json(self._paths["challenger_log"], self._challenger_log)
         self.save_state()
+
+        # Trigger : un bias `high` détecté par le Challenger pousse le besoin
+        # `integrity`. Best-effort — on ne bloque jamais add_finding sur ça.
+        if finding_type == "bias" and severity == "high":
+            try:
+                from backend.plugins.consciousness.triggers import emit_trigger_sync
+                emit_trigger_sync(
+                    self.user_id or 0, "bias_detected",
+                    entity_id=sig,  # cooldown par signature → ne respam pas si même bias
+                    cooldown_seconds=12 * 3600,
+                )
+            except Exception:
+                pass
 
     def get_recent_findings(self, limit: int = 20) -> list:
         return self._challenger_log.get("findings", [])[-limit:]

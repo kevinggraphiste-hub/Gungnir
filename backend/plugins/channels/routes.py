@@ -898,6 +898,29 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
                 "ok",
             )
 
+        # Triggers conscience tirés du message user (mêmes règles que chat.py :
+        # user_asked_status → progression, open_question → comprehension).
+        if consciousness_uid and text:
+            try:
+                import asyncio as _aio
+                from backend.plugins.consciousness.triggers import emit_trigger
+                _msg_low = text.lower()
+                _status_patterns = (
+                    "où en est", "ou en est", "t'en es où", "ten es ou", "état de",
+                    "etat de", "avancement", "comment ça avance", "comment ca avance",
+                    "news de", "des nouvelles de", "status de", "où ça en est",
+                )
+                if any(p in _msg_low for p in _status_patterns):
+                    _aio.ensure_future(emit_trigger(
+                        consciousness_uid, "user_asked_status", cooldown_seconds=6 * 3600,
+                    ))
+                if "?" in text and not loop_result.tool_events:
+                    _aio.ensure_future(emit_trigger(
+                        consciousness_uid, "open_question", cooldown_seconds=2 * 3600,
+                    ))
+            except Exception:
+                pass
+
         # Store in consciousness
         try:
             from backend.plugins.consciousness.engine import consciousness_manager

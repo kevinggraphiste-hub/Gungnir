@@ -1645,6 +1645,38 @@ Tu operes en mode **demande**. Comportement :
             except Exception:
                 pass
 
+        # Triggers conscience tirés du message user. Best-effort, fire-and-forget.
+        # Détections volontairement simples (regex + heuristique courte) :
+        # - user_asked_status → besoin `progression` (l'user cherche du reporting)
+        # - open_question → besoin `comprehension` (question sans recherche/outil
+        #   derrière = l'agent a juste répondu de mémoire, zone potentielle
+        #   d'incertitude à creuser)
+        if user_id and message:
+            try:
+                from backend.plugins.consciousness.triggers import emit_trigger
+                _msg_low = message.lower()
+                # Status: "où en est", "t'en es où", "état de", "avancement", "status",
+                # "news de", "comment ça avance", etc.
+                _status_patterns = (
+                    "où en est", "ou en est", "t'en es où", "ten es ou", "état de",
+                    "etat de", "avancement", "comment ça avance", "comment ca avance",
+                    "news de", "des nouvelles de", "status de", "où ça en est",
+                )
+                if any(p in _msg_low for p in _status_patterns):
+                    asyncio.ensure_future(emit_trigger(
+                        int(user_id), "user_asked_status", cooldown_seconds=6 * 3600,
+                    ))
+                # Open question : le message user contient "?" ET l'agent n'a
+                # déclenché aucun tool_call (donc pas de recherche web/fichier,
+                # il a répondu "de mémoire"). Signal que sa compréhension
+                # pourrait bénéficier d'une recherche proactive ultérieure.
+                if "?" in message and not tool_events:
+                    asyncio.ensure_future(emit_trigger(
+                        int(user_id), "open_question", cooldown_seconds=2 * 3600,
+                    ))
+            except Exception:
+                pass
+
         # Check if agent switched provider/model during this turn
         _switch_info = None
         for _evt in tool_events:

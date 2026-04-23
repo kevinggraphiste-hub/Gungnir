@@ -1379,15 +1379,45 @@ async def _tick_once():
         except Exception as e:
             logger.debug(f"Plugin conscience blocks gather failed for user {user_id}: {e}")
 
-        # Idle heartbeat — pousse `curiosity` si rien d'autre n'a fait monter
-        # l'urgence dans la dernière période. Cooldown interne (2h) empêche
-        # le spam. Sans ce trigger, la curiosité ne progresse jamais sauf
-        # via son decay_rate temporel pur.
+        # Triggers système émis à la fin du tick. Chacun a son cooldown
+        # propre géré par `emit_trigger` (idempotence via state recent_triggers).
         try:
             from backend.plugins.consciousness.triggers import emit_trigger
+            # Idle heartbeat → curiosity (2h cooldown)
             await emit_trigger(user_id, "idle_heartbeat", cooldown_seconds=2 * 3600)
+
+            # Journal missed → integrity : si aucune pensée depuis > 6h
+            # (background_think éteint ou en panne). Cooldown 6h pour ne pas
+            # re-émettre tant que l'état anormal persiste mais qu'une nouvelle
+            # dégradation apparaisse à chaque fenêtre.
+            try:
+                from backend.plugins.consciousness.engine import consciousness_manager as _cm
+                _eng = _cm.get(user_id)
+                last_thought_iso = (_eng.state or {}).get("last_thought")
+                if last_thought_iso:
+                    from datetime import datetime, timezone as _tz
+                    last_dt = datetime.fromisoformat(str(last_thought_iso).replace("Z", "+00:00"))
+                    hours = (datetime.now(_tz.utc) - last_dt).total_seconds() / 3600
+                    if hours >= 6:
+                        await emit_trigger(user_id, "journal_missed", cooldown_seconds=6 * 3600)
+            except Exception as _jm_err:
+                logger.debug(f"journal_missed check failed for user {user_id}: {_jm_err}")
+
+            # Disk low → survival : si < 15% libre sur le data dir. Cooldown
+            # 24h car disque qui se remplit = alerte à réitérer quotidiennement.
+            try:
+                import shutil
+                from pathlib import Path
+                _data = Path(__file__).parent.parent.parent.parent / "data"
+                if _data.exists():
+                    usage = shutil.disk_usage(str(_data))
+                    free_ratio = usage.free / usage.total if usage.total else 1.0
+                    if free_ratio < 0.15:
+                        await emit_trigger(user_id, "disk_low", cooldown_seconds=24 * 3600)
+            except Exception as _dl_err:
+                logger.debug(f"disk_low check failed for user {user_id}: {_dl_err}")
         except Exception as e:
-            logger.debug(f"idle_heartbeat emit failed for user {user_id}: {e}")
+            logger.debug(f"System triggers emit failed for user {user_id}: {e}")
 
 
 async def _consciousness_loop():
