@@ -191,6 +191,7 @@ class Settings(BaseSettings):
             models=[
                 "anthropic/claude-sonnet-4.6",
                 "anthropic/claude-opus-4.6",
+                "anthropic/claude-opus-4.7",
                 "google/gemini-2.5-flash",
                 "google/gemini-2.5-pro",
                 "openai/gpt-4.1",
@@ -210,7 +211,7 @@ class Settings(BaseSettings):
         ),
         "anthropic": ProviderConfig(
             default_model="claude-sonnet-4-6",
-            models=["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-3-5-sonnet-20241022"]
+            models=["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-3-5-sonnet-20241022"]
         ),
         "google": ProviderConfig(
             default_model="gemini-2.5-flash-preview",

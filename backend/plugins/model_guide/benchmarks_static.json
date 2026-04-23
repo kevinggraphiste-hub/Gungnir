@@ -40,6 +40,7 @@
     }
   ],
   "models": [
+    {"id": "anthropic/claude-opus-4.7", "lmarena_elo": 1410, "aa_index": 78, "mmlu_pro": 84.2, "gpqa": 73.1, "livecodebench": 64.2},
     {"id": "anthropic/claude-opus-4.6", "lmarena_elo": 1398, "aa_index": 76, "mmlu_pro": 83.1, "gpqa": 71.4, "livecodebench": 62.8},
     {"id": "anthropic/claude-opus-4.5", "lmarena_elo": 1382, "aa_index": 74, "mmlu_pro": 82.0, "gpqa": 69.5, "livecodebench": 60.2},
     {"id": "anthropic/claude-opus-4.1", "lmarena_elo": 1365, "aa_index": 71, "mmlu_pro": 80.8, "gpqa": 66.8, "livecodebench": 56.4},
