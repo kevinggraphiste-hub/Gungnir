@@ -1612,6 +1612,11 @@ Tu operes en mode **demande**. Comportement :
             tool_calls=response.tool_calls,
             tokens_input=response.tokens_input,
             tokens_output=response.tokens_output,
+            # Conserve le modèle/provider effectivement utilisés pour cette
+            # réponse — indépendant du modèle actif de la conversation (qui
+            # peut changer ensuite via /switch ou provider_manage).
+            model=(response.model or chosen_model or "")[:255],
+            provider=provider_name or "",
         )
         session.add(user_msg)
         session.add(assistant_msg)

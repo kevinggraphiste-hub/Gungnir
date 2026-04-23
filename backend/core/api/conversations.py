@@ -159,6 +159,8 @@ async def get_messages(convo_id: int, request: Request, session: AsyncSession = 
             "tool_calls": m.tool_calls,
             "tokens_input": m.tokens_input or 0,
             "tokens_output": m.tokens_output or 0,
+            "model": m.model or "",
+            "provider": m.provider or "",
             "created_at": m.created_at.isoformat(),
         }
         for m in msgs

@@ -2006,18 +2006,33 @@ export default function Chat() {
               )}
 
               <div className={`flex flex-col gap-1 max-w-[70%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                {/* Pseudo + badge provider (pas de compteur tokens ici — il est accolé à la bulle plus bas) */}
-                <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                  <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
-                    {msg.role === 'user' ? (currentUser?.display_name || t('common.user')) : formatModelName((msg as any).model || selectedModel)}
-                  </span>
-                  {msg.role === 'assistant' && (
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
-                      style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 15%, transparent)' }}>
-                      {(msg as any).provider || selectedProvider}
-                    </span>
-                  )}
-                </div>
+                {/* Header : pseudo + provider + compteur tokens (au-dessus de la bulle, pas accolé) */}
+                {(() => {
+                  // Tokens : assistant → tokens_output propres ; user → tokens_input
+                  // de la bulle assistant qui suit (c'est ce que le prompt a consommé).
+                  let headerTokens: number | undefined
+                  if (msg.role === 'assistant') {
+                    headerTokens = (msg as any).tokens_output
+                  } else {
+                    const next = messages[msgIdx + 1]
+                    if (next && next.role === 'assistant') headerTokens = (next as any).tokens_input
+                  }
+                  const hasTokens = typeof headerTokens === 'number' && headerTokens > 0
+                  return (
+                    <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                      <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                        {msg.role === 'user' ? (currentUser?.display_name || t('common.user')) : formatModelName((msg as any).model || selectedModel)}
+                      </span>
+                      {msg.role === 'assistant' && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
+                          style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 15%, transparent)' }}>
+                          {(msg as any).provider || selectedProvider}
+                        </span>
+                      )}
+                      {hasTokens && <TokenBadge tokens={headerTokens as number} />}
+                    </div>
+                  )
+                })()}
 
                 {msg.role === 'assistant' && (msg as any).tool_events?.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mb-1">
@@ -2060,47 +2075,25 @@ export default function Chat() {
                   </div>
                 )}
 
-                {(() => {
-                  // Tokens : assistant → tokens_output propres ; user → tokens_input
-                  // de la bulle assistant qui suit (c'est ce que le prompt a consommé).
-                  let headerTokens: number | undefined
-                  if (msg.role === 'assistant') {
-                    headerTokens = (msg as any).tokens_output
-                  } else {
-                    const next = messages[msgIdx + 1]
-                    if (next && next.role === 'assistant') headerTokens = (next as any).tokens_input
-                  }
-                  const hasTokens = typeof headerTokens === 'number' && headerTokens > 0
-                  const bubble = (
-                    <div className={`group relative rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
-                      style={msg.role === 'assistant' ? {
-                        background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 4%, transparent), color-mix(in srgb, var(--ember) 2%, transparent))',
-                        border: '1px solid color-mix(in srgb, var(--scarlet) 10%, transparent)', color: 'var(--text-primary)',
-                      } : { background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
-                      <FloatingCopyButton
-                        content={msg.content.replace(/\n\[Image jointe\]/g, '')}
-                        side={msg.role === 'user' ? 'left' : 'right'}
-                      />
-                      {msg.images && msg.images.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mb-2">
-                          {msg.images.map((img: string, i: number) => (
-                            <img key={i} src={img} alt={`Image ${i + 1}`} className="max-h-48 rounded-lg border border-[var(--border)] cursor-pointer hover:opacity-80 transition-opacity"
-                              onClick={() => window.open(img, '_blank')} />
-                          ))}
-                        </div>
-                      )}
-                      <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
+                <div className={`group relative rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+                  style={msg.role === 'assistant' ? {
+                    background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 4%, transparent), color-mix(in srgb, var(--ember) 2%, transparent))',
+                    border: '1px solid color-mix(in srgb, var(--scarlet) 10%, transparent)', color: 'var(--text-primary)',
+                  } : { background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                  <FloatingCopyButton
+                    content={msg.content.replace(/\n\[Image jointe\]/g, '')}
+                    side={msg.role === 'user' ? 'left' : 'right'}
+                  />
+                  {msg.images && msg.images.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {msg.images.map((img: string, i: number) => (
+                        <img key={i} src={img} alt={`Image ${i + 1}`} className="max-h-48 rounded-lg border border-[var(--border)] cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() => window.open(img, '_blank')} />
+                      ))}
                     </div>
-                  )
-                  return (
-                    <div className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                      {hasTokens && (
-                        <TokenBadge tokens={headerTokens as number} />
-                      )}
-                      {bubble}
-                    </div>
-                  )
-                })()}
+                  )}
+                  <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
+                </div>
                 {/* Barre d'actions (copie + régénération + 👍/👎) */}
                 {msg.content && (
                   <MessageActions

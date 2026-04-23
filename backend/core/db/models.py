@@ -100,6 +100,12 @@ class Message(Base):
     created_at = Column(DateTime, server_default=func.now())
     tokens_input = Column(Integer, default=0)
     tokens_output = Column(Integer, default=0)
+    # Modèle / provider effectivement utilisés pour GÉNÉRER ce message
+    # (rempli côté assistant uniquement). Permet à l'UI de garder la bonne
+    # étiquette sur les bulles historiques même si l'user change de modèle
+    # actif en cours de conversation.
+    model = Column(String(255), default="")
+    provider = Column(String(100), default="")
 
     conversation = relationship("Conversation", back_populates="messages")
 
@@ -339,6 +345,8 @@ async def init_db(engine):
         ("ALTER TABLE user_settings ADD COLUMN huntr_config JSONB DEFAULT '{}'::jsonb", "huntr_config -> user_settings"),
         ("ALTER TABLE user_settings ADD COLUMN ui_preferences JSONB DEFAULT '{}'::jsonb", "ui_preferences -> user_settings"),
         ("ALTER TABLE users ADD COLUMN token_expires_at TIMESTAMP NULL", "token_expires_at -> users"),
+        ("ALTER TABLE messages ADD COLUMN model VARCHAR(255) DEFAULT ''", "model -> messages"),
+        ("ALTER TABLE messages ADD COLUMN provider VARCHAR(100) DEFAULT ''", "provider -> messages"),
     ]
 
     # Migrations plugin : chaque plugin expose optionnellement sa propre liste
