@@ -215,131 +215,28 @@ async def _describe_images_for_blind_model(
 # Mode restreint : vérification d'intent utilisateur
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Mapping : catégorie d'outils → mots-clés FR/EN que l'utilisateur doit employer
-_RESTRAINED_INTENT_MAP = {
-    "web": {
-        "tools": ["web_fetch", "web_search", "web_crawl"],
-        "keywords": [
-            "cherche", "recherche", "trouve", "va sur", "va voir", "regarde",
-            "ouvre", "visite", "consulte", "scrape", "scrapper", "crawler",
-            "sur internet", "sur le web", "en ligne", "sur google",
-            "search", "look up", "find", "google", "browse", "go to", "visit",
-            "fetch", "url", "http", "site", "page web",
-        ],
-    },
-    "browser": {
-        "tools": ["browser_navigate", "browser_get_text", "browser_click", "browser_type",
-                  "browser_screenshot", "browser_evaluate", "browser_get_links", "browser_crawl",
-                  "browser_close", "browser_goto", "browser_get_html", "browser_wait_for_selector",
-                  "browser_scroll", "browser_extract_table", "browser_query_selector_all",
-                  "browser_select_option", "browser_fill_form", "browser_list_pages",
-                  "browser_get_page_info", "browser_press_key"],
-        "keywords": [
-            "naviguer", "navigue", "browser", "navigateur", "ouvre", "clique",
-            "screenshot", "capture", "page", "site",
-            "va sur", "visite", "consulte",
-        ],
-    },
-    "skill": {
-        "tools": ["skill_create", "skill_update", "skill_delete"],
-        "keywords": [
-            "skill", "competence", "cree un skill", "nouveau skill",
-            "ajoute un skill", "supprime", "modifie", "met a jour",
-            "create skill", "new skill", "add skill",
-        ],
-    },
-    "subagent": {
-        "tools": ["subagent_create", "subagent_invoke", "subagent_update", "subagent_delete"],
-        "keywords": [
-            "sous-agent", "sub-agent", "subagent", "agent", "delegue",
-            "cree un agent", "nouvel agent", "nouveau sous-agent",
-            "invoke", "appelle", "utilise l'agent",
-            "create agent", "new agent",
-        ],
-    },
-    "personality": {
-        "tools": ["personality_create", "personality_update", "personality_delete", "personality_set_active"],
-        "keywords": [
-            "personnalite", "personality", "persona",
-            "cree une personnalite", "nouvelle personnalite", "change de personnalite",
-            "active la personnalite", "switch", "mode",
-        ],
-    },
-    "kb": {
-        "tools": ["kb_write"],
-        "keywords": [
-            "ecris", "ecrire", "sauvegarde", "enregistre", "note", "memorise",
-            "stocke", "persiste", "base de connaissance", "knowledge",
-            "write", "save", "store", "remember",
-        ],
-    },
-    "soul": {
-        "tools": ["soul_write"],
-        "keywords": [
-            "ame", "soul", "identite", "identity", "modifie ton ame",
-            "change ton identite", "redefinis-toi",
-        ],
-    },
-    "automata": {
-        "tools": ["schedule_task", "schedule_list", "schedule_delete"],
-        "keywords": [
-            "planifie", "programme", "cron", "automatise", "automatisation",
-            "recurrent", "recurrente", "tous les jours", "chaque jour",
-            "chaque semaine", "toutes les heures", "rappelle-moi",
-            "schedule", "automate", "recurring", "every day", "every hour",
-            "tache planifiee", "tache automatique",
-        ],
-    },
-}
-
-# Outils toujours autorisés en mode restreint (lecture pure, sans effet de bord)
-# subagent_invoke y figure : c'est une orchestration décidée par le LLM, les
-# sous-agents ayant déjà été créés explicitement par l'utilisateur.
+# Outils autorisés SANS carte de validation en mode restreint — lecture pure,
+# aucun effet de bord, aucune requête réseau. Tout le reste (écriture, exécution,
+# web, browser, subagent_invoke…) passe par la PermissionCard UI.
 _RESTRAINED_ALWAYS_ALLOWED = {
-    "skill_list", "kb_read", "kb_list", "soul_read", "subagent_list", "subagent_invoke",
-    "subagent_run",
-    "schedule_list",
+    "kb_read", "kb_list",        # lecture base de connaissance
+    "skill_list",                # liste skills
+    "soul_read",                 # lecture soul
+    "subagent_list",             # liste sous-agents
+    "schedule_list",             # liste tâches planifiées
+    "personality_list",          # liste personnalités
 }
-
-
-def _normalize_for_intent(text: str) -> str:
-    """Normalise le texte pour le matching d'intent."""
-    t = text.lower()
-    for a, b in [("è","e"),("é","e"),("ê","e"),("ë","e"),("à","a"),("â","a"),
-                 ("ô","o"),("î","i"),("ù","u"),("û","u"),("ç","c"),("'","'")]:
-        t = t.replace(a, b)
-    return t
 
 
 def _restrained_check_user_intent(tool_name: str, user_message: str) -> bool:
+    """Mode Restreint : chaque action doit être validée explicitement via
+    PermissionCard. Seules les lectures pures locales (sans effet de bord
+    ni I/O réseau) bypassent la carte pour ne pas demander un clic à
+    chaque `kb_list`.
+
+    Retourne True = autorisé sans carte, False = demande validation UI.
     """
-    Vérifie si le message utilisateur contient une intention explicite
-    correspondant à l'outil que le LLM veut appeler.
-    Retourne True si l'outil est autorisé, False sinon.
-    """
-    # Outils de lecture pure → toujours OK
-    if tool_name in _RESTRAINED_ALWAYS_ALLOWED:
-        return True
-
-    msg_norm = _normalize_for_intent(user_message)
-
-    # Vérifier chaque catégorie
-    for category in _RESTRAINED_INTENT_MAP.values():
-        if tool_name in category["tools"]:
-            for kw in category["keywords"]:
-                kw_norm = _normalize_for_intent(kw)
-                if kw_norm in msg_norm:
-                    return True
-            return False  # Outil trouvé dans une catégorie mais aucun keyword match
-
-    # Outil inconnu dans le mapping → on détecte les domaines (.com, .fr, etc.)
-    # pour autoriser les web tools quand une URL/domaine est mentionnée
-    if _re_mod.search(r'https?://|[a-zA-Z0-9-]+\.(com|fr|org|net|io|dev|ai)', user_message):
-        if tool_name.startswith("web_") or tool_name.startswith("browser_"):
-            return True
-
-    # Outil non mappé → autoriser par défaut (ne pas bloquer les outils système imprévus)
-    return True
+    return tool_name in _RESTRAINED_ALWAYS_ALLOWED
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

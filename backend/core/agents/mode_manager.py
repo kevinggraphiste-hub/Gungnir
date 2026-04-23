@@ -90,13 +90,11 @@ class ModeManager:
                 + self.WOLF_READ_TOOLS
             )
         elif mode == AgentMode.RESTRAINED:
-            # Mode restreint : tous les outils sont disponibles, mais le LLM
-            # ne doit les utiliser QUE sur demande explicite de l'utilisateur.
-            # Le contrôle est dans le system prompt, pas dans un blocage technique.
-            self.config.auto_approve_tools = (
-                ["read_file", "write_file", "list_dir", "run_command", "git_status", "git_log"]
-                + self.WOLF_READ_TOOLS + self.WOLF_WRITE_TOOLS
-            )
+            # Mode restreint : AUCUN outil auto-approuvé. Chaque appel de tool
+            # passe par la PermissionCard UI (validation explicite par clic).
+            # Seules les lectures pures locales (kb_read, list…) bypassent
+            # la carte, via _RESTRAINED_ALWAYS_ALLOWED dans chat.py.
+            self.config.auto_approve_tools = []
             self.config.require_confirmation_for = []
 
     def needs_permission(self, action: str, tool: str = None) -> bool:
