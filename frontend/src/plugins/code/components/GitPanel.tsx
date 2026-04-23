@@ -90,11 +90,67 @@ export function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => vo
     setPulling(false); refresh()
   }
 
+  // Fetch : récupère les refs distantes sans merger. Utile pour voir les
+  // commits remote avant de décider de pull.
+  const [fetching, setFetching] = useState(false)
+  const doFetch = async () => {
+    setFetching(true); setRemoteOutput('')
+    const res = await apiFetch<{ ok: boolean; output?: string }>('/git/fetch', {
+      method: 'POST', body: JSON.stringify({ remote: 'origin' }),
+    })
+    setRemoteOutput(res?.output || 'Fetch terminé.')
+    setFetching(false); refresh()
+  }
+
+  // Clone : URL → workspace. Si un dossier du même nom existe déjà côté
+  // backend, /git/clone renvoie une erreur que l'user voit dans remoteOutput.
+  const [showClone, setShowClone] = useState(false)
+  const [cloneUrl, setCloneUrl] = useState('')
+  const [cloneDest, setCloneDest] = useState('')
+  const [cloning, setCloning] = useState(false)
+  const doClone = async () => {
+    const url = cloneUrl.trim()
+    if (!url) return
+    setCloning(true); setRemoteOutput('')
+    const res = await apiFetch<{ ok: boolean; output?: string }>('/git/clone', {
+      method: 'POST',
+      body: JSON.stringify({ url, dest: cloneDest.trim() || undefined }),
+    })
+    setRemoteOutput(res?.output || (res?.ok ? 'Clone terminé.' : 'Échec du clone.'))
+    setCloning(false)
+    if (res?.ok) {
+      setCloneUrl(''); setCloneDest(''); setShowClone(false)
+      refresh()
+    }
+  }
+
   if (loading) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Chargement...</div>
   if (!status?.is_repo) return (
     <div style={{ padding: 20, textAlign: 'center' }}>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>Pas de depot Git</div>
-      <button onClick={initRepo} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 600, background: 'var(--scarlet)', color: '#fff', cursor: 'pointer' }}>Initialiser Git</button>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>Pas de dépôt Git</div>
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+        <button onClick={initRepo} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 600, background: 'var(--scarlet)', color: '#fff', cursor: 'pointer' }}>Initialiser Git</button>
+        <button onClick={() => setShowClone(v => !v)} style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid var(--border)', fontSize: 11, fontWeight: 600, background: 'var(--bg-tertiary)', color: 'var(--text-primary)', cursor: 'pointer' }}>Cloner un repo…</button>
+      </div>
+      {showClone && (
+        <div style={{ marginTop: 14, textAlign: 'left', padding: 10, background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={{ fontSize: 9, color: 'var(--text-muted)' }}>URL du repo</label>
+          <input value={cloneUrl} onChange={e => setCloneUrl(e.target.value)}
+            placeholder="https://github.com/user/repo.git"
+            style={{ padding: '5px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
+          <label style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4 }}>Destination (optionnel — nom du dossier)</label>
+          <input value={cloneDest} onChange={e => setCloneDest(e.target.value)}
+            placeholder="Laisse vide pour utiliser le nom du repo"
+            style={{ padding: '5px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
+          <button onClick={doClone} disabled={cloning || !cloneUrl.trim()}
+            style={{ marginTop: 4, padding: '6px 0', borderRadius: 4, border: 'none', fontSize: 11, fontWeight: 700, background: 'var(--scarlet)', color: '#fff', cursor: cloning ? 'wait' : 'pointer' }}>
+            {cloning ? 'Clonage…' : 'Cloner'}
+          </button>
+          {remoteOutput && (
+            <pre style={{ marginTop: 4, padding: 6, fontSize: 9, color: 'var(--text-secondary)', background: 'var(--bg-primary)', borderRadius: 4, maxHeight: 120, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{remoteOutput}</pre>
+          )}
+        </div>
+      )}
     </div>
   )
 
@@ -106,6 +162,11 @@ export function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => vo
           {status.branch} {branches.length > 1 ? '▾' : ''}
         </button>
         <div style={{ flex: 1 }} />
+        <IconBtn onClick={doFetch} title="git fetch origin (récupère refs sans merger)" disabled={fetching || remotes.length === 0}>
+          {fetching
+            ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>
+            : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/><polyline points="8 12 12 16 16 12"/></svg>}
+        </IconBtn>
         <IconBtn onClick={() => doPull()} title="git pull origin" disabled={pulling || remotes.length === 0}>
           {pulling
             ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>

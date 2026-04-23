@@ -162,15 +162,71 @@ export function FileExplorer({ onOpenFile }: { onOpenFile: (path: string, name?:
       <div style={{ flex: 1, overflow: 'auto', padding: '2px 0' }}>
         {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Chargement...</div>
         : tree.length === 0 ? <div style={{ padding: '30px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.6 }}>Dossier vide. Placez un projet dans <code style={{ fontSize: 10, background: 'var(--bg-tertiary)', padding: '1px 4px', borderRadius: 3 }}>data/workspace/</code></div>
-        : tree.map(e => <FileRow key={e.path} entry={e} onClick={() => e.is_dir ? navIn(e.path) : onOpenFile(e.path, e.name)} onDelete={() => handleDelete(e.path, e.name)} />)}
+        : tree.map(e => <FileRow key={e.path} entry={e}
+            onClick={() => e.is_dir ? navIn(e.path) : onOpenFile(e.path, e.name)}
+            onDelete={() => handleDelete(e.path, e.name)}
+            onRename={async (newName) => {
+              const parent = currentPath
+              const newPath = parent ? `${parent}/${newName}` : newName
+              if (newPath === e.path) return
+              const r = await apiFetch<{ ok: boolean; error?: string }>('/rename', {
+                method: 'POST',
+                body: JSON.stringify({ old_path: e.path, new_path: newPath }),
+              })
+              if (!r?.ok) {
+                alert(`Renommage impossible${r?.error ? ` : ${r.error}` : ''}`)
+                return
+              }
+              loadTree(currentPath)
+            }}
+          />)}
       </div>
     </div>
   )
 }
 
-export function FileRow({ entry, onClick, onDelete }: { entry: TreeEntry; onClick: () => void; onDelete: () => void }) {
+export function FileRow({ entry, onClick, onDelete, onRename }: {
+  entry: TreeEntry
+  onClick: () => void
+  onDelete: () => void
+  onRename?: (newName: string) => void | Promise<void>
+}) {
   const [h, setH] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState(entry.name)
   const icon = entry.is_dir ? null : FI[entry.ext || '']
+
+  const commitRename = async () => {
+    const name = draft.trim()
+    setRenaming(false)
+    if (!name || name === entry.name || !onRename) { setDraft(entry.name); return }
+    await onRename(name)
+    setDraft(name)
+  }
+
+  if (renaming) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '3px 12px', background: 'var(--bg-tertiary)' }}>
+        {entry.is_dir
+          ? <svg width="13" height="13" viewBox="0 0 24 24" fill="var(--text-muted)" stroke="none" opacity={0.4}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          : <span style={{ width: 13, textAlign: 'center', fontSize: 10, flexShrink: 0 }}>{icon || '\u{1F4C4}'}</span>}
+        <input
+          autoFocus value={draft} onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') commitRename()
+            if (e.key === 'Escape') { setRenaming(false); setDraft(entry.name) }
+          }}
+          onBlur={commitRename}
+          style={{
+            flex: 1, background: 'var(--bg-primary)', border: '1px solid var(--scarlet)',
+            borderRadius: 3, padding: '1px 5px', fontSize: 11.5, color: 'var(--text-primary)',
+            outline: 'none',
+          }}
+        />
+      </div>
+    )
+  }
+
   return (
     <div onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '3px 12px', cursor: 'pointer', fontSize: 11.5, background: h ? 'var(--bg-tertiary)' : 'transparent', transition: 'background 0.06s' }}>
@@ -181,7 +237,16 @@ export function FileRow({ entry, onClick, onDelete }: { entry: TreeEntry; onClic
       {!entry.is_dir && entry.language && <span style={{ width: 4, height: 4, borderRadius: '50%', background: LC[entry.language] || '#6b7280', opacity: 0.5 }} />}
       {entry.is_dir && entry.children_count !== undefined && <span style={{ ...S.badge('#6b7280'), fontSize: 7, padding: '0 4px' }}>{entry.children_count}</span>}
       {!entry.is_dir && <span style={{ fontSize: 8, color: 'var(--text-muted)', opacity: 0.4 }}>{fmtSize(entry.size || 0)}</span>}
-      {h && <button onClick={e => { e.stopPropagation(); onDelete() }} style={{ border: 'none', background: 'transparent', color: '#dc2626', cursor: 'pointer', padding: 0, opacity: 0.5, fontSize: 9 }}>&times;</button>}
+      {h && onRename && (
+        <button onClick={e => { e.stopPropagation(); setDraft(entry.name); setRenaming(true) }}
+          title="Renommer"
+          style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, opacity: 0.7, fontSize: 10 }}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </button>
+      )}
+      {h && <button onClick={e => { e.stopPropagation(); onDelete() }}
+        title="Supprimer"
+        style={{ border: 'none', background: 'transparent', color: '#dc2626', cursor: 'pointer', padding: 0, opacity: 0.5, fontSize: 9 }}>&times;</button>}
     </div>
   )
 }

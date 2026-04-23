@@ -324,6 +324,35 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
     setInput(''); setAgentRunning(true); setAgentSteps([])
     updateSession(s => ({ ...s, messages: [...s.messages, { role: 'user', content: `🤖 Agent: ${task}` }] }))
 
+    // Si le toggle multi-fichier est activé ET qu'au moins 2 fichiers sont
+    // ouverts, on bascule vers /ai/chat/multi (non-streaming, contexte
+    // partagé explicite entre fichiers) au lieu de /ai/agent. Max 5 fichiers
+    // pris en compte côté backend.
+    if (multiFileCtx && openFiles.length >= 2) {
+      try {
+        const res = await apiFetch<{ ok: boolean; response?: string; error?: string }>('/ai/chat/multi', {
+          method: 'POST',
+          body: JSON.stringify({
+            message: task,
+            files: openFiles.slice(0, 5).map(f => ({ path: f.path })),
+            persona: activePersona || undefined,
+            provider_name: selectedProvider || undefined,
+            model_name: selectedModel || undefined,
+            context_mode: contextMode,
+            history: messages.slice(-16),
+          }),
+        })
+        const body = res?.ok && res.response
+          ? res.response
+          : `[Erreur multi-fichier: ${res?.error || 'inconnue'}]`
+        updateSession(s => ({ ...s, messages: [...s.messages, { role: 'assistant', content: body }] }))
+      } finally {
+        setAgentRunning(false)
+        abortRef.current = null
+      }
+      return
+    }
+
     const controller = new AbortController()
     abortRef.current = controller
 

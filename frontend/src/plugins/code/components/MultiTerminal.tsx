@@ -185,27 +185,9 @@ export function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string
       }))
     } catch (e: any) {
       if (e.name === 'AbortError') return
-      // Fallback to non-streaming endpoint
-      try {
-        const fallback = await apiFetch<{ ok: boolean; response?: string; error?: string; actions?: Array<{ tool: string; args: any; result: any }> }>('/ai/chat', {
-          method: 'POST', body: JSON.stringify({ message: question, file_path: filePath || null, context_mode: 'smart', history: newAiHistory.slice(-16) }),
-        })
-        const actionsHdr = (fallback?.actions || []).map(a => {
-          const t = a.args?.path || a.args?.src || a.args?.dst || ''
-          const lbl = a.result?.ok ? 'OK' : `ERR: ${a.result?.error || 'echec'}`
-          return `• ${a.tool}${t ? ` (${t})` : ''} → ${lbl}`
-        }).join('\n')
-        const elapsed = (Date.now() - startTime) / 1000
-        const body = fallback?.ok ? fallback.response! : (fallback?.error || e.message || 'Erreur IA')
-        const text = actionsHdr ? `${actionsHdr}\n\n${body}` : body
-        setSessions(prev => prev.map(s => {
-          if (s.id !== activeSession) return s
-          const hist = [...s.history]
-          const last = hist[hist.length - 1]
-          if (last?.streaming) hist[hist.length - 1] = { ...last, streaming: false, result: { ok: !!fallback?.ok, exit_code: fallback?.ok ? 0 : 1, stdout: fallback?.ok ? text : '', stderr: fallback?.ok ? '' : text, elapsed } }
-          return { ...s, history: hist, aiHistory: fallback?.ok ? [...s.aiHistory, { role: 'assistant', content: text }] : s.aiHistory }
-        }))
-      } catch {
+      // Plus de fallback vers /ai/chat (endpoint retiré) — on remonte
+      // simplement l'erreur de streaming dans l'historique terminal.
+      {
         const elapsed = (Date.now() - startTime) / 1000
         setSessions(prev => prev.map(s => {
           if (s.id !== activeSession) return s

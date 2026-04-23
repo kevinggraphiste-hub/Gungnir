@@ -49,6 +49,76 @@ function Section({ title, description, children }: {
   )
 }
 
+// Éditeur du fichier `.spearcode` à la racine du workspace — règles que
+// l'agent SpearCode consulte à chaque chat (ton, conventions, interdits…).
+// Plus visible ici que dans un fichier caché que personne ne pense à créer.
+function ProjectRulesSection() {
+  const [content, setContent] = useState('')
+  const [exists, setExists] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    apiFetch<{ ok: boolean; content: string; exists: boolean }>('/project-rules').then(r => {
+      if (r) { setContent(r.content || ''); setExists(!!r.exists) }
+      setLoaded(true)
+    })
+  }, [])
+
+  const save = async () => {
+    setSaving(true)
+    const r = await apiFetch<{ ok: boolean }>('/project-rules', {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    })
+    setSaving(false)
+    if (r?.ok) { setExists(true); setSaved(true); setTimeout(() => setSaved(false), 2000) }
+  }
+
+  return (
+    <Section
+      title="Règles projet (.spearcode)"
+      description="Fichier texte à la racine du workspace. L'assistant SpearCode le lit à chaque conversation pour adapter son ton, les conventions de code à suivre, les interdits (ex: 'pas de any en TS', 'commentaires en français', etc.)."
+    >
+      {!loaded ? (
+        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Chargement…</div>
+      ) : (
+        <>
+          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            Statut : {exists
+              ? <span style={{ color: '#22c55e' }}>actif</span>
+              : <span style={{ color: '#f59e0b' }}>pas encore créé — écris dans la zone ci-dessous et sauvegarde</span>}
+          </div>
+          <textarea
+            value={content} onChange={e => setContent(e.target.value)}
+            placeholder={`Exemple :
+- Réponds toujours en français.
+- Privilégie TypeScript strict (pas de any).
+- Pour les commits, format "type(scope): message".
+- Ne modifie jamais le dossier backend/core/db/ sans demander.`}
+            rows={10}
+            className="w-full rounded-lg border px-4 py-3 focus:outline-none"
+            style={{
+              background: 'var(--bg-primary)', borderColor: 'var(--border)',
+              color: 'var(--text-primary)', fontFamily: MONO, fontSize: 12,
+              resize: 'vertical',
+            }}
+          />
+          <button onClick={save} disabled={saving}
+            className="rounded-lg px-5 py-2 text-sm font-semibold transition-colors"
+            style={{
+              background: saved ? 'var(--accent-success, #22c55e)' : 'var(--scarlet)',
+              color: '#fff', border: 'none', cursor: saving ? 'wait' : 'pointer',
+            }}>
+            {saving ? 'Sauvegarde…' : saved ? '✓ Sauvegardé' : 'Sauvegarder les règles'}
+          </button>
+        </>
+      )}
+    </Section>
+  )
+}
+
 export function SettingsPanel({ uiFontSize, setUiFontSize }: {
   uiFontSize?: number
   setUiFontSize?: (n: number) => void
@@ -286,6 +356,9 @@ export function SettingsPanel({ uiFontSize, setUiFontSize }: {
       >
         <GitCredentialsPanel />
       </Section>
+
+      {/* ── Règles projet .spearcode ──────────────────────────────────────── */}
+      <ProjectRulesSection />
 
       {/* ── Raccourcis ────────────────────────────────────────────────────── */}
       <Section
