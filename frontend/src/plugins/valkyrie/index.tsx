@@ -140,12 +140,24 @@ const TAG_COLORS = [
 ]
 
 function colorForTag(label: string): string {
-  // Hash stable — simple djb2 tronqué → index dans la palette
+  // Hash stable — simple djb2 tronqué → index dans la palette.
+  // Hash sur lowercase pour que DEV / Dev / dev partagent la même couleur.
+  const key = (label || '').toLowerCase()
   let hash = 5381
-  for (let i = 0; i < label.length; i++) {
-    hash = ((hash << 5) + hash) + label.charCodeAt(i)
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) + hash) + key.charCodeAt(i)
   }
   return TAG_COLORS[Math.abs(hash) % TAG_COLORS.length]
+}
+
+// Format canonique d'affichage pour un tag — première lettre UPPER, reste LOWER.
+// Défensif : le backend normalise déjà à l'écriture ET à la lecture, mais on
+// applique aussi côté UI pour rendre un display cohérent même si un tag
+// arrive non normalisé (cas edge : import, données anciennes, etc.).
+function displayTag(label: string): string {
+  if (!label) return ''
+  const s = label.trim()
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -1283,7 +1295,7 @@ export default function ValkyriePlugin() {
                     cursor: 'pointer',
                   }}>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: c }} />
-                  {t.label}
+                  {displayTag(t.label)}
                   <span style={{
                     fontFamily: 'JetBrains Mono, monospace', fontSize: 9,
                     color: 'var(--text-muted)', padding: '0 4px',
@@ -2105,7 +2117,7 @@ function CardTile({
                       color: c, fontSize: 9.5, fontWeight: 600,
                     }}>
                       <span style={{ width: 4, height: 4, borderRadius: '50%', background: c }} />
-                      {t}
+                      {displayTag(t)}
                     </span>
                   )
                 })}
@@ -2370,7 +2382,7 @@ function TagBar({
             color: c, fontSize: 10, fontWeight: 600,
           }}>
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: c }} />
-            {t}
+            {displayTag(t)}
             <button onClick={() => onRemove(t)}
               style={{
                 background: 'none', border: 'none', padding: 0, cursor: 'pointer',
@@ -2421,7 +2433,7 @@ function TagBar({
                   onMouseOver={e => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
                   onMouseOut={e => (e.currentTarget.style.background = 'transparent')}>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: c }} />
-                  <span style={{ flex: 1 }}>{s.label}</span>
+                  <span style={{ flex: 1 }}>{displayTag(s.label)}</span>
                   <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>×{s.count}</span>
                 </button>
               )

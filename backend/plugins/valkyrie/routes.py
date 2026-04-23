@@ -133,7 +133,9 @@ def _serialize_card(c: ValkyrieCard) -> dict:
         "subtasks": list(c.subtasks_json or []),
         "subtasks2": list(c.subtasks2_json or []),
         "subtasks2_title": (c.subtasks2_title or ""),
-        "tags": list(c.tags_json or []),
+        # Normalise à la lecture aussi (pas juste à l'écriture) — rattrape
+        # les cartes historiques qui avaient DEV, Dev, dev côte à côte.
+        "tags": _sanitize_tags(list(c.tags_json or [])),
         "due_date": c.due_date.date().isoformat() if c.due_date else None,
         "archived_at": c.archived_at.isoformat() if c.archived_at else None,
         "origin": c.origin or "",
@@ -669,21 +671,25 @@ async def _spawn_next_recurrence(session: AsyncSession, src: ValkyrieCard) -> Op
 
 
 def _sanitize_tags(items) -> list[str]:
-    """Normalise la liste de tags : strings uniques trim, ≤40 chars chacun,
-    max 20 tags par carte. On lowercase pas — l'user garde sa casse."""
+    """Normalise la liste de tags : strings uniques trim, ≤40 chars, max 20
+    par carte. Forme canonique Title Case (première lettre UPPER, reste
+    LOWER) → 'DEV' = 'Dev' = 'dev' tous stockés 'Dev'. Insensible à la
+    casse côté dédup et côté comparaison globale.
+    """
     out: list[str] = []
     seen = set()
     for it in items or []:
         if not isinstance(it, str):
             continue
-        label = it.strip()[:40]
-        if not label:
+        cleaned = it.strip()[:40]
+        if not cleaned:
             continue
-        key = label.lower()
+        canonical = cleaned[:1].upper() + cleaned[1:].lower()
+        key = canonical.lower()
         if key in seen:
             continue
         seen.add(key)
-        out.append(label)
+        out.append(canonical)
         if len(out) >= 20:
             break
     return out
@@ -693,27 +699,30 @@ def _sanitize_tags(items) -> list[str]:
 
 @router.get("/tags")
 async def list_tags(request: Request, session: AsyncSession = Depends(get_session)):
-    """Retourne tous les tags uniques utilisés par l'user sur l'ensemble de
-    ses cartes. Utilisé par l'UI pour l'autocomplétion + la recherche."""
+    """Retourne tous les tags uniques utilisés par l'user. Dédup insensible
+    à la casse + forme canonique Title Case pour l'affichage (DEV / Dev /
+    dev → 'Dev'). Count agrégé sur toutes les variantes de casse."""
     uid = await _uid(request, session)
     _require_uid(uid)
     rs = await session.execute(
         select(ValkyrieCard.tags_json).where(ValkyrieCard.user_id == uid)
     )
-    seen: dict[str, int] = {}  # label → count
+    seen: dict[str, dict] = {}  # lowercase_key → {label, count}
     for (tags,) in rs.all():
         if not tags:
             continue
         for t in tags:
             if not isinstance(t, str):
                 continue
-            key = t.strip()
-            if not key:
+            cleaned = t.strip()
+            if not cleaned:
                 continue
-            seen[key] = seen.get(key, 0) + 1
-    # Trié par fréquence descendante puis alphabétique
-    ranked = sorted(seen.items(), key=lambda x: (-x[1], x[0].lower()))
-    return {"tags": [{"label": k, "count": v} for k, v in ranked]}
+            canonical = cleaned[:1].upper() + cleaned[1:].lower()
+            key = canonical.lower()
+            entry = seen.setdefault(key, {"label": canonical, "count": 0})
+            entry["count"] += 1
+    ranked = sorted(seen.values(), key=lambda x: (-x["count"], x["label"].lower()))
+    return {"tags": ranked}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
