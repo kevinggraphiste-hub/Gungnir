@@ -29,12 +29,49 @@ export function FileExplorer({ onOpenFile }: { onOpenFile: (path: string, name?:
   const navIn = (p: string) => { setPathStack(s => [...s, currentPath]); setCurrentPath(p); loadTree(p) }
   const navBack = () => { const p = pathStack[pathStack.length - 1] ?? ''; setPathStack(s => s.slice(0, -1)); setCurrentPath(p); loadTree(p) }
 
+  // Trouve un nom disponible dans le dossier courant en ajoutant un suffixe
+  // `-2`, `-3`, etc. si collision (insensible à la casse). Préserve l'extension
+  // pour les fichiers (ex: `test.py` → `test-2.py`). Évite d'écraser
+  // silencieusement un dossier/fichier existant.
+  const findAvailableName = (base: string, existing: TreeEntry[]): string => {
+    const names = new Set(existing.map(e => e.name.toLowerCase()))
+    if (!names.has(base.toLowerCase())) return base
+    const dot = base.lastIndexOf('.')
+    const [stem, ext] = dot > 0 ? [base.slice(0, dot), base.slice(dot)] : [base, '']
+    for (let i = 2; i < 100; i++) {
+      const candidate = `${stem}-${i}${ext}`
+      if (!names.has(candidate.toLowerCase())) return candidate
+    }
+    return `${stem}-${Date.now()}${ext}`
+  }
+
   const handleCreate = async () => {
     if (!newName.trim()) return
-    const full = currentPath ? `${currentPath}/${newName}` : newName
+    const finalName = findAvailableName(newName.trim(), tree)
+    const full = currentPath ? `${currentPath}/${finalName}` : finalName
     if (creating === 'folder') await apiFetch('/folder', { method: 'POST', body: JSON.stringify({ path: full }) })
     else await apiFetch('/file', { method: 'PUT', body: JSON.stringify({ path: full, content: '' }) })
     setCreating(null); setNewName(''); loadTree(currentPath)
+  }
+
+  // Nouveau projet : toujours à la racine du workspace (pas dans le dossier
+  // courant). Le nom demandé via prompt — si collision, auto-rename avec
+  // suffixe. Après création, on y navigue pour que l'user démarre directement
+  // dans son nouveau dossier.
+  const handleNewProject = async () => {
+    const defaultName = `projet-${new Date().toISOString().slice(0, 10)}`
+    const raw = window.prompt('Nom du projet', defaultName)
+    if (!raw || !raw.trim()) return
+    // On lit la racine workspace (indépendamment du currentPath) pour résoudre
+    // la collision au bon niveau.
+    const rootData = await apiFetch<{ entries: TreeEntry[] }>(`/tree?path=`)
+    const rootEntries = rootData?.entries || []
+    const finalName = findAvailableName(raw.trim(), rootEntries)
+    await apiFetch('/folder', { method: 'POST', body: JSON.stringify({ path: finalName }) })
+    // Navigate dedans
+    setPathStack([])
+    setCurrentPath(finalName)
+    loadTree(finalName)
   }
 
   const handleDelete = async (path: string, name: string) => {
@@ -95,6 +132,14 @@ export function FileExplorer({ onOpenFile }: { onOpenFile: (path: string, name?:
       <div style={{ padding: '7px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 4 }}>
         {currentPath && <IconBtn onClick={navBack}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg></IconBtn>}
         <span style={{ ...S.sl, padding: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentPath || 'Workspace'}</span>
+        <IconBtn onClick={handleNewProject} title="Nouveau projet (sous-dossier à la racine du workspace)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--scarlet)" strokeWidth="2">
+            <path d="M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z"/>
+            <circle cx="16" cy="14" r="3" fill="var(--scarlet)" stroke="none"/>
+            <line x1="16" y1="12.5" x2="16" y2="15.5" stroke="white" strokeWidth="1.5"/>
+            <line x1="14.5" y1="14" x2="17.5" y2="14" stroke="white" strokeWidth="1.5"/>
+          </svg>
+        </IconBtn>
         <IconBtn onClick={() => setCreating(creating ? null : 'file')} title="Nouveau fichier"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg></IconBtn>
         <IconBtn onClick={() => setCreating(creating ? null : 'folder')} title="Nouveau dossier"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg></IconBtn>
         <IconBtn onClick={() => !uploading && fileInputRef.current?.click()} title={uploading ? 'Import en cours...' : 'Importer depuis le PC'}>

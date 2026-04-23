@@ -25,6 +25,10 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
   const [loading, setLoading] = useState(false)
   const [tokenStats, setTokenStats] = useState({ context: 0, total: 0, msgs: 0 })
   const [streamingText, setStreamingText] = useState('')
+  // Mode par défaut `chat` — la distinction Chat/Agent a été retirée du
+  // panneau (inutile : les deux mènent vers le LLM). Les states restent pour
+  // que la logique côté API/events conservée fonctionne ; ils ne sont juste
+  // plus togglables depuis l'UI.
   const [mode, setMode] = useState<'chat' | 'agent'>('chat')
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([])
   const [agentRunning, setAgentRunning] = useState(false)
@@ -78,8 +82,10 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
     setLoadingModels(false)
   }
 
-  // Context reduction
-  const [contextMode, setContextMode] = useState<'smart' | 'selection' | 'full' | 'none'>('smart')
+  // Context reduction — `smart` par défaut, les autres modes ont été retirés
+  // de l'UI (peu utilisés et prêtent à confusion). State conservé pour
+  // payload API identique.
+  const [contextMode] = useState<'smart' | 'selection' | 'full' | 'none'>('smart')
   const [multiFileCtx, setMultiFileCtx] = useState(false)
   const [hasProjectRules, setHasProjectRules] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -398,7 +404,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
       <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', background: 'var(--bg-tertiary)' }}>
         {/* Model selector row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, position: 'relative' }}>
-          <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Modele</span>
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Modele</span>
           <button onClick={() => setShowModelMenu(!showModelMenu)} title="Changer de modele IA"
             style={{
               flex: 1, display: 'flex', alignItems: 'center', gap: 6,
@@ -409,7 +415,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
             }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--scarlet)', flexShrink: 0 }} />
             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>{modelShort}</span>
-            <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{selectedProvider || 'auto'}</span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{selectedProvider || 'auto'}</span>
             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
@@ -440,7 +446,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
               <div style={{ maxHeight: 300, overflow: 'auto' }}>
                 {/* SpearCode favorites */}
                 {!modelSearch && favorites.length > 0 && <>
-                  <div style={{ padding: '6px 10px 3px', fontSize: 8, fontWeight: 700, color: 'var(--scarlet)', textTransform: 'uppercase', letterSpacing: 0.5 }}>★ Favoris SpearCode</div>
+                  <div style={{ padding: '6px 10px 3px', fontSize: 10, fontWeight: 700, color: 'var(--scarlet)', textTransform: 'uppercase', letterSpacing: 0.5 }}>★ Favoris SpearCode</div>
                   {favorites.map(fav => {
                     const [prov, ...mParts] = fav.split('::')
                     const model = mParts.join('::')
@@ -465,7 +471,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
                   const displayLimit = modelSearch ? 50 : 20
                   return (
                     <div key={prov.name}>
-                      <div style={{ padding: '6px 10px 3px', fontSize: 8, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ padding: '6px 10px 3px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span>{prov.name}</span>
                         <span style={{ fontWeight: 400, opacity: 0.6 }}>{filtered.length}{filtered.length < models.length ? `/${models.length}` : ''} modeles</span>
                       </div>
@@ -480,7 +486,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
                         )
                       })}
                       {filtered.length > displayLimit && (
-                        <div style={{ padding: '4px 10px', fontSize: 9, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        <div style={{ padding: '4px 10px', fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
                           ... et {filtered.length - displayLimit} autres (utilisez la recherche)
                         </div>
                       )}
@@ -492,60 +498,22 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
           )}
         </div>
 
-        {/* Mode toggle + Context mode row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          {/* Chat / Agent toggle */}
-          <div style={{ display: 'flex', borderRadius: 5, overflow: 'hidden', border: '1px solid var(--border)', marginRight: 4 }}>
-            <button onClick={() => setMode('chat')} style={{
-              border: 'none', cursor: 'pointer', padding: '2px 7px', fontSize: 8, fontWeight: 700,
-              background: mode === 'chat' ? 'var(--scarlet)' : 'transparent',
-              color: mode === 'chat' ? '#fff' : 'var(--text-muted)', transition: 'all 0.12s',
-            }}>Chat</button>
-            <button onClick={() => setMode('agent')} style={{
-              border: 'none', cursor: 'pointer', padding: '2px 7px', fontSize: 8, fontWeight: 700,
-              background: mode === 'agent' ? '#8b5cf6' : 'transparent',
-              color: mode === 'agent' ? '#fff' : 'var(--text-muted)', transition: 'all 0.12s',
-            }}>{'\u{1F916}'} Agent</button>
-          </div>
-          <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginRight: 2 }}>Ctx</span>
-          {CTX_MODES.map(m => (
-            <button key={m.id} onClick={() => setContextMode(m.id as any)} title={`${m.label}: ${m.desc}`}
-              style={{
-                border: 'none', cursor: 'pointer', borderRadius: 4, padding: '2px 6px',
-                fontSize: 8, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 2,
-                background: contextMode === m.id ? `${m.color}20` : 'transparent',
-                color: contextMode === m.id ? m.color : 'var(--text-muted)',
-                outline: contextMode === m.id ? `1px solid ${m.color}40` : 'none',
-                transition: 'all 0.12s',
-              }}>
-              {m.icon}
-              {contextMode === m.id && <span>{m.label}</span>}
-            </button>
-          ))}
+        {/* Skill dropdown + tokens — Chat/Agent toggle retiré (inutile : un
+            seul flux vers le LLM), CTX modes retirés (smart par défaut). */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <SkillDropdown
+            personas={personas}
+            activeId={activePersona}
+            onSelect={id => setActivePersona(id)}
+          />
           <div style={{ flex: 1 }} />
           {tokenStats.total > 0 && (
             <span title={`Contexte: ~${tokenStats.context} | Session: ~${tokenStats.total}`}
-              style={{ fontSize: 8, color: tokenStats.total > 5000 ? '#f59e0b' : '#22c55e', fontWeight: 600, cursor: 'help' }}>
+              style={{ fontSize: 10, color: tokenStats.total > 5000 ? '#f59e0b' : '#22c55e', fontWeight: 600, cursor: 'help' }}>
               ~{tokenStats.total > 1000 ? `${(tokenStats.total / 1000).toFixed(1)}k` : tokenStats.total} tok
             </span>
           )}
         </div>
-      </div>
-
-      {/* ── Personas ─────────────────────────────────────────────── */}
-      <div style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-        <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginRight: 2 }}>IA</span>
-        {personas.map(p => (
-          <button key={p.id} onClick={() => setActivePersona(activePersona === p.id ? null : p.id)} title={p.description}
-            style={{
-              border: 'none', cursor: 'pointer', borderRadius: 4, padding: '2px 5px',
-              fontSize: 8, fontWeight: 600,
-              background: activePersona === p.id ? `${PC[p.id]}20` : 'transparent',
-              color: activePersona === p.id ? PC[p.id] : 'var(--text-muted)',
-              outline: activePersona === p.id ? `1px solid ${PC[p.id]}40` : 'none',
-              transition: 'all 0.12s',
-            }}>{p.icon} {p.name}</button>
-        ))}
       </div>
 
       {/* ── Session tabs ─────────────────────────────────────────── */}
@@ -553,15 +521,15 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
         {sessions.map(s => (
           <div key={s.id} onClick={() => { setActiveSessionId(s.id); setTokenStats(prev => ({ ...prev, total: s.tokens })) }}
             style={{
-              display: 'flex', alignItems: 'center', gap: 3, padding: '4px 8px', cursor: 'pointer', fontSize: 9,
+              display: 'flex', alignItems: 'center', gap: 3, padding: '4px 8px', cursor: 'pointer', fontSize: 11,
               color: s.id === activeSessionId ? 'var(--text-primary)' : 'var(--text-muted)',
               borderBottom: s.id === activeSessionId ? '2px solid var(--scarlet)' : '2px solid transparent',
               fontWeight: s.id === activeSessionId ? 600 : 400,
             }}>
             <span>{s.name}</span>
-            <span style={{ fontSize: 7, opacity: 0.4 }}>{s.messages.length > 0 ? `(${s.messages.length})` : ''}</span>
+            <span style={{ fontSize: 11, opacity: 0.4 }}>{s.messages.length > 0 ? `(${s.messages.length})` : ''}</span>
             {sessions.length > 1 && (
-              <button onClick={e => { e.stopPropagation(); closeSession(s.id) }} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 8, padding: 0, opacity: 0.3 }}>&times;</button>
+              <button onClick={e => { e.stopPropagation(); closeSession(s.id) }} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10, padding: 0, opacity: 0.3 }}>&times;</button>
             )}
           </div>
         ))}
@@ -570,34 +538,34 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
         {messages.length >= 4 && (
           <button onClick={compactSession} title="Compacter la session (reduire les tokens)" style={{
             border: 'none', cursor: 'pointer', padding: '2px 6px', marginRight: 4,
-            borderRadius: 3, fontSize: 8, fontWeight: 600,
+            borderRadius: 3, fontSize: 10, fontWeight: 600,
             background: '#6366f120', color: '#6366f1',
           }}>{'\u{1F5DC}️'} Compacter</button>
         )}
       </div>
 
       {/* ── File indicator + controls ─────────────────────────────── */}
-      <div style={{ padding: '2px 10px', fontSize: 9, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ padding: '2px 10px', fontSize: 11, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 4 }}>
         {filePath
           ? <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
               <span style={{ width: 4, height: 4, borderRadius: '50%', background: curCtx.color }} />
-              <span style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: 9 }}>{filePath.split('/').pop()}</span>
-              <span style={{ fontSize: 7, color: curCtx.color }}>{curCtx.label}</span>
+              <span style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: 11 }}>{filePath.split('/').pop()}</span>
+              <span style={{ fontSize: 11, color: curCtx.color }}>{curCtx.label}</span>
             </span>
           : <span style={{ opacity: 0.4 }}>Aucun fichier ouvert</span>
         }
         {openFiles.length > 1 && (
           <button onClick={() => setMultiFileCtx(!multiFileCtx)} title={multiFileCtx ? 'Multi-fichiers ON' : 'Multi-fichiers OFF'}
-            style={{ border: 'none', cursor: 'pointer', borderRadius: 3, padding: '0 4px', fontSize: 7, fontWeight: 700, background: multiFileCtx ? '#3b82f620' : 'transparent', color: multiFileCtx ? '#3b82f6' : 'var(--text-muted)' }}>
+            style={{ border: 'none', cursor: 'pointer', borderRadius: 3, padding: '0 4px', fontSize: 11, fontWeight: 700, background: multiFileCtx ? '#3b82f620' : 'transparent', color: multiFileCtx ? '#3b82f6' : 'var(--text-muted)' }}>
             {'\u{1F4C1}'}{openFiles.length}
           </button>
         )}
-        {hasProjectRules && <span title="Regles .spearcode actives" style={{ fontSize: 7, color: '#22c55e', fontWeight: 700 }}>{'⚙️'}.spearcode</span>}
+        {hasProjectRules && <span title="Regles .spearcode actives" style={{ fontSize: 11, color: '#22c55e', fontWeight: 700 }}>{'⚙️'}.spearcode</span>}
         <div style={{ flex: 1 }} />
         {messages.length > 0 && (
-          <button onClick={() => window.dispatchEvent(new CustomEvent('spearcode-export-session'))} title="Exporter la session en Markdown" style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 8, opacity: 0.4 }}>{'\u{1F4E4}'}</button>
+          <button onClick={() => window.dispatchEvent(new CustomEvent('spearcode-export-session'))} title="Exporter la session en Markdown" style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10, opacity: 0.4 }}>{'\u{1F4E4}'}</button>
         )}
-        {messages.length > 0 && <button onClick={() => { updateSession(s => ({ ...s, messages: [], tokens: 0 })); setTokenStats({ context: 0, total: 0, msgs: 0 }) }} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 8, opacity: 0.4 }}>Effacer</button>}
+        {messages.length > 0 && <button onClick={() => { updateSession(s => ({ ...s, messages: [], tokens: 0 })); setTokenStats({ context: 0, total: 0, msgs: 0 }) }} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10, opacity: 0.4 }}>Effacer</button>}
       </div>
 
       {/* ── Messages ─────────────────────────────────────────────── */}
@@ -617,7 +585,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
           </div>
         ) : messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 6, padding: '6px 10px', borderRadius: 8, background: m.role === 'user' ? 'var(--bg-tertiary)' : 'var(--bg-card)', border: m.role === 'assistant' ? '1px solid var(--border)' : 'none' }}>
-            <div style={{ fontSize: 8, fontWeight: 700, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.3, color: m.role === 'user' ? 'var(--scarlet)' : (PC[activePersona || ''] || '#22c55e') }}>
+            <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.3, color: m.role === 'user' ? 'var(--scarlet)' : (PC[activePersona || ''] || '#22c55e') }}>
               {m.role === 'user' ? 'Vous' : (personas.find(p => p.id === activePersona)?.name || 'SpearCode')}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-primary)', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.content}</div>
@@ -625,7 +593,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
               <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {extractCodeBlocks(m.content).map((block, bi) => (
                   <button key={bi} onClick={() => onApplyCode(block.code)}
-                    style={{ border: 'none', cursor: 'pointer', borderRadius: 4, padding: '3px 8px', fontSize: 8, fontWeight: 600, background: '#22c55e20', color: '#22c55e', display: 'flex', alignItems: 'center', gap: 3 }}>
+                    style={{ border: 'none', cursor: 'pointer', borderRadius: 4, padding: '3px 8px', fontSize: 10, fontWeight: 600, background: '#22c55e20', color: '#22c55e', display: 'flex', alignItems: 'center', gap: 3 }}>
                     <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
                     Appliquer {block.language ? `(${block.language})` : `bloc ${bi + 1}`}
                   </button>
@@ -637,8 +605,8 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
         {/* Streaming text (live tokens) */}
         {loading && streamingText && (
           <div style={{ marginBottom: 6, padding: '6px 10px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: 8, fontWeight: 700, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.3, color: PC[activePersona || ''] || '#22c55e' }}>
-              {personas.find(p => p.id === activePersona)?.name || 'SpearCode'} <span style={{ fontSize: 7, color: 'var(--text-muted)', fontWeight: 400 }}>streaming...</span>
+            <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.3, color: PC[activePersona || ''] || '#22c55e' }}>
+              {personas.find(p => p.id === activePersona)?.name || 'SpearCode'} <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>streaming...</span>
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-primary)', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{streamingText}<span style={{ display: 'inline-block', width: 5, height: 12, background: 'var(--scarlet)', marginLeft: 1, animation: 'pulse 0.6s ease-in-out infinite' }} /></div>
           </div>
@@ -646,8 +614,8 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
         {/* Agent steps live display */}
         {agentRunning && agentSteps.length > 0 && (
           <div style={{ marginBottom: 6, padding: '6px 10px', borderRadius: 8, background: '#8b5cf608', border: '1px solid #8b5cf630' }}>
-            <div style={{ fontSize: 8, fontWeight: 700, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.3, color: '#8b5cf6', display: 'flex', alignItems: 'center', gap: 4 }}>
-              {'\u{1F916}'} Agent Mode <span style={{ fontSize: 7, color: 'var(--text-muted)', fontWeight: 400 }}>etape {agentSteps[agentSteps.length - 1]?.step || '...'}</span>
+            <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.3, color: '#8b5cf6', display: 'flex', alignItems: 'center', gap: 4 }}>
+              {'\u{1F916}'} Agent Mode <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>etape {agentSteps[agentSteps.length - 1]?.step || '...'}</span>
             </div>
             {agentSteps.map((s, i) => (
               <div key={i} style={{ marginBottom: 4, fontSize: 10, lineHeight: 1.5 }}>
@@ -659,14 +627,14 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
                 )}
                 {s.type === 'tool_call' && (
                   <div style={{ background: '#1e293b', borderRadius: 6, padding: '4px 8px', border: '1px solid #334155' }}>
-                    <div style={{ color: '#f59e0b', fontWeight: 700, fontSize: 9 }}>{'\u{1F527}'} {s.tool}({Object.keys(s.args || {}).map(k => `${k}="${String(s.args[k]).substring(0, 30)}"`).join(', ')})</div>
-                    {s.reasoning && <div style={{ color: 'var(--text-muted)', fontSize: 9, marginTop: 2 }}>{s.reasoning.substring(0, 120)}</div>}
+                    <div style={{ color: '#f59e0b', fontWeight: 700, fontSize: 11 }}>{'\u{1F527}'} {s.tool}({Object.keys(s.args || {}).map(k => `${k}="${String(s.args[k]).substring(0, 30)}"`).join(', ')})</div>
+                    {s.reasoning && <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>{s.reasoning.substring(0, 120)}</div>}
                   </div>
                 )}
                 {s.type === 'tool_result' && (
                   <div style={{ background: '#0f172a', borderRadius: 6, padding: '4px 8px', border: '1px solid #1e293b', maxHeight: 80, overflow: 'auto' }}>
-                    <div style={{ color: '#22c55e', fontWeight: 600, fontSize: 8 }}>{'✅'} Resultat de {s.tool}</div>
-                    <pre style={{ margin: 0, fontSize: 9, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{(s.result || '').substring(0, 300)}</pre>
+                    <div style={{ color: '#22c55e', fontWeight: 600, fontSize: 10 }}>{'✅'} Resultat de {s.tool}</div>
+                    <pre style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{(s.result || '').substring(0, 300)}</pre>
                   </div>
                 )}
                 {s.type === 'response' && (
@@ -691,7 +659,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
           <div style={{ padding: '4px 10px', display: 'flex', justifyContent: 'flex-end' }}>
             <button onClick={stopGeneration} title="Arreter" style={{
               border: 'none', cursor: 'pointer', padding: '3px 10px', borderRadius: 4,
-              background: '#dc262620', color: '#dc2626', fontSize: 9, fontWeight: 700,
+              background: '#dc262620', color: '#dc2626', fontSize: 11, fontWeight: 700,
               display: 'flex', alignItems: 'center', gap: 4,
             }}>
               <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
@@ -704,7 +672,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
       {/* ── Input ─────────────────────────────────────────────────── */}
       <div style={{ padding: '6px 8px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
         {mode === 'agent' && (
-          <div style={{ fontSize: 8, color: '#8b5cf6', fontWeight: 600, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{ fontSize: 10, color: '#8b5cf6', fontWeight: 600, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
             {'\u{1F916}'} Mode Agent — l'IA va planifier et executer les etapes automatiquement
           </div>
         )}
@@ -766,6 +734,83 @@ export function ModelRow({ provider, model, shortName, isActive, isFav, onSelect
         }}>{isFav ? '★' : '☆'}</button>
       <span style={{ flex: 1, color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: isActive ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shortName}</span>
       {isActive && <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--scarlet)' }} />}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SkillDropdown — regroupe les personas (Architect, Debugger, Reviewer, etc.)
+// sous un bouton unique avec menu déroulant. Remplace l'ancienne rangée de
+// badges qui prenait toute la largeur.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SkillDropdown({ personas, activeId, onSelect }: {
+  personas: CodingPersona[]
+  activeId: string | null
+  onSelect: (id: string | null) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const active = personas.find(p => p.id === activeId) || null
+  const color = active ? (PC[active.id] || 'var(--scarlet)') : 'var(--text-muted)'
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex' }}>
+      <button onClick={() => setOpen(v => !v)} onBlur={() => setTimeout(() => setOpen(false), 180)}
+        title="Choisir un rôle (skill) pour cette session"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          padding: '3px 8px', borderRadius: 5, cursor: 'pointer',
+          background: active ? `${color}20` : 'var(--bg-tertiary)',
+          border: active ? `1px solid ${color}40` : '1px solid var(--border)',
+          color: active ? color : 'var(--text-secondary)',
+          fontSize: 10, fontWeight: 600,
+        }}>
+        <span style={{ fontSize: 11 }}>{active ? active.icon : '🎭'}</span>
+        <span>{active ? active.name : 'Skill'}</span>
+        <span style={{ fontSize: 11, opacity: 0.6 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+          minWidth: 180, background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+          borderRadius: 6, boxShadow: '0 8px 18px rgba(0,0,0,0.3)',
+          padding: 3, zIndex: 20, maxHeight: 260, overflowY: 'auto',
+        }}>
+          {/* Option pour désactiver le skill courant */}
+          <button onMouseDown={e => { e.preventDefault(); onSelect(null); setOpen(false) }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+              padding: '5px 8px', borderRadius: 4, background: 'transparent',
+              border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 10,
+              textAlign: 'left',
+            }}>
+            <span style={{ fontSize: 11, width: 16, textAlign: 'center' }}>∅</span>
+            <span>Aucun skill</span>
+          </button>
+          <div style={{ height: 1, background: 'var(--border)', margin: '2px 0' }} />
+          {personas.map(p => {
+            const c = PC[p.id] || 'var(--text-muted)'
+            const isActive = p.id === activeId
+            return (
+              <button key={p.id}
+                onMouseDown={e => { e.preventDefault(); onSelect(p.id); setOpen(false) }}
+                title={p.description}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                  padding: '5px 8px', borderRadius: 4, cursor: 'pointer',
+                  background: isActive ? `${c}15` : 'transparent',
+                  color: isActive ? c : 'var(--text-primary)',
+                  border: 'none', fontSize: 10, fontWeight: isActive ? 600 : 400,
+                  textAlign: 'left',
+                }}>
+                <span style={{ fontSize: 11, width: 16, textAlign: 'center' }}>{p.icon}</span>
+                <span style={{ flex: 1 }}>{p.name}</span>
+                {isActive && <span style={{ fontSize: 11, color: c }}>✓</span>}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

@@ -42,11 +42,27 @@ export function SnippetsPanel({ language, onInsert }: { language?: string; onIns
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ padding: '7px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6 }}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-primary)' }}>Snippets</span>
-        <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>({snippets.length})</span>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>Snippets</span>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>({snippets.length})</span>
         <div style={{ flex: 1 }} />
-        <IconBtn onClick={() => setShowAdd(!showAdd)} title="Nouveau snippet"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></IconBtn>
+        <IconBtn onClick={() => setShowAdd(!showAdd)} title="Nouveau snippet"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></IconBtn>
+      </div>
+
+      {/* Bandeau explicatif — affiché en permanence en haut du panneau. Aide
+          les nouveaux utilisateurs à comprendre à quoi sert cette zone. */}
+      <div style={{
+        padding: '8px 12px', fontSize: 11, lineHeight: 1.45,
+        color: 'var(--text-muted)', background: 'var(--bg-tertiary)',
+        borderBottom: '1px solid var(--border)',
+      }}>
+        <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Snippets</strong> : petits bouts de code réutilisables
+        (imports fréquents, boilerplate, patterns…). <br />
+        • Pour en <strong style={{ color: 'var(--text-primary)' }}>créer</strong> un : sélectionne du code dans l'éditeur
+        puis clique <em>Snippet</em> dans la barre d'actions IA, ou utilise le
+        bouton <strong style={{ color: 'var(--text-primary)' }}>+</strong> ci-dessus pour le saisir à la main. <br />
+        • Pour <strong style={{ color: 'var(--text-primary)' }}>insérer</strong> un snippet : clique dessus dans la liste pour
+        déplier, puis utilise le bouton <em>Insérer</em>.
       </div>
 
       {showAdd && (

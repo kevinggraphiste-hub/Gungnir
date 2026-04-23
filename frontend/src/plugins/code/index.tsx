@@ -51,6 +51,31 @@ export default function SpearCodePlugin() {
   const [selectedCode, setSelectedCode] = useState('')
   const [codeActionLoading, setCodeActionLoading] = useState(false)
   const [gitBranch, setGitBranch] = useState('')
+  // Largeur du panneau latéral — redimensionnable via drag handle.
+  // Persisté en localStorage pour garder la préférence entre sessions.
+  const [sidePanelWidth, setSidePanelWidth] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem('spearcode_side_width') || '')
+      return Number.isFinite(v) && v >= 220 && v <= 720 ? v : 300
+    } catch { return 300 }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('spearcode_side_width', String(sidePanelWidth)) } catch { /* ignore */ }
+  }, [sidePanelWidth])
+  // Paramètres en overlay pleine page (masque terminal/preview) — séparé
+  // de sideView pour avoir vraiment une vue maximisée.
+  const [showSettings, setShowSettings] = useState(false)
+  // Taille de police globale SpearCode — appliquée via CSS var sur le
+  // root du plugin. Persiste en localStorage, défaut 13 px.
+  const [uiFontSize, setUiFontSize] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem('spearcode_font_size') || '')
+      return Number.isFinite(v) && v >= 11 && v <= 18 ? v : 13
+    } catch { return 13 }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('spearcode_font_size', String(uiFontSize)) } catch { /* ignore */ }
+  }, [uiFontSize])
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
   void editorRef
   const restoredRef = useRef(false)
@@ -223,7 +248,15 @@ export default function SpearCodePlugin() {
   const [previewCollapsed, setPreviewCollapsed] = useState(false)
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', position: 'relative' }}>
+    <div style={{
+      flex: 1, display: 'flex', flexDirection: 'column', height: '100%',
+      overflow: 'hidden', position: 'relative',
+      // CSS var consommée par les composants SpearCode pour leurs textes UI
+      // (tags, badges, labels). Les tailles monospace de l'éditeur
+      // CodeMirror restent indépendantes.
+      ['--spear-ui-font-size' as any]: `${uiFontSize}px`,
+      fontSize: `${uiFontSize}px`,
+    }}>
       {showPalette && <CommandPalette onClose={() => setShowPalette(false)} onOpenFile={openFile} />}
 
       {/* Header */}
@@ -268,7 +301,14 @@ export default function SpearCodePlugin() {
             ['ai', 'Assistant IA (Ctrl+L)'],
             ['settings', 'Parametres'],
           ] as const).map(([id, title]) => (
-            <HBtn key={id} active={sideView === id} onClick={() => setSideView(id as any)} title={title}>
+            <HBtn
+              key={id}
+              active={id === 'settings' ? showSettings : (sideView === id)}
+              onClick={() => {
+                if (id === 'settings') setShowSettings(v => !v)
+                else { setShowSettings(false); setSideView(id as any) }
+              }}
+              title={title}>
               {id === 'files' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>}
               {id === 'search' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>}
               {id === 'git' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>}
@@ -313,19 +353,49 @@ export default function SpearCodePlugin() {
 
       {/* Body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Side panel */}
+        {/* Side panel (redimensionnable via drag handle) */}
         <div style={{
-          width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column',
+          width: sidePanelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column',
           borderRight: '1px solid var(--border)', background: 'var(--bg-secondary)', overflow: 'hidden',
         }}>
           {sideView === 'files' && <FileExplorer onOpenFile={openFile} />}
           {sideView === 'search' && <SearchPanel onOpenFile={openFile} />}
           {sideView === 'git' && <GitPanel onBranchChange={setGitBranch} />}
           {sideView === 'ai' && <AIPanel filePath={activeFile?.path} language={activeFile?.language} onApplyCode={applyCodeToFile} openFiles={tabs.map(t => ({ path: t.path, name: t.name, language: t.language }))} />}
-          {sideView === 'settings' && <SettingsPanel />}
           {sideView === 'versions' && <VersionPanel filePath={activeFile?.path} onRestore={(content) => { if (activeTab) updateContent(activeTab, content) }} />}
           {sideView === 'snippets' && <SnippetsPanel language={activeFile?.language} onInsert={(code) => { if (activeTab) { const tab = tabs.find(t => t.path === activeTab); if (tab) updateContent(activeTab, tab.content + '\n' + code) } }} />}
         </div>
+        {/* Drag handle pour redimensionner le panneau latéral (220-720px). */}
+        <div
+          onMouseDown={(e) => {
+            e.preventDefault()
+            const startX = e.clientX
+            const startW = sidePanelWidth
+            const onMove = (ev: MouseEvent) => {
+              const next = Math.max(220, Math.min(720, startW + (ev.clientX - startX)))
+              setSidePanelWidth(next)
+            }
+            const onUp = () => {
+              window.removeEventListener('mousemove', onMove)
+              window.removeEventListener('mouseup', onUp)
+              document.body.style.cursor = ''
+              document.body.style.userSelect = ''
+            }
+            window.addEventListener('mousemove', onMove)
+            window.addEventListener('mouseup', onUp)
+            document.body.style.cursor = 'col-resize'
+            document.body.style.userSelect = 'none'
+          }}
+          title="Redimensionner"
+          style={{
+            width: 4, flexShrink: 0, cursor: 'col-resize',
+            background: 'transparent',
+            borderRight: '1px solid var(--border)',
+            transition: 'background 0.12s',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'color-mix(in srgb, var(--scarlet) 30%, transparent)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+        />
 
         {/* Editor zone */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -438,6 +508,47 @@ export default function SpearCodePlugin() {
 
       {/* Status Bar */}
       <StatusBar file={activeFile} gitBranch={gitBranch} tabCount={tabs.length} modifiedCount={tabs.filter(t => t.modified).length} />
+
+      {/* Paramètres en overlay pleine page — masque terminal, preview, etc. */}
+      {showSettings && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 50,
+          background: 'var(--bg-primary)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '10px 16px', borderBottom: '1px solid var(--border)',
+            background: 'var(--bg-secondary)', flexShrink: 0,
+          }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--scarlet)" strokeWidth="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Paramètres SpearCode</span>
+            <div style={{ flex: 1 }} />
+            {/* Contrôle taille police — effectif immédiatement via CSS var */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}>
+              Taille police
+              <input type="range" min={11} max={18} step={1} value={uiFontSize}
+                onChange={e => setUiFontSize(Number(e.target.value))}
+                style={{ width: 100 }} />
+              <span style={{ fontFamily: 'monospace', minWidth: 28, textAlign: 'right' }}>{uiFontSize}px</span>
+            </label>
+            <button onClick={() => setShowSettings(false)} title="Fermer (Échap)"
+              style={{
+                background: 'transparent', border: '1px solid var(--border)',
+                color: 'var(--text-secondary)', cursor: 'pointer',
+                padding: '4px 10px', borderRadius: 5, fontSize: 12,
+              }}>
+              ×
+            </button>
+          </div>
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            <SettingsPanel />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
