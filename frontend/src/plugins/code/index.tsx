@@ -509,7 +509,10 @@ export default function SpearCodePlugin() {
       {/* Status Bar */}
       <StatusBar file={activeFile} gitBranch={gitBranch} tabCount={tabs.length} modifiedCount={tabs.filter(t => t.modified).length} />
 
-      {/* Paramètres en overlay pleine page — masque terminal, preview, etc. */}
+      {/* Paramètres en overlay pleine page — masque terminal, preview, etc.
+          Le contrôle taille police est DANS le SettingsPanel (pas doublé
+          dans le header ici), pour cohérence avec le style de la page
+          Settings principale de Gungnir. */}
       {showSettings && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 50,
@@ -527,15 +530,7 @@ export default function SpearCodePlugin() {
             </svg>
             <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Paramètres SpearCode</span>
             <div style={{ flex: 1 }} />
-            {/* Contrôle taille police — effectif immédiatement via CSS var */}
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}>
-              Taille police
-              <input type="range" min={11} max={18} step={1} value={uiFontSize}
-                onChange={e => setUiFontSize(Number(e.target.value))}
-                style={{ width: 100 }} />
-              <span style={{ fontFamily: 'monospace', minWidth: 28, textAlign: 'right' }}>{uiFontSize}px</span>
-            </label>
-            <button onClick={() => setShowSettings(false)} title="Fermer (Échap)"
+            <button onClick={() => setShowSettings(false)} title="Fermer"
               style={{
                 background: 'transparent', border: '1px solid var(--border)',
                 color: 'var(--text-secondary)', cursor: 'pointer',
@@ -545,7 +540,7 @@ export default function SpearCodePlugin() {
             </button>
           </div>
           <div style={{ flex: 1, overflow: 'auto' }}>
-            <SettingsPanel />
+            <SettingsPanel uiFontSize={uiFontSize} setUiFontSize={setUiFontSize} />
           </div>
         </div>
       )}

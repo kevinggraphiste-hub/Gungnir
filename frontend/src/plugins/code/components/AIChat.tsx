@@ -498,14 +498,24 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
           )}
         </div>
 
-        {/* Skill dropdown + tokens — Chat/Agent toggle retiré (inutile : un
-            seul flux vers le LLM), CTX modes retirés (smart par défaut). */}
+        {/* Skill dropdown + Compacter + tokens — une seule ligne d'actions
+            (avant : Compacter était dans la barre de sessions, moins propre
+            visuellement). */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <SkillDropdown
             personas={personas}
             activeId={activePersona}
             onSelect={id => setActivePersona(id)}
           />
+          {messages.length >= 4 && (
+            <button onClick={compactSession} title="Compacter la session (reduire les tokens)"
+              style={{
+                border: 'none', cursor: 'pointer', padding: '3px 8px',
+                borderRadius: 5, fontSize: 10, fontWeight: 600,
+                background: '#6366f120', color: '#6366f1',
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}>{'\u{1F5DC}️'} Compacter</button>
+          )}
           <div style={{ flex: 1 }} />
           {tokenStats.total > 0 && (
             <span title={`Contexte: ~${tokenStats.context} | Session: ~${tokenStats.total}`}
@@ -535,13 +545,6 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
         ))}
         <button onClick={newSession} title="Nouvelle session" style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '3px 6px' }}>+</button>
         <div style={{ flex: 1 }} />
-        {messages.length >= 4 && (
-          <button onClick={compactSession} title="Compacter la session (reduire les tokens)" style={{
-            border: 'none', cursor: 'pointer', padding: '2px 6px', marginRight: 4,
-            borderRadius: 3, fontSize: 10, fontWeight: 600,
-            background: '#6366f120', color: '#6366f1',
-          }}>{'\u{1F5DC}️'} Compacter</button>
-        )}
       </div>
 
       {/* ── File indicator + controls ─────────────────────────────── */}

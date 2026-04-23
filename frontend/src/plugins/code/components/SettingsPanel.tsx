@@ -1,17 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { ProviderInfo } from '../types'
-import { apiFetch, MONO, S } from '../utils'
+import { apiFetch, MONO } from '../utils'
 import { GitCredentialsPanel } from './GitPanel'
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SETTINGS PANEL (with model selector)
+// SETTINGS PANEL — style page principal Gungnir (sections aérées + cards)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Must match backend/core/providers/__init__.py PROVIDERS (registered classes).
-// Ajouter un provider ici sans backend correspondant crée une cle "orpheline"
-// que le backend stocke mais ne peut pas appeler.
 const PROVIDER_PRESETS: { id: string; label: string; hint: string; baseUrlPlaceholder?: string }[] = [
-  { id: 'openrouter', label: 'OpenRouter', hint: 'Claude + GPT + 200 modeles via cle unique' },
+  { id: 'openrouter', label: 'OpenRouter', hint: 'Claude + GPT + 200 modèles via clé unique' },
   { id: 'anthropic', label: 'Anthropic (Claude API)', hint: 'console.anthropic.com/settings/keys' },
   { id: 'openai', label: 'OpenAI', hint: 'platform.openai.com/api-keys' },
   { id: 'google', label: 'Google Gemini', hint: 'aistudio.google.com/apikey' },
@@ -23,11 +20,41 @@ const PROVIDER_PRESETS: { id: string; label: string; hint: string; baseUrlPlaceh
 
 export const PROVIDERS_UPDATED_EVENT = 'spearcode-providers-updated'
 
-export function SettingsPanel() {
-  const [config, setConfig] = useState<any>(null)
+const SHORTCUTS: [string, string][] = [
+  ['Ctrl+K', 'Command palette'],
+  ['Ctrl+S', 'Sauvegarder'],
+  ['Ctrl+H', 'Chercher/Remplacer'],
+  ['Ctrl+D', 'Diff'],
+  ['Ctrl+Shift+T', 'Terminal'],
+  ['Ctrl+Shift+P', 'Aperçu Markdown'],
+  ['Ctrl+L', 'Assistant IA'],
+  ['Ctrl+Shift+S', 'Snippets'],
+]
+
+// Sections principales — même pattern que frontend/src/core/pages/Settings.tsx.
+function Section({ title, description, children }: {
+  title: string
+  description?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="rounded-xl border p-6"
+      style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
+      <h3 className="font-semibold mb-1" style={{ color: 'var(--text-primary)', fontSize: 16 }}>{title}</h3>
+      {description && (
+        <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>{description}</p>
+      )}
+      <div className="space-y-3">{children}</div>
+    </div>
+  )
+}
+
+export function SettingsPanel({ uiFontSize, setUiFontSize }: {
+  uiFontSize?: number
+  setUiFontSize?: (n: number) => void
+}) {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [wsInput, setWsInput] = useState('')
-  const [fontInput, setFontInput] = useState(14)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -45,26 +72,29 @@ export function SettingsPanel() {
   }, [])
 
   useEffect(() => {
-    apiFetch<any>('/config').then(c => { if (c) { setConfig(c); setWsInput(c.workspace || ''); setFontInput(c.font_size || 14) } })
+    apiFetch<any>('/config').then(c => { if (c) setWsInput(c.workspace || '') })
     reloadProviders()
   }, [reloadProviders])
 
   const save = async () => {
     setSaving(true)
-    await apiFetch('/config', { method: 'PUT', body: JSON.stringify({ workspace: wsInput || undefined, font_size: fontInput }) })
+    // Persist workspace au backend ; la font-size UI reste locale (CSS var + localStorage).
+    await apiFetch('/config', {
+      method: 'PUT',
+      body: JSON.stringify({ workspace: wsInput || undefined }),
+    })
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000)
   }
 
   const submitAddProvider = async () => {
     setAddError('')
     const preset = PROVIDER_PRESETS.find(p => p.id === addPreset)!
-    const name = preset.id
-    if (!addApiKey.trim() && preset.id !== 'ollama') { setAddError('Cle API requise'); return }
+    if (!addApiKey.trim() && preset.id !== 'ollama') { setAddError('Clé API requise'); return }
     setAddBusy(true)
     try {
       const body: any = { api_key: addApiKey.trim() || 'local', enabled: true }
       if (addBaseUrl.trim()) body.base_url = addBaseUrl.trim()
-      const res = await fetch(`/api/config/user/providers/${encodeURIComponent(name)}`, {
+      const res = await fetch(`/api/config/user/providers/${encodeURIComponent(preset.id)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -83,7 +113,7 @@ export function SettingsPanel() {
   }
 
   const removeProvider = async (name: string) => {
-    if (!confirm(`Supprimer la cle ${name} ?`)) return
+    if (!confirm(`Supprimer la clé ${name} ?`)) return
     await fetch(`/api/config/user/providers/${encodeURIComponent(name)}`, { method: 'DELETE' })
     await reloadProviders()
     window.dispatchEvent(new CustomEvent(PROVIDERS_UPDATED_EVENT))
@@ -91,93 +121,191 @@ export function SettingsPanel() {
 
   const currentPreset = PROVIDER_PRESETS.find(p => p.id === addPreset)!
 
+  // Fallback si le parent n'a pas passé les props (rendu standalone) :
+  // on gère la font-size localement via localStorage + CSS var globale.
+  const [localFont, setLocalFont] = useState<number>(() => {
+    if (uiFontSize) return uiFontSize
+    try {
+      const v = Number(localStorage.getItem('spearcode_font_size') || '')
+      return Number.isFinite(v) && v >= 11 && v <= 18 ? v : 13
+    } catch { return 13 }
+  })
+  const fontVal = uiFontSize ?? localFont
+  const applyFont = (n: number) => {
+    if (setUiFontSize) setUiFontSize(n)
+    else {
+      setLocalFont(n)
+      try { localStorage.setItem('spearcode_font_size', String(n)) } catch { /* ignore */ }
+    }
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'auto' }}>
-      <div style={{ ...S.sl, paddingTop: 12 }}>Parametres SpearCode</div>
-      <div style={{ padding: '6px 12px' }}>
-        <label style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3, display: 'block' }}>Workspace</label>
-        <input value={wsInput} onChange={e => setWsInput(e.target.value)} placeholder="data/workspace" style={{ width: '100%', padding: '5px 10px', fontSize: 11, borderRadius: 5, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
-      </div>
-      <div style={{ padding: '6px 12px' }}>
-        <label style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3, display: 'block' }}>Police ({fontInput}px)</label>
-        <input type="range" min={8} max={24} value={fontInput} onChange={e => setFontInput(Number(e.target.value))} style={{ width: '100%', accentColor: 'var(--scarlet)' }} />
-      </div>
-      <div style={{ padding: '4px 12px 10px' }}>
-        <button onClick={save} disabled={saving} style={{ width: '100%', padding: '5px 0', borderRadius: 5, border: 'none', fontSize: 10, fontWeight: 600, cursor: 'pointer', background: saved ? '#22c55e' : 'var(--scarlet)', color: '#fff', transition: 'background 0.3s' }}>
-          {saving ? 'Sauvegarde...' : saved ? 'OK !' : 'Sauvegarder'}
-        </button>
-      </div>
+    <div className="p-6 space-y-6" style={{ maxWidth: 1100, margin: '0 auto' }}>
 
-      <div style={{ borderTop: '1px solid var(--border)' }}>
-        <div style={{ ...S.sl, paddingTop: 10 }}>Providers IA</div>
-
-        <div style={{ padding: '0 12px 8px' }}>
-          <button type="button" onClick={() => setShowAdd(s => !s)}
-            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 'none', cursor: 'pointer', background: showAdd ? 'var(--bg-tertiary)' : 'var(--scarlet)', color: showAdd ? 'var(--text-primary)' : '#fff', borderRadius: 6, padding: '8px 12px', fontSize: 11, fontWeight: 700, letterSpacing: 0.3, transition: 'background 0.15s' }}>
-            {showAdd
-              ? <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Annuler</>
-              : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Ajouter un provider</>
-            }
-          </button>
+      {/* ── Apparence ─────────────────────────────────────────────────────── */}
+      <Section
+        title="Apparence"
+        description="Réglages visuels de SpearCode. La taille de police affecte les textes de l'UI (bulles chat, badges, listes)."
+      >
+        <div className="flex items-center gap-4">
+          <label className="text-sm font-medium" style={{ color: 'var(--text-primary)', minWidth: 140 }}>
+            Taille de police UI
+          </label>
+          <input
+            type="range" min={11} max={18} step={1}
+            value={fontVal} onChange={e => applyFont(Number(e.target.value))}
+            className="flex-1" style={{ accentColor: 'var(--scarlet)', maxWidth: 400 }}
+          />
+          <span className="text-sm"
+            style={{ color: 'var(--text-primary)', fontFamily: MONO, minWidth: 56, textAlign: 'right' }}>
+            {fontVal} px
+          </span>
         </div>
+      </Section>
 
-        {showAdd && (
-          <div style={{ padding: '6px 12px 10px', background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <label style={{ fontSize: 9, color: 'var(--text-muted)' }}>Provider</label>
-            <select value={addPreset} onChange={e => setAddPreset(e.target.value)}
-              style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}>
-              {PROVIDER_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-            </select>
-            {currentPreset.hint && <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.8 }}>{currentPreset.hint}</span>}
+      {/* ── Workspace ─────────────────────────────────────────────────────── */}
+      <Section
+        title="Workspace"
+        description="Dossier racine où SpearCode lit et écrit tes fichiers. Chaque utilisateur a son propre workspace isolé par défaut."
+      >
+        <input
+          value={wsInput} onChange={e => setWsInput(e.target.value)}
+          placeholder="data/workspace"
+          className="w-full rounded-lg border px-4 py-3 focus:outline-none"
+          style={{
+            background: 'var(--bg-primary)', borderColor: 'var(--border)',
+            color: 'var(--text-primary)', fontFamily: MONO, fontSize: 13,
+          }}
+        />
+        <button onClick={save} disabled={saving}
+          className="rounded-lg px-5 py-2 text-sm font-semibold transition-colors"
+          style={{
+            background: saved ? 'var(--accent-success, #22c55e)' : 'var(--scarlet)',
+            color: '#fff', border: 'none', cursor: saving ? 'wait' : 'pointer',
+          }}>
+          {saving ? 'Sauvegarde…' : saved ? '✓ Sauvegardé' : 'Sauvegarder'}
+        </button>
+      </Section>
 
-            <input type="password" value={addApiKey} onChange={e => setAddApiKey(e.target.value)}
-              placeholder={addPreset === 'ollama' ? 'Laisse vide (local)' : 'sk-...'}
-              autoComplete="new-password"
-              style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
-
-            {currentPreset.baseUrlPlaceholder && (
-              <input value={addBaseUrl} onChange={e => setAddBaseUrl(e.target.value)} placeholder={currentPreset.baseUrlPlaceholder}
-                style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
-            )}
-
-            {addError && <span style={{ fontSize: 10, color: '#f87171' }}>{addError}</span>}
-
-            <button onClick={submitAddProvider} disabled={addBusy}
-              style={{ marginTop: 2, padding: '5px 0', borderRadius: 4, border: 'none', fontSize: 10, fontWeight: 700, cursor: addBusy ? 'wait' : 'pointer', background: 'var(--scarlet)', color: '#fff' }}>
-              {addBusy ? 'Enregistrement...' : 'Enregistrer la cle'}
-            </button>
+      {/* ── Providers IA ─────────────────────────────────────────────────── */}
+      <Section
+        title="Providers IA"
+        description="Clés API pour les modèles utilisés par le panneau assistant SpearCode. Indépendant des providers du chat principal."
+      >
+        {providers.length === 0 ? (
+          <div className="text-sm py-3" style={{ color: 'var(--text-muted)' }}>
+            Aucun provider configuré. Clique sur <strong>Ajouter un provider</strong> pour brancher OpenRouter, Anthropic, OpenAI, etc.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {providers.map(p => {
+              const ok = p.registered !== false && p.enabled !== false
+              return (
+                <div key={p.name}
+                  className="flex items-center gap-3 rounded-lg border px-4 py-3"
+                  style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
+                  <span title={ok ? 'Actif' : 'Non supporté par ce backend'}
+                    style={{ width: 10, height: 10, borderRadius: '50%', background: ok ? '#22c55e' : '#f59e0b', flexShrink: 0 }} />
+                  <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{p.name}</span>
+                  {p.default_model && (
+                    <span className="rounded px-2 py-0.5 text-xs"
+                      style={{ background: 'color-mix(in srgb, #3b82f6 12%, transparent)', color: '#3b82f6' }}>
+                      {p.default_model}
+                    </span>
+                  )}
+                  {p.models && p.models.length > 0 && (
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{p.models.length} modèle{p.models.length > 1 ? 's' : ''}</span>
+                  )}
+                  <div className="flex-1" />
+                  <button onClick={() => removeProvider(p.name)} title="Supprimer la clé"
+                    className="rounded px-2 py-1 text-xs"
+                    style={{ background: 'transparent', border: '1px solid var(--border)', color: '#dc2626', cursor: 'pointer' }}>
+                    Retirer
+                  </button>
+                </div>
+              )
+            })}
           </div>
         )}
 
-        {providers.length === 0
-          ? <div style={{ padding: '6px 12px', fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-              Aucun provider configure. Clique sur <b>+ Ajouter</b> pour brancher OpenRouter, Anthropic, OpenAI, etc.
+        <button type="button" onClick={() => setShowAdd(s => !s)}
+          className="rounded-lg px-4 py-2 text-sm font-semibold transition-colors"
+          style={{
+            background: showAdd ? 'var(--bg-tertiary)' : 'var(--scarlet)',
+            color: showAdd ? 'var(--text-primary)' : '#fff',
+            border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+          {showAdd ? 'Annuler' : '+ Ajouter un provider'}
+        </button>
+
+        {showAdd && (
+          <div className="rounded-lg border p-4 space-y-3"
+            style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
+            <div>
+              <label className="text-xs font-medium block mb-1" style={{ color: 'var(--text-muted)' }}>Provider</label>
+              <select value={addPreset} onChange={e => setAddPreset(e.target.value)}
+                className="w-full rounded border px-3 py-2"
+                style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}>
+                {PROVIDER_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
+              {currentPreset.hint && (
+                <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{currentPreset.hint}</div>
+              )}
             </div>
-          : providers.map(p => {
-            const ok = p.registered !== false && p.enabled !== false
-            return (
-              <div key={p.name} style={{ padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border)' }}>
-                <span title={ok ? 'Actif' : 'Non supporté par ce backend'} style={{ width: 6, height: 6, borderRadius: '50%', background: ok ? '#22c55e' : '#f59e0b' }} />
-                <span style={{ fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, flex: 1 }}>{p.name}</span>
-                {p.default_model && <span style={{ ...S.badge('#3b82f6', true), fontSize: 8 }}>{p.default_model}</span>}
-                {p.models?.length > 0 && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{p.models.length} mod.</span>}
-                <button onClick={() => removeProvider(p.name)} title="Supprimer la cle"
-                  style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', opacity: 0.6, padding: '0 3px', fontSize: 11 }}>&times;</button>
+            <div>
+              <label className="text-xs font-medium block mb-1" style={{ color: 'var(--text-muted)' }}>Clé API</label>
+              <input type="password" value={addApiKey} onChange={e => setAddApiKey(e.target.value)}
+                placeholder={addPreset === 'ollama' ? 'Laisse vide (local)' : 'sk-…'}
+                autoComplete="new-password"
+                className="w-full rounded border px-3 py-2"
+                style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text-primary)', fontFamily: MONO }} />
+            </div>
+            {currentPreset.baseUrlPlaceholder && (
+              <div>
+                <label className="text-xs font-medium block mb-1" style={{ color: 'var(--text-muted)' }}>Base URL</label>
+                <input value={addBaseUrl} onChange={e => setAddBaseUrl(e.target.value)}
+                  placeholder={currentPreset.baseUrlPlaceholder}
+                  className="w-full rounded border px-3 py-2"
+                  style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text-primary)', fontFamily: MONO }} />
               </div>
-            )
-          })
-        }
-      </div>
-      <GitCredentialsPanel />
-      <div style={{ borderTop: '1px solid var(--border)', padding: '0 12px 14px' }}>
-        <div style={{ ...S.sl, padding: '10px 0 6px' }}>Raccourcis</div>
-        {[['Ctrl+K', 'Command palette'], ['Ctrl+S', 'Sauvegarder'], ['Ctrl+H', 'Chercher/Remplacer'], ['Ctrl+D', 'Diff'], ['Ctrl+Shift+T', 'Terminal'], ['Ctrl+Shift+P', 'Apercu Markdown']].map(([k, d]) => (
-          <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-            <kbd style={{ padding: '0 5px', background: 'var(--bg-tertiary)', borderRadius: 3, fontSize: 9, border: '1px solid var(--border)', fontFamily: MONO, minWidth: 55, textAlign: 'center', color: 'var(--text-primary)' }}>{k}</kbd>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{d}</span>
+            )}
+            {addError && <div className="text-xs" style={{ color: '#f87171' }}>{addError}</div>}
+            <button onClick={submitAddProvider} disabled={addBusy}
+              className="rounded px-4 py-2 text-sm font-semibold"
+              style={{ background: 'var(--scarlet)', color: '#fff', border: 'none', cursor: addBusy ? 'wait' : 'pointer' }}>
+              {addBusy ? 'Enregistrement…' : 'Enregistrer la clé'}
+            </button>
           </div>
-        ))}
-      </div>
+        )}
+      </Section>
+
+      {/* ── Git credentials ───────────────────────────────────────────────── */}
+      <Section
+        title="Identifiants Git"
+        description="PAT (personal access token) utilisé par SpearCode pour les opérations git authentifiées (clone, push…)."
+      >
+        <GitCredentialsPanel />
+      </Section>
+
+      {/* ── Raccourcis ────────────────────────────────────────────────────── */}
+      <Section
+        title="Raccourcis clavier"
+        description="Actifs quand l'éditeur SpearCode est focus."
+      >
+        <div className="grid grid-cols-2 gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
+          {SHORTCUTS.map(([k, d]) => (
+            <div key={k} className="flex items-center gap-3">
+              <kbd className="rounded border px-2 py-1 text-xs"
+                style={{
+                  background: 'var(--bg-primary)', borderColor: 'var(--border)',
+                  color: 'var(--text-primary)', fontFamily: MONO, minWidth: 92, textAlign: 'center',
+                }}>{k}</kbd>
+              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{d}</span>
+            </div>
+          ))}
+        </div>
+      </Section>
+
     </div>
   )
 }
