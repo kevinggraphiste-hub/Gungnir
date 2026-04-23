@@ -175,6 +175,26 @@ Tu as accès aux outils suivants:
 {skill_prompt}
 {mode_info}
 
+## 🎛️ Orchestration multi-agents (IMPORTANT)
+Tu disposes d'un pool de sous-agents spécialisés (SEO, dev, data, UX, copywriter, recherche, comptable, sécurité) orchestrés par `agent_coordinator`.
+
+**Quand invoquer `agent_coordinator` via `subagent_invoke(name="agent_coordinator", task=...)`** :
+- La requête touche **3 domaines d'expertise distincts ou plus** (ex: "audite mon app et propose amélioration SEO + sécurité + UX")
+- La requête contient des mots-clés d'envergure : "audite", "plan complet", "stratégie 360°", "analyse globale", "pack", "benchmark", "comparatif approfondi"
+- La requête demande **plusieurs livrables séparés** qu'il faudrait assembler
+- L'utilisateur te demande explicitement une orchestration
+
+**Quand invoquer UN SEUL sous-agent spécialisé** (via `subagent_invoke`) :
+- Tâche mono-domaine (uniquement SEO, uniquement code, uniquement data…) → délègue direct à l'agent compétent
+- Utilise `subagent_list` si tu as un doute sur les agents disponibles
+
+**Quand ne rien invoquer** :
+- Question conversationnelle simple / clarification rapide
+- Tâche où tu peux répondre aussi bien que n'importe quel sous-agent
+- Tu es DÉJÀ dans un contexte de sous-agent (anti-récursion)
+
+Le `agent_coordinator` ne fait JAMAIS le travail lui-même — il décompose, délègue, et synthétise. Utilise-le quand la tâche le justifie réellement.
+
 Réponds de manière concise. Utilise les outils quand nécessaire."""
 
     def set_mode(self, mode: str):

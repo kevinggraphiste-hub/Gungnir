@@ -254,6 +254,31 @@ WOLF_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "subagent_invoke_parallel",
+            "description": "Délègue plusieurs tâches à plusieurs sous-agents EN PARALLÈLE (asyncio.gather). Usage réservé à agent_coordinator pour orchestrer une tâche complexe multi-domaines. Retourne un dict {nom_agent: résultat}. Max 4 invocations simultanées.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "invocations": {
+                        "type": "array",
+                        "description": "Liste d'invocations. Chaque élément : {name, task}.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Nom du sous-agent"},
+                                "task": {"type": "string", "description": "Tâche spécifique pour cet agent"},
+                            },
+                            "required": ["name", "task"],
+                        },
+                    },
+                },
+                "required": ["invocations"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "subagent_update",
             "description": "Met à jour un sous-agent existant.",
             "parameters": {
@@ -1193,14 +1218,19 @@ def _get_tools_for_agent(agent_tools: list[str] | None) -> list[dict]:
         "browser_crawl", "browser_download",
         "kb_write", "kb_read", "kb_list",
         # Inter-agent communication: sub-agents can delegate to other sub-agents
-        "subagent_invoke", "subagent_list",
+        "subagent_invoke", "subagent_list", "subagent_invoke_parallel",
     }
     return [s for s in WOLF_TOOL_SCHEMAS if s["function"]["name"] in web_tool_names]
 
 
-# Track active invocations to prevent infinite loops (A → B → A)
-_active_invocations: set[str] = set()
-_MAX_DELEGATION_DEPTH = 3  # Max chain: agent → sub1 → sub2 → sub3
+# Track active invocations to prevent infinite loops.
+# Dict par nom (vs. set) pour permettre le parallélisme contrôlé :
+# le coordinator peut invoquer 2x le même agent avec des tasks différents,
+# mais jamais au-delà de _MAX_PARALLEL_PER_AGENT (garde-fou anti-récursion
+# vraie A → B → A, qui resterait bloqué par la profondeur de pile).
+_active_invocations: dict[str, int] = {}
+_MAX_DELEGATION_DEPTH = 4  # Max chain: super → coordinator → specialized → skill
+_MAX_PARALLEL_PER_AGENT = 2  # Un même agent ne peut tourner qu'à 2x max en parallèle
 
 async def _subagent_invoke(name: str, task: str) -> dict:
     from backend.core.agents.skills import subagent_library
@@ -1209,10 +1239,13 @@ async def _subagent_invoke(name: str, task: str) -> dict:
     from backend.core.providers.base import ChatMessage as CM
     from backend.core.agents.inter_agent_log import ConversationRecorder
 
-    # Anti-loop: prevent recursive invocation
-    if name in _active_invocations:
-        return {"ok": False, "error": f"Boucle détectée : le sous-agent '{name}' est déjà en cours d'exécution. Évite les appels circulaires."}
-    if len(_active_invocations) >= _MAX_DELEGATION_DEPTH:
+    # Anti-loop : même agent appelé trop de fois en parallèle → vraisemblablement
+    # une boucle récursive déguisée, on bloque.
+    current_count = _active_invocations.get(name, 0)
+    if current_count >= _MAX_PARALLEL_PER_AGENT:
+        return {"ok": False, "error": f"Sous-agent '{name}' déjà actif {current_count}× en parallèle — probable boucle récursive. Évite les appels circulaires."}
+    # Profondeur totale (tous agents confondus) = somme des counters
+    if sum(_active_invocations.values()) >= _MAX_DELEGATION_DEPTH:
         return {"ok": False, "error": f"Profondeur max de délégation atteinte ({_MAX_DELEGATION_DEPTH}). Résous la tâche toi-même."}
 
     agent = subagent_library.get_agent(name)
@@ -1272,7 +1305,8 @@ Pour appeler un outil, écris ce format dans ta réponse :
 - **web_crawl** : Crawler un site. Params: url, max_pages
 - **browser_navigate** / **browser_get_text** / **browser_screenshot** (pour JS dynamique)
 - **subagent_list** : Lister les autres sous-agents disponibles
-- **subagent_invoke** : Déléguer une tâche à un autre sous-agent. Params: name (nom du sous-agent), task (la tâche à effectuer)
+- **subagent_invoke** : Déléguer UNE tâche à UN sous-agent. Params: name, task
+- **subagent_invoke_parallel** : Déléguer PLUSIEURS tâches en PARALLÈLE à plusieurs sous-agents (réservé à l'orchestration, max 4). Params: invocations=[{name, task}, ...]
 - **kb_write** / **kb_read** / **kb_list** : Base de connaissances partagée (tous les agents y ont accès)
 
 ## COLLABORATION INTER-AGENTS
@@ -1299,7 +1333,7 @@ TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
     messages = [CM(role="system", content=system), CM(role="user", content=enriched_task)]
     _recorder.record_messages(messages)
 
-    _active_invocations.add(name)
+    _active_invocations[name] = _active_invocations.get(name, 0) + 1
     _tok_in_total = 0
     _tok_out_total = 0
     try:
@@ -1391,11 +1425,50 @@ TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
         _recorder.conv.error = str(ex)
         return {"ok": False, "error": str(ex), "conversation_id": _recorder.conv.id}
     finally:
-        _active_invocations.discard(name)
+        # Decrement counter, remove key si 0
+        _active_invocations[name] = _active_invocations.get(name, 1) - 1
+        if _active_invocations.get(name, 0) <= 0:
+            _active_invocations.pop(name, None)
         try:
             _recorder.__exit__(None, None, None)
         except Exception:
             pass
+
+
+async def _subagent_invoke_parallel(invocations: list) -> dict:
+    """Invoque plusieurs sous-agents en PARALLÈLE via asyncio.gather.
+
+    Usage : réservé à `agent_coordinator` pour orchestrer une tâche complexe.
+    Chaque invocation = {name, task}. Retourne {results: [...], errors: [...]}.
+    Les invocations sont limitées à 4 simultanées (sécurité cout + contexte).
+    """
+    import asyncio
+    if not isinstance(invocations, list) or not invocations:
+        return {"ok": False, "error": "`invocations` doit être une liste non vide de {name, task}."}
+    if len(invocations) > 4:
+        return {"ok": False, "error": f"Trop d'invocations simultanées ({len(invocations)}). Max = 4. Découpe en plusieurs vagues."}
+
+    # Valide le format d'entrée avant de lancer
+    valid = []
+    for i, inv in enumerate(invocations):
+        if not isinstance(inv, dict) or "name" not in inv or "task" not in inv:
+            return {"ok": False, "error": f"Invocation #{i} invalide : attendu {{name, task}}."}
+        valid.append((str(inv["name"]), str(inv["task"])))
+
+    # Lance toutes les invocations en parallèle. Les exceptions d'un agent
+    # n'empêchent pas les autres — chaque agent retourne son propre dict.
+    async def _safe(name: str, task: str) -> dict:
+        try:
+            return await _subagent_invoke(name, task)
+        except Exception as e:
+            return {"ok": False, "agent": name, "error": f"Exception: {type(e).__name__}: {e}"}
+
+    outcomes = await asyncio.gather(*[_safe(n, t) for (n, t) in valid])
+    return {
+        "ok": True,
+        "count": len(outcomes),
+        "results": outcomes,
+    }
 
 
 async def _subagent_update(name: str, role: str = None, expertise: str = None, system_prompt: str = None, tools: list = None) -> dict:
@@ -3204,6 +3277,7 @@ WOLF_EXECUTORS: dict[str, Any] = {
     "subagent_list":         _subagent_list,
     "subagent_invoke":       _subagent_invoke,
     "subagent_run":          _subagent_invoke,  # alias anti-hallucination LLM
+    "subagent_invoke_parallel": _subagent_invoke_parallel,
     "kb_write":              _kb_write,
     "kb_read":               _kb_read,
     "kb_list":               _kb_list,
