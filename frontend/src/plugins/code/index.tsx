@@ -251,11 +251,15 @@ export default function SpearCodePlugin() {
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column', height: '100%',
       overflow: 'hidden', position: 'relative',
-      // CSS var consommée par les composants SpearCode pour leurs textes UI
-      // (tags, badges, labels). Les tailles monospace de l'éditeur
-      // CodeMirror restent indépendantes.
+      // `zoom` CSS applique une mise à l'échelle globale (textes, paddings,
+      // espacements) — indispensable parce que la plupart des composants
+      // SpearCode ont leur fontSize hardcodée en px inline, ce qui ignore
+      // le cascade habituel. `zoom` contourne en scalant tout le rendu.
+      // Base = 13px → zoom 1.0 ; 18px → zoom ~1.38.
+      zoom: (uiFontSize / 13),
+      // On garde aussi la CSS var pour le futur : les composants qui l'utilisent
+      // (`font-size: var(--spear-ui-font-size)`) réagissent sans dépendre du zoom.
       ['--spear-ui-font-size' as any]: `${uiFontSize}px`,
-      fontSize: `${uiFontSize}px`,
     }}>
       {showPalette && <CommandPalette onClose={() => setShowPalette(false)} onOpenFile={openFile} />}
 

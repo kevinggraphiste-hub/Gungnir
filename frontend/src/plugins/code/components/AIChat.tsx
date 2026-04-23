@@ -82,10 +82,9 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
     setLoadingModels(false)
   }
 
-  // Context reduction — `smart` par défaut, les autres modes ont été retirés
-  // de l'UI (peu utilisés et prêtent à confusion). State conservé pour
-  // payload API identique.
-  const [contextMode] = useState<'smart' | 'selection' | 'full' | 'none'>('smart')
+  // Context reduction — 4 modes (smart/selection/full/none), contrôle
+  // réintégré dans la rangée d'actions (entre Skill et Compacter).
+  const [contextMode, setContextMode] = useState<'smart' | 'selection' | 'full' | 'none'>('smart')
   const [multiFileCtx, setMultiFileCtx] = useState(false)
   const [hasProjectRules, setHasProjectRules] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -498,17 +497,34 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
           )}
         </div>
 
-        {/* Skill dropdown + Compacter + tokens — une seule ligne d'actions
-            (avant : Compacter était dans la barre de sessions, moins propre
-            visuellement). */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {/* Skill + CTX + Compacter + tokens — une seule ligne d'actions. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <SkillDropdown
             personas={personas}
             activeId={activePersona}
             onSelect={id => setActivePersona(id)}
           />
+          {/* Mini sélecteur de contexte — 4 pastilles icônes, active affiche
+              aussi son label ; compact pour rester sur la même ligne. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2 }} title="Contexte fourni au LLM">
+            {CTX_MODES.map(m => (
+              <button key={m.id} onClick={() => setContextMode(m.id as any)} title={`${m.label} — ${m.desc}`}
+                style={{
+                  border: 'none', cursor: 'pointer', borderRadius: 4, padding: '3px 6px',
+                  fontSize: 10, fontWeight: 600,
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  background: contextMode === m.id ? `${m.color}22` : 'transparent',
+                  color: contextMode === m.id ? m.color : 'var(--text-muted)',
+                  outline: contextMode === m.id ? `1px solid ${m.color}55` : '1px solid transparent',
+                  transition: 'all 0.12s',
+                }}>
+                <span>{m.icon}</span>
+                {contextMode === m.id && <span>{m.label}</span>}
+              </button>
+            ))}
+          </div>
           {messages.length >= 4 && (
-            <button onClick={compactSession} title="Compacter la session (reduire les tokens)"
+            <button onClick={compactSession} title="Compacter la session (réduire les tokens)"
               style={{
                 border: 'none', cursor: 'pointer', padding: '3px 8px',
                 borderRadius: 5, fontSize: 10, fontWeight: 600,
