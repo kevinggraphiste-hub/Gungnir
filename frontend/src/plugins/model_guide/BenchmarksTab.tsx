@@ -9,7 +9,7 @@
  * cross-check les valeurs live si besoin.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { RefreshCw, ExternalLink, Search as SearchIcon } from 'lucide-react'
+import { RefreshCw, ExternalLink, Search as SearchIcon, Lock } from 'lucide-react'
 import { SecondaryButton } from '@core/components/ui'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -33,6 +33,7 @@ export interface BenchmarkRow {
   avg_price: number | null
   price_tier: string
   efficiency: number | null
+  accessible?: boolean
   // Métriques dynamiques (extraites via `metrics`)
   [key: string]: unknown
 }
@@ -44,6 +45,9 @@ interface BenchmarksPayload {
   metrics: string[]
   models: BenchmarkRow[]
   has_user_filter?: boolean
+  accessible_count?: number
+  total_count?: number
+  configured_providers?: string[]
   aider_models_count?: number
 }
 
@@ -140,6 +144,7 @@ export function BenchmarksTab() {
   const [providerFilter, setProviderFilter] = useState<string | null>(null)
   const [sortMetric, setSortMetric] = useState<string>('lmarena_elo')
   const [favOnly, setFavOnly] = useState(false)
+  const [accessibleOnly, setAccessibleOnly] = useState(false)
   const [favorites] = useState<string[]>(getFavorites())
 
   const load = useCallback(async () => {
@@ -169,6 +174,7 @@ export function BenchmarksTab() {
     }
     if (providerFilter) r = r.filter(m => m.provider === providerFilter)
     if (favOnly) r = r.filter(m => favorites.includes(m.id) || favorites.includes(`${m.provider}::${m.id}`))
+    if (accessibleOnly) r = r.filter(m => m.accessible)
     // Tri desc sur la métrique choisie (null → bas du classement)
     r = [...r].sort((a, b) => {
       const va = a[sortMetric]
@@ -178,7 +184,7 @@ export function BenchmarksTab() {
       return nb - na
     })
     return r
-  }, [data, search, providerFilter, favOnly, sortMetric, favorites])
+  }, [data, search, providerFilter, favOnly, accessibleOnly, sortMetric, favorites])
 
   if (loading) {
     return (
@@ -240,18 +246,23 @@ export function BenchmarksTab() {
         padding: '5px 24px', fontSize: 10, color: 'var(--text-muted)',
         background: data.has_user_filter ? 'rgba(34,197,94,.06)' : 'rgba(234,179,8,.06)',
         borderBottom: '1px solid var(--border-subtle)',
-        display: 'flex', alignItems: 'center', gap: 8,
+        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
       }}>
         {data.has_user_filter ? (
           <>
             <span style={{ color: '#22c55e', fontWeight: 700 }}>●</span>
-            Filtré sur vos providers configurés — {data.models.length} modèle{data.models.length > 1 ? 's' : ''} avec au moins une métrique connue.
-            {data.aider_models_count !== undefined && <> Aider live : {data.aider_models_count} modèles indexés.</>}
+            {data.accessible_count ?? 0} modèle{(data.accessible_count ?? 0) > 1 ? 's' : ''} accessible{(data.accessible_count ?? 0) > 1 ? 's' : ''} via vos providers
+            {data.configured_providers && data.configured_providers.length > 0 && (
+              <span style={{ opacity: .7 }}>({data.configured_providers.join(', ')})</span>
+            )}
+            <span>·</span>
+            <span>{data.total_count ?? data.models.length} au total dans les classements</span>
+            {data.aider_models_count !== undefined && <><span>·</span><span>Aider live : {data.aider_models_count} modèles</span></>}
           </>
         ) : (
           <>
             <span style={{ color: '#ca8a04', fontWeight: 700 }}>●</span>
-            Mode découverte — aucun provider configuré pour votre compte. Affichage du snapshot complet.
+            Mode découverte — aucun provider configuré. {data.total_count ?? data.models.length} modèles des classements affichés.
           </>
         )}
       </div>
@@ -312,6 +323,10 @@ export function BenchmarksTab() {
         <button onClick={() => setFavOnly(v => !v)} style={chipStyle(favOnly, '#dc2626')}>
           ★ Favoris
         </button>
+        <button onClick={() => setAccessibleOnly(v => !v)} style={chipStyle(accessibleOnly, '#3b82f6')}
+          title="Ne montrer que les modèles disponibles via vos providers configurés">
+          Accessibles
+        </button>
       </div>
 
       {/* Tableau */}
@@ -336,11 +351,17 @@ export function BenchmarksTab() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((m, i) => (
-              <tr key={m.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+            {rows.map((m, i) => {
+              const locked = m.accessible === false
+              return (
+              <tr key={m.id} style={{ borderBottom: '1px solid var(--border-subtle)', opacity: locked ? 0.55 : 1 }}
+                title={locked ? 'Provider non configuré pour votre compte — ajoutez une clé dans Paramètres' : undefined}>
                 <td style={tdStyle('left')}><span style={{ color: 'var(--text-muted)', fontFamily: 'monospace' }}>{i + 1}</span></td>
                 <td style={tdStyle('left')}>
-                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{m.name}</div>
+                  <div style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {locked && <Lock size={10} style={{ color: 'var(--text-muted)' }} />}
+                    {m.name}
+                  </div>
                   <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{m.id}</div>
                 </td>
                 <td style={tdStyle('center')}>
@@ -365,7 +386,8 @@ export function BenchmarksTab() {
                   {m.efficiency != null ? m.efficiency.toFixed(0) : '—'}
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
         {rows.length === 0 && (

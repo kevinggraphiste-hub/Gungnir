@@ -88,6 +88,23 @@
     {"id": "qwen/qwen3-235b-a22b", "lmarena_elo": 1318, "aa_index": 62, "mmlu_pro": 73.8, "gpqa": 55.1, "livecodebench": 48.5},
     {"id": "qwen/qwen3-32b", "lmarena_elo": 1275, "aa_index": 54, "mmlu_pro": 68.9, "gpqa": 46.2, "livecodebench": 38.1},
 
-    {"id": "microsoft/phi-4", "lmarena_elo": 1245, "aa_index": 48, "mmlu_pro": 63.5, "gpqa": 40.8, "livecodebench": 30.7}
+    {"id": "microsoft/phi-4", "lmarena_elo": 1245, "aa_index": 48, "mmlu_pro": 63.5, "gpqa": 40.8, "livecodebench": 30.7},
+
+    {"id": "openai/gpt-5-pro", "lmarena_elo": 1418, "aa_index": 80, "mmlu_pro": 86.2, "gpqa": 75.4, "livecodebench": 68.1},
+    {"id": "anthropic/claude-opus-4.6-thinking", "lmarena_elo": 1415, "aa_index": 79, "mmlu_pro": 85.4, "gpqa": 80.6, "livecodebench": 66.9},
+    {"id": "google/gemini-3.1-pro-thinking", "lmarena_elo": 1412, "aa_index": 79, "mmlu_pro": 85.7, "gpqa": 78.9, "livecodebench": 67.4},
+    {"id": "anthropic/claude-3-opus", "lmarena_elo": 1253, "aa_index": 49, "mmlu_pro": 68.5, "gpqa": 50.2, "livecodebench": 35.9},
+    {"id": "anthropic/claude-3-haiku", "lmarena_elo": 1179, "aa_index": 38, "mmlu_pro": 58.4, "gpqa": 33.9, "livecodebench": 24.6},
+    {"id": "google/gemma-3-27b-it", "lmarena_elo": 1236, "aa_index": 46, "mmlu_pro": 62.8, "gpqa": 39.5, "livecodebench": 28.4},
+    {"id": "google/gemini-2.0-flash-lite-001", "lmarena_elo": 1248, "aa_index": 48, "mmlu_pro": 65.2, "gpqa": 41.8, "livecodebench": 30.1},
+    {"id": "meta-llama/llama-3.1-8b-instruct", "lmarena_elo": 1195, "aa_index": 40, "mmlu_pro": 57.3, "gpqa": 32.8, "livecodebench": 22.4},
+    {"id": "mistralai/mistral-small", "lmarena_elo": 1238, "aa_index": 47, "mmlu_pro": 63.9, "gpqa": 41.2, "livecodebench": 31.5},
+    {"id": "mistralai/pixtral-large-2411", "lmarena_elo": 1263, "aa_index": 52, "mmlu_pro": 67.4, "gpqa": 44.7, "livecodebench": 36.2},
+    {"id": "x-ai/grok-2", "lmarena_elo": 1270, "aa_index": 53, "mmlu_pro": 68.1, "gpqa": 47.3, "livecodebench": 37.8},
+    {"id": "qwen/qwen-2.5-72b-instruct", "lmarena_elo": 1257, "aa_index": 51, "mmlu_pro": 66.8, "gpqa": 45.1, "livecodebench": 36.9},
+    {"id": "qwen/qwen3-30b-a3b", "lmarena_elo": 1268, "aa_index": 53, "mmlu_pro": 67.9, "gpqa": 46.4, "livecodebench": 38.2},
+    {"id": "cohere/command-r-plus", "lmarena_elo": 1227, "aa_index": 44, "mmlu_pro": 60.8, "gpqa": 38.2, "livecodebench": 26.7},
+    {"id": "nvidia/llama-3.1-nemotron-70b-instruct", "lmarena_elo": 1272, "aa_index": 53, "mmlu_pro": 68.4, "gpqa": 46.9, "livecodebench": 37.1},
+    {"id": "perplexity/sonar-reasoning-pro", "lmarena_elo": 1305, "aa_index": 60, "mmlu_pro": 72.9, "gpqa": 56.8, "livecodebench": 45.3}
   ]
 }

@@ -676,34 +676,31 @@ async def get_benchmarks(request: Request, session: AsyncSession = Depends(get_s
 
     # Construction de la liste d'IDs accessibles à l'user
     accessible_ids: set[str] = set()
+    configured_providers: set[str] = set()
     for pname, pconf in settings.providers.items():
         if not pconf.enabled:
             continue
         api_key, base_url = _user_key_for(pname)
         if not (api_key or base_url):
             continue  # pas de clé user → provider skipped
-
-        # On prend la liste statique configurée (ultra-rapide), pas de
-        # list_models() live ici pour ne pas ralentir l'endpoint. Si besoin
-        # plus tard, on peut basculer sur dynamic listing avec cache.
+        configured_providers.add(pname)
+        # On prend la liste statique configurée (ultra-rapide).
         for mid in (pconf.models or []):
             accessible_ids.add(mid)
 
-    # Cas OpenRouter : pour plus de pertinence, on ajoute aussi tous les
-    # modèles d'OpenRouter déjà référencés dans le snapshot (l'user OR
-    # a accès à ~500 modèles, on ne veut pas tous les afficher — on limite
-    # aux modèles qui ont au moins une métrique bench).
-    or_key, _ = _user_key_for("openrouter")
-    if or_key:
+    # Cas OpenRouter : accès à ~500 modèles — on ajoute ceux qui ont au
+    # moins une métrique bench (sinon le tableau explose).
+    if "openrouter" in configured_providers:
         for mid in or_models.keys():
             norm = _normalize_model_key(mid)
             if norm in static_by_key or norm in aider:
                 accessible_ids.add(mid)
 
-    # Fallback : si l'user n'a aucun provider configuré, on retourne le
-    # snapshot complet (mode démo / découverte) plutôt qu'une table vide.
-    if not accessible_ids:
-        accessible_ids = {row["id"] for row in static.get("models", [])}
+    # Union : modèles accessibles user + TOUS les modèles du snapshot (pour
+    # voir le classement complet même sans clé provider). Chaque ligne porte
+    # un flag `accessible` qui dit si l'user peut vraiment utiliser ce modèle.
+    snapshot_ids = {row["id"] for row in static.get("models", [])}
+    all_ids = accessible_ids | snapshot_ids
 
     # Métriques dispo : celles du snapshot + Aider (deux colonnes)
     metrics = [s["metric"] for s in static.get("sources", []) if s.get("metric")]
@@ -711,7 +708,7 @@ async def get_benchmarks(request: Request, session: AsyncSession = Depends(get_s
 
     # Build des rangées
     models_out: list[dict] = []
-    for mid in sorted(accessible_ids):
+    for mid in sorted(all_ids):
         norm = _normalize_model_key(mid)
         or_meta = or_models.get(mid, {})
         static_row = static_by_key.get(norm, {})
@@ -728,16 +725,26 @@ async def get_benchmarks(request: Request, session: AsyncSession = Depends(get_s
         elif lmarena and avg_price == 0:
             efficiency = round(max(lmarena - 1000, 0) * 100, 2)
 
+        provider = _provider_from_id(mid)
+        # Accessible si : dans la liste accessible OU si l'user a le provider
+        # direct configuré (même si le modèle précis n'est pas dans sa liste,
+        # il peut l'appeler via l'API). Pour OpenRouter, on est déjà strict.
+        is_accessible = (
+            mid in accessible_ids
+            or (provider in configured_providers and provider != "openrouter")
+        )
+
         entry = {
             "id": mid,
             "name": or_meta.get("name") or mid.split("/")[-1],
-            "provider": _provider_from_id(mid),
+            "provider": provider,
             "context_window": or_meta.get("context_window") or None,
             "input_1m": input_1m,
             "output_1m": output_1m,
             "avg_price": round(avg_price, 4) if avg_price is not None else None,
             "price_tier": _price_tier(input_1m or 0, output_1m or 0) if (input_1m is not None and output_1m is not None) else "unknown",
             "efficiency": efficiency,
+            "accessible": is_accessible,
         }
         # Métriques snapshot
         for m in [s["metric"] for s in static.get("sources", []) if s.get("metric")]:
@@ -746,10 +753,11 @@ async def get_benchmarks(request: Request, session: AsyncSession = Depends(get_s
         entry["aider_edit_pass2"] = aider_row.get("aider_edit_pass2")
         entry["aider_polyglot_pass2"] = aider_row.get("aider_polyglot_pass2")
 
-        # Ne garde que les modèles qui ont au moins UNE métrique connue —
-        # sinon on pollue le tableau avec des lignes vides.
+        # Ne garde que les modèles qui ont au moins UNE métrique connue
         if any(entry.get(m) is not None for m in metrics):
             models_out.append(entry)
+
+    accessible_count = sum(1 for m in models_out if m.get("accessible"))
 
     return {
         "schema_version": static.get("schema_version", 1),
@@ -758,6 +766,9 @@ async def get_benchmarks(request: Request, session: AsyncSession = Depends(get_s
         "metrics": metrics,
         "models": models_out,
         "has_user_filter": bool(user_settings_row),
+        "accessible_count": accessible_count,
+        "total_count": len(models_out),
+        "configured_providers": sorted(configured_providers),
         "aider_models_count": len(aider),
     }
 
