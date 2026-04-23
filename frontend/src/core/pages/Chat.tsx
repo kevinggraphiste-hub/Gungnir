@@ -1362,6 +1362,7 @@ export default function Chat() {
     addMessage({ id: streamingId, role: 'assistant', content: '', created_at: new Date().toISOString() })
     let streamedSoFar = ''
     try {
+      const collectedToolEvents: any[] = []
       const response = await api.chat(
         convoId!,
         {
@@ -1377,6 +1378,17 @@ export default function Chat() {
             streamedSoFar += chunk
             const current = useStore.getState().messages
             setMessages(current.map(m => m.id === streamingId ? { ...m, content: streamedSoFar } : m))
+          },
+          onTool: (evt: any) => {
+            // Collecte des tool_events — nécessaire pour afficher la
+            // PermissionCard inline (évts avec result.pending_approval) dans
+            // le chat, ainsi que les badges des tools exécutés.
+            collectedToolEvents.push(evt)
+            if (useStore.getState().currentConversation !== convoId) return
+            const current = useStore.getState().messages
+            setMessages(current.map(m => m.id === streamingId
+              ? ({ ...m, tool_events: [...collectedToolEvents] } as any)
+              : m))
           },
         },
       )
@@ -1396,12 +1408,13 @@ export default function Chat() {
         if (stillOnSameConvo) {
           const current = useStore.getState().messages
           setMessages(current.map(m => m.id === streamingId
-            ? {
+            ? ({
                 ...m,
                 content: response.content ?? streamedSoFar,
                 model: response.model, provider: response.provider,
                 tokens_input: response.tokens_input, tokens_output: response.tokens_output,
-              }
+                tool_events: collectedToolEvents.length > 0 ? collectedToolEvents : undefined,
+              } as any)
             : m))
         }
         // If agent switched provider/model, update the frontend selection
@@ -1462,6 +1475,7 @@ export default function Chat() {
 
     let streamedSoFar = ''
     try {
+      const collectedToolEvents: any[] = []
       const response = await api.chat(
         convoId,
         {
@@ -1478,6 +1492,14 @@ export default function Chat() {
             const current = useStore.getState().messages
             setMessagesFn(current.map(m => m.id === assistantMsgId ? { ...m, content: streamedSoFar } : m))
           },
+          onTool: (evt: any) => {
+            collectedToolEvents.push(evt)
+            if (useStore.getState().currentConversation !== convoId) return
+            const current = useStore.getState().messages
+            setMessagesFn(current.map(m => m.id === assistantMsgId
+              ? ({ ...m, tool_events: [...collectedToolEvents] } as any)
+              : m))
+          },
         },
       )
       const stillOnSameConvo = useStore.getState().currentConversation === convoId
@@ -1489,12 +1511,13 @@ export default function Chat() {
             : m))
         } else {
           setMessagesFn(current.map(m => m.id === assistantMsgId
-            ? {
+            ? ({
                 ...m,
                 content: response.content ?? streamedSoFar,
                 model: response.model, provider: response.provider,
                 tokens_input: response.tokens_input, tokens_output: response.tokens_output,
-              }
+                tool_events: collectedToolEvents.length > 0 ? collectedToolEvents : undefined,
+              } as any)
             : m))
         }
       }
@@ -2030,16 +2053,20 @@ export default function Chat() {
                             args={evt.result?.args || evt.args}
                             permissionId={evt.result?.permission_id}
                             onApprove={async () => {
+                              const tn = evt.result?.tool_name || evt.tool
+                              const argsJson = JSON.stringify(evt.result?.args ?? evt.args ?? {})
                               try {
                                 await apiFetch(`/api/agent/permission/${evt.result.permission_id}/approve`, { method: 'POST' })
                               } catch { /* ignore */ }
-                              handleSend(`Oui, je t'autorise à utiliser l'outil ${evt.result?.tool_name || evt.tool}.`)
+                              // Message explicite pour pousser l'agent à re-exécuter l'outil au tour suivant avec les MÊMES args + annoncer le résultat dans le chat.
+                              handleSend(`Autorisation accordée. Exécute maintenant \`${tn}\` avec les arguments ${argsJson}, puis dis-moi ce que ça a donné.`)
                             }}
                             onDeny={async () => {
+                              const tn = evt.result?.tool_name || evt.tool
                               try {
                                 await apiFetch(`/api/agent/permission/${evt.result.permission_id}/deny`, { method: 'POST' })
                               } catch { /* ignore */ }
-                              handleSend(`Non, n'utilise pas l'outil ${evt.result?.tool_name || evt.tool}.`)
+                              handleSend(`Refusé. N'exécute pas \`${tn}\`. Propose une alternative ou demande-moi des précisions.`)
                             }}
                           />
                         )
