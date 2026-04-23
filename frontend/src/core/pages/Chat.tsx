@@ -9,7 +9,7 @@ import {
   Search, Sparkles, MessageSquare, Star,
   Code, FileText, Globe, BarChart3, Radio,
   ChevronLeft, ChevronRight, Pencil, Check, X, Key,
-  Paperclip, Image as ImageIcon, Copy, ListTodo, Folder, FolderMinus, GripVertical,
+  Paperclip, Image as ImageIcon, Copy, Folder, FolderMinus, GripVertical,
   Calendar, Play, Pause, CheckCircle2, AlertCircle, Clock,
   RefreshCw, ThumbsUp, ThumbsDown, Zap, Wand2, Volume2, VolumeX, Loader2,
   ShieldCheck, ShieldAlert
@@ -19,7 +19,6 @@ import VoiceModal from '../components/VoiceModal'
 import ApiKeysModal from '../components/ApiKeysModal'
 import UserModal from '../components/UserModal'
 import ConversationMenu from '../components/ConversationMenu'
-import TaskPanel from '../components/TaskPanel'
 
 function AgentAvatar({ size = 32 }: { size?: number }) {
   return (
@@ -587,18 +586,6 @@ export default function Chat() {
     return localStorage.getItem('gungnir_chat_sidebar') === 'true'
   })
 
-  // Task panel (right side)
-  const [showTaskPanel, setShowTaskPanel] = useState(() => {
-    return localStorage.getItem('gungnir_task_panel') === 'true'
-  })
-
-  const toggleTaskPanel = useCallback(() => {
-    setShowTaskPanel(prev => {
-      const next = !prev
-      localStorage.setItem('gungnir_task_panel', String(next))
-      return next
-    })
-  }, [])
 
   const [editingTitleId, setEditingTitleId] = useState<number | null>(null)
   const [editTitleValue, setEditTitleValue] = useState('')
@@ -1875,19 +1862,6 @@ export default function Chat() {
 
             <SecondaryButton
               size="sm"
-              icon={<ListTodo className="w-3.5 h-3.5" />}
-              onClick={toggleTaskPanel}
-              title="Todo-list de la conversation"
-              style={showTaskPanel ? {
-                background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
-                border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
-                color: 'var(--scarlet)',
-              } : undefined}
-            >
-              Tâches
-            </SecondaryButton>
-            <SecondaryButton
-              size="sm"
               icon={<Key className="w-3.5 h-3.5" />}
               onClick={() => setShowApiKeysModal(true)}
             >
@@ -2005,7 +1979,7 @@ export default function Chat() {
                 </div>
               )}
 
-              <div className={`flex flex-col gap-1 max-w-[70%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+              <div className="flex flex-col gap-1 max-w-[70%] items-stretch">
                 {/* Header : pseudo + provider + compteur tokens (au-dessus de la bulle, pas accolé) */}
                 {(() => {
                   // Tokens : assistant → tokens_output propres ; user → tokens_input
@@ -2042,7 +2016,7 @@ export default function Chat() {
                 })()}
 
                 {msg.role === 'assistant' && (msg as any).tool_events?.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-1">
+                  <div className="flex flex-wrap gap-1.5 mb-1 self-start">
                     {(msg as any).tool_events.map((evt: any, i: number) => {
                       // Permission card : affichée quand le backend a gating
                       // l'outil en mode ask_permission (tool_event marqué avec
@@ -2082,7 +2056,7 @@ export default function Chat() {
                   </div>
                 )}
 
-                <div className={`group relative rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+                <div className={`group relative rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm self-end' : 'rounded-tl-sm self-start'}`}
                   style={msg.role === 'assistant' ? {
                     background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 4%, transparent), color-mix(in srgb, var(--ember) 2%, transparent))',
                     border: '1px solid color-mix(in srgb, var(--scarlet) 10%, transparent)', color: 'var(--text-primary)',
@@ -2458,11 +2432,6 @@ export default function Chat() {
           </div>
         </div>
       </div>
-
-      {/* ── TASK PANEL (right side) ── */}
-      {showTaskPanel && (
-        <TaskPanel conversationId={currentConversation} onClose={() => toggleTaskPanel()} />
-      )}
 
       {/* Modals */}
       <VoiceModal isOpen={showVoiceModal} onClose={() => setShowVoiceModal(false)} />
