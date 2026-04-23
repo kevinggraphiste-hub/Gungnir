@@ -820,17 +820,28 @@ async def _process_incoming(channel_id: str, text: str, sender_id: str = "unknow
         except Exception:
             pass
 
-        # Consciousness context (memories) — per-user strict : on utilise le
-        # user_id propriétaire du canal, pas le contexte système (0).
+        # Consciousness context — per-user strict : on utilise le user_id
+        # propriétaire du canal, pas le contexte système (0). Deux blocs :
+        #   1) Le bloc conscience complet (mood, top besoins, pending_impulse,
+        #      goals, alertes challenger) — identique au chat web
+        #   2) Les souvenirs vectoriels pertinents pour ce message
+        # Sans (1), l'agent sur Telegram ignore sa volition et ses besoins
+        # urgents — il devient aveugle à son propre état mental.
         consciousness_uid = int(channel_owner_id) if channel_owner_id else 0
         consciousness_block = ""
         try:
             from backend.plugins.consciousness.engine import consciousness_manager
             _ch_consciousness = consciousness_manager.get(consciousness_uid)
             if _ch_consciousness.enabled:
+                # (1) Bloc conscience complet — même source que chat.py
+                try:
+                    consciousness_block += _ch_consciousness.get_consciousness_prompt_block()
+                except Exception:
+                    pass
+                # (2) Mémoire vectorielle ciblée sur le message courant
                 memories = await _ch_consciousness.recall(text, limit=3)
                 if memories:
-                    consciousness_block = "\n\n## Souvenirs pertinents\n" + "\n".join(
+                    consciousness_block += "\n\n## Souvenirs pertinents\n" + "\n".join(
                         f"- {m.get('content', '')[:200]}" for m in memories
                     )
         except Exception:
