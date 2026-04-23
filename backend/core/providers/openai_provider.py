@@ -1,12 +1,13 @@
 from typing import AsyncGenerator, Optional
 import openai
-from .base import LLMProvider, ChatMessage, ChatResponse
+from .base import LLMProvider, ChatMessage, ChatResponse, GeneratedImage
 
 
 class OpenAIProvider(LLMProvider):
     name = "openai"
     supports_streaming = True
     supports_tools = True
+    supports_image_generation = True
 
     def __init__(self, api_key: str, base_url: Optional[str] = None, **kwargs):
         super().__init__(api_key, base_url, **kwargs)
@@ -55,3 +56,41 @@ class OpenAIProvider(LLMProvider):
     async def list_models(self) -> list[str]:
         resp = await self.client.models.list()
         return [m.id for m in resp.data]
+
+    async def generate_image(
+        self,
+        prompt: str,
+        model: str,
+        *,
+        size: str = "1024x1024",
+        n: int = 1,
+        **kwargs,
+    ) -> list[GeneratedImage]:
+        """Images API — DALL-E 3, GPT Image 1, DALL-E 2. Normalise le retour
+        (URL ou b64) en liste de GeneratedImage."""
+        # dall-e-3 n'accepte pas n>1 → on boucle côté client.
+        if model.startswith("dall-e-3") and n > 1:
+            out: list[GeneratedImage] = []
+            for _ in range(n):
+                out.extend(await self.generate_image(prompt, model, size=size, n=1, **kwargs))
+            return out
+
+        params: dict = {"model": model, "prompt": prompt, "size": size, "n": n}
+        response_format = kwargs.pop("response_format", None)
+        if response_format:
+            params["response_format"] = response_format
+        for k in ("quality", "style", "background", "user"):
+            if k in kwargs and kwargs[k] is not None:
+                params[k] = kwargs[k]
+
+        resp = await self.client.images.generate(**params)
+        out: list[GeneratedImage] = []
+        for item in resp.data or []:
+            out.append(GeneratedImage(
+                url=getattr(item, "url", None),
+                b64=getattr(item, "b64_json", None),
+                revised_prompt=getattr(item, "revised_prompt", None),
+                size=size,
+                mime_type="image/png",
+            ))
+        return out

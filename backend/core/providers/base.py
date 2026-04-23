@@ -38,10 +38,29 @@ class ChatResponse(BaseModel):
     tool_calls: Optional[list[dict]] = None
 
 
+class GeneratedImage(BaseModel):
+    """Image retournée par `generate_image`. Un provider donné utilisera soit
+    `url` (OpenAI DALL-E 3, URL temporaire), soit `b64` (data-uri base64)."""
+    url: Optional[str] = None
+    b64: Optional[str] = None   # Base64 sans le préfixe data:image/...;base64,
+    mime_type: str = "image/png"
+    revised_prompt: Optional[str] = None  # OpenAI réécrit parfois le prompt
+    size: Optional[str] = None  # ex: "1024x1024"
+
+    def as_data_uri(self) -> Optional[str]:
+        """Renvoie un data URI inline si on a le base64, sinon l'URL."""
+        if self.b64:
+            return f"data:{self.mime_type};base64,{self.b64}"
+        return self.url
+
+
 class LLMProvider(ABC):
     name: str
     supports_streaming: bool = True
     supports_tools: bool = False
+    # Quand True, ce provider implémente `generate_image`. Permet à l'UI de
+    # filtrer les providers dans le sélecteur de modèle image.
+    supports_image_generation: bool = False
 
     def __init__(self, api_key: str, base_url: Optional[str] = None, **kwargs):
         self.api_key = api_key
@@ -68,6 +87,22 @@ class LLMProvider(ABC):
     @abstractmethod
     async def list_models(self) -> list[str]:
         ...
+
+    async def generate_image(
+        self,
+        prompt: str,
+        model: str,
+        *,
+        size: str = "1024x1024",
+        n: int = 1,
+        **kwargs,
+    ) -> list[GeneratedImage]:
+        """Génère une ou plusieurs images à partir d'un prompt texte. Le
+        provider par défaut lève NotImplementedError — à override dans les
+        providers qui supportent."""
+        raise NotImplementedError(
+            f"Le provider '{self.name}' ne supporte pas la génération d'images."
+        )
 
     async def test_connection(self) -> bool:
         try:

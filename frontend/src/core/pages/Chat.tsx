@@ -650,6 +650,37 @@ export default function Chat() {
   }
 
   const [showVoiceModal, setShowVoiceModal] = useState(false)
+
+  // ── Image generation modal state ────────────────────────────────────────
+  type ImageModelInfo = { id: string; label: string; sizes: string[]; default_size: string; quality?: boolean }
+  type ImageProvidersCatalog = Array<{ provider: string; has_key: boolean; models: ImageModelInfo[] }>
+  const [showImageGenModal, setShowImageGenModal] = useState(false)
+  const [imgGenCatalog, setImgGenCatalog] = useState<ImageProvidersCatalog>([])
+  const [imgGenProvider, setImgGenProvider] = useState<string>('')
+  const [imgGenModel, setImgGenModel] = useState<string>('')
+  const [imgGenSize, setImgGenSize] = useState<string>('1024x1024')
+  const [imgGenPrompt, setImgGenPrompt] = useState<string>('')
+  const [imgGenLoading, setImgGenLoading] = useState(false)
+  const [imgGenError, setImgGenError] = useState<string>('')
+  // Charge le catalogue une fois ; re-fetch après ajout/retrait d'une clé provider
+  useEffect(() => {
+    const load = () => {
+      apiFetch('/api/chat/image/models').then(r => r.json()).then((data: any) => {
+        const providers: ImageProvidersCatalog = (data?.providers || []).filter((p: any) => p.has_key)
+        setImgGenCatalog(providers)
+        if (providers.length > 0 && !imgGenProvider) {
+          setImgGenProvider(providers[0].provider)
+          const firstModel = providers[0].models[0]
+          if (firstModel) {
+            setImgGenModel(firstModel.id)
+            setImgGenSize(firstModel.default_size || firstModel.sizes[0] || '1024x1024')
+          }
+        }
+      }).catch(() => { /* ignore */ })
+    }
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [pttStatus, setPttStatus] = useState<'idle' | 'recording' | 'processing'>('idle')
   const recognitionRef = useRef<any>(null)
 
@@ -2102,6 +2133,28 @@ export default function Chat() {
                       ))}
                     </div>
                   )}
+                  {/* Images GÉNÉRÉES par l'assistant (DALL-E, Imagen, NanoBanana…) */}
+                  {(msg as any).images_out && Array.isArray((msg as any).images_out) && (msg as any).images_out.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {(msg as any).images_out.map((img: any, i: number) => {
+                        const src = img.url || (img.b64 ? `data:${img.mime_type || 'image/png'};base64,${img.b64}` : null)
+                        if (!src) return null
+                        return (
+                          <div key={i} className="flex flex-col gap-1">
+                            <img src={src} alt={`Image générée ${i + 1}`}
+                              className="max-h-80 rounded-lg border border-[var(--border)] cursor-pointer hover:opacity-90 transition-opacity"
+                              style={{ maxWidth: '100%' }}
+                              onClick={() => window.open(src, '_blank')} />
+                            {img.revised_prompt && (
+                              <span className="text-[10px] italic" style={{ color: 'var(--text-muted)', maxWidth: 360 }}>
+                                « {img.revised_prompt} »
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                   <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
                 </div>
                 {/* Barre d'actions (copie + régénération + 👍/👎) */}
@@ -2271,6 +2324,31 @@ export default function Chat() {
                   style={{ width: '26px', height: '26px', background: attachedFiles.length > 0 ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'transparent', border: `1px solid ${attachedFiles.length > 0 ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border)'}`, color: attachedFiles.length > 0 ? 'var(--accent-primary)' : 'var(--text-muted)' }}
                   title={t('chat.attachFile')}>
                   <Paperclip className="w-3 h-3" />
+                </button>
+
+                {/* Génération d'image — bouton pinceau ; ouvre modal avec
+                    sélection provider/modèle (DALL-E 3, GPT Image 1, Imagen 3,
+                    NanoBanana…). Désactivé si l'user n'a aucune clé compatible. */}
+                <button
+                  onClick={() => {
+                    setImgGenPrompt(input.trim() || '')
+                    setImgGenError('')
+                    setShowImageGenModal(true)
+                  }}
+                  disabled={imgGenCatalog.length === 0}
+                  className="flex items-center justify-center rounded-lg transition-colors"
+                  style={{
+                    width: '26px', height: '26px',
+                    background: 'transparent',
+                    border: '1px solid var(--border)',
+                    color: imgGenCatalog.length > 0 ? 'var(--accent-primary)' : 'var(--text-muted)',
+                    cursor: imgGenCatalog.length > 0 ? 'pointer' : 'not-allowed',
+                    opacity: imgGenCatalog.length > 0 ? 1 : 0.4,
+                  }}
+                  title={imgGenCatalog.length > 0
+                    ? 'Générer une image (DALL-E, Imagen, NanoBanana…)'
+                    : 'Aucun provider image configuré (ajoute une clé OpenAI, Google ou OpenRouter)'}>
+                  <ImageIcon className="w-3 h-3" />
                 </button>
 
                 {/* Skill actif — chip avec × pour désactiver */}
@@ -2467,6 +2545,193 @@ export default function Chat() {
       <ApiKeysModal isOpen={showApiKeysModal} onClose={() => setShowApiKeysModal(false)} config={config}
         onConfigUpdate={(newConfig) => useStore.getState().setConfig(newConfig)} />
       <UserModal isOpen={showUserModal} onClose={() => setShowUserModal(false)} currentUser={currentUser} onUserChange={setCurrentUser} />
+
+      {/* Image generation modal — sélection explicite du modèle (DALL-E 3,
+          GPT Image 1, Imagen 3, NanoBanana…), pas de détection auto. */}
+      {showImageGenModal && (
+        <div
+          onClick={() => !imgGenLoading && setShowImageGenModal(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <div onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: 560,
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              borderRadius: 14, padding: 22,
+              display: 'flex', flexDirection: 'column', gap: 14,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ImageIcon className="w-5 h-5" style={{ color: 'var(--scarlet)' }} />
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
+                Génération d'image
+              </h3>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => !imgGenLoading && setShowImageGenModal(false)}
+                style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 20 }}>
+                ×
+              </button>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Prompt</label>
+              <textarea
+                value={imgGenPrompt} onChange={(e) => setImgGenPrompt(e.target.value)}
+                placeholder="Décris l'image à générer…"
+                rows={3}
+                style={{
+                  width: '100%', padding: '8px 10px', fontSize: 13,
+                  borderRadius: 6, background: 'var(--bg-primary)',
+                  border: '1px solid var(--border)', color: 'var(--text-primary)',
+                  outline: 'none', resize: 'vertical', fontFamily: 'inherit',
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Provider</label>
+                <select
+                  value={imgGenProvider}
+                  onChange={(e) => {
+                    const prov = e.target.value
+                    setImgGenProvider(prov)
+                    const firstModel = imgGenCatalog.find(p => p.provider === prov)?.models[0]
+                    if (firstModel) {
+                      setImgGenModel(firstModel.id)
+                      setImgGenSize(firstModel.default_size || firstModel.sizes[0] || '1024x1024')
+                    }
+                  }}
+                  style={{
+                    width: '100%', padding: '7px 10px', fontSize: 12,
+                    borderRadius: 6, background: 'var(--bg-primary)',
+                    border: '1px solid var(--border)', color: 'var(--text-primary)',
+                  }}>
+                  {imgGenCatalog.map(p => (
+                    <option key={p.provider} value={p.provider}>{p.provider}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ flex: 2 }}>
+                <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Modèle</label>
+                <select
+                  value={imgGenModel}
+                  onChange={(e) => {
+                    const modelId = e.target.value
+                    setImgGenModel(modelId)
+                    const modelDef = imgGenCatalog
+                      .find(p => p.provider === imgGenProvider)?.models
+                      .find(m => m.id === modelId)
+                    if (modelDef) setImgGenSize(modelDef.default_size || modelDef.sizes[0] || '1024x1024')
+                  }}
+                  style={{
+                    width: '100%', padding: '7px 10px', fontSize: 12,
+                    borderRadius: 6, background: 'var(--bg-primary)',
+                    border: '1px solid var(--border)', color: 'var(--text-primary)',
+                  }}>
+                  {imgGenCatalog.find(p => p.provider === imgGenProvider)?.models.map(m => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Taille</label>
+              <select
+                value={imgGenSize} onChange={(e) => setImgGenSize(e.target.value)}
+                style={{
+                  width: '100%', padding: '7px 10px', fontSize: 12,
+                  borderRadius: 6, background: 'var(--bg-primary)',
+                  border: '1px solid var(--border)', color: 'var(--text-primary)',
+                }}>
+                {(imgGenCatalog.find(p => p.provider === imgGenProvider)?.models
+                  .find(m => m.id === imgGenModel)?.sizes || ['1024x1024']).map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+              </select>
+            </div>
+
+            {imgGenError && (
+              <div style={{
+                padding: '8px 12px', borderRadius: 6, fontSize: 12,
+                background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)',
+                color: 'var(--accent-primary)',
+              }}>
+                {imgGenError}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+              <button
+                disabled={imgGenLoading}
+                onClick={() => setShowImageGenModal(false)}
+                style={{
+                  padding: '8px 16px', borderRadius: 6, fontSize: 13,
+                  background: 'transparent', border: '1px solid var(--border)',
+                  color: 'var(--text-secondary)', cursor: imgGenLoading ? 'not-allowed' : 'pointer',
+                }}>
+                Annuler
+              </button>
+              <button
+                disabled={imgGenLoading || !imgGenPrompt.trim() || !imgGenProvider || !imgGenModel}
+                onClick={async () => {
+                  setImgGenError('')
+                  if (!currentConversation) {
+                    setImgGenError("Ouvre ou crée une conversation d'abord.")
+                    return
+                  }
+                  setImgGenLoading(true)
+                  try {
+                    const res = await apiFetch('/api/chat/image', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        prompt: imgGenPrompt.trim(),
+                        provider: imgGenProvider,
+                        model: imgGenModel,
+                        size: imgGenSize,
+                        n: 1,
+                        conversation_id: currentConversation,
+                      }),
+                    })
+                    const data = await res.json()
+                    if (!data?.ok) {
+                      setImgGenError(data?.error || 'Échec de la génération')
+                      return
+                    }
+                    // Recharge les messages pour afficher le nouveau couple user/assistant
+                    try {
+                      const msgs = await api.getMessages(currentConversation)
+                      setMessages(msgs)
+                    } catch { /* ignore */ }
+                    setShowImageGenModal(false)
+                    setImgGenPrompt('')
+                  } catch (e: any) {
+                    setImgGenError(`Erreur réseau : ${e?.message || 'inconnue'}`)
+                  } finally {
+                    setImgGenLoading(false)
+                  }
+                }}
+                style={{
+                  padding: '8px 20px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                  background: 'var(--scarlet)', border: 'none', color: '#fff',
+                  cursor: imgGenLoading ? 'wait' : 'pointer',
+                  opacity: (imgGenLoading || !imgGenPrompt.trim()) ? 0.6 : 1,
+                }}>
+                {imgGenLoading ? 'Génération…' : '✨ Générer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

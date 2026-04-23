@@ -4,7 +4,8 @@ Uses the new google-genai SDK (recommended by Google, GA since 2025).
 Fallback to legacy google-generativeai if needed.
 """
 from typing import AsyncGenerator, Optional
-from .base import LLMProvider, ChatMessage, ChatResponse
+from .base import LLMProvider, ChatMessage, ChatResponse, GeneratedImage
+import base64 as _b64
 
 # Try new SDK first, fallback to legacy
 try:
@@ -20,6 +21,7 @@ class GoogleProvider(LLMProvider):
     name = "google"
     supports_streaming = True
     supports_tools = True
+    supports_image_generation = True
 
     def __init__(self, api_key: str, base_url: Optional[str] = None, **kwargs):
         super().__init__(api_key, base_url, **kwargs)
@@ -242,3 +244,94 @@ class GoogleProvider(LLMProvider):
             return models
         except Exception:
             return []
+
+    async def generate_image(
+        self,
+        prompt: str,
+        model: str,
+        *,
+        size: str = "1024x1024",
+        n: int = 1,
+        **kwargs,
+    ) -> list[GeneratedImage]:
+        """Deux chemins selon le modèle :
+
+        - `imagen-*` → API Imagen (`client.models.generate_images`). Le SDK
+          renvoie des bytes PNG directement.
+        - `gemini-2.5-flash-image-*` (NanoBanana) et `gemini-2.0-flash-exp-image-generation`
+          → API Gemini `generate_content` avec `response_modalities=["IMAGE"]`.
+          Les images arrivent en inline_data (b64) dans les parts du candidat.
+        """
+        if not USE_NEW_SDK:
+            raise NotImplementedError(
+                "Génération d'image Google nécessite le nouveau SDK google-genai. "
+                "Installer : pip install google-genai>=1.0.0"
+            )
+
+        out: list[GeneratedImage] = []
+
+        # ── Imagen ─────────────────────────────────────────────────────────
+        if "imagen" in model.lower():
+            # size "1024x1024" → aspect_ratio "1:1" ; "1792x1024" → "16:9" ; etc.
+            aspect_map = {
+                "1024x1024": "1:1",
+                "1792x1024": "16:9", "1024x1792": "9:16",
+                "1536x1024": "3:2", "1024x1536": "2:3",
+            }
+            aspect_ratio = aspect_map.get(size, "1:1")
+            try:
+                config = types.GenerateImagesConfig(
+                    number_of_images=n,
+                    aspect_ratio=aspect_ratio,
+                )
+            except Exception:
+                # Fallback minimal si certains champs manquent selon la version
+                config = types.GenerateImagesConfig(number_of_images=n)
+            resp = self.client.models.generate_images(
+                model=model, prompt=prompt, config=config,
+            )
+            for img in getattr(resp, "generated_images", []) or []:
+                data = getattr(getattr(img, "image", None), "image_bytes", None)
+                if not data:
+                    continue
+                out.append(GeneratedImage(
+                    b64=_b64.b64encode(data).decode("ascii"),
+                    mime_type="image/png",
+                    size=size,
+                ))
+            return out
+
+        # ── Gemini Flash Image (NanoBanana) ────────────────────────────────
+        try:
+            config = types.GenerateContentConfig(
+                response_modalities=["IMAGE", "TEXT"],
+            )
+        except Exception:
+            config = None
+        resp = self.client.models.generate_content(
+            model=model, contents=prompt, config=config,
+        )
+        revised = ""
+        for cand in getattr(resp, "candidates", []) or []:
+            content = getattr(cand, "content", None)
+            if not content:
+                continue
+            for part in getattr(content, "parts", []) or []:
+                inline = getattr(part, "inline_data", None)
+                if inline and getattr(inline, "data", None):
+                    raw = inline.data
+                    if isinstance(raw, (bytes, bytearray)):
+                        b64 = _b64.b64encode(raw).decode("ascii")
+                    else:
+                        # Certaines versions du SDK renvoient déjà du b64
+                        b64 = str(raw)
+                    out.append(GeneratedImage(
+                        b64=b64,
+                        mime_type=getattr(inline, "mime_type", "image/png") or "image/png",
+                        size=size,
+                    ))
+                elif getattr(part, "text", None):
+                    revised += part.text
+        if revised and out:
+            out[0].revised_prompt = revised.strip()[:500]
+        return out

@@ -106,6 +106,11 @@ class Message(Base):
     # actif en cours de conversation.
     model = Column(String(255), default="")
     provider = Column(String(100), default="")
+    # Images GÉNÉRÉES par l'assistant (DALL-E, Imagen, NanoBanana…) — distinct
+    # du champ `content` texte et des images UPLOADÉES par l'user (stockées
+    # en base64 dans le payload de requête, pas persistées). Format :
+    # [{"url": "...", "b64": "...", "mime_type": "image/png", "size": "1024x1024", "revised_prompt": "..."}]
+    images_out = Column(JSON, nullable=True)
 
     conversation = relationship("Conversation", back_populates="messages")
 
@@ -347,6 +352,7 @@ async def init_db(engine):
         ("ALTER TABLE users ADD COLUMN token_expires_at TIMESTAMP NULL", "token_expires_at -> users"),
         ("ALTER TABLE messages ADD COLUMN model VARCHAR(255) DEFAULT ''", "model -> messages"),
         ("ALTER TABLE messages ADD COLUMN provider VARCHAR(100) DEFAULT ''", "provider -> messages"),
+        ("ALTER TABLE messages ADD COLUMN images_out JSONB DEFAULT NULL", "images_out -> messages"),
     ]
 
     # Migrations plugin : chaque plugin expose optionnellement sa propre liste
