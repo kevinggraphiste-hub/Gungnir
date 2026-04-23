@@ -12,7 +12,7 @@ import {
   Paperclip, Image as ImageIcon, Copy, Folder, FolderMinus, GripVertical,
   Calendar, Play, Pause, CheckCircle2, AlertCircle, Clock,
   RefreshCw, ThumbsUp, ThumbsDown, Zap, Wand2, Volume2, VolumeX, Loader2,
-  ShieldCheck, ShieldAlert
+  ShieldCheck, ShieldAlert, Square
 } from 'lucide-react'
 import { SecondaryButton } from '../components/ui'
 import VoiceModal from '../components/VoiceModal'
@@ -431,6 +431,54 @@ function MessageContent({ content }: { content: string }) {
   )
 }
 
+// Fullscreen image preview overlay. Click-anywhere (ou touche Échap) pour
+// fermer. Stop propagation sur l'image elle-même pour laisser la zoomée
+// sans fermer accidentellement.
+function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: 'rgba(0,0,0,0.92)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20, cursor: 'zoom-out',
+      }}
+    >
+      <button
+        onClick={(e) => { e.stopPropagation(); onClose() }}
+        style={{
+          position: 'absolute', top: 16, right: 16,
+          width: 36, height: 36, borderRadius: '50%',
+          background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)',
+          color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer',
+        }}
+        title="Fermer (Échap)"
+      >
+        <X className="w-5 h-5" />
+      </button>
+      <img
+        src={src}
+        alt="Aperçu plein écran"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          maxWidth: '95vw', maxHeight: '95vh',
+          objectFit: 'contain',
+          borderRadius: 6,
+          boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+          cursor: 'default',
+        }}
+      />
+    </div>
+  )
+}
+
 export default function Chat() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -572,6 +620,19 @@ export default function Chat() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // AbortController pour interrompre le stream LLM en cours (bouton Stop ou
+  // renvoi d'un nouveau message pendant la génération).
+  const abortRef = useRef<AbortController | null>(null)
+  // Message user qu'on garde en mémoire quand on interrompt pour le
+  // rajouter au contexte du prochain envoi.
+  const pendingContextRef = useRef<string | null>(null)
+  // Message texte "en file d'attente" : quand l'utilisateur envoie pendant
+  // la génération, on stocke son nouveau texte ici puis on abort. Dès que
+  // le handler en cours se termine, un useEffect rejoue handleSend avec
+  // ce texte (enrichi du contexte du message interrompu).
+  const queuedSendRef = useRef<string | null>(null)
+  // Image affichée en fullscreen (lightbox). null = overlay caché.
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   // When we create a conversation locally (handleSend / handleNewChat /
   // handleNewChatWithSummary), we already know its messages state — either
   // empty or the optimistic user message we just added. Without this ref,
@@ -1341,7 +1402,37 @@ export default function Chat() {
 
   const handleSend = async (overrideText?: string) => {
     const effectiveInput = overrideText ?? input
-    if ((!effectiveInput.trim() && attachedFiles.length === 0) || isLoading) return
+    if (!effectiveInput.trim() && attachedFiles.length === 0) return
+    // Si une réponse est déjà en cours de génération : on abort le stream
+    // actuel et on mémorise le dernier message user pour l'enrichir au
+    // prochain envoi. On sort ensuite : l'abort va rejeter la promise en
+    // cours, qui remettra isLoading=false ; l'utilisateur peut alors
+    // renvoyer. Si l'utilisateur appuie direct sur Entrée à nouveau, le
+    // prochain appel verra `pendingContextRef` et préfixera le contexte.
+    if (isLoading) {
+      // Récupère le dernier message user pour l'inclure comme contexte.
+      const msgs = useStore.getState().messages
+      const lastUser = [...msgs].reverse().find(m => m.role === 'user')
+      if (lastUser) {
+        pendingContextRef.current = lastUser.content.replace(/\n\[Image jointe\]/g, '')
+      }
+      // Si l'utilisateur a tapé un nouveau message, on le met en file
+      // d'attente : il sera rejoué automatiquement après l'abort par le
+      // useEffect qui observe isLoading.
+      if (effectiveInput.trim()) {
+        queuedSendRef.current = effectiveInput.trim()
+        setInput('')
+      }
+      abortRef.current?.abort()
+      return
+    }
+    // Si on a un contexte en attente (après un abort précédent), on le
+    // préfixe au message courant pour que le LLM ait le fil complet.
+    let prefixed = effectiveInput
+    if (pendingContextRef.current) {
+      prefixed = `[Contexte message précédent interrompu] ${pendingContextRef.current}\n\n[Nouveau message] ${effectiveInput}`
+      pendingContextRef.current = null
+    }
 
     // Auto-create conversation if none selected
     let convoId: number | null = currentConversation
@@ -1370,11 +1461,15 @@ export default function Chat() {
       }
     }
 
+    // `userMessage` = ce que l'utilisateur voit dans sa bulle (version brute).
+    // `sentMessage` = ce qu'on envoie au LLM (potentiellement enrichi du
+    // contexte du message précédent interrompu).
     const userMessage = effectiveInput.trim()
+    const sentMessage = prefixed.trim()
     const currentImages = attachedFiles.filter(f => f.type.startsWith('image/')).map(f => f.dataUrl)
     const currentDocs = attachedFiles.filter(f => !f.type.startsWith('image/'))
     // Pour les documents non-image, ajouter le contenu texte au message
-    let fullMessage = userMessage
+    let fullMessage = sentMessage
     if (currentDocs.length > 0) {
       const docTexts = currentDocs.map(d => {
         // Pour les fichiers texte, extraire le contenu base64
@@ -1439,6 +1534,10 @@ export default function Chat() {
     const setMessages = useStore.getState().setMessages
     addMessage({ id: streamingId, role: 'assistant', content: '', created_at: new Date().toISOString() })
     let streamedSoFar = ''
+    // AbortController pour ce stream — stocké dans abortRef pour que le
+    // bouton Stop (ou un renvoi pendant loading) puisse l'interrompre.
+    const controller = new AbortController()
+    abortRef.current = controller
     try {
       const collectedToolEvents: any[] = []
       const response = await api.chat(
@@ -1469,7 +1568,21 @@ export default function Chat() {
               : m))
           },
         },
+        controller.signal,
       )
+      // Si le stream a été abort par l'utilisateur, on garde le contenu
+      // partiel déjà streamé et on marque la bulle en "(interrompu)" pour
+      // qu'il voie clairement ce qui s'est passé.
+      if ((response as any)?.aborted) {
+        const stillOnSame = useStore.getState().currentConversation === convoId
+        if (stillOnSame) {
+          const current = useStore.getState().messages
+          const partial = (response as any).content ?? streamedSoFar
+          setMessages(current.map(m => m.id === streamingId
+            ? { ...m, content: (partial || '') + '\n\n*(interrompu)*' }
+            : m))
+        }
+      }
       // Read the live current conversation — the user may have switched
       // chats while we were awaiting. If so, the response is already saved
       // server-side and we must NOT append it to the local messages array
@@ -1523,9 +1636,25 @@ export default function Chat() {
         } catch { /* ignore */ }
       }
     } catch (err) { console.error('Chat error:', err) }
+    abortRef.current = null
     setLoading(false)
     setLoadingConvoId(null)
   }
+
+  // Si l'utilisateur a envoyé un message pendant la génération précédente,
+  // il a été mis en file d'attente (queuedSendRef). Dès que le handler en
+  // cours se termine (isLoading → false), on le rejoue automatiquement
+  // avec le contexte du message interrompu.
+  useEffect(() => {
+    if (!isLoading && queuedSendRef.current) {
+      const queued = queuedSendRef.current
+      queuedSendRef.current = null
+      // Petit délai pour laisser React finaliser le setLoading avant
+      // que handleSend relise l'état.
+      setTimeout(() => handleSend(queued), 50)
+    }
+
+  }, [isLoading])
 
   // Relance une réponse en recyclant la bulle assistant cliquée : trouve le
   // message utilisateur qui la précède, vide le contenu de l'assistant, et
@@ -2176,7 +2305,7 @@ export default function Chat() {
                     <div className="flex flex-wrap gap-2 mb-2">
                       {msg.images.map((img: string, i: number) => (
                         <img key={i} src={img} alt={`Image ${i + 1}`} className="max-h-48 rounded-lg border border-[var(--border)] cursor-pointer hover:opacity-80 transition-opacity"
-                          onClick={() => window.open(img, '_blank')} />
+                          onClick={() => setLightboxSrc(img)} />
                       ))}
                     </div>
                   )}
@@ -2191,7 +2320,7 @@ export default function Chat() {
                             <img src={src} alt={`Image générée ${i + 1}`}
                               className="max-h-80 rounded-lg border border-[var(--border)] cursor-pointer hover:opacity-90 transition-opacity"
                               style={{ maxWidth: '100%' }}
-                              onClick={() => window.open(src, '_blank')} />
+                              onClick={() => setLightboxSrc(src)} />
                             {img.revised_prompt && (
                               <span className="text-[10px] italic" style={{ color: 'var(--text-muted)', maxWidth: 360 }}>
                                 « {img.revised_prompt} »
@@ -2510,13 +2639,23 @@ export default function Chat() {
                   <Radio className="w-3.5 h-3.5" />
                 </button>
 
-                {/* Bouton Lancer (envoyer) */}
-                <button onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
-                  className="flex items-center gap-1.5 px-3 rounded-lg disabled:opacity-30 transition-all text-xs font-medium"
-                  style={{ height: '30px', background: (input.trim() || attachedFiles.length > 0) && !isLoading ? 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
-                  <Send className="w-3 h-3" />
-                  <span>Lancer</span>
-                </button>
+                {/* Bouton Lancer (envoyer) / Stop (pendant génération) */}
+                {isLoading ? (
+                  <button onClick={() => abortRef.current?.abort()}
+                    className="flex items-center gap-1.5 px-3 rounded-lg transition-all text-xs font-medium"
+                    style={{ height: '30px', background: 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))', color: 'var(--text-primary)' }}
+                    title="Interrompre la réponse en cours">
+                    <Square className="w-3 h-3" fill="currentColor" />
+                    <span>Stop</span>
+                  </button>
+                ) : (
+                  <button onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0)}
+                    className="flex items-center gap-1.5 px-3 rounded-lg disabled:opacity-30 transition-all text-xs font-medium"
+                    style={{ height: '30px', background: (input.trim() || attachedFiles.length > 0) ? 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
+                    <Send className="w-3 h-3" />
+                    <span>Lancer</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2586,6 +2725,12 @@ export default function Chat() {
           </div>
         </div>
       </div>
+
+      {/* Lightbox fullscreen — image affichée en grand sur clic. Ferme au
+          clic de l'overlay OU de la croix OU de la touche Échap. */}
+      {lightboxSrc && (
+        <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+      )}
 
       {/* Modals */}
       <VoiceModal isOpen={showVoiceModal} onClose={() => setShowVoiceModal(false)} />

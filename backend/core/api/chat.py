@@ -97,13 +97,27 @@ def _classify_llm_error(exc: Exception) -> str:
 
 # Fallback patterns quand le catalogue OpenRouter n'est pas joignable.
 # Utilisé uniquement si `_fetch_openrouter_models()` échoue (offline, rate-limit…).
+# Liste élargie mi-2026 pour couvrir les familles récentes (sinon les images
+# upload sont silencieusement décrites en texte au lieu d'être envoyées au LLM,
+# perte de fidélité notable vs multimodal natif).
 _VISION_MODEL_PATTERNS = [
-    "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-4.1",
+    # OpenAI
+    "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-4.1", "gpt-4.5", "gpt-5",
+    "o1", "o3", "o4",
+    # Anthropic
     "claude-3", "claude-sonnet", "claude-opus", "claude-haiku",
-    "gemini", "gemma",
+    "claude-4", "claude-sonnet-4", "claude-opus-4", "claude-haiku-4",
+    # Google
+    "gemini", "gemma", "imagen",
+    # Open-source / autres vision
     "llava", "bakllava", "moondream",
-    "pixtral", "qwen-vl", "qwen2-vl", "internvl",
-    "yi-vision", "phi-3-vision", "phi-3.5-vision",
+    "pixtral", "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "internvl",
+    "yi-vision", "phi-3-vision", "phi-3.5-vision", "phi-4-vision",
+    # xAI / Meta vision
+    "grok-2-vision", "grok-3", "grok-4",
+    "llama-3.2-vision", "llama-3.3-vision", "llama-4",
+    # Mistral
+    "mistral-medium-vision", "mistral-large-vision",
 ]
 
 

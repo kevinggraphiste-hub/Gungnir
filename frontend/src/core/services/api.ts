@@ -164,11 +164,13 @@ export const api = {
       onToken?: (chunk: string) => void
       onTool?: (evt: any) => void
     },
+    signal?: AbortSignal,
   ): Promise<any> => {
     const response = await apiFetch(`${API_BASE}/conversations/${conversationId}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify(data),
+      signal,
     })
     if (!response.ok) {
       return handleResponse(response)
@@ -200,22 +202,31 @@ export const api = {
       }
     }
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      let idx: number
-      while ((idx = buffer.indexOf('\n\n')) !== -1) {
-        const rawEvent = buffer.slice(0, idx)
-        buffer = buffer.slice(idx + 2)
-        let eventName = 'message'
-        const dataLines: string[] = []
-        for (const line of rawEvent.split('\n')) {
-          if (line.startsWith('event: ')) eventName = line.slice(7)
-          else if (line.startsWith('data: ')) dataLines.push(line.slice(6))
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx: number
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const rawEvent = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          let eventName = 'message'
+          const dataLines: string[] = []
+          for (const line of rawEvent.split('\n')) {
+            if (line.startsWith('event: ')) eventName = line.slice(7)
+            else if (line.startsWith('data: ')) dataLines.push(line.slice(6))
+          }
+          if (dataLines.length > 0) dispatch(eventName, dataLines.join('\n'))
         }
-        if (dataLines.length > 0) dispatch(eventName, dataLines.join('\n'))
       }
+    } catch (e: any) {
+      // AbortError = l'user a cliqué Stop, pas une erreur applicative.
+      // On retourne le contenu partiel déjà streamé + flag `aborted`.
+      if (e?.name === 'AbortError') {
+        return { ...finalPayload, content: finalPayload.content ?? streamedContent, aborted: true }
+      }
+      throw e
     }
 
     if (errorPayload) return { error: errorPayload }
