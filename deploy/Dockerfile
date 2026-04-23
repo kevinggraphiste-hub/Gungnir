@@ -5,7 +5,12 @@
 # ============================================================================
 
 # ── Stage 1: Frontend build ─────────────────────────────────────────────────
-FROM node:20-alpine AS frontend-build
+# On utilise node:20-slim (Debian/glibc) plutôt qu'Alpine (musl) — le binaire
+# node est ensuite COPY'é dans la stage prod (python:3.12-slim, glibc). Avec
+# Alpine, le binaire musl échoue à charger sous Debian avec un obscur
+# "env: 'node': No such file or directory" (en vrai c'est le loader musl
+# qui manque, pas node).
+FROM node:20-slim AS frontend-build
 
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
@@ -16,7 +21,9 @@ RUN npm run build
 
 
 # ── Stage 1b: Build gopls (Go toolchain chain is heavy — throw it away) ─────
-FROM golang:1.22-alpine AS gopls-build
+# Idem : bookworm/Debian plutôt qu'Alpine pour que le binaire gopls copié
+# dans la stage prod (glibc) soit directement exécutable.
+FROM golang:1.22-bookworm AS gopls-build
 RUN go install golang.org/x/tools/gopls@v0.16.1
 
 
