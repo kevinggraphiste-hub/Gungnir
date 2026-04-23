@@ -2018,17 +2018,24 @@ export default function Chat() {
                     if (next && next.role === 'assistant') headerTokens = (next as any).tokens_input
                   }
                   const hasTokens = typeof headerTokens === 'number' && headerTokens > 0
+                  // Pseudo + provider groupés d'un côté de la ligne ; tokens
+                  // placés du côté opposé (justify-between). Assistant : pseudo
+                  // à gauche, tokens à droite. User : pseudo à droite, tokens
+                  // à gauche. Sans tokens, le pseudo reste simplement aligné
+                  // sur son bord habituel.
                   return (
-                    <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                      <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
-                        {msg.role === 'user' ? (currentUser?.display_name || t('common.user')) : formatModelName((msg as any).model || selectedModel)}
-                      </span>
-                      {msg.role === 'assistant' && (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
-                          style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 15%, transparent)' }}>
-                          {(msg as any).provider || selectedProvider}
+                    <div className={`flex items-center w-full gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} ${hasTokens ? 'justify-between' : ''}`}>
+                      <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                        <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                          {msg.role === 'user' ? (currentUser?.display_name || t('common.user')) : formatModelName((msg as any).model || selectedModel)}
                         </span>
-                      )}
+                        {msg.role === 'assistant' && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide"
+                            style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 15%, transparent)' }}>
+                            {(msg as any).provider || selectedProvider}
+                          </span>
+                        )}
+                      </div>
                       {hasTokens && <TokenBadge tokens={headerTokens as number} />}
                     </div>
                   )
