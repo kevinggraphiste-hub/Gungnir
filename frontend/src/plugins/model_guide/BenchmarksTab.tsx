@@ -20,6 +20,7 @@ export interface BenchmarkSource {
   url: string
   description: string
   metric: string
+  live?: boolean
 }
 
 export interface BenchmarkRow {
@@ -42,6 +43,8 @@ interface BenchmarksPayload {
   notes: string | null
   metrics: string[]
   models: BenchmarkRow[]
+  has_user_filter?: boolean
+  aider_models_count?: number
 }
 
 interface SourcesPayload {
@@ -81,6 +84,8 @@ const METRIC_LABEL: Record<string, string> = {
   mmlu_pro: 'MMLU-Pro',
   gpqa: 'GPQA',
   livecodebench: 'LiveCode',
+  aider_edit_pass2: 'Aider Edit',
+  aider_polyglot_pass2: 'Aider Poly',
 }
 
 const METRIC_UNIT: Record<string, string> = {
@@ -89,6 +94,8 @@ const METRIC_UNIT: Record<string, string> = {
   mmlu_pro: '%',
   gpqa: '%',
   livecodebench: '%',
+  aider_edit_pass2: '%',
+  aider_polyglot_pass2: '%',
 }
 
 function fmtMetric(v: unknown, metric: string): string {
@@ -206,9 +213,16 @@ export function BenchmarksTab() {
               display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600,
               padding: '3px 8px', borderRadius: 5, textDecoration: 'none',
               background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
-              border: '1px solid var(--border-subtle)',
+              border: `1px solid ${s.live ? '#22c55e55' : 'var(--border-subtle)'}`,
             }}>
             {s.name}
+            <span style={{
+              fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3,
+              background: s.live ? '#22c55e22' : 'rgba(234,179,8,.15)',
+              color: s.live ? '#22c55e' : '#ca8a04',
+            }}>
+              {s.live ? 'LIVE' : 'SNAP'}
+            </span>
             <ExternalLink size={10} />
           </a>
         ))}
@@ -221,10 +235,29 @@ export function BenchmarksTab() {
         </SecondaryButton>
       </div>
 
-      {/* Note curation */}
+      {/* Bandeau filtrage per-user */}
+      <div style={{
+        padding: '5px 24px', fontSize: 10, color: 'var(--text-muted)',
+        background: data.has_user_filter ? 'rgba(34,197,94,.06)' : 'rgba(234,179,8,.06)',
+        borderBottom: '1px solid var(--border-subtle)',
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}>
+        {data.has_user_filter ? (
+          <>
+            <span style={{ color: '#22c55e', fontWeight: 700 }}>●</span>
+            Filtré sur vos providers configurés — {data.models.length} modèle{data.models.length > 1 ? 's' : ''} avec au moins une métrique connue.
+            {data.aider_models_count !== undefined && <> Aider live : {data.aider_models_count} modèles indexés.</>}
+          </>
+        ) : (
+          <>
+            <span style={{ color: '#ca8a04', fontWeight: 700 }}>●</span>
+            Mode découverte — aucun provider configuré pour votre compte. Affichage du snapshot complet.
+          </>
+        )}
+      </div>
       {data.notes && (
         <div style={{
-          padding: '6px 24px', fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic',
+          padding: '5px 24px', fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic',
           background: 'rgba(234,179,8,.06)', borderBottom: '1px solid var(--border-subtle)',
         }}>
           ⚠ {data.notes}

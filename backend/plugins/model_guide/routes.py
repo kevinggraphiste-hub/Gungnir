@@ -463,21 +463,33 @@ async def get_tiers():
 
 
 # ── Benchmarks ───────────────────────────────────────────────────────────────
-# Même pattern que le catalogue : chargement paresseux, cache mémoire, fetch
-# enrichi par la live data OpenRouter. Les scores benchmarks eux-mêmes sont
-# curés (snapshot JSON bundled) car aucune source publique ne les expose en
-# API gratuite (LMArena / Artificial Analysis → 401, HF datasets → auth).
-# Le snapshot peut être rafraîchi via un PR ou une mise à jour manuelle.
+# Même pattern que /catalog : résout les providers configurés par l'utilisateur
+# et ne retourne que les modèles auxquels il a accès. Sources combinées :
+#
+#   LIVE  — OpenRouter (/api/v1/models)     — pricing, context, metadata
+#   LIVE  — Aider edit leaderboard (YAML)   — pass_rate_1/2 édition de code
+#   LIVE  — Aider polyglot leaderboard      — pass_rate polyglot multi-lang
+#   SNAP  — benchmarks_static.json          — LMArena Elo, MMLU-Pro, GPQA, LiveCodeBench
+#
+# Les 3 premières sont fetchées live (cache mémoire 1h), la 4e est un snapshot
+# curé bundled (hot-swap toutes les 60s). LMArena et Artificial Analysis ne
+# publient plus de feed gratuit en 2026 — le snapshot est une approximation,
+# les liens officiels sont affichés côté UI pour cross-check.
 
 _benchmarks_static: dict | None = None
 _benchmarks_static_ts: float = 0.0
-_BENCHMARKS_FILE_TTL = 60  # re-read JSON from disk every 60s (permet hot-swap)
+_BENCHMARKS_FILE_TTL = 60
+
+_aider_cache: dict | None = None
+_aider_cache_ts: float = 0.0
+_AIDER_CACHE_TTL = 3600  # 1h
+
+AIDER_EDIT_URL = "https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/_data/edit_leaderboard.yml"
+AIDER_POLYGLOT_URL = "https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/_data/polyglot_leaderboard.yml"
 
 
 def _load_benchmarks_static() -> dict:
-    """Charge le snapshot JSON avec un petit cache pour éviter les reads
-    disque à chaque requête. Re-read toutes les 60s pour permettre un
-    hot-swap (édition manuelle du fichier sans redémarrage)."""
+    """Charge le snapshot JSON avec cache de 60s (hot-swap permis)."""
     global _benchmarks_static, _benchmarks_static_ts
     if _benchmarks_static and (time.time() - _benchmarks_static_ts) < _BENCHMARKS_FILE_TTL:
         return _benchmarks_static
@@ -492,41 +504,229 @@ def _load_benchmarks_static() -> dict:
 
 
 def _provider_from_id(model_id: str) -> str:
-    """Extrait le provider depuis un id 'provider/model' (ou 'unknown')."""
     if "/" in model_id:
         return model_id.split("/", 1)[0]
     return "unknown"
 
 
-@router.get("/benchmarks")
-async def get_benchmarks():
-    """Retourne le snapshot des benchmarks enrichi avec le pricing et le
-    context_window récupérés live depuis OpenRouter. Les modèles absents
-    d'OpenRouter restent listés sans pricing (null).
+_DATE_SUFFIX_RE = __import__("re").compile(r'[-_]?(?:20\d{6}|20\d{2}[-_]\d{2}[-_]\d{2}|\d{4})$')
+_VERSION_TAG_RE = __import__("re").compile(r'[-_](?:exp|preview|thinking|latest|instruct|chat|it)(?:[-_].*)?$')
+_TRAILING_NUM_RE = __import__("re").compile(r'[-_]\d{3,4}$')
 
-    Le frontend reçoit tout en un seul call et fait filtres/tri côté client
-    (même principe que /catalog)."""
+
+def _normalize_model_key(raw_id: str) -> str:
+    """Normalise un id modèle pour matcher entre sources différentes.
+    Ex : 'anthropic/claude-3.5-sonnet', 'claude-3-5-sonnet-20241022',
+    'Claude 3.5 Sonnet' → tous ramenés à 'claude-3-5-sonnet'.
+    """
+    if not raw_id:
+        return ""
+    s = str(raw_id).lower().strip()
+    # Provider prefix (anthropic/, openai/, google/, mistralai/…)
+    if "/" in s:
+        s = s.split("/", 1)[1]
+    # Espaces et ponctuation → tirets
+    s = __import__("re").sub(r'[\s_\.()]+', '-', s)
+    # Dates (YYYYMMDD, YYYY-MM-DD, 4-digit suffix version)
+    for _ in range(2):  # boucle car plusieurs suffixes possibles
+        s2 = _DATE_SUFFIX_RE.sub('', s)
+        if s2 == s:
+            break
+        s = s2
+    # Tags de version courants
+    s = _VERSION_TAG_RE.sub('', s)
+    # Trailing numeric suffix (002, 0125…)
+    s = _TRAILING_NUM_RE.sub('', s)
+    # Tirets multiples
+    s = __import__("re").sub(r'-+', '-', s).strip('-')
+    return s
+
+
+def _parse_aider_yaml(text: str) -> list[dict]:
+    """Parseur YAML minimaliste pour les leaderboards Aider (format stable,
+    entrées `- key: value`). Évite une dépendance PyYAML dédiée.
+    """
+    import re as _re
+    entries: list[dict] = []
+    current: dict | None = None
+    for line in text.splitlines():
+        if line.startswith("- "):
+            if current is not None:
+                entries.append(current)
+            current = {}
+            # La première ligne peut contenir un champ (- dirname: x)
+            m = _re.match(r'- (\w+):\s*(.+)$', line)
+            if m:
+                current[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+        elif line.startswith("  ") and current is not None:
+            m = _re.match(r'\s{2}(\w+):\s*(.+)$', line)
+            if m:
+                k, v = m.group(1), m.group(2).strip().strip('"').strip("'")
+                # Cast basique (float / int / bool / str)
+                if v.lower() in ("true", "false"):
+                    current[k] = (v.lower() == "true")
+                else:
+                    try:
+                        current[k] = float(v) if "." in v else int(v)
+                    except ValueError:
+                        current[k] = v
+    if current:
+        entries.append(current)
+    return entries
+
+
+async def _fetch_aider_leaderboards() -> dict:
+    """Fetch et parse les deux leaderboards Aider GitHub (edit + polyglot).
+    Retourne {normalized_key: {edit_pass2, polyglot_pass2, edit_format,
+    released}}. Cache 1h. Fallback cache stale en cas d'échec réseau.
+    """
+    global _aider_cache, _aider_cache_ts
+    if _aider_cache and (time.time() - _aider_cache_ts) < _AIDER_CACHE_TTL:
+        return _aider_cache
+
+    merged: dict[str, dict] = {}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            edit_resp, poly_resp = await _gather_safe(
+                client.get(AIDER_EDIT_URL),
+                client.get(AIDER_POLYGLOT_URL),
+            )
+
+        for kind, resp in (("edit", edit_resp), ("polyglot", poly_resp)):
+            if resp is None or getattr(resp, "status_code", 0) != 200:
+                continue
+            try:
+                entries = _parse_aider_yaml(resp.text)
+            except Exception as e:
+                logger.warning(f"Aider {kind} parse failed: {e}")
+                continue
+            # Pour chaque modèle, garder l'entrée la plus récente (dernière date)
+            best: dict[str, dict] = {}
+            for e in entries:
+                model_raw = e.get("model")
+                if not model_raw:
+                    continue
+                key = _normalize_model_key(str(model_raw))
+                if not key:
+                    continue
+                date = str(e.get("released") or e.get("date") or e.get("_released") or "")
+                if key not in best or date > best[key].get("_date", ""):
+                    best[key] = {
+                        "_date": date,
+                        "pass_rate_2": e.get("pass_rate_2"),
+                        "pass_rate_1": e.get("pass_rate_1"),
+                        "edit_format": e.get("edit_format"),
+                    }
+            for k, v in best.items():
+                merged.setdefault(k, {})
+                merged[k][f"aider_{kind}_pass2"] = v.get("pass_rate_2")
+                merged[k][f"aider_{kind}_pass1"] = v.get("pass_rate_1")
+                merged[k][f"aider_{kind}_released"] = v.get("_date") or None
+
+        _aider_cache = merged
+        _aider_cache_ts = time.time()
+        logger.info(f"Aider leaderboards refreshed: {len(merged)} models")
+        return merged
+    except Exception as e:
+        logger.warning(f"Aider fetch failed: {e}")
+        return _aider_cache or {}
+
+
+async def _gather_safe(*coros):
+    """asyncio.gather mais renvoie None pour chaque coro qui lève."""
+    import asyncio
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    return tuple(r if not isinstance(r, BaseException) else None for r in results)
+
+
+@router.get("/benchmarks")
+async def get_benchmarks(request: Request, session: AsyncSession = Depends(get_session)):
+    """Benchmarks filtrés par les providers configurés de l'utilisateur.
+
+    Même logique que /catalog : on récupère les providers enabled + dont
+    l'user a une clé, on liste leurs modèles dynamiques, et on enrichit
+    avec les scores benchmarks (Aider live + snapshot curé pour le reste).
+    """
+    settings = Settings.load()
     static = _load_benchmarks_static()
     or_models = await _fetch_openrouter_models()
+    aider = await _fetch_aider_leaderboards()
 
-    metrics = [s["metric"] for s in static.get("sources", []) if s.get("metric")]
-    models_out: list[dict] = []
+    # Index du snapshot par clé normalisée — fallback quand pas de source live
+    static_by_key: dict[str, dict] = {}
     for row in static.get("models", []):
-        mid = row.get("id", "")
+        key = _normalize_model_key(row.get("id", ""))
+        if key:
+            static_by_key[key] = row
+
+    # Résolution des providers per-user (copie du pattern de /catalog)
+    uid = getattr(request.state, "user_id", None)
+    user_settings_row = None
+    if uid:
+        try:
+            user_settings_row = await get_user_settings(uid, session)
+        except Exception as e:
+            logger.warning(f"Benchmarks: user settings lookup failed: {e}")
+
+    def _user_key_for(pname: str) -> tuple[str | None, str | None]:
+        if user_settings_row is None:
+            return None, None
+        decoded = get_user_provider_key(user_settings_row, pname) or {}
+        return (decoded.get("api_key") or None, decoded.get("base_url") or None)
+
+    # Construction de la liste d'IDs accessibles à l'user
+    accessible_ids: set[str] = set()
+    for pname, pconf in settings.providers.items():
+        if not pconf.enabled:
+            continue
+        api_key, base_url = _user_key_for(pname)
+        if not (api_key or base_url):
+            continue  # pas de clé user → provider skipped
+
+        # On prend la liste statique configurée (ultra-rapide), pas de
+        # list_models() live ici pour ne pas ralentir l'endpoint. Si besoin
+        # plus tard, on peut basculer sur dynamic listing avec cache.
+        for mid in (pconf.models or []):
+            accessible_ids.add(mid)
+
+    # Cas OpenRouter : pour plus de pertinence, on ajoute aussi tous les
+    # modèles d'OpenRouter déjà référencés dans le snapshot (l'user OR
+    # a accès à ~500 modèles, on ne veut pas tous les afficher — on limite
+    # aux modèles qui ont au moins une métrique bench).
+    or_key, _ = _user_key_for("openrouter")
+    if or_key:
+        for mid in or_models.keys():
+            norm = _normalize_model_key(mid)
+            if norm in static_by_key or norm in aider:
+                accessible_ids.add(mid)
+
+    # Fallback : si l'user n'a aucun provider configuré, on retourne le
+    # snapshot complet (mode démo / découverte) plutôt qu'une table vide.
+    if not accessible_ids:
+        accessible_ids = {row["id"] for row in static.get("models", [])}
+
+    # Métriques dispo : celles du snapshot + Aider (deux colonnes)
+    metrics = [s["metric"] for s in static.get("sources", []) if s.get("metric")]
+    metrics += ["aider_edit_pass2", "aider_polyglot_pass2"]
+
+    # Build des rangées
+    models_out: list[dict] = []
+    for mid in sorted(accessible_ids):
+        norm = _normalize_model_key(mid)
         or_meta = or_models.get(mid, {})
+        static_row = static_by_key.get(norm, {})
+        aider_row = aider.get(norm, {})
+
         input_1m = or_meta.get("input_1m")
         output_1m = or_meta.get("output_1m")
         avg_price = (input_1m + output_1m) / 2 if (input_1m is not None and output_1m is not None) else None
 
-        # Score d'efficacité (Arena Elo par $ moyen) — pratique pour trier sur
-        # « rapport perf/prix ». Null si pas de pricing ou pas de score arena.
-        lmarena = row.get("lmarena_elo")
+        lmarena = static_row.get("lmarena_elo")
         efficiency = None
         if lmarena and avg_price and avg_price > 0:
-            # Normalisation : Elo au-dessus de 1000 / prix moyen
             efficiency = round(max(lmarena - 1000, 0) / avg_price, 2)
         elif lmarena and avg_price == 0:
-            efficiency = round(max(lmarena - 1000, 0) * 100, 2)  # gratuit → bonus
+            efficiency = round(max(lmarena - 1000, 0) * 100, 2)
 
         entry = {
             "id": mid,
@@ -539,10 +739,17 @@ async def get_benchmarks():
             "price_tier": _price_tier(input_1m or 0, output_1m or 0) if (input_1m is not None and output_1m is not None) else "unknown",
             "efficiency": efficiency,
         }
-        # Copie les métriques présentes dans le static (scores benchmarks bruts)
-        for m in metrics:
-            entry[m] = row.get(m)
-        models_out.append(entry)
+        # Métriques snapshot
+        for m in [s["metric"] for s in static.get("sources", []) if s.get("metric")]:
+            entry[m] = static_row.get(m)
+        # Métriques Aider (live)
+        entry["aider_edit_pass2"] = aider_row.get("aider_edit_pass2")
+        entry["aider_polyglot_pass2"] = aider_row.get("aider_polyglot_pass2")
+
+        # Ne garde que les modèles qui ont au moins UNE métrique connue —
+        # sinon on pollue le tableau avec des lignes vides.
+        if any(entry.get(m) is not None for m in metrics):
+            models_out.append(entry)
 
     return {
         "schema_version": static.get("schema_version", 1),
@@ -550,14 +757,40 @@ async def get_benchmarks():
         "notes": static.get("notes"),
         "metrics": metrics,
         "models": models_out,
+        "has_user_filter": bool(user_settings_row),
+        "aider_models_count": len(aider),
     }
 
 
 @router.get("/benchmarks/sources")
 async def get_benchmarks_sources():
-    """Métadonnées des sources (URL, description, métrique)."""
+    """Métadonnées des sources (URL, description, métrique, statut live/snap)."""
     static = _load_benchmarks_static()
+    sources = list(static.get("sources", []))
+    # Ajoute les sources live Aider qui ne sont pas dans le JSON statique
+    sources.extend([
+        {
+            "id": "aider_edit",
+            "name": "Aider — Code Editing",
+            "url": "https://aider.chat/docs/leaderboards/",
+            "description": "Pass rate (second try) sur le benchmark d'édition de code Aider. Fetché live depuis GitHub.",
+            "metric": "aider_edit_pass2",
+            "live": True,
+        },
+        {
+            "id": "aider_polyglot",
+            "name": "Aider — Polyglot",
+            "url": "https://aider.chat/docs/leaderboards/",
+            "description": "Pass rate (second try) sur le benchmark polyglot multi-langages. Live GitHub.",
+            "metric": "aider_polyglot_pass2",
+            "live": True,
+        },
+    ])
+    # Marque les autres comme snapshot (non-live)
+    for s in sources:
+        if "live" not in s:
+            s["live"] = False
     return {
         "last_updated": static.get("last_updated"),
-        "sources": static.get("sources", []),
+        "sources": sources,
     }
