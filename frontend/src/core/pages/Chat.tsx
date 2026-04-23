@@ -2024,7 +2024,7 @@ export default function Chat() {
                   // à gauche. Sans tokens, le pseudo reste simplement aligné
                   // sur son bord habituel.
                   return (
-                    <div className={`flex items-center w-full gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} ${hasTokens ? 'justify-between' : ''}`}>
+                    <div className={`flex items-center self-stretch gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} ${hasTokens ? 'justify-between' : ''}`}>
                       <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                         <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
                           {msg.role === 'user' ? (currentUser?.display_name || t('common.user')) : formatModelName((msg as any).model || selectedModel)}
