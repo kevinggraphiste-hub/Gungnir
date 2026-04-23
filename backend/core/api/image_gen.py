@@ -46,7 +46,7 @@ IMAGE_MODELS_CATALOG: dict[str, list[dict]] = {
         {"id": "imagen-3.0-fast-generate-001", "label": "Imagen 3 Fast", "sizes": ["1024x1024"], "default_size": "1024x1024", "quality": False},
     ],
     "openrouter": [
-        {"id": "openai/gpt-image-2", "label": "GPT Image 2 (OpenRouter)", "sizes": ["1024x1024", "1024x1536", "1536x1024"], "default_size": "1024x1024", "quality": True},
+        {"id": "openai/gpt-5.4-image-2", "label": "GPT-5.4 Image 2 (OpenRouter)", "sizes": ["1024x1024", "1024x1536", "1536x1024"], "default_size": "1024x1024", "quality": True},
         {"id": "openai/dall-e-3", "label": "DALL-E 3 (OpenRouter)", "sizes": ["1024x1024", "1792x1024", "1024x1792"], "default_size": "1024x1024", "quality": True},
         {"id": "openai/gpt-image-1", "label": "GPT Image 1 (OpenRouter)", "sizes": ["1024x1024", "1024x1536", "1536x1024"], "default_size": "1024x1024", "quality": True},
         {"id": "google/gemini-2.5-flash-image-preview", "label": "Gemini 2.5 Flash Image (OpenRouter)", "sizes": ["1024x1024"], "default_size": "1024x1024", "quality": False},
