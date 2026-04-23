@@ -1379,6 +1379,16 @@ async def _tick_once():
         except Exception as e:
             logger.debug(f"Plugin conscience blocks gather failed for user {user_id}: {e}")
 
+        # Idle heartbeat — pousse `curiosity` si rien d'autre n'a fait monter
+        # l'urgence dans la dernière période. Cooldown interne (2h) empêche
+        # le spam. Sans ce trigger, la curiosité ne progresse jamais sauf
+        # via son decay_rate temporel pur.
+        try:
+            from backend.plugins.consciousness.triggers import emit_trigger
+            await emit_trigger(user_id, "idle_heartbeat", cooldown_seconds=2 * 3600)
+        except Exception as e:
+            logger.debug(f"idle_heartbeat emit failed for user {user_id}: {e}")
+
 
 async def _consciousness_loop():
     logger.info(f"Consciousness background-think daemon started (tick every {TICK_INTERVAL_SECONDS}s)")

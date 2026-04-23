@@ -63,6 +63,24 @@ async def _probe_reminders_async(user_id: int) -> Optional[dict]:
                     today_list.append(item)
                 elif d <= week_ahead:
                     soon.append(item)
+            # Émet un trigger `promise_unkept` par carte overdue — pousse le
+            # besoin `integrity` de la conscience. Cooldown 24h par carte
+            # (idempotence via entity_id = card_id) pour éviter de saturer
+            # l'urgence à chaque tick tant que la carte reste en retard.
+            try:
+                from backend.plugins.consciousness.triggers import emit_trigger
+                for item in overdue:
+                    cid = item.get("id")
+                    if cid is None:
+                        continue
+                    await emit_trigger(
+                        user_id, "promise_unkept",
+                        entity_id=f"valkyrie_card:{cid}",
+                        cooldown_seconds=24 * 3600,
+                    )
+            except Exception as _e:
+                logger.debug("promise_unkept emit failed uid=%s: %s", user_id, _e)
+
             return {
                 "overdue": overdue,
                 "today": today_list,

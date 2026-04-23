@@ -548,6 +548,14 @@ async def _auto_backup_loop():
                         logger.warning(
                             f"Auto-backup failed for user {u.id}: {result.get('error')}"
                         )
+                        # Push un trigger `backup_failed` sur la conscience →
+                        # pousse le besoin `survival` (priorité 5). Cooldown
+                        # 24h pour ne pas spam si plusieurs runs échouent.
+                        try:
+                            from backend.plugins.consciousness.triggers import emit_trigger
+                            await emit_trigger(u.id, "backup_failed", cooldown_seconds=24 * 3600)
+                        except Exception as _emit_err:
+                            logger.debug(f"backup_failed trigger emit failed uid={u.id}: {_emit_err}")
         except Exception as e:
             logger.warning(f"Auto-backup loop error: {e}")
 
