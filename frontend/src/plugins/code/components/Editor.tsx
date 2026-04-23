@@ -58,6 +58,35 @@ export function CodeEditor({ file, onChange, onSave, onRun, onCursorChange }: {
   const lines = file.content.split('\n')
   const langColor = LC[file.language] || '#6b7280'
 
+  // Format on save — intercepte `onSave` : si l'option est activée (toggle
+  // dans Paramètres → Apparence), appelle /format avec le contenu courant,
+  // applique le résultat via onChange, puis enchaîne sur onSave au tick
+  // suivant pour laisser React commit le nouveau state.
+  const handleSave = async () => {
+    const enabled = (() => {
+      try { return localStorage.getItem('spearcode_format_on_save') === 'true' } catch { return false }
+    })()
+    if (enabled && file.content) {
+      try {
+        const res = await fetch('/api/plugins/code/format', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ language: file.language, content: file.content }),
+        })
+        const data = await res.json()
+        if (data?.ok && data.changed && typeof data.content === 'string') {
+          onChange(data.content)
+          // Laisse React flush le setState avant d'appeler onSave qui va
+          // lire le state parent pour envoyer au backend.
+          await new Promise(r => setTimeout(r, 0))
+        }
+      } catch {
+        /* Formatter down → save du contenu non-formaté (mieux que de bloquer) */
+      }
+    }
+    onSave()
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0, fontSize: 10 }}>
@@ -73,7 +102,7 @@ export function CodeEditor({ file, onChange, onSave, onRun, onCursorChange }: {
           language={file.language}
           filePath={file.path}
           onChange={onChange}
-          onSave={onSave}
+          onSave={handleSave}
           onCursorChange={onCursorChange}
         />
       </div>

@@ -28,6 +28,7 @@ import { DiffViewer } from './components/DiffViewer'
 import { MultiTerminal } from './components/MultiTerminal'
 import { VersionPanel } from './components/VersionPanel'
 import { SnippetsPanel } from './components/SnippetsPanel'
+import { OutlinePanel } from './components/OutlinePanel'
 
 const PLUGIN_VERSION = (manifest as { version?: string }).version || '?'
 
@@ -40,7 +41,7 @@ export default function SpearCodePlugin() {
 
   const [tabs, setTabs] = useState<OpenTab[]>([])
   const [activeTab, setActiveTab] = useState<string | null>(saved.current?.activeTab || null)
-  const [sideView, setSideView] = useState<'files' | 'search' | 'git' | 'ai' | 'settings' | 'versions' | 'snippets'>((saved.current?.sideView as any) || 'files')
+  const [sideView, setSideView] = useState<'files' | 'search' | 'git' | 'ai' | 'settings' | 'versions' | 'snippets' | 'outline'>((saved.current?.sideView as any) || 'files')
   const [showTerminal, setShowTerminal] = useState(saved.current?.showTerminal || false)
   const [showDiff, setShowDiff] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
@@ -299,6 +300,7 @@ export default function SpearCodePlugin() {
           {([
             ['files', 'Explorateur'],
             ['search', 'Rechercher'],
+            ['outline', 'Plan du fichier'],
             ['git', 'Git'],
             ['versions', 'Historique'],
             ['snippets', 'Snippets (Ctrl+Shift+S)'],
@@ -315,6 +317,7 @@ export default function SpearCodePlugin() {
               title={title}>
               {id === 'files' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>}
               {id === 'search' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>}
+              {id === 'outline' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>}
               {id === 'git' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>}
               {id === 'versions' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>}
               {id === 'snippets' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>}
@@ -368,6 +371,14 @@ export default function SpearCodePlugin() {
           {sideView === 'ai' && <AIPanel filePath={activeFile?.path} language={activeFile?.language} onApplyCode={applyCodeToFile} openFiles={tabs.map(t => ({ path: t.path, name: t.name, language: t.language }))} />}
           {sideView === 'versions' && <VersionPanel filePath={activeFile?.path} onRestore={(content) => { if (activeTab) updateContent(activeTab, content) }} />}
           {sideView === 'snippets' && <SnippetsPanel language={activeFile?.language} onInsert={(code) => { if (activeTab) { const tab = tabs.find(t => t.path === activeTab); if (tab) updateContent(activeTab, tab.content + '\n' + code) } }} />}
+          {sideView === 'outline' && <OutlinePanel
+            activeFile={activeFile}
+            onGotoLine={(line) => {
+              // Dispatch un event que CodeMirrorEditor intercepte pour scroller
+              // + positionner le curseur. Évite un prop drilling de la ref.
+              window.dispatchEvent(new CustomEvent('spearcode-goto-line', { detail: { line } }))
+            }}
+          />}
         </div>
         {/* Drag handle pour redimensionner le panneau latéral (220-720px). */}
         <div

@@ -2,7 +2,7 @@
 // Remplace le textarea custom par un vrai moteur d'éditeur (syntax highlighting,
 // fold, search, multi-cursor, brackets matching, auto-indent, history natifs).
 
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import type { ReactCodeMirrorRef } from '@uiw/react-codemirror'
 import { EditorView, keymap } from '@codemirror/view'
@@ -193,6 +193,32 @@ export function CodeMirrorEditor({ value, language, filePath, onChange, onSave, 
     }
     return ext
   }, [language, filePath, saveKeymap])
+
+  // Navigation vers une ligne spécifique — déclenchée par OutlinePanel.
+  // L'event est global (window) pour éviter de faire remonter la ref de
+  // l'éditeur dans les props ; c'est suffisant vu qu'il n'y a qu'un
+  // CodeMirrorEditor actif à la fois dans SpearCode.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      const line = Number(detail?.line)
+      if (!Number.isFinite(line) || line < 1) return
+      const view = ref.current?.view
+      if (!view) return
+      try {
+        const doc = view.state.doc
+        const target = Math.min(line, doc.lines)
+        const pos = doc.line(target).from
+        view.dispatch({
+          selection: { anchor: pos },
+          effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+        })
+        view.focus()
+      } catch { /* ignore */ }
+    }
+    window.addEventListener('spearcode-goto-line', handler)
+    return () => window.removeEventListener('spearcode-goto-line', handler)
+  }, [])
 
   const handleChange = useCallback((v: string) => { onChange(v) }, [onChange])
 

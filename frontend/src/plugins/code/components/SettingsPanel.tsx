@@ -49,6 +49,55 @@ function Section({ title, description, children }: {
   )
 }
 
+// Toggle "Format on save" — applique black/prettier/gofmt/rustfmt avant
+// chaque Ctrl+S. Désactivé par défaut ; valeur persistée dans localStorage
+// et lue par CodeEditor au moment du save.
+function FormatOnSaveToggle() {
+  const [enabled, setEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem('spearcode_format_on_save') === 'true' } catch { return false }
+  })
+  const [available, setAvailable] = useState<Record<string, boolean> | null>(null)
+
+  useEffect(() => {
+    apiFetch<{ formatters: Record<string, boolean> }>('/format/available').then(r => {
+      if (r) setAvailable(r.formatters)
+    })
+  }, [])
+
+  const toggle = () => {
+    const next = !enabled
+    setEnabled(next)
+    try { localStorage.setItem('spearcode_format_on_save', String(next)) } catch { /* ignore */ }
+  }
+
+  const installedCount = available ? Object.values(available).filter(Boolean).length : 0
+  const totalCount = available ? Object.keys(available).length : 0
+
+  return (
+    <div className="flex items-center gap-4 pt-2">
+      <label className="text-sm font-medium" style={{ color: 'var(--text-primary)', minWidth: 140 }}>
+        Format on save
+      </label>
+      <button onClick={toggle}
+        className="rounded-full transition-colors"
+        style={{
+          width: 42, height: 22, position: 'relative', border: 'none', cursor: 'pointer',
+          background: enabled ? 'var(--scarlet)' : 'var(--bg-tertiary)',
+        }}>
+        <span style={{
+          position: 'absolute', top: 2, left: enabled ? 22 : 2,
+          width: 18, height: 18, borderRadius: '50%',
+          background: '#fff', transition: 'left 0.15s',
+        }} />
+      </button>
+      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+        {enabled ? 'Actif' : 'Désactivé'}
+        {available != null && ` — ${installedCount}/${totalCount} formatters installés`}
+      </span>
+    </div>
+  )
+}
+
 // Éditeur du fichier `.spearcode` à la racine du workspace — règles que
 // l'agent SpearCode consulte à chaque chat (ton, conventions, interdits…).
 // Plus visible ici que dans un fichier caché que personne ne pense à créer.
@@ -214,8 +263,8 @@ export function SettingsPanel({ uiFontSize, setUiFontSize }: {
 
       {/* ── Apparence ─────────────────────────────────────────────────────── */}
       <Section
-        title="Apparence"
-        description="Réglages visuels de SpearCode. La taille de police affecte les textes de l'UI (bulles chat, badges, listes)."
+        title="Apparence & édition"
+        description="Réglages visuels et comportement de l'éditeur. La taille de police affecte les textes de l'UI SpearCode (bulles chat, badges, listes)."
       >
         <div className="flex items-center gap-4">
           <label className="text-sm font-medium" style={{ color: 'var(--text-primary)', minWidth: 140 }}>
@@ -231,6 +280,7 @@ export function SettingsPanel({ uiFontSize, setUiFontSize }: {
             {fontVal} px
           </span>
         </div>
+        <FormatOnSaveToggle />
       </Section>
 
       {/* ── Workspace ─────────────────────────────────────────────────────── */}

@@ -55,6 +55,8 @@ RUN npm install -g --no-audit --no-fund \
       pyright@1.1.367 \
       typescript-language-server@4.3.3 \
       typescript@5.4.5 \
+      prettier@3.3.3 \
+ && pip install --no-cache-dir 'black==24.8.0' \
  && curl -sSL -o /tmp/ra.gz \
       https://github.com/rust-lang/rust-analyzer/releases/download/2024-06-03/rust-analyzer-x86_64-unknown-linux-gnu.gz \
  && gunzip -c /tmp/ra.gz > /usr/local/bin/rust-analyzer \
