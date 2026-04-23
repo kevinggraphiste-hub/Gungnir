@@ -1758,6 +1758,50 @@ function CardTile({
             </>
           )}
         </div>
+        {/* Actions rapides : dupliquer / archiver(ou restaurer) / supprimer.
+            Cachées en mode sélection multiple pour éviter la confusion avec
+            la checkbox. Click + mousedown stopPropagation → pas de drag
+            parasite déclenché depuis l'icône. */}
+        {!selectMode && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onDuplicate() }}
+              title="Dupliquer"
+              className="hover:opacity-100 transition-opacity"
+              style={{
+                background: 'transparent', border: 'none', padding: 4, borderRadius: 4,
+                color: 'var(--text-muted)', cursor: 'pointer', opacity: 0.5,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+              <Copy className="w-3 h-3" />
+            </button>
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); archivedMode ? onRestore() : onArchive() }}
+              title={archivedMode ? 'Restaurer' : 'Archiver'}
+              className="hover:opacity-100 transition-opacity"
+              style={{
+                background: 'transparent', border: 'none', padding: 4, borderRadius: 4,
+                color: 'var(--text-muted)', cursor: 'pointer', opacity: 0.5,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+              {archivedMode ? <RotateCcw className="w-3 h-3" /> : <Archive className="w-3 h-3" />}
+            </button>
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onDelete() }}
+              title="Supprimer"
+              className="hover:opacity-100 transition-opacity"
+              style={{
+                background: 'transparent', border: 'none', padding: 4, borderRadius: 4,
+                color: '#dc2626', cursor: 'pointer', opacity: 0.5,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        )}
         {/* Status badge (top-right) */}
         <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
