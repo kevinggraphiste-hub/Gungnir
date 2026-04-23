@@ -15,6 +15,11 @@ COPY frontend/ ./
 RUN npm run build
 
 
+# ── Stage 1b: Build gopls (Go toolchain chain is heavy — throw it away) ─────
+FROM golang:1.22-alpine AS gopls-build
+RUN go install golang.org/x/tools/gopls@v0.16.1
+
+
 # ── Stage 2: Python backend + static frontend ──────────────────────────────
 FROM python:3.12-slim AS production
 
@@ -33,6 +38,22 @@ COPY --from=frontend-build /usr/local/bin/node /usr/local/bin/node
 COPY --from=frontend-build /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+# ── LSP language servers (SpearCode Phase 1.6-1.8) ─────────────────────────
+# 4 langages supportés au démarrage : Python, TypeScript/JS, Rust, Go.
+# On installe des binaires pré-compilés pour rust-analyzer (évite de shipper
+# un Rust toolchain complet) et on copie gopls depuis la stage gopls-build
+# (évite Go SDK dans l'image finale).
+RUN npm install -g --no-audit --no-fund \
+      pyright@1.1.367 \
+      typescript-language-server@4.3.3 \
+      typescript@5.4.5 \
+ && curl -sSL -o /tmp/ra.gz \
+      https://github.com/rust-lang/rust-analyzer/releases/download/2024-06-03/rust-analyzer-x86_64-unknown-linux-gnu.gz \
+ && gunzip -c /tmp/ra.gz > /usr/local/bin/rust-analyzer \
+ && chmod +x /usr/local/bin/rust-analyzer \
+ && rm /tmp/ra.gz
+COPY --from=gopls-build /go/bin/gopls /usr/local/bin/gopls
 
 # Create non-root user
 RUN useradd -m -s /bin/bash gungnir

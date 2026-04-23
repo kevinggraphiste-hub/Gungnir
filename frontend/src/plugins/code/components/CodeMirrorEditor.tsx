@@ -23,7 +23,31 @@ import { yaml } from '@codemirror/lang-yaml'
 import { cpp } from '@codemirror/lang-cpp'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { showMinimap } from '@replit/codemirror-minimap'
+import { languageServer } from 'codemirror-languageserver'
+import { getAuthToken } from '@core/services/api'
 import { MONO } from '../utils'
+
+// Langages pour lesquels on dispose d'un LSP backend (Phase 1.6-1.8).
+// Doit correspondre à LSP_COMMANDS côté backend (plugins/code/lsp/runner.py).
+const LSP_SUPPORTED = new Set(['python', 'typescript', 'javascript', 'tsx', 'jsx', 'rust', 'go'])
+
+// Mappe notre `language` vers la clé backend WS (certains langages partagent
+// le même serveur : tsx/jsx/typescript/javascript → tsserver).
+function lspKey(language: string): string | null {
+  if (language === 'python') return 'python'
+  if (language === 'rust') return 'rust'
+  if (language === 'go') return 'go'
+  if (['typescript', 'javascript', 'tsx', 'jsx'].includes(language)) return 'typescript'
+  return null
+}
+
+// languageId LSP standard (pas la clé WS) — ce que le serveur attend dans
+// les messages didOpen.
+function lspLanguageId(language: string): string {
+  if (language === 'tsx') return 'typescriptreact'
+  if (language === 'jsx') return 'javascriptreact'
+  return language
+}
 
 // Map langage SpearCode → extension CodeMirror
 function langExt(language: string) {
@@ -118,9 +142,10 @@ const gungnirTheme = EditorView.theme({
   },
 }, { dark: true })
 
-export function CodeMirrorEditor({ value, language, onChange, onSave, onCursorChange }: {
+export function CodeMirrorEditor({ value, language, filePath, onChange, onSave, onCursorChange }: {
   value: string
   language: string
+  filePath?: string
   onChange: (content: string) => void
   onSave: () => void
   onCursorChange?: (line: number, col: number) => void
@@ -141,8 +166,33 @@ export function CodeMirrorEditor({ value, language, onChange, onSave, onCursorCh
     const ext = [gungnirTheme, saveKeymap, keymap.of([indentWithTab]), EditorView.lineWrapping, minimap]
     const l = langExt(language)
     if (l) ext.push(l)
+
+    // Extension LSP — activée si le langage est supporté côté backend
+    // (Phase 1.6-1.8). Le WebSocket pointe vers /api/plugins/code/lsp/{key}
+    // avec le token d'auth en query param (les WS ne traversent pas le
+    // middleware HTTP — validation manuelle côté backend).
+    const key = lspKey(language)
+    if (key && LSP_SUPPORTED.has(language) && filePath) {
+      try {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const tok = getAuthToken() || ''
+        const serverUri = `${proto}//${window.location.host}/api/plugins/code/lsp/${key}${tok ? `?token=${encodeURIComponent(tok)}` : ''}` as `ws://${string}` | `wss://${string}`
+        const docPath = filePath.startsWith('/') ? filePath : `/${filePath}`
+        ext.push(languageServer({
+          serverUri,
+          rootUri: 'file:///workspace',
+          workspaceFolders: [{ name: 'workspace', uri: 'file:///workspace' }],
+          documentUri: `file:///workspace${docPath}`,
+          languageId: lspLanguageId(language),
+        }))
+      } catch (e) {
+        // Si la lib LSP plante au chargement, on ne veut surtout pas casser
+        // l'éditeur — on log et on continue sans LSP.
+        console.warn('[SpearCode] LSP extension failed to load:', e)
+      }
+    }
     return ext
-  }, [language, saveKeymap])
+  }, [language, filePath, saveKeymap])
 
   const handleChange = useCallback((v: string) => { onChange(v) }, [onChange])
 

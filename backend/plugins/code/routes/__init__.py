@@ -447,3 +447,5 @@ from . import git  # noqa: E402,F401
 from . import exec  # noqa: E402,F401
 from . import ai  # noqa: E402,F401
 from . import snippets  # noqa: E402,F401
+from .lsp import register_lsp_ws  # noqa: E402
+register_lsp_ws(router)

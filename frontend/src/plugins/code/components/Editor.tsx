@@ -71,6 +71,7 @@ export function CodeEditor({ file, onChange, onSave, onRun, onCursorChange }: {
         <CodeMirrorEditor
           value={file.content}
           language={file.language}
+          filePath={file.path}
           onChange={onChange}
           onSave={onSave}
           onCursorChange={onCursorChange}

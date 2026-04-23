@@ -29,7 +29,7 @@ const API_BASE = '/api'
 
 const TOKEN_KEY = 'gungnir_auth_token'
 
-function getAuthToken(): string | null {
+export function getAuthToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
 
