@@ -267,6 +267,21 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
           </div>
         </div>
 
+        {/* Disclaimer — cette modal utilise l'agent Convai d'ElevenLabs.
+            Il répond via son propre LLM et ses propres voix, SANS accès à
+            la conscience, aux skills, aux sous-agents, à la mémoire ni à
+            l'orchestration Gungnir. C'est un canal conversationnel autonome,
+            utile pour un échange fluide et full-duplex, mais découplé du
+            reste de l'application. */}
+        <div className="mx-4 mt-3 p-2.5 rounded-lg flex items-start gap-2"
+          style={{ background: 'color-mix(in srgb, var(--accent-tertiary) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-tertiary) 25%, transparent)' }}>
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-tertiary)' }} />
+          <p className="text-[10.5px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+            <span style={{ color: 'var(--accent-tertiary)', fontWeight: 600 }}>Mode conversationnel autonome.</span>{' '}
+            Cet agent vocal tourne sur ElevenLabs Convai. Il n'a PAS accès aux skills, sous-agents, mémoire, conscience ni orchestration de Gungnir — purement du dialogue fluide en temps réel.
+          </p>
+        </div>
+
         {error && (
           <div className="mx-4 mt-3 p-3 rounded-lg flex items-start gap-2"
             style={{ background: 'color-mix(in srgb, var(--accent-danger) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-danger) 30%, transparent)' }}>

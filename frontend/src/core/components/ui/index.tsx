@@ -145,6 +145,10 @@ export function PrimaryButton({ icon, children, className = '', size = 'md', ...
   const sz = size === 'sm' ? 'px-3 py-1.5 text-xs' : size === 'lg' ? 'px-5 py-2.5 text-sm' : 'px-4 py-2 text-sm'
   return (
     <button
+      // `type="button"` par défaut pour éviter qu'un bouton dans un <form>
+      // parent ne déclenche un submit involontaire (reload + perte d'état).
+      // L'appelant peut toujours forcer `type="submit"` via ...rest.
+      type="button"
       {...rest}
       className={`inline-flex items-center gap-2 ${sz} rounded-xl font-semibold transition-all hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
       style={{
@@ -172,6 +176,8 @@ export function SecondaryButton({ icon, children, className = '', size = 'md', d
   const color = danger ? '#ef4444' : 'var(--text-primary)'
   return (
     <button
+      // `type="button"` par défaut — voir commentaire PrimaryButton.
+      type="button"
       {...rest}
       className={`inline-flex items-center gap-2 ${sz} rounded-lg font-medium transition-all hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
       style={{
