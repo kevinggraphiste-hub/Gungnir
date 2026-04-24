@@ -16,47 +16,15 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Mic, Square, Loader2, AlertCircle } from 'lucide-react'
+import { loadTranscriber, transcribeBlob } from '../services/whisper'
 
 type VoiceState = 'idle' | 'loading-model' | 'recording' | 'transcribing'
-
-// Taille du modèle Whisper à charger. `tiny` ~40 MB très rapide mais perd en
-// précision sur le français technique. `base` ~80 MB est le bon compromis.
-// `small` ~240 MB pour qui veut la qualité max (premier chargement plus long).
-const WHISPER_MODEL = 'Xenova/whisper-base'
-const WHISPER_LANGUAGE = 'french'
 
 interface VoiceInputProps {
   onTranscript: (text: string) => void
   disabled?: boolean
   size?: number  // Taille du bouton en px (défaut 30 pour matcher la toolbar chat)
   title?: string
-}
-
-// Singleton du pipeline pour ne pas recharger à chaque mount du composant.
-let transcriberPromise: Promise<any> | null = null
-
-function loadTranscriber(onProgress?: (pct: number) => void): Promise<any> {
-  if (transcriberPromise) return transcriberPromise
-  transcriberPromise = (async () => {
-    const { pipeline, env } = await import('@xenova/transformers')
-    // Désactive le remote pour forcer la récupération locale ? Non — on VEUT
-    // le remote (HuggingFace CDN). Mais on désactive l'onnxruntime-web
-    // telemetry pour rester strict "sans log".
-    env.allowLocalModels = false
-    env.backends.onnx.wasm.numThreads = 1  // évite contention multi-thread
-    return pipeline('automatic-speech-recognition', WHISPER_MODEL, {
-      quantized: true,
-      progress_callback: (p: any) => {
-        if (p?.status === 'progress' && typeof p.progress === 'number' && onProgress) {
-          onProgress(Math.round(p.progress))
-        }
-      },
-    } as any)
-  })().catch((e) => {
-    transcriberPromise = null  // permet un retry après échec
-    throw e
-  })
-  return transcriberPromise
 }
 
 export default function VoiceInput({ onTranscript, disabled, size = 30, title }: VoiceInputProps) {
@@ -161,39 +129,7 @@ export default function VoiceInput({ onTranscript, disabled, size = 30, title }:
 
     setState('transcribing')
     try {
-      const transcriber = transcriberRef.current
-      if (!transcriber) throw new Error('Modèle non chargé')
-
-      // Decode le blob audio (webm/opus) vers Float32Array mono à 16 kHz
-      // (format attendu par Whisper). On utilise AudioContext pour le resample.
-      const arrayBuffer = await blob.arrayBuffer()
-      // NOTE : webkitAudioContext pour Safari < 14. Le sampleRate cible 16000
-      // est pris en charge par les AudioContext modernes — le navigateur
-      // resamplera à la volée le décodage.
-      const Ctx: any = (window as any).AudioContext || (window as any).webkitAudioContext
-      const audioCtx = new Ctx({ sampleRate: 16000 })
-      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0))
-      let samples = audioBuffer.getChannelData(0)
-      // Si par hasard le navigateur ignore le sampleRate: 16000 et décode à 44100,
-      // on fait un downsample naïf (prend 1 sur ~2.76 samples).
-      if (audioBuffer.sampleRate !== 16000) {
-        const ratio = audioBuffer.sampleRate / 16000
-        const targetLen = Math.floor(samples.length / ratio)
-        const resampled = new Float32Array(targetLen)
-        for (let i = 0; i < targetLen; i++) {
-          resampled[i] = samples[Math.floor(i * ratio)]
-        }
-        samples = resampled
-      }
-      try { audioCtx.close() } catch { /* ignore */ }
-
-      const result = await transcriber(samples, {
-        language: WHISPER_LANGUAGE,
-        task: 'transcribe',
-        chunk_length_s: 30,
-        stride_length_s: 5,
-      })
-      const text = (result?.text || '').trim()
+      const text = await transcribeBlob(blob)
       if (text) onTranscript(text)
       else setError('Aucune parole détectée')
       setState('idle')
