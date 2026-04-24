@@ -61,13 +61,25 @@ WOLF_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "skill_create",
-            "description": "Crée une nouvelle compétence (skill) pour Wolf. Appelle ceci quand l'utilisateur demande de créer un skill ou une capacité spécifique.",
+            "description": (
+                "Crée une nouvelle compétence (skill) étoffée pour Wolf. "
+                "PRIORITÉ : génère un skill RICHE et COMPLET, pas un stub minimal. "
+                "Le prompt DOIT contenir : "
+                "(1) rôle + posture (qui est le skill, quelle expertise, quel ton), "
+                "(2) méthodologie en étapes numérotées pour aborder la tâche, "
+                "(3) règles strictes (anti-patterns à éviter, qualité attendue), "
+                "(4) format de sortie imposé (sections, markdown, longueur), "
+                "(5) critères de succès vérifiables en fin de tâche, "
+                "(6) 2-3 exemples concrets ou mini cas d'usage. "
+                "Un skill bien étoffé fait 40 à 150 lignes de prompt. "
+                "Évite les skills-stub de 5 lignes qui ne guident rien."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name":        {"type": "string", "description": "Identifiant unique (snake_case)"},
-                    "description": {"type": "string", "description": "Description courte"},
-                    "prompt":      {"type": "string", "description": "Prompt système détaillé pour ce skill"},
+                    "description": {"type": "string", "description": "Description courte mais précise (≤ 120 chars)"},
+                    "prompt":      {"type": "string", "description": "Prompt système DÉTAILLÉ (40-150 lignes) : rôle, méthodologie, règles, format, critères de succès, exemples. Pas un stub."},
                     "category":    {"type": "string", "description": "Catégorie: development, research, writing, design, general", "default": "general"},
                 },
                 "required": ["name", "description", "prompt"]

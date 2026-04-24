@@ -1386,7 +1386,14 @@ export default function ValkyriePlugin() {
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-                gridAutoRows: 260,
+                // `minmax(260px, auto)` : les lignes gardent 260px minimum pour
+                // préserver le layout kanban compact, MAIS peuvent s'étendre
+                // verticalement quand une carte expanded (mémo Gungnir long,
+                // description riche, beaucoup de sous-tâches) a besoin de
+                // plus. Avant : hauteur fixe 260 × span 2 = 520 max → contenu
+                // tronqué.
+                gridAutoRows: 'minmax(260px, auto)',
+                gridAutoFlow: 'row dense',
                 gap: 14,
               }}>
                 {visibleCards.map((card, idx) => (
@@ -1685,7 +1692,11 @@ function CardTile({
                 ? 'color-mix(in srgb, var(--scarlet) 35%, var(--border))'
                 : isDropTarget ? 'var(--scarlet)' : 'var(--border)'}`,
         borderRadius: 12,
-        overflow: 'hidden',
+        // Cartes non-expanded : overflow hidden pour garder le kanban compact
+        // (titre + meta clippés à 260px). Cartes expanded : overflow visible
+        // → laisse le contenu long (mémo, sous-tâches) pousser la hauteur de
+        // la carte, en combinaison avec `gridAutoRows: minmax(260px, auto)`.
+        overflow: card.expanded ? 'visible' : 'hidden',
         position: 'relative',
         transition: 'transform 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s',
         cursor: selectMode ? 'pointer' : (card.expanded ? 'default' : 'grab'),
