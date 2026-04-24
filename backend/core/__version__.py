@@ -6,4 +6,4 @@ Format : semver MAJOR.MINOR.PATCH
 - MINOR : nouvelle feature, ajout plugin, migration backward-compat
 - PATCH : fix, refacto sans impact utilisateur
 """
-__version__ = "2.63.12"
+__version__ = "2.63.13"

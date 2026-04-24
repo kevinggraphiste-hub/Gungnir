@@ -42,8 +42,15 @@ const STATUS_COLOR: Record<Status, string> = {
 
 interface VoiceModalProps { isOpen: boolean; onClose: () => void }
 
+type VoiceMode = 'simple' | 'convai'
+
 export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
   const agentName = useStore((s) => s.agentName)
+  const currentConversation = useStore((s) => s.currentConversation)
+  const selectedProvider = useStore((s) => s.selectedProvider)
+  const selectedModel = useStore((s) => s.selectedModel)
+  const setCurrentConversation = useStore((s) => s.setCurrentConversation)
+
   const [status, setStatus] = useState<Status>('idle')
   const [conversation, setConversation] = useState<ConvEntry[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -51,6 +58,18 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
   const [needsAgent, setNeedsAgent] = useState(false)
   const [creatingAgent, setCreatingAgent] = useState(false)
 
+  // Mode vocal : 'simple' (par défaut) utilise le cerveau Gungnir (STT navigateur
+  // → chat stream → TTS par phrase). 'convai' utilise l'agent autonome ElevenLabs
+  // via WebSocket natif. Persisté en localStorage pour respecter le choix user.
+  const [mode, setMode] = useState<VoiceMode>(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('gungnir_voice_mode') : null
+    return saved === 'convai' ? 'convai' : 'simple'
+  })
+  useEffect(() => {
+    try { localStorage.setItem('gungnir_voice_mode', mode) } catch { /* ignore */ }
+  }, [mode])
+
+  // ─── Refs mode Convai (WebSocket ElevenLabs) ───────────────────────────
   const wsRef = useRef<WebSocket | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null)
@@ -59,6 +78,16 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
   const convEndRef = useRef<HTMLDivElement | null>(null)
   const audioQueueRef = useRef<ArrayBuffer[]>([])
   const isPlayingRef = useRef(false)
+
+  // ─── Refs mode Simple (SpeechRecognition + TTS queue) ──────────────────
+  const recognitionRef = useRef<any>(null)
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null)
+  const ttsQueueRef = useRef<string[]>([])
+  const ttsPlayingRef = useRef(false)
+  const simpleActiveRef = useRef(false)  // true pendant la session Simple
+  // Quand l'user ouvre la modal en mode Simple, on snapshot sa convo cible.
+  // Si aucune convo courante, on en créera une à la volée.
+  const simpleConvoIdRef = useRef<number | null>(null)
 
   useEffect(() => { convEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [conversation])
 
@@ -93,6 +122,179 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
     }
     src.start()
   }, [isMuted])
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // MODE SIMPLE — cerveau Gungnir en vocal
+  // Pipeline : SpeechRecognition (navigateur) → /conversations/{id}/chat (stream)
+  //            → tokens accumulés → détection fin de phrase → /chat/tts (ElevenLabs)
+  //            → queue audio lecture séquentielle. Permet d'utiliser skills,
+  //            sous-agents, conscience, orchestration en vocal.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const playNextTTS = useCallback(async () => {
+    if (isMuted) return
+    if (ttsPlayingRef.current) return
+    if (ttsQueueRef.current.length === 0) return
+    ttsPlayingRef.current = true
+    const text = ttsQueueRef.current.shift()!
+    try {
+      const resp = await apiFetch('/api/chat/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, provider: 'elevenlabs' }),
+      })
+      if (!resp.ok) throw new Error(`TTS HTTP ${resp.status}`)
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      ttsAudioRef.current = audio
+      audio.onended = () => {
+        URL.revokeObjectURL(url)
+        ttsPlayingRef.current = false
+        if (ttsQueueRef.current.length > 0) playNextTTS()
+        else if (simpleActiveRef.current) setStatus('listening')
+      }
+      audio.onerror = () => {
+        URL.revokeObjectURL(url)
+        ttsPlayingRef.current = false
+        if (ttsQueueRef.current.length > 0) playNextTTS()
+      }
+      await audio.play()
+    } catch (e: any) {
+      console.warn('[VoiceSimple] TTS failed:', e?.message)
+      ttsPlayingRef.current = false
+      if (ttsQueueRef.current.length > 0) playNextTTS()
+    }
+  }, [isMuted])
+
+  const processUserSpeech = useCallback(async (text: string, convoId: number) => {
+    setStatus('speaking')
+    ttsQueueRef.current = []
+    let assistantFullText = ''
+    let pendingBuffer = ''
+    try {
+      const response = await api.chat(
+        convoId,
+        { message: text, provider: selectedProvider, model: selectedModel },
+        {
+          onToken: (chunk: string) => {
+            assistantFullText += chunk
+            pendingBuffer += chunk
+            // Découpe dès qu'une phrase complète apparaît (. ! ? suivi d'espace
+            // ou fin). Permet de lancer le TTS en parallèle du streaming
+            // restant au lieu d'attendre la fin complète.
+            while (true) {
+              const m = pendingBuffer.match(/^([\s\S]*?[.!?])(\s+|$)/)
+              if (!m) break
+              const sentence = m[1].trim()
+              pendingBuffer = pendingBuffer.slice(m[0].length)
+              if (sentence.length > 2) {
+                ttsQueueRef.current.push(sentence)
+                if (!ttsPlayingRef.current) playNextTTS()
+              }
+            }
+          },
+        },
+      )
+      if (pendingBuffer.trim().length > 2) {
+        ttsQueueRef.current.push(pendingBuffer.trim())
+        if (!ttsPlayingRef.current) playNextTTS()
+      }
+      if (response?.error) setError(response.error)
+      if (assistantFullText.trim()) {
+        setConversation(prev => [...prev, { role: 'assistant', text: assistantFullText.trim(), ts: Date.now() }])
+      }
+    } catch (e: any) {
+      console.warn('[VoiceSimple] chat error:', e)
+      setError(`Erreur chat : ${e?.message || 'inconnue'}`)
+    }
+  }, [selectedProvider, selectedModel, playNextTTS])
+
+  const endSimpleSession = useCallback(() => {
+    simpleActiveRef.current = false
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop() } catch { /* ignore */ }
+      recognitionRef.current = null
+    }
+    if (ttsAudioRef.current) {
+      try { ttsAudioRef.current.pause() } catch { /* ignore */ }
+      ttsAudioRef.current = null
+    }
+    ttsQueueRef.current = []
+    ttsPlayingRef.current = false
+    setStatus('idle')
+  }, [])
+
+  const startSimpleSession = useCallback(async () => {
+    setError(null); setStatus('connecting')
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) {
+      setError('Reconnaissance vocale non supportée par ce navigateur (essaie Chrome/Edge) — ou bascule sur ElevenLabs Convai.')
+      setStatus('error')
+      return
+    }
+
+    // Conversation cible : courante OU création à la volée
+    let convoId = simpleConvoIdRef.current ?? currentConversation
+    if (!convoId) {
+      try {
+        const newConvo = await api.createConversation({
+          title: 'Session vocale',
+          provider: selectedProvider,
+          model: selectedModel,
+        })
+        convoId = newConvo.id
+        simpleConvoIdRef.current = newConvo.id
+        setCurrentConversation(newConvo.id)
+      } catch (e: any) {
+        setError(`Impossible de créer la conversation : ${e?.message || 'inconnu'}`); setStatus('error'); return
+      }
+    } else {
+      simpleConvoIdRef.current = convoId
+    }
+
+    const recognition = new SR()
+    recognition.lang = 'fr-FR'
+    recognition.continuous = true
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+    recognitionRef.current = recognition
+    simpleActiveRef.current = true
+
+    recognition.onresult = async (event: any) => {
+      const last = event.results[event.results.length - 1]
+      if (!last?.isFinal) return
+      const transcript = (last[0]?.transcript || '').trim()
+      if (!transcript) return
+      setConversation(prev => [...prev, { role: 'user', text: transcript, ts: Date.now() }])
+      await processUserSpeech(transcript, convoId!)
+    }
+    recognition.onerror = (e: any) => {
+      const err = e?.error || 'unknown'
+      console.warn('[VoiceSimple] recognition error:', err)
+      if (err === 'no-speech') return  // normal en continuous
+      if (err === 'not-allowed') {
+        setError('Micro bloqué par le navigateur. Autorise l\'accès audio.')
+        endSimpleSession(); return
+      }
+      if (err === 'aborted') return  // stop explicite
+      setError(`Reconnaissance : ${err}`)
+    }
+    recognition.onend = () => {
+      // Web Speech peut s'arrêter malgré continuous=true. Relance si toujours actif
+      // et TTS pas en train de parler (évite que l'agent s'écoute parler).
+      if (simpleActiveRef.current && !ttsPlayingRef.current) {
+        try { recognition.start() } catch { /* already started */ }
+      }
+    }
+
+    try {
+      recognition.start()
+      setStatus('listening')
+    } catch (e: any) {
+      setError(`Démarrage : ${e?.message}`); setStatus('error'); simpleActiveRef.current = false
+    }
+  }, [currentConversation, selectedProvider, selectedModel, setCurrentConversation, processUserSpeech, endSimpleSession])
 
   const createAgent = useCallback(async () => {
     setCreatingAgent(true); setError(null)
@@ -212,13 +414,25 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
   }
 
   const endSession = useCallback(() => {
+    // Stoppe TOUT — Convai WS + audio queue ET la session Simple si active.
+    // Appelé au close de la modal et sur bascule de mode (pour éviter deux
+    // sessions qui tournent en parallèle).
     if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
-    cleanupAudio(); setStatus('idle')
-  }, [])
+    cleanupAudio()
+    endSimpleSession()
+  }, [endSimpleSession])
 
   const toggleSession = useCallback(() => {
-    if (wsRef.current) endSession(); else startSession()
-  }, [startSession, endSession])
+    // Route selon le mode actif. L'état "en cours" se lit via le ref approprié :
+    // wsRef.current (Convai) ou recognitionRef.current (Simple).
+    if (mode === 'simple') {
+      if (recognitionRef.current) endSimpleSession()
+      else startSimpleSession()
+    } else {
+      if (wsRef.current) endSession()
+      else startSession()
+    }
+  }, [mode, startSession, endSession, startSimpleSession, endSimpleSession])
 
   useEffect(() => {
     if (!isOpen) return

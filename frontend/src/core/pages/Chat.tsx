@@ -966,15 +966,38 @@ export default function Chat() {
     } catch { /* ignore */ }
     const engine = prefs?.engine || 'browser'
     const forcedLang = prefs?.lang && prefs.lang !== 'auto' ? prefs.lang : null
+    console.info('[PTT] startPTT', { engine, lang: forcedLang, prefs })
 
     // ─── Engine "browser" : Web Speech Recognition ───────────
     if (engine === 'browser') {
+      // Context check : Web Speech API refuse en HTTP (sauf localhost). Sans
+      // ce warning l'user tape dans le vide pendant 5 min en se demandant.
+      const isSecure = window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+      if (!isSecure) {
+        alert('La reconnaissance vocale exige HTTPS. Passe Gungnir derrière un reverse-proxy TLS ou configure un certificat.')
+        return
+      }
+
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-      if (!SpeechRecognition) return
-      if (recognitionRef.current) return
+      if (!SpeechRecognition) {
+        alert('Ce navigateur ne supporte pas la reconnaissance vocale (essaie Chrome ou Edge).')
+        return
+      }
+      if (recognitionRef.current) {
+        console.info('[PTT] Already running, ignore click')
+        return
+      }
+
+      // Normalise la locale : i18n.language peut déjà contenir une région (ex "fr-FR"),
+      // dans ce cas ne pas concaténer en "fr-FR-FR-FR" qui est invalide.
+      const lang = forcedLang || (
+        i18n.language.includes('-') ? i18n.language :
+        i18n.language === 'en' ? 'en-US' :
+        `${i18n.language}-${i18n.language.toUpperCase()}`
+      )
+
       const recognition = new SpeechRecognition()
-      recognition.lang = forcedLang
-        || (i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`)
+      recognition.lang = lang
       // Defaults : continuous + interim ACTIVÉS par défaut quand l'user n'a
       // pas configuré ses prefs. Sinon la Web Speech API s'arrête au premier
       // silence (~1-2s) et le bouton retombe en idle avant que l'user ait
@@ -990,7 +1013,14 @@ export default function Chat() {
       // en final), et le code précédent qui n'ajoutait que les finals
       // donnait l'impression que rien n'était retranscrit.
       const snapshot = (inputRef.current?.value ?? input ?? '')
-      recognition.onstart = () => setPttStatus('recording')
+      console.info('[PTT] Starting browser SpeechRecognition', { lang, continuous: recognition.continuous, interim: recognition.interimResults, snapshot_len: snapshot.length })
+      recognition.onstart = () => {
+        console.info('[PTT] onstart — listening')
+        setPttStatus('recording')
+      }
+      recognition.onaudiostart = () => console.info('[PTT] onaudiostart — mic capturing')
+      recognition.onsoundstart = () => console.info('[PTT] onsoundstart — sound detected')
+      recognition.onspeechstart = () => console.info('[PTT] onspeechstart — speech detected')
       recognition.onresult = (event: any) => {
         // On reconstruit TOUT le transcript (interim + final) depuis le début
         // de la session, puis on replace sur le snapshot. Pas de risque de
@@ -1001,6 +1031,7 @@ export default function Chat() {
           if (res[0]?.transcript) transcript += res[0].transcript
         }
         transcript = transcript.trim()
+        console.info('[PTT] onresult', { transcript, results_count: event.results.length })
         if (transcript) {
           const sep = snapshot && !/\s$/.test(snapshot) ? ' ' : ''
           setInput(snapshot + sep + transcript)
@@ -1011,19 +1042,34 @@ export default function Chat() {
       // croit que le bouton "ne marche pas".
       recognition.onerror = (e: any) => {
         const err = e?.error || 'unknown'
-        console.warn('[PTT] SpeechRecognition error:', err, e)
+        console.warn('[PTT] SpeechRecognition error:', err, 'message=', e?.message)
         // "no-speech" est normal en continuous mode si l'user se tait un moment.
         // On laisse tourner sans arrêter ni alerter.
         if (err === 'no-speech') return
         if (err === 'not-allowed') {
-          alert('Le micro est bloqué par le navigateur. Autorise l\'accès audio puis réessaie.')
+          alert('Le micro est bloqué par le navigateur. Vérifie l\'icône cadenas dans la barre d\'adresse et autorise l\'accès audio.')
+        } else if (err === 'network') {
+          alert('Erreur réseau de reconnaissance vocale. Chrome envoie l\'audio vers Google Speech — vérifie ta connexion.')
+        } else if (err === 'service-not-allowed') {
+          alert('Le service de reconnaissance vocale est bloqué (peut-être par une extension ou un firewall).')
         }
         setPttStatus('idle')
         recognitionRef.current = null
       }
-      recognition.onend = () => { setPttStatus('idle'); recognitionRef.current = null }
+      recognition.onend = () => {
+        console.info('[PTT] onend')
+        setPttStatus('idle')
+        recognitionRef.current = null
+      }
       recognitionRef.current = recognition
-      recognition.start()
+      try {
+        recognition.start()
+      } catch (startErr: any) {
+        console.warn('[PTT] recognition.start() threw:', startErr?.message)
+        alert(`Impossible de démarrer la reconnaissance vocale : ${startErr?.message || 'erreur inconnue'}`)
+        recognitionRef.current = null
+        setPttStatus('idle')
+      }
       return
     }
 
