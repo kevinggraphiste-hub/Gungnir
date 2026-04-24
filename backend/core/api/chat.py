@@ -258,6 +258,86 @@ def _restrained_check_user_intent(tool_name: str, user_message: str) -> bool:
     return tool_name in _RESTRAINED_ALWAYS_ALLOWED
 
 
+# Mapping tool_name → mots-clés d'action dans le message user qui indiquent
+# que l'utilisateur a DÉJÀ demandé explicitement cette action. Quand on
+# matche, on skip la question de confirmation en mode ASK_PERMISSION.
+_TOOL_INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "write_file":        ("écris", "ecris", "crée le fichier", "cree le fichier", "ajoute le fichier", "sauvegarde", "enregistre", "write file", "save file"),
+    "run_command":       ("lance", "exécute", "execute", "run", "cmd", "commande", "bash", "shell"),
+    "git_commit":        ("commit", "commite", "commiter", "committe"),
+    "git_push":          ("push", "pousse", "envoi sur le remote", "deploy"),
+    "git_pull":          ("pull", "récupère les changements", "recupere"),
+    "git_add":           ("add", "stage", "ajoute au git"),
+    "delete_file":       ("supprime", "efface", "remove", "delete", "rm "),
+    "subagent_invoke":   ("délègue", "delegue", "sous-agent", "subagent", "orchestre"),
+    "subagent_invoke_parallel": ("orchestre", "délègue en parallèle", "team", "multi-agent", "pack complet", "audite"),
+    "skill_create":      ("crée le skill", "cree le skill", "nouveau skill", "ajoute le skill"),
+    "subagent_create":   ("crée l'agent", "cree l'agent", "nouveau sous-agent", "nouveau agent"),
+    "personality_create": ("nouvelle personnalité", "crée la personnalité"),
+    "kb_write":          ("note", "mémorise", "memorise", "sauvegarde dans la kb"),
+    "schedule_create":   ("planifie", "programme", "schedule"),
+}
+
+# Mots-clés de confirmation génériques (si l'user a accepté suite à une
+# demande antérieure au tour précédent). Utilisés aussi pour matcher les
+# phrases courtes type "ok" / "vas-y" / "oui".
+_CONFIRM_PATTERNS = (
+    "oui", "ouai", "yes", "yep", "ok", "okay", "d'accord", "go", "vas-y",
+    "vas y", "allez", "valide", "confirme", "confirmé", "fais", "fait",
+    "parfait", "nickel", "j'approuve", "approuve", "allons-y", "let's go",
+)
+
+
+def _ask_permission_check_user_intent(tool_name: str, user_message: str, args: dict | None = None) -> bool:
+    """Mode Demande : décide si la confirmation peut être bypassée.
+
+    Retourne True dans 2 cas :
+    1. **Confirmation explicite** : le user a répondu « oui / ok / vas-y / ... »
+       suite à une question précédente de l'agent.
+    2. **Demande directe initiale** : le message user contient à la fois un
+       verbe d'action ET une mention cohérente avec l'outil (ex : "push le
+       code" → git_push, "écris le fichier X" → write_file).
+
+    Sinon : False → l'agent doit poser une question de confirmation claire.
+    """
+    if not user_message:
+        return False
+    msg = user_message.lower().strip()
+
+    # 1) Confirmation courte et explicite — on prend le match comme indicateur
+    # fort (pas besoin de matcher le tool_name ensuite).
+    #   - Si le message fait < 40 caractères et contient un pattern de confirm
+    #   - OU commence par un de ces patterns (exact match au début)
+    if len(msg) < 40:
+        for p in _CONFIRM_PATTERNS:
+            if p == msg or msg.startswith(p + " ") or msg.startswith(p + ","):
+                return True
+
+    # 2) Demande directe : matcher un mot-clé d'action spécifique à ce tool
+    keywords = _TOOL_INTENT_KEYWORDS.get(tool_name, ())
+    for kw in keywords:
+        if kw in msg:
+            return True
+
+    # 3) Heuristique : le nom du tool lui-même apparaît dans le message
+    # (ex : user écrit "lance git_commit"). Rare mais ça arrive.
+    if tool_name.replace("_", " ") in msg or tool_name in msg:
+        return True
+
+    # 4) Fallback : les très longs messages user qui contiennent plusieurs
+    # patterns de confirmation combinés ET des verbes d'action génériques
+    # (plan d'action demandé de toute évidence).
+    action_verbs = ("fais", "lance", "crée", "cree", "écris", "ecris", "push",
+                    "pull", "commit", "déploie", "deploie", "supprime", "ajoute",
+                    "configure", "installe")
+    has_action = any(v in msg for v in action_verbs)
+    has_confirm = any(p in msg for p in _CONFIRM_PATTERNS)
+    if has_action and has_confirm:
+        return True
+
+    return False
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fallback tool-call parsing pour modèles sans function calling natif
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1483,23 +1563,37 @@ Tu operes en mode **demande**. Comportement :
                         print(f"[Wolf] RESTRAINED: pending UI approval for {tool_name} (pending_id={_perm_id})")
                         _blocked = True
                 elif _current_mode == "ask_permission" and tool_name not in READ_ONLY_TOOLS and tool_name not in mode_manager.config.auto_approve_tools:
-                    # Validation conversationnelle : l'agent verbalise la demande
-                    # au tour N, l'user répond oui/non au tour N+1, l'agent rejoue
-                    # le tool au tour N+1 et passe cette fois.
-                    _confirm_patterns = ("oui", "yes", "ok", "go", "fais", "fait", "lance", "crée", "créer",
-                                         "connecte", "configure", "ajoute", "installe", "supprime", "active",
-                                         "d'accord", "vas-y", "valide", "confirme", "je veux", "j'aimerais",
-                                         "liste", "montre", "affiche", "donne", "met", "mets")
-                    _user_confirmed = any(p in message.lower() for p in _confirm_patterns)
-                    if _user_confirmed:
-                        print(f"[Wolf] ASK_PERMISSION: verbal OK → {tool_name}")
+                    # Validation conversationnelle robuste :
+                    # - Si l'user a DÉJÀ demandé l'action explicitement (verbe
+                    #   d'action + mention cohérente avec l'outil) OU a répondu
+                    #   « oui / ok / vas-y » au tour précédent → on exécute
+                    #   direct sans redemander.
+                    # - Sinon → on bloque et on impose au LLM un format visuel
+                    #   clair pour la question (voir error string ci-dessous).
+                    if _ask_permission_check_user_intent(tool_name, message, args):
+                        print(f"[Wolf] ASK_PERMISSION: user intent matched → {tool_name} (skip confirm)")
                     else:
+                        # Format de question imposé au LLM : bloc visuel bien
+                        # identifiable dans le chat, avec 3 sections (Action /
+                        # Paramètres / Question), pour que l'user le voie
+                        # clairement comme une demande et pas comme du texte
+                        # normal noyé dans la réponse.
+                        _args_preview = ", ".join(f"{k}={v!r}"[:80] for k, v in (args or {}).items())[:300]
                         tool_result = {
                             "ok": False,
                             "error": (
-                                f"Mode 'Demande' : avant d'exécuter '{tool_name}' (args={args}), "
-                                f"pose une courte question de confirmation à l'utilisateur. "
-                                f"Sa réponse « oui » (ou équivalent) au tour suivant suffira à valider."
+                                f"Mode 'Demande' : confirmation requise avant d'exécuter `{tool_name}`.\n\n"
+                                f"Réponds STRICTEMENT en suivant ce format visuel dans ta prochaine réponse texte "
+                                f"(sans réinvoquer l'outil pour l'instant) :\n\n"
+                                f"---\n"
+                                f"🔐 **Confirmation requise**\n\n"
+                                f"**Action :** [une phrase explicite de ce que tu veux faire en langage naturel]\n"
+                                f"**Outil :** `{tool_name}`\n"
+                                f"**Paramètres :** `{_args_preview or '(aucun)'}`\n\n"
+                                f"👉 **Je lance ? (`oui` pour valider, `non` pour annuler)**\n"
+                                f"---\n\n"
+                                f"Si l'utilisateur répond « oui » (ou équivalent) au tour suivant, rejoue `{tool_name}` "
+                                f"avec les mêmes arguments. S'il répond « non », abandonne et propose une alternative."
                             ),
                         }
                         print(f"[Wolf] ASK_PERMISSION: verbal confirmation needed for {tool_name}")
