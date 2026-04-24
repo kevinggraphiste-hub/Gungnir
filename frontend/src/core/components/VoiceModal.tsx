@@ -106,16 +106,24 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
   // Récupère le voice_id préféré de l'user (depuis ses settings ElevenLabs).
   // L'endpoint est per-user strict (auth bearer). Si l'user n'a pas configuré
   // de voix, on laisse `userVoiceId` à null → le backend tombe sur Rachel.
+  // Appelé au mount ET après chaque tour (Gungnir peut lui-même changer la
+  // voix via le tool `voice_manage` pendant une conversation — on refetch
+  // pour que le changement prenne effet dès la réponse suivante).
+  const refreshUserVoiceId = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/plugins/voice/convai/config')
+      if (!r.ok) return
+      const data = await r.json()
+      const vid = data?.voice_id
+      if (vid && typeof vid === 'string') setUserVoiceId(vid)
+      else setUserVoiceId(null)
+    } catch { /* silent */ }
+  }, [])
+
   useEffect(() => {
     if (!isOpen) return
-    apiFetch('/api/plugins/voice/convai/config')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        const vid = data?.voice_id
-        if (vid && typeof vid === 'string') setUserVoiceId(vid)
-      })
-      .catch(() => { /* silent — on garde le fallback Rachel */ })
-  }, [isOpen])
+    refreshUserVoiceId()
+  }, [isOpen, refreshUserVoiceId])
 
   // ─── Lecture TTS (queue séquentielle) ──────────────────────────────────
   const playNextTTS = useCallback(async () => {
@@ -208,6 +216,10 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
       if (assistantFullText.trim()) {
         setConversation(prev => [...prev, { role: 'assistant', text: assistantFullText.trim(), ts: Date.now() }])
       }
+      // Refresh du voice_id : Gungnir peut avoir appelé `voice_manage` pendant
+      // ce tour (ex: l'user a dit "change la voix pour Adam") — la DB est à
+      // jour, on re-lit pour que les TTS suivants utilisent la nouvelle voix.
+      refreshUserVoiceId()
     } catch (e: any) {
       console.warn('[VoiceModal] chat error:', e)
       setError(`Chat : ${e?.message || 'inconnu'}`)
@@ -233,7 +245,7 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
       setStatus('idle')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProvider, selectedModel, playNextTTS])
+  }, [selectedProvider, selectedModel, playNextTTS, refreshUserVoiceId])
 
   // ─── Cycle d'enregistrement ────────────────────────────────────────────
   const startRecording = useCallback(async (convoId: number) => {
