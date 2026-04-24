@@ -1,16 +1,25 @@
 /**
- * VoiceModal — Chat vocal temps réel via ElevenLabs Conversational AI
+ * VoiceModal — Chat vocal avec 2 modes :
  *
- * Utilise le WebSocket natif ElevenLabs ConvAI.
- * Le backend génère le signed URL via /api/voice/convai/signed-url.
+ * 1. **Simple (Gungnir)** — par défaut. Utilise le cerveau principal de Gungnir :
+ *    SpeechRecognition navigateur (STT) → /api/conversations/{id}/chat (stream)
+ *    → /api/chat/tts (ElevenLabs) par phrase. Tu gardes tes modèles, skills,
+ *    personnalités, conscience et orchestration multi-agents. Plus fiable,
+ *    léger delay séquentiel ~300-800ms.
+ *
+ * 2. **ElevenLabs Convai** — full-duplex natif via WebSocket ElevenLabs.
+ *    L'agent vit côté ElevenLabs, plus fluide mais détaché de ton orchestration
+ *    Gungnir. Utilise `/api/plugins/voice/convai/signed-url` pour le handshake.
+ *
+ * Le mode est persisté en localStorage. Les deux peuvent cohabiter.
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Mic, Volume2, VolumeX, X, Radio,
-  AlertCircle, Loader2, Plus, Wifi, WifiOff
+  AlertCircle, Loader2, Plus, Wifi, WifiOff, Zap, Brain
 } from 'lucide-react'
 import { useStore } from '../stores/appStore'
-import { apiFetch } from '../services/api'
+import { api, apiFetch } from '../services/api'
 
 type ConvEntry = { role: 'user' | 'assistant'; text: string; ts: number }
 type Status = 'idle' | 'connecting' | 'listening' | 'speaking' | 'error'

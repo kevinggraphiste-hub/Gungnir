@@ -975,9 +975,13 @@ export default function Chat() {
       const recognition = new SpeechRecognition()
       recognition.lang = forcedLang
         || (i18n.language === 'en' ? 'en-US' : `${i18n.language}-${i18n.language.toUpperCase()}`)
-      recognition.interimResults = !!prefs?.interim
-      recognition.maxAlternatives = 1
-      recognition.continuous = !!prefs?.continuous
+      // Defaults : continuous + interim ACTIVÉS par défaut quand l'user n'a
+      // pas configuré ses prefs. Sinon la Web Speech API s'arrête au premier
+      // silence (~1-2s) et le bouton retombe en idle avant que l'user ait
+      // fini sa phrase. On respecte les prefs si elles sont définies.
+      recognition.interimResults   = prefs?.interim    === undefined ? true : !!prefs.interim
+      recognition.continuous       = prefs?.continuous === undefined ? true : !!prefs.continuous
+      recognition.maxAlternatives  = 1
       recognition.onstart = () => setPttStatus('recording')
       recognition.onresult = (event: any) => {
         let finalText = ''
