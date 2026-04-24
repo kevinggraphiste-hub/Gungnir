@@ -65,6 +65,13 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
   const [modelProgress, setModelProgress] = useState(0)
   const [recordingSec, setRecordingSec] = useState(0)
 
+  // Voix ElevenLabs préférée du user (stockée dans Settings → Voix). On la
+  // lit au mount via /api/plugins/voice/convai/config et on l'envoie dans
+  // chaque appel /chat/tts pour que l'agent vocal utilise CETTE voix au lieu
+  // du fallback Rachel hardcodé. Per-user strict : c'est le token bearer
+  // côté API qui résout l'utilisateur, pas une clé partagée.
+  const [userVoiceId, setUserVoiceId] = useState<string | null>(null)
+
   // Refs session
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -96,6 +103,20 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
     loadTranscriber(pct => setModelProgress(pct)).catch(() => { /* silent */ })
   }, [isOpen])
 
+  // Récupère le voice_id préféré de l'user (depuis ses settings ElevenLabs).
+  // L'endpoint est per-user strict (auth bearer). Si l'user n'a pas configuré
+  // de voix, on laisse `userVoiceId` à null → le backend tombe sur Rachel.
+  useEffect(() => {
+    if (!isOpen) return
+    apiFetch('/api/plugins/voice/convai/config')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        const vid = data?.voice_id
+        if (vid && typeof vid === 'string') setUserVoiceId(vid)
+      })
+      .catch(() => { /* silent — on garde le fallback Rachel */ })
+  }, [isOpen])
+
   // ─── Lecture TTS (queue séquentielle) ──────────────────────────────────
   const playNextTTS = useCallback(async () => {
     if (isMuted) return
@@ -107,7 +128,15 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
       const resp = await apiFetch('/api/chat/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, provider: 'elevenlabs' }),
+        // On force le voice_id préféré de l'user si on l'a chargé. Le backend
+        // accepte `voice` dans le body et l'utilise tel quel — ça override
+        // son fallback Rachel sans toucher à la logique pour les autres
+        // call sites (Chat.tsx TTS toggle, etc.).
+        body: JSON.stringify({
+          text,
+          provider: 'elevenlabs',
+          ...(userVoiceId ? { voice: userVoiceId } : {}),
+        }),
       })
       if (!resp.ok) {
         // TTS échoue (pas de clé ElevenLabs ?) → on saute la phrase sans bloquer
@@ -137,7 +166,7 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
       ttsPlayingRef.current = false
       if (ttsQueueRef.current.length > 0) playNextTTS()
     }
-  }, [isMuted])
+  }, [isMuted, userVoiceId])
 
   // ─── Envoi au chat Gungnir + streaming tokens → TTS par phrase ─────────
   const sendToGungnir = useCallback(async (userText: string, convoId: number) => {

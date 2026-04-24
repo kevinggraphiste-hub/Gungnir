@@ -2114,25 +2114,13 @@ async def chat_tts(data: dict, request: Request):
             return JSONResponse({"error": f"Erreur réseau : {e}"}, status_code=502)
 
     if provider == "elevenlabs":
-        # Lit toute la config ElevenLabs de l'user (api_key + voice_id + model_id)
-        cfg = await _get_user_elevenlabs_cfg(uid) or {}
-        api_key = cfg.get("api_key")
+        api_key = await _get_user_elevenlabs_key(uid)
         if not api_key:
             return JSONResponse({"error": "Aucune clé ElevenLabs configurée"}, status_code=400)
-        # Priorité : voice fournie dans la requête > voice_id sauvegardée dans
-        # les settings user > Rachel (voice publique par défaut). Sans le
-        # fallback settings, l'agent restait coincé sur Rachel même quand
-        # l'user avait sauvegardé son voice_id préféré.
-        voice_id = (
-            str(data.get("voice") or "").strip()
-            or str(cfg.get("voice_id") or "").strip()
-            or "21m00Tcm4TlvDq8ikWAM"
-        )
-        model_id = (
-            str(data.get("model") or "").strip()
-            or str(cfg.get("model_id") or "").strip()
-            or "eleven_multilingual_v2"
-        )
+        # voice_id ElevenLabs : le user doit le fournir via settings. Sinon
+        # on utilise "Rachel" (voice_id public par défaut, accepté par tous les comptes).
+        voice_id = str(data.get("voice") or "21m00Tcm4TlvDq8ikWAM").strip()
+        model_id = str(data.get("model") or "eleven_multilingual_v2").strip()
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
         headers = {"xi-api-key": api_key, "Content-Type": "application/json",
                    "Accept": "audio/mpeg"}
