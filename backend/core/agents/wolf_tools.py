@@ -1021,6 +1021,31 @@ WOLF_TOOL_SCHEMAS = [
             }
         }
     },
+    # ── Voice / TTS provider management ───────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "voice_manage",
+            "description": (
+                "Gère les providers VOCAL (ElevenLabs, OpenAI TTS, Google TTS) — clés API, voix, agents ElevenLabs Convai. "
+                "Utilise cet outil quand l'utilisateur fournit une clé ElevenLabs/OpenAI/Google TTS, veut configurer une voix, ou sélectionner un agent ElevenLabs Convai. "
+                "Actions: 'list' (lister les configs voice), 'save' (enregistrer clé/voix/agent), 'delete' (retirer un provider voice)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action":    {"type": "string", "enum": ["list", "save", "delete"], "description": "Action à effectuer"},
+                    "provider":  {"type": "string", "description": "Nom : 'elevenlabs', 'openai', 'google', 'grok'"},
+                    "api_key":   {"type": "string", "description": "Clé API à sauvegarder (chiffrée au write)"},
+                    "voice_id":  {"type": "string", "description": "ID de la voix (ex ElevenLabs '2gPFXx8pN3Avh27Dw5Ma')"},
+                    "agent_id":  {"type": "string", "description": "ID d'un agent ElevenLabs Convai si applicable (ex 'agent_2001knen3hgrf32v919z57ad7rvw')"},
+                    "language":  {"type": "string", "description": "Code langue (fr, en, es…)", "default": "fr"},
+                    "enabled":   {"type": "boolean", "description": "Activer le provider après save", "default": True},
+                },
+                "required": ["action"]
+            }
+        }
+    },
     # ── MCP server management ─────────────────────────────────────────────────
     {
         "type": "function",
@@ -2673,6 +2698,105 @@ async def _provider_manage(action: str, provider: str = None, api_key: str = Non
         return {"ok": False, "error": str(e)[:300]}
 
 
+# ── Voice / TTS provider management ──────────────────────────────────────────
+
+async def _voice_manage(action: str, provider: str = None, api_key: str = None,
+                         voice_id: str = None, agent_id: str = None,
+                         language: str = "fr", enabled: bool = True) -> dict:
+    """Gère la config voice per-user (ElevenLabs, OpenAI TTS, Google TTS).
+
+    Backend : POST `/api/config/voice/{provider}` (save), GET `/api/config/user/voice` (list),
+    DELETE `/api/config/user/voice/{provider}` (delete). Toutes authentifiées per-user via
+    le token bearer que le middleware FastAPI pose dans la requête HTTP locale.
+
+    Sans clé API préalable, l'agent ne peut rien configurer — il doit donc soit demander
+    la clé à l'utilisateur, soit se plaindre explicitement plutôt que prétendre avoir
+    sauvegardé. L'erreur API est renvoyée telle quelle pour que le LLM puisse la citer.
+    """
+    import httpx
+    from backend.core.agents.wolf_tools import get_user_context
+    base = "http://127.0.0.1:8000/api"
+    uid = get_user_context() or 0
+
+    # Le middleware backend lit l'Authorization dans les requêtes HTTP — mais l'agent
+    # appelle en loopback sans token. Plutôt que de forger un token, on tape direct la
+    # DB/helper côté Python pour rester strict per-user (pas besoin de self-HTTP).
+    if action == "list":
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.api.auth_helpers import get_user_settings
+            async with async_session() as session:
+                us = await get_user_settings(uid, session)
+                out = {}
+                for name, vc in (us.voice_config or {}).items():
+                    if not isinstance(vc, dict):
+                        continue
+                    out[name] = {
+                        "enabled": bool(vc.get("enabled")),
+                        "has_api_key": bool(vc.get("api_key")),
+                        "voice_id": vc.get("voice_id"),
+                        "agent_id": vc.get("agent_id"),
+                        "language": vc.get("language"),
+                    }
+                return {"ok": True, "voice_providers": out}
+        except Exception as e:
+            return {"ok": False, "error": f"list failed: {e}"[:300]}
+
+    if action == "save":
+        if not provider:
+            return {"ok": False, "error": "provider requis pour save (elevenlabs, openai, google, grok)"}
+        if not api_key and not (voice_id or agent_id):
+            return {"ok": False, "error": "save nécessite au moins api_key OU (voice_id / agent_id) pour mise à jour partielle"}
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.api.auth_helpers import get_user_settings
+            from backend.core.security import encrypt_value
+            from sqlalchemy.orm.attributes import flag_modified
+            async with async_session() as session:
+                us = await get_user_settings(uid, session)
+                voice_config = dict(us.voice_config or {})
+                existing = dict(voice_config.get(provider) or {})
+                merged = {**existing, "enabled": enabled, "provider": provider, "language": language or existing.get("language", "fr")}
+                if api_key and api_key.strip() and api_key != "***":
+                    merged["api_key"] = encrypt_value(api_key.strip())
+                if voice_id:
+                    merged["voice_id"] = voice_id
+                if agent_id:
+                    merged["agent_id"] = agent_id
+                voice_config[provider] = merged
+                us.voice_config = voice_config
+                flag_modified(us, "voice_config")
+                await session.commit()
+                return {
+                    "ok": True,
+                    "provider": provider,
+                    "message": f"Config voice '{provider}' sauvegardée (api_key={'oui' if merged.get('api_key') else 'non'}, voice_id={merged.get('voice_id') or '—'}, agent_id={merged.get('agent_id') or '—'}).",
+                }
+        except Exception as e:
+            return {"ok": False, "error": f"save failed: {e}"[:300]}
+
+    if action == "delete":
+        if not provider:
+            return {"ok": False, "error": "provider requis pour delete"}
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.api.auth_helpers import get_user_settings
+            from sqlalchemy.orm.attributes import flag_modified
+            async with async_session() as session:
+                us = await get_user_settings(uid, session)
+                voice_config = dict(us.voice_config or {})
+                if provider in voice_config:
+                    del voice_config[provider]
+                    us.voice_config = voice_config
+                    flag_modified(us, "voice_config")
+                    await session.commit()
+                return {"ok": True, "message": f"Provider voice '{provider}' supprimé."}
+        except Exception as e:
+            return {"ok": False, "error": f"delete failed: {e}"[:300]}
+
+    return {"ok": False, "error": f"Action inconnue: {action}. Actions: list, save, delete."}
+
+
 # ── MCP server management ────────────────────────────────────────────────────
 
 async def _mcp_manage(action: str, name: str = None, command: str = None,
@@ -3329,6 +3453,7 @@ WOLF_EXECUTORS: dict[str, Any] = {
     # Setup wizard tools
     "channel_manage":             _channel_manage,
     "provider_manage":            _provider_manage,
+    "voice_manage":               _voice_manage,
     "mcp_manage":                 _mcp_manage,
     # Service connections (API directes)
     "service_connect":            _service_connect,
@@ -3352,7 +3477,7 @@ READ_ONLY_TOOLS = {
     "file_read", "file_list", "doctor_check",
     # Lecture todo-list
     "conversation_tasks_list",
-    "channel_manage", "provider_manage", "mcp_manage",
+    "channel_manage", "provider_manage", "voice_manage", "mcp_manage",
     # service_connect est read-only pour list/test, service_call est lecture
     "service_connect", "service_call",
 }
