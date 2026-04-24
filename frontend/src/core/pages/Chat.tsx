@@ -2447,87 +2447,110 @@ export default function Chat() {
             <div className="rounded-2xl"
               style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
 
-              {/* Row 1 — model selector + fichier + skill actif + tokens session */}
-              <div className="flex items-center gap-1.5 px-2 pt-2">
-            <div className="relative">
-              <button onClick={() => setShowModelMenu(!showModelMenu)}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors whitespace-nowrap"
-                style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
-                <AgentIcon size={11} /><span>{formatModelName(selectedModel)}</span>
-                <ChevronDown className={`w-3 h-3 transition-transform ${showModelMenu ? 'rotate-180' : ''}`} />
-              </button>
-              {showModelMenu && (
-                <div className="absolute bottom-full left-0 mb-2 w-80 rounded-xl shadow-2xl z-50 max-h-80 flex flex-col"
-                  style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
-                  <div className="p-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <input type="text" value={modelSearch} onChange={e => setModelSearch(e.target.value)}
-                      placeholder="Rechercher un modèle..." className="w-full rounded-lg px-3 py-1.5 text-xs placeholder-[#555] outline-none"
-                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
-                  </div>
-                  <div className="overflow-y-auto p-1.5">
-                    {/* Favoris */}
-                    {favoriteModels.length > 0 && !modelSearch.trim() && (
-                      <div className="mb-2 pb-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                        <div className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1" style={{ color: 'var(--accent-tertiary)' }}>
-                          <Star className="w-2.5 h-2.5" /> Favoris
-                        </div>
-                        {favoriteModels.map(fav => {
-                          const [prov, mod] = fav.split('::')
-                          return (
-                            <button key={fav} onClick={() => { setSelectedModel(mod); setSelectedProvider(prov); setShowModelMenu(false); setModelSearch('') }}
-                              className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between"
-                              style={selectedModel === mod && selectedProvider === prov ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
-                              <span className="truncate">{mod.split('/').pop()} <span style={{ color: 'var(--text-muted)' }}>({prov})</span></span>
-                              <Star className="w-3 h-3 flex-shrink-0 fill-current" style={{ color: 'var(--accent-tertiary)' }}
-                                onClick={e => { e.stopPropagation(); toggleFavorite(prov, mod) }} />
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
-                    {groupedProviders.map(group => {
-                      const isSearching = !!modelSearch.trim()
-                      const isExpanded = expandedProviders.has(group.name)
-                      // Show ALL models by default. Provider lists like
-                      // OpenRouter (300+) are scrollable inside the dropdown.
-                      // Search still acts as a filter.
-                      const limit = group.models.length
-                      const displayModels = group.models.slice(0, limit)
-                      const hasMore = group.models.length > limit
-                      return (
-                      <div key={group.name}>
-                        <div className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest flex items-center justify-between" style={{ color: 'var(--text-muted)' }}>
-                          <span>{group.name}</span>
-                          <span className="text-[8px] font-normal">{group.models.length}</span>
-                        </div>
-                        {displayModels.map(m => {
-                          const isFav = favoriteModels.includes(`${group.name}::${m}`)
-                          return (
-                            <button key={m} onClick={() => { setSelectedModel(m); setSelectedProvider(group.name); setShowModelMenu(false); setModelSearch('') }}
-                              className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between group"
-                              style={selectedModel === m ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
-                              <span className="truncate">{m}</span>
-                              <Star className={`w-3 h-3 flex-shrink-0 cursor-pointer transition-colors ${isFav ? 'fill-current' : ''}`}
-                                style={{ color: isFav ? 'var(--accent-tertiary)' : 'var(--border)' }}
-                                onClick={e => { e.stopPropagation(); toggleFavorite(group.name, m) }} />
-                            </button>
-                          )
-                        })}
-                        {hasMore && (
-                          <button onClick={() => setExpandedProviders(prev => { const next = new Set(prev); next.add(group.name); return next })}
-                            className="w-full text-center py-1.5 text-[10px] transition-colors rounded-lg"
-                            style={{ color: 'var(--accent-primary)' }}>
-                            + {group.models.length - limit} modèles...
-                          </button>
-                        )}
-                      </div>
-                    )})}
-                  </div>
-                </div>
-              )}
-            </div>
+              {/* Textarea transparent à l'intérieur de la boîte */}
+              <div className="px-3 pt-3 pb-2">
+                <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+                  placeholder={t('chat.placeholder')} rows={1}
+                  className="w-full bg-transparent text-sm placeholder-[#555] outline-none resize-none"
+                  style={{ color: 'var(--text-primary)', minHeight: '36px', maxHeight: '200px' }}
+                  onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px' }} />
+              </div>
 
-                {/* Fichier joint — petit bouton icône */}
+              {/* Barre d'actions unifiée — ordre : [Modèle] [Skills] [📎] [🖼️]
+                  [Skill actif chip?] [Hint /] ...(ml-auto) [Tokens?] [Wand] [Mic]
+                  [TTS] [Radio] [Lancer/Stop]. Une seule ligne, alignée sur la
+                  concurrence (ChatGPT/Claude). */}
+              <div className="flex items-center gap-1.5 px-2 pb-2">
+                {/* 1) Sélecteur de modèle */}
+                <div className="relative">
+                  <button onClick={() => setShowModelMenu(!showModelMenu)}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors whitespace-nowrap"
+                    style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                    <AgentIcon size={11} /><span>{formatModelName(selectedModel)}</span>
+                    <ChevronDown className={`w-3 h-3 transition-transform ${showModelMenu ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showModelMenu && (
+                    <div className="absolute bottom-full left-0 mb-2 w-80 rounded-xl shadow-2xl z-50 max-h-80 flex flex-col"
+                      style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+                      <div className="p-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <input type="text" value={modelSearch} onChange={e => setModelSearch(e.target.value)}
+                          placeholder="Rechercher un modèle..." className="w-full rounded-lg px-3 py-1.5 text-xs placeholder-[#555] outline-none"
+                          style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                      </div>
+                      <div className="overflow-y-auto p-1.5">
+                        {favoriteModels.length > 0 && !modelSearch.trim() && (
+                          <div className="mb-2 pb-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                            <div className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1" style={{ color: 'var(--accent-tertiary)' }}>
+                              <Star className="w-2.5 h-2.5" /> Favoris
+                            </div>
+                            {favoriteModels.map(fav => {
+                              const [prov, mod] = fav.split('::')
+                              return (
+                                <button key={fav} onClick={() => { setSelectedModel(mod); setSelectedProvider(prov); setShowModelMenu(false); setModelSearch('') }}
+                                  className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between"
+                                  style={selectedModel === mod && selectedProvider === prov ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
+                                  <span className="truncate">{mod.split('/').pop()} <span style={{ color: 'var(--text-muted)' }}>({prov})</span></span>
+                                  <Star className="w-3 h-3 flex-shrink-0 fill-current" style={{ color: 'var(--accent-tertiary)' }}
+                                    onClick={e => { e.stopPropagation(); toggleFavorite(prov, mod) }} />
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
+                        {groupedProviders.map(group => {
+                          const limit = group.models.length
+                          const displayModels = group.models.slice(0, limit)
+                          const hasMore = group.models.length > limit
+                          return (
+                            <div key={group.name}>
+                              <div className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest flex items-center justify-between" style={{ color: 'var(--text-muted)' }}>
+                                <span>{group.name}</span>
+                                <span className="text-[8px] font-normal">{group.models.length}</span>
+                              </div>
+                              {displayModels.map(m => {
+                                const isFav = favoriteModels.includes(`${group.name}::${m}`)
+                                return (
+                                  <button key={m} onClick={() => { setSelectedModel(m); setSelectedProvider(group.name); setShowModelMenu(false); setModelSearch('') }}
+                                    className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between group"
+                                    style={selectedModel === m ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
+                                    <span className="truncate">{m}</span>
+                                    <Star className={`w-3 h-3 flex-shrink-0 cursor-pointer transition-colors ${isFav ? 'fill-current' : ''}`}
+                                      style={{ color: isFav ? 'var(--accent-tertiary)' : 'var(--border)' }}
+                                      onClick={e => { e.stopPropagation(); toggleFavorite(group.name, m) }} />
+                                  </button>
+                                )
+                              })}
+                              {hasMore && (
+                                <button onClick={() => setExpandedProviders(prev => { const next = new Set(prev); next.add(group.name); return next })}
+                                  className="w-full text-center py-1.5 text-[10px] transition-colors rounded-lg"
+                                  style={{ color: 'var(--accent-primary)' }}>
+                                  + {group.models.length - limit} modèles...
+                                </button>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2) Bouton Skills (toggle) */}
+                {allSkills.length > 0 && (
+                  <button onClick={() => setShowSkillsBar(!showSkillsBar)}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] transition-colors"
+                    style={{
+                      background: showSkillsBar ? 'color-mix(in srgb, var(--accent-tertiary) 18%, transparent)' : 'var(--bg-tertiary)',
+                      border: `1px solid ${showSkillsBar ? 'color-mix(in srgb, var(--accent-tertiary) 40%, transparent)' : 'var(--border)'}`,
+                      color: showSkillsBar ? 'var(--accent-tertiary)' : 'var(--text-secondary)',
+                    }}
+                    title="Afficher / masquer les skills">
+                    <Sparkles className="w-3 h-3" />
+                    <span>Skills</span>
+                  </button>
+                )}
+
+                {/* 3) Trombone — pièce jointe fichier */}
                 <input ref={fileInputRef} type="file" multiple accept="image/*,.txt,.md,.json,.csv,.xml,.html,.py,.js,.ts,.tsx,.jsx,.css,.yaml,.yml,.log,.sql,.sh,.bat" className="hidden"
                   onChange={handleFileSelect} />
                 <button onClick={() => fileInputRef.current?.click()}
@@ -2537,9 +2560,7 @@ export default function Chat() {
                   <Paperclip className="w-3 h-3" />
                 </button>
 
-                {/* Génération d'image — bouton pinceau ; ouvre modal avec
-                    sélection provider/modèle (DALL-E 3, GPT Image 1, Imagen 3,
-                    NanoBanana…). Désactivé si l'user n'a aucune clé compatible. */}
+                {/* 4) Génération d'image — ouvre la modal de sélection */}
                 <button
                   onClick={() => {
                     setImgGenPrompt(input.trim() || '')
@@ -2562,7 +2583,7 @@ export default function Chat() {
                   <ImageIcon className="w-3 h-3" />
                 </button>
 
-                {/* Skill actif — chip avec × pour désactiver */}
+                {/* Skill actif — chip avec × pour désactiver (conditionnel) */}
                 {activeSkill && (
                   <div className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px]"
                     style={{
@@ -2580,7 +2601,15 @@ export default function Chat() {
                   </div>
                 )}
 
-                {/* Tokens session — aligné à droite */}
+                {/* Hint raccourci / */}
+                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
+                  style={{ color: 'var(--text-muted)' }}
+                  title="Tape '/' pour ouvrir la palette">
+                  <span className="font-mono opacity-60">/</span>
+                </div>
+
+                {/* Tokens session — positionné juste avant la zone d'actions
+                    droite (le ml-auto vit sur le bouton Wand qui suit). */}
                 {sessionTokens > 0 && (
                   <div className="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[10px]"
                     style={{ color: 'var(--text-muted)', background: 'transparent' }}
@@ -2589,45 +2618,15 @@ export default function Chat() {
                     <span>{sessionTokens.toLocaleString()} tok</span>
                   </div>
                 )}
-              </div>
-
-              {/* Row 2 — Textarea transparent à l'intérieur de la boîte */}
-              <div className="px-3 py-2">
-                <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-                  placeholder={t('chat.placeholder')} rows={1}
-                  className="w-full bg-transparent text-sm placeholder-[#555] outline-none resize-none"
-                  style={{ color: 'var(--text-primary)', minHeight: '36px', maxHeight: '200px' }}
-                  onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px' }} />
-              </div>
-
-              {/* Row 3 — Footer : Skills toggle / slash / mic / radio / Lancer */}
-              <div className="flex items-center gap-1.5 px-2 pb-2">
-                {/* Bouton Skills (toggle) */}
-                {allSkills.length > 0 && (
-                  <button onClick={() => setShowSkillsBar(!showSkillsBar)}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] transition-colors"
-                    style={{
-                      background: showSkillsBar ? 'color-mix(in srgb, var(--accent-tertiary) 18%, transparent)' : 'var(--bg-tertiary)',
-                      border: `1px solid ${showSkillsBar ? 'color-mix(in srgb, var(--accent-tertiary) 40%, transparent)' : 'var(--border)'}`,
-                      color: showSkillsBar ? 'var(--accent-tertiary)' : 'var(--text-secondary)',
-                    }}
-                    title="Afficher / masquer les skills">
-                    <Sparkles className="w-3 h-3" />
-                    <span>Skills</span>
-                  </button>
-                )}
-
-                {/* Hint raccourci / */}
-                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-                  style={{ color: 'var(--text-muted)' }}
-                  title="Tape '/' pour ouvrir la palette">
-                  <span className="font-mono opacity-60">/</span>
-                </div>
+                {/* Spacer transparent quand aucun chip tokens : garantit que
+                    le bloc d'actions droit reste poussé à droite même sans
+                    ml-auto naturel sur le premier bouton. */}
+                {sessionTokens <= 0 && <div className="ml-auto" />}
 
                 {/* Améliorer le prompt — LLM réécrit le draft */}
                 <button onClick={improvePrompt}
                   disabled={!input.trim() || improving || isLoading}
-                  className="ml-auto flex items-center justify-center rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="flex items-center justify-center rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   style={improving
                     ? { width: '30px', height: '30px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
                     : originalBeforeImprove !== null
