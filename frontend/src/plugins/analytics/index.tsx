@@ -244,6 +244,25 @@ export default function AnalyticsPlugin() {
 
   useEffect(() => { loadData() }, [loadData])
 
+  // Auto-refresh des analytics : (1) toutes les 30s tant que la fenêtre est
+  // visible, (2) à chaque retour de focus sur la fenêtre, (3) au retour
+  // visible si l'onglet a été en arrière-plan. Évite le "pas en temps réel"
+  // ressenti quand l'user envoie un message puis revient sur l'analytics.
+  useEffect(() => {
+    const onFocus = () => loadData()
+    const onVisibility = () => { if (document.visibilityState === 'visible') loadData() }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') loadData()
+    }, 30000)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.clearInterval(interval)
+    }
+  }, [loadData])
+
   const trendData = useMemo(() => {
     if (trendPeriod === 'week') return weekly.map(e => ({ label: e.week || '', ...e }))
     if (trendPeriod === 'month') return monthly.map(e => ({ label: e.month || '', ...e }))

@@ -203,6 +203,28 @@ async def generate_image(request: Request, data: dict, session: AsyncSession = D
         except Exception as e:
             logger.warning(f"Image gen DB persist failed: {e}")
 
+    # Enregistre le coût dans les analytics — sinon les images n'apparaissent
+    # JAMAIS dans le tableau de bord (zéro coût remonté). On utilise une
+    # session séparée pour ne pas impacter la transaction principale (déjà
+    # committée plus haut pour la persistance des messages).
+    try:
+        from backend.core.cost.manager import get_cost_manager
+        from backend.core.db.engine import async_session as _cost_sm
+        cost_n = len(images)
+        async with _cost_sm() as _cost_s:
+            cost_recorded = await get_cost_manager().record_image_cost(
+                _cost_s,
+                conversation_id=int(conversation_id) if conversation_id is not None else None,
+                model=model,
+                n=cost_n,
+                size=size,
+                quality=str(data.get("quality") or ""),
+                user_id=user_id,
+            )
+            logger.info(f"Image cost recorded: model={model} n={cost_n} size={size} → ${cost_recorded:.4f}")
+    except Exception as _ce:
+        logger.warning(f"Image cost recording skipped: {_ce}")
+
     return {
         "ok": True,
         "images": images_out,

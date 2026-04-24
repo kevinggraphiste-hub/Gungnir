@@ -210,3 +210,66 @@ def format_cost(cost: float) -> str:
     elif cost >= 0.001:
         return f"${cost:.4f}"
     return f"${cost:.6f}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pricing génération d'images (USD par image, tarifs publics avril 2026)
+# ─────────────────────────────────────────────────────────────────────────────
+# Format : { canonical_model_id: prix_par_image_1024 }
+# Pour les sizes plus grandes (1792x*, 1024x1536, 1536x1024), un multiplicateur
+# 1.5x s'applique. Pour les modèles "HD" / "quality=hd", encore 2x. Logique
+# simple — exact à 10-20% près, suffisant pour l'analytics.
+IMAGE_PRICING_PER_IMAGE = {
+    # OpenAI
+    "gpt-image-2":                            0.040,
+    "gpt-image-1":                            0.040,
+    "dall-e-3":                               0.040,
+    "dall-e-2":                               0.020,
+    # Google
+    "gemini-2.5-flash-image-preview":         0.039,
+    "gemini-2.0-flash-exp-image-generation":  0.039,
+    "imagen-3.0-generate-002":                0.040,
+    "imagen-3.0-fast-generate-001":           0.020,
+    # OpenRouter slugs (mêmes tarifs que les modèles sources)
+    "openai/gpt-5.4-image-2":                 0.040,
+    "openai/gpt-image-2":                     0.040,
+    "openai/gpt-image-1":                     0.040,
+    "openai/dall-e-3":                        0.040,
+    "openai/dall-e-2":                        0.020,
+    "google/gemini-2.5-flash-image-preview":  0.039,
+    "google/imagen-3-generate-002":           0.040,
+}
+
+
+def get_image_cost(model: str, n: int = 1, size: str = "1024x1024", quality: str | None = None) -> float:
+    """Renvoie le coût total estimé pour `n` images générées par `model` en `size`.
+
+    - Tarif de base depuis IMAGE_PRICING_PER_IMAGE.
+    - Tailles plus grandes que 1024x1024 → x1.5
+    - quality == 'hd' → x2 supplémentaire (DALL-E 3, GPT-Image)
+    - Modèle inconnu → 0.040 par défaut (estimation conservatrice)
+    """
+    if not model:
+        return 0.0
+    m = model.lower().strip()
+    base = IMAGE_PRICING_PER_IMAGE.get(m)
+    if base is None:
+        for k, v in IMAGE_PRICING_PER_IMAGE.items():
+            if m.endswith("/" + k) or k.endswith(m):
+                base = v
+                break
+    if base is None:
+        base = 0.040
+
+    multiplier = 1.0
+    if size and size != "1024x1024":
+        try:
+            w, h = (int(x) for x in size.lower().split("x"))
+            if w * h > 1024 * 1024:
+                multiplier *= 1.5
+        except Exception:
+            pass
+    if quality and str(quality).lower() in ("hd", "high", "quality"):
+        multiplier *= 2.0
+
+    return float(base) * float(n) * multiplier

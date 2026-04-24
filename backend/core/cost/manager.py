@@ -109,6 +109,51 @@ class CostManager:
             await session.rollback()
             return 0.0
 
+    async def record_image_cost(
+        self,
+        session: AsyncSession,
+        conversation_id: int | None,
+        model: str,
+        n: int = 1,
+        size: str = "1024x1024",
+        quality: str | None = None,
+        user_id: Optional[int] = None,
+    ) -> float:
+        """Enregistre le coût d'une génération d'image dans CostAnalytics.
+
+        Les images n'ont pas de tokens (au sens texte), on utilise le helper
+        `get_image_cost` qui applique les tarifs par image + multiplicateurs
+        de taille/quality. tokens_input/output sont à 0 — la colonne `cost` et
+        `model` permettent de filtrer/agréger côté analytics.
+        """
+        from backend.core.cost.calculator import get_image_cost
+        try:
+            cost = get_image_cost(model, n=n, size=size, quality=quality)
+            resolved_user_id = user_id
+            if resolved_user_id is None and conversation_id is not None:
+                conv = await session.get(Conversation, conversation_id)
+                if conv and conv.user_id is not None:
+                    resolved_user_id = conv.user_id
+            record = CostAnalytics(
+                user_id=resolved_user_id,
+                date=datetime.utcnow().date(),
+                conversation_id=conversation_id,
+                model=model,
+                tokens_input=0,
+                tokens_output=0,
+                cost=cost,
+            )
+            session.add(record)
+            await session.commit()
+            return cost
+        except Exception as e:
+            logger.error(f"Error recording image cost: {e}")
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            return 0.0
+
     async def get_summary(self, session: AsyncSession, user_id: Optional[int] = None) -> dict:
         """Get cost and usage summary scoped to a user (or global if None)."""
         try:
