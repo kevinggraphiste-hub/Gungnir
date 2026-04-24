@@ -45,6 +45,116 @@ def _validate_display_name(name: str) -> tuple[bool, str]:
         return False, f"Caractères interdits dans le nom : {human}"
     return True, ""
 
+
+def _parse_frontmatter(raw: str) -> tuple[dict, str]:
+    """Extrait un bloc YAML-like entre `---` en tête de fichier MD/TXT.
+
+    Pas besoin d'une lib yaml complète : on supporte les formats courants
+    qu'on attend dans un import skill/agent/personnalité :
+      key: value   (string, nombre, bool)
+      key: [a, b]  (liste inline)
+      key: true/false/null
+
+    Retourne (meta_dict, remaining_body). Si pas de front-matter, meta = {}
+    et body = raw tel quel.
+    """
+    if not raw.lstrip().startswith("---"):
+        return {}, raw
+    # Trouve la fermeture
+    content = raw.lstrip()
+    parts = content.split("\n", 1)
+    if len(parts) < 2:
+        return {}, raw
+    rest = parts[1]
+    close_idx = rest.find("\n---")
+    if close_idx == -1:
+        return {}, raw
+    yaml_block = rest[:close_idx]
+    body_after = rest[close_idx + 4:].lstrip("\n")
+
+    meta: dict = {}
+    for line in yaml_block.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        # Parse basique : listes inline [a, b], bool, null, string
+        if value.startswith("[") and value.endswith("]"):
+            inner = value[1:-1].strip()
+            items = [x.strip().strip('"\'') for x in inner.split(",") if x.strip()]
+            meta[key] = items
+        elif value.lower() in ("true", "false"):
+            meta[key] = value.lower() == "true"
+        elif value.lower() in ("null", "none", ""):
+            meta[key] = None
+        else:
+            # Strip quotes si présentes
+            if (value.startswith('"') and value.endswith('"')) or \
+               (value.startswith("'") and value.endswith("'")):
+                value = value[1:-1]
+            meta[key] = value
+    return meta, body_after
+
+
+async def _parse_import_body(request: Request, *, body_key: str = "prompt") -> dict:
+    """Parse un body d'import de skill / sub-agent / personnalité.
+
+    Supporte 3 formats :
+      - `application/json` OU le body brut commence par `{` : json.loads direct
+      - `text/markdown`, `text/plain`, ou extension `.md`/`.txt` : parse
+        front-matter YAML optionnel → meta, le reste du contenu devient le
+        champ `body_key` ("prompt" pour skill, "system_prompt" pour agent).
+        Le nom peut aussi être dérivé du premier `# Titre` en tête.
+
+    Ça permet à l'utilisateur de partager un skill sous forme de MD lisible
+    (avec méthodo, exemples, règles) sans devoir se casser la tête à faire
+    du JSON.
+    """
+    raw_bytes = await request.body()
+    try:
+        text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return {"__error__": "Encodage non-UTF-8"}
+    if not text.strip():
+        return {}
+
+    ctype = (request.headers.get("content-type") or "").lower()
+    stripped = text.lstrip()
+
+    # JSON : content-type explicite, ou body commence par { / [
+    if "application/json" in ctype or stripped.startswith("{") or stripped.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+            return {"__error__": "JSON racine doit être un objet"}
+        except json.JSONDecodeError as e:
+            return {"__error__": f"JSON invalide : {e}"}
+
+    # MD / TXT : front-matter YAML + body
+    meta, body = _parse_frontmatter(text)
+    result: dict = dict(meta) if meta else {}
+
+    # Extraction d'un nom depuis le premier "# Titre" si pas déjà dans meta
+    if not result.get("name"):
+        for line in body.splitlines():
+            m = re.match(r"^\s*#\s+(.+?)\s*$", line)
+            if m:
+                result["name"] = m.group(1).strip()
+                break
+
+    # Le contenu principal devient le prompt / system_prompt (selon le type)
+    if body.strip():
+        result[body_key] = body.strip()
+
+    return result
+
 # Import helper functions from chat module (needed by invoke_sub_agent)
 from backend.core.api.chat import (
     _parse_text_tool_calls,
