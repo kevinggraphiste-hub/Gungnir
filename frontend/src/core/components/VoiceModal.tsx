@@ -55,7 +55,7 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
 
   useEffect(() => {
     if (!isOpen) return
-    apiFetch('/api/voice/convai/config')
+    apiFetch('/api/plugins/voice/convai/config')
       .then(r => { if (!r.headers.get('content-type')?.includes('application/json')) throw new Error('Not JSON'); return r.json() })
       .then(data => { if (!data.configured && data.has_api_key) setNeedsAgent(true) })
       .catch(() => {})
@@ -88,7 +88,7 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
   const createAgent = useCallback(async () => {
     setCreatingAgent(true); setError(null)
     try {
-      const resp = await apiFetch('/api/voice/convai/create-agent', { method: 'POST' })
+      const resp = await apiFetch('/api/plugins/voice/convai/create-agent', { method: 'POST' })
       if (!resp.headers.get('content-type')?.includes('application/json')) throw new Error('Backend non joignable')
       const data = await resp.json()
       if (data.agent_id) setNeedsAgent(false)
@@ -102,7 +102,7 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true } })
       streamRef.current = stream
-      const resp = await apiFetch('/api/voice/convai/signed-url')
+      const resp = await apiFetch('/api/plugins/voice/convai/signed-url')
       if (!resp.headers.get('content-type')?.includes('application/json')) {
         setError('Backend non joignable'); setStatus('error'); stream.getTracks().forEach(t => t.stop()); return
       }
