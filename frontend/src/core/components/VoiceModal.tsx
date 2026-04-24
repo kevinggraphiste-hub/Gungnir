@@ -122,6 +122,16 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
       wsRef.current = ws
       ws.onopen = () => {
         setStatus('listening'); setError(null)
+
+        // ── ElevenLabs Convai v3 : message d'initialisation obligatoire ─────
+        // Sans ce handshake, le serveur ne démarre pas vraiment la session
+        // (la WS reste ouverte mais aucun audio n'est traité). On envoie une
+        // config par défaut ; les overrides (prompt, voice_id, langue) sont
+        // déjà portés par l'agent côté ElevenLabs.
+        try {
+          ws.send(JSON.stringify({ type: 'conversation_initiation_client_data' }))
+        } catch { /* ignore */ }
+
         const audioCtx = new AudioContext({ sampleRate: 16000 }); audioCtxRef.current = audioCtx
         const source = audioCtx.createMediaStreamSource(stream); sourceNodeRef.current = source
         const processor = audioCtx.createScriptProcessor(4096, 1, 1); processorRef.current = processor
@@ -134,31 +144,54 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
           for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
           ws.send(JSON.stringify({ user_audio_chunk: btoa(binary) }))
         }
-        source.connect(processor); processor.connect(audioCtx.destination)
+        // IMPORTANT : on NE connecte PAS le processor au destination,
+        // sinon le micro est rebouclé dans les haut-parleurs (feedback).
+        // Un GainNode à 0 est juste là pour que le processor "tire" du son
+        // (les ScriptProcessorNode ont besoin d'un downstream sink actif).
+        const mute = audioCtx.createGain(); mute.gain.value = 0
+        source.connect(processor); processor.connect(mute); mute.connect(audioCtx.destination)
       }
       ws.onmessage = (evt) => {
         try {
           const msg = JSON.parse(evt.data)
-          if (msg.audio) {
+
+          // ── Audio venant de l'agent (parole synthétisée) ──────────────────
+          // ElevenLabs Convai v3 structure : { type:"audio", audio_event:{ audio_base_64 } }
+          // On garde un fallback msg.audio pour compat avec d'anciennes versions.
+          const audioB64 = msg?.audio_event?.audio_base_64 || msg?.audio
+          if (audioB64) {
             setStatus('speaking')
-            const raw = atob(msg.audio); const buf = new ArrayBuffer(raw.length); const view = new Uint8Array(buf)
+            const raw = atob(audioB64); const buf = new ArrayBuffer(raw.length); const view = new Uint8Array(buf)
             for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i)
             audioQueueRef.current.push(buf); playNextAudio()
           }
-          if (msg.type === 'user_transcript' || msg.user_transcription_event?.user_transcript) {
-            const text = msg.user_transcript || msg.user_transcription_event?.user_transcript || ''
-            if (text.trim()) setConversation(prev => [...prev, { role: 'user', text, ts: Date.now() }])
+
+          // Transcript user
+          const userText = msg?.user_transcription_event?.user_transcript || msg?.user_transcript
+          if (userText?.trim()) setConversation(prev => [...prev, { role: 'user', text: userText, ts: Date.now() }])
+
+          // Réponse agent (texte)
+          const agentText = msg?.agent_response_event?.agent_response || msg?.agent_response
+          if (agentText?.trim()) setConversation(prev => [...prev, { role: 'assistant', text: agentText, ts: Date.now() }])
+
+          // Interruption — on drop la queue audio
+          if (msg.type === 'interruption') {
+            audioQueueRef.current = []; isPlayingRef.current = false; setStatus('listening')
           }
-          if (msg.type === 'agent_response' || msg.agent_response_event) {
-            const text = msg.agent_response || msg.agent_response_event?.agent_response || ''
-            if (text.trim()) setConversation(prev => [...prev, { role: 'assistant', text, ts: Date.now() }])
+
+          // Ping — ElevenLabs envoie { type:"ping", ping_event:{ event_id } }
+          // et attend un pong avec le MÊME event_id, sinon ferme la session
+          // au bout de quelques secondes (cause de l'instabilité).
+          if (msg.type === 'ping') {
+            const eventId = msg?.ping_event?.event_id ?? msg?.event_id
+            ws.send(JSON.stringify({ type: 'pong', event_id: eventId }))
           }
-          if (msg.type === 'interruption') { audioQueueRef.current = []; isPlayingRef.current = false; setStatus('listening') }
-          if (msg.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }))
-        } catch {}
+        } catch (e) {
+          console.warn('[VoiceModal] onmessage parse error:', e)
+        }
       }
-      ws.onerror = () => { setError('Erreur WebSocket ElevenLabs'); setStatus('error') }
-      ws.onclose = () => { setStatus('idle'); cleanupAudio() }
+      ws.onerror = (e) => { console.warn('[VoiceModal] WebSocket error:', e); setError('Erreur WebSocket ElevenLabs'); setStatus('error') }
+      ws.onclose = (e) => { console.info('[VoiceModal] WebSocket closed:', e.code, e.reason); setStatus('idle'); cleanupAudio() }
     } catch (err: any) { console.error('ConvAI session error:', err); setError(err?.message || 'Impossible de démarrer la session'); setStatus('error') }
   }, [playNextAudio])
 
