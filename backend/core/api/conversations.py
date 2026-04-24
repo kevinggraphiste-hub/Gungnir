@@ -133,11 +133,16 @@ async def update_conversation(convo_id: int, request: Request, data: dict, sessi
         convo.provider = data["provider"]
     if "model" in data:
         convo.model = data["model"]
+    if "is_pinned" in data:
+        convo.is_pinned = bool(data["is_pinned"])
 
     convo.updated_at = __import__("datetime").datetime.utcnow()
     await session.commit()
     await session.refresh(convo)
-    return {"id": convo.id, "title": convo.title, "provider": convo.provider, "model": convo.model}
+    return {
+        "id": convo.id, "title": convo.title, "provider": convo.provider,
+        "model": convo.model, "is_pinned": convo.is_pinned,
+    }
 
 
 @router.get("/conversations/{convo_id}/messages")

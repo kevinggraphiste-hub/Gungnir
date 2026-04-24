@@ -12,7 +12,7 @@ import {
   Paperclip, Image as ImageIcon, Copy, Folder, FolderMinus, GripVertical,
   Calendar, Play, Pause, CheckCircle2, AlertCircle, Clock,
   RefreshCw, ThumbsUp, ThumbsDown, Zap, Wand2, Volume2, VolumeX, Loader2,
-  ShieldCheck, ShieldAlert, Square
+  ShieldCheck, ShieldAlert, Square, Pin
 } from 'lucide-react'
 import { SecondaryButton } from '../components/ui'
 import VoiceModal from '../components/VoiceModal'
@@ -1768,7 +1768,30 @@ export default function Chat() {
     if (folderFilter === 'all') return true
     if (folderFilter === null) return !c.folder_id
     return c.folder_id === folderFilter
+  }).sort((a: any, b: any) => {
+    // Conversations épinglées remontent en haut. À pin égal, on respecte
+    // l'ordre serveur (updated_at desc).
+    const ap = a.is_pinned ? 1 : 0
+    const bp = b.is_pinned ? 1 : 0
+    if (ap !== bp) return bp - ap
+    return 0
   })
+
+  // Toggle l'épinglage d'une conversation. Optimistic update + revert si l'API échoue.
+  const togglePinConversation = async (convoId: number, currentPinned: boolean) => {
+    const next = !currentPinned
+    setConversations(conversations.map(c => c.id === convoId ? { ...c, is_pinned: next } : c))
+    try {
+      await apiFetch(`/api/conversations/${convoId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_pinned: next }),
+      })
+    } catch (err) {
+      console.error('Pin toggle failed:', err)
+      setConversations(conversations.map(c => c.id === convoId ? { ...c, is_pinned: currentPinned } : c))
+    }
+  }
 
   return (
     <div className="flex h-full" style={{ background: 'var(--bg-primary)' }}>
@@ -1933,7 +1956,19 @@ export default function Chat() {
                       </div>
                       {!isEditing && (
                         <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>$0.000</span>
+                          {/* Bouton Pin — toujours visible si épinglée, sinon
+                              révélé au hover sur la ligne (group-hover) pour
+                              ne pas surcharger visuellement la sidebar. */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); togglePinConversation(convo.id, !!(convo as any).is_pinned) }}
+                            className={`p-1 rounded transition-opacity ${(convo as any).is_pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                            style={{ color: (convo as any).is_pinned ? 'var(--scarlet)' : 'var(--text-muted)' }}
+                            title={(convo as any).is_pinned ? 'Désépingler' : 'Épingler en haut'}
+                          >
+                            {(convo as any).is_pinned
+                              ? <Pin className="w-3 h-3" fill="currentColor" />
+                              : <Pin className="w-3 h-3" />}
+                          </button>
                           <ConversationMenu conversationId={convo.id} conversationTitle={convo.title}
                             provider={selectedProvider} model={selectedModel}
                             onTitleUpdated={(id, title) => setConversations(conversations.map(c => c.id === id ? { ...c, title } : c))}

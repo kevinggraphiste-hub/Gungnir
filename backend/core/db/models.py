@@ -353,6 +353,7 @@ async def init_db(engine):
         ("ALTER TABLE messages ADD COLUMN model VARCHAR(255) DEFAULT ''", "model -> messages"),
         ("ALTER TABLE messages ADD COLUMN provider VARCHAR(100) DEFAULT ''", "provider -> messages"),
         ("ALTER TABLE messages ADD COLUMN images_out JSONB DEFAULT NULL", "images_out -> messages"),
+        ("ALTER TABLE conversations ADD COLUMN is_pinned BOOLEAN DEFAULT FALSE", "is_pinned -> conversations"),
     ]
 
     # Migrations plugin : chaque plugin expose optionnellement sa propre liste
