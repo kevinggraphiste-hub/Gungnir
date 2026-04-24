@@ -5,7 +5,7 @@ import i18n from '../../i18n'
 import { useStore } from '../stores/appStore'
 import { api, apiFetch } from '../services/api'
 import {
-  Send, Plus, User, Mic, MicOff, ChevronDown, Bot,
+  Send, Plus, User, ChevronDown, Bot,
   Search, Sparkles, MessageSquare, Star,
   Code, FileText, Globe, BarChart3, Radio,
   ChevronLeft, ChevronRight, Pencil, Check, X, Key,
@@ -19,6 +19,7 @@ import VoiceModal from '../components/VoiceModal'
 import ApiKeysModal from '../components/ApiKeysModal'
 import UserModal from '../components/UserModal'
 import ConversationMenu from '../components/ConversationMenu'
+import VoiceInput from '../components/VoiceInput'
 
 function AgentAvatar({ size = 32 }: { size?: number }) {
   return (
@@ -742,8 +743,11 @@ export default function Chat() {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  const [pttStatus, setPttStatus] = useState<'idle' | 'recording' | 'processing'>('idle')
-  const recognitionRef = useRef<any>(null)
+  // Nettoyage d'anciennes prefs PTT périmées — le nouveau composant VoiceInput
+  // utilise Whisper local (transformers.js), plus de config engine nécessaire.
+  // Évite qu'un ancien prefs `{engine: 'browser'}` cause confusion si un jour
+  // on re-expose un sélecteur.
+  useEffect(() => { try { localStorage.removeItem('chat.ptt.prefs') } catch { /* ignore */ } }, [])
 
   // ── Prompt improvement : LLM réécrit le draft avant envoi ──────────
   const [improving, setImproving] = useState(false)
@@ -952,213 +956,9 @@ export default function Chat() {
     }
   }, [currentConversation])
 
-  // Pour l'engine cloud STT : MediaRecorder + chunks audio.
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
-  const audioStreamRef = useRef<MediaStream | null>(null)
-
-  const startPTT = useCallback(async () => {
-    // Lit les prefs PTT depuis localStorage (Settings → Voix).
-    let prefs: { engine?: string; lang: string; continuous: boolean; interim: boolean } | null = null
-    try {
-      const raw = localStorage.getItem('chat.ptt.prefs')
-      if (raw) prefs = JSON.parse(raw)
-    } catch { /* ignore */ }
-    // Default = 'openai' (Whisper via notre backend) au lieu de 'browser'
-    // (Web Speech API). Le moteur browser échouait systématiquement avec
-    // erreur `network` sur les setups où Chrome ne peut pas contacter
-    // speech.googleapis.com (VPS avec firewall sortant, adblockers, etc.).
-    // OpenAI Whisper passe par notre backend donc pas de dépendance Google.
-    // L'user peut toujours forcer 'browser' via Settings → Voix s'il préfère.
-    const engine = prefs?.engine || 'openai'
-    const forcedLang = prefs?.lang && prefs.lang !== 'auto' ? prefs.lang : null
-    console.info('[PTT] startPTT', { engine, lang: forcedLang, prefs })
-
-    // ─── Engine "browser" : Web Speech Recognition ───────────
-    if (engine === 'browser') {
-      // Context check : Web Speech API refuse en HTTP (sauf localhost). Sans
-      // ce warning l'user tape dans le vide pendant 5 min en se demandant.
-      const isSecure = window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-      if (!isSecure) {
-        alert('La reconnaissance vocale exige HTTPS. Passe Gungnir derrière un reverse-proxy TLS ou configure un certificat.')
-        return
-      }
-
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-      if (!SpeechRecognition) {
-        alert('Ce navigateur ne supporte pas la reconnaissance vocale (essaie Chrome ou Edge).')
-        return
-      }
-      if (recognitionRef.current) {
-        console.info('[PTT] Already running, ignore click')
-        return
-      }
-
-      // Normalise la locale : i18n.language peut déjà contenir une région (ex "fr-FR"),
-      // dans ce cas ne pas concaténer en "fr-FR-FR-FR" qui est invalide.
-      const lang = forcedLang || (
-        i18n.language.includes('-') ? i18n.language :
-        i18n.language === 'en' ? 'en-US' :
-        `${i18n.language}-${i18n.language.toUpperCase()}`
-      )
-
-      const recognition = new SpeechRecognition()
-      recognition.lang = lang
-      // Defaults : continuous + interim ACTIVÉS par défaut quand l'user n'a
-      // pas configuré ses prefs. Sinon la Web Speech API s'arrête au premier
-      // silence (~1-2s) et le bouton retombe en idle avant que l'user ait
-      // fini sa phrase. On respecte les prefs si elles sont définies.
-      recognition.interimResults   = prefs?.interim    === undefined ? true : !!prefs.interim
-      recognition.continuous       = prefs?.continuous === undefined ? true : !!prefs.continuous
-      recognition.maxAlternatives  = 1
-
-      // Snapshot de l'input au moment de démarrer — on préfixe toutes les
-      // transcriptions (interim + final) à partir d'ici pour afficher le texte
-      // EN DIRECT. Sinon avec `continuous=true`, les navigateurs gardent les
-      // résultats en interim très longtemps (parfois sans jamais les passer
-      // en final), et le code précédent qui n'ajoutait que les finals
-      // donnait l'impression que rien n'était retranscrit.
-      const snapshot = (inputRef.current?.value ?? input ?? '')
-      console.info('[PTT] Starting browser SpeechRecognition', { lang, continuous: recognition.continuous, interim: recognition.interimResults, snapshot_len: snapshot.length })
-      recognition.onstart = () => {
-        console.info('[PTT] onstart — listening')
-        setPttStatus('recording')
-      }
-      recognition.onaudiostart = () => console.info('[PTT] onaudiostart — mic capturing')
-      recognition.onsoundstart = () => console.info('[PTT] onsoundstart — sound detected')
-      recognition.onspeechstart = () => console.info('[PTT] onspeechstart — speech detected')
-      recognition.onresult = (event: any) => {
-        // On reconstruit TOUT le transcript (interim + final) depuis le début
-        // de la session, puis on replace sur le snapshot. Pas de risque de
-        // doublon : on réécrit intégralement à chaque update.
-        let transcript = ''
-        for (let i = 0; i < event.results.length; i++) {
-          const res = event.results[i]
-          if (res[0]?.transcript) transcript += res[0].transcript
-        }
-        transcript = transcript.trim()
-        console.info('[PTT] onresult', { transcript, results_count: event.results.length })
-        if (transcript) {
-          const sep = snapshot && !/\s$/.test(snapshot) ? ' ' : ''
-          setInput(snapshot + sep + transcript)
-        }
-      }
-      // Log explicite des erreurs — sans ça, un "not-allowed" ou un
-      // "no-speech" ou un "network" plante silencieusement et l'user
-      // croit que le bouton "ne marche pas".
-      recognition.onerror = (e: any) => {
-        const err = e?.error || 'unknown'
-        console.warn('[PTT] SpeechRecognition error:', err, 'message=', e?.message)
-        // "no-speech" est normal en continuous mode si l'user se tait un moment.
-        // On laisse tourner sans arrêter ni alerter.
-        if (err === 'no-speech') return
-        if (err === 'not-allowed') {
-          alert('Le micro est bloqué par le navigateur. Vérifie l\'icône cadenas dans la barre d\'adresse et autorise l\'accès audio.')
-        } else if (err === 'network') {
-          alert('Erreur réseau de reconnaissance vocale. Chrome envoie l\'audio vers Google Speech — vérifie ta connexion.')
-        } else if (err === 'service-not-allowed') {
-          alert('Le service de reconnaissance vocale est bloqué (peut-être par une extension ou un firewall).')
-        }
-        setPttStatus('idle')
-        recognitionRef.current = null
-      }
-      recognition.onend = () => {
-        console.info('[PTT] onend')
-        setPttStatus('idle')
-        recognitionRef.current = null
-      }
-      recognitionRef.current = recognition
-      try {
-        recognition.start()
-      } catch (startErr: any) {
-        console.warn('[PTT] recognition.start() threw:', startErr?.message)
-        alert(`Impossible de démarrer la reconnaissance vocale : ${startErr?.message || 'erreur inconnue'}`)
-        recognitionRef.current = null
-        setPttStatus('idle')
-      }
-      return
-    }
-
-    // ─── Engine cloud (Whisper…) : MediaRecorder → POST /stt au stop ───
-    console.info('[PTT] Using cloud engine:', engine)
-    if (mediaRecorderRef.current) return
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      audioStreamRef.current = stream
-      // On tente webm/opus (Chrome/Firefox), fallback au défaut navigateur.
-      let mimeType = ''
-      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported) {
-        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus'
-        else if (MediaRecorder.isTypeSupported('audio/webm')) mimeType = 'audio/webm'
-        else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4'
-      }
-      const mr = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
-      audioChunksRef.current = []
-      mr.ondataavailable = e => { if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data) }
-      mr.onstart = () => setPttStatus('recording')
-      mr.onstop = async () => {
-        setPttStatus('processing')
-        // Coupe le micro immédiatement pour l'indicateur OS
-        if (audioStreamRef.current) {
-          audioStreamRef.current.getTracks().forEach(t => t.stop())
-          audioStreamRef.current = null
-        }
-        const chunks = audioChunksRef.current
-        audioChunksRef.current = []
-        const blob = new Blob(chunks, { type: mimeType || 'audio/webm' })
-        if (!blob.size) { setPttStatus('idle'); mediaRecorderRef.current = null; return }
-        try {
-          const form = new FormData()
-          const ext = (mimeType.includes('mp4') ? 'm4a' : 'webm')
-          form.append('audio', blob, `recording.${ext}`)
-          form.append('provider', engine)
-          if (forcedLang) form.append('lang', forcedLang)
-          else form.append('lang', i18n.language === 'en' ? 'en-US' : 'fr-FR')
-          // Model hint pour mistral / custom (openai = whisper-1 hardcodé backend)
-          if (engine === 'mistral' && (prefs as any)?.mistralModel) {
-            form.append('model', (prefs as any).mistralModel)
-          } else if (engine === 'custom' && (prefs as any)?.customModel) {
-            form.append('model', (prefs as any).customModel)
-          }
-          const r = await apiFetch('/api/chat/stt', { method: 'POST', body: form })
-          const data = await r.json()
-          console.info('[PTT] /api/chat/stt response:', { ok: data?.ok, text_len: data?.text?.length, error: data?.error })
-          if (data?.ok && data.text) {
-            setInput(prev => (prev ? prev + ' ' : '') + data.text.trim())
-            setTimeout(() => inputRef.current?.focus(), 50)
-          } else {
-            const msg = data?.error || `Échec Whisper (${engine}) — clé API manquante ou invalide ?`
-            console.warn('[PTT] Cloud STT failed:', msg)
-            alert(msg)
-          }
-        } catch (e: any) {
-          console.warn('[PTT] Cloud STT network error:', e?.message)
-          alert(`Erreur réseau STT : ${e?.message || 'inconnue'}`)
-        } finally {
-          setPttStatus('idle')
-          mediaRecorderRef.current = null
-        }
-      }
-      mr.onerror = () => { setPttStatus('idle'); mediaRecorderRef.current = null }
-      mediaRecorderRef.current = mr
-      mr.start()
-    } catch (e) {
-      console.warn('Mic access denied or unavailable:', e)
-      setPttStatus('idle')
-    }
-  }, [])
-
-  const stopPTT = useCallback(() => {
-    // Engine browser → recognition.stop() ; engine cloud → mediaRecorder.stop()
-    if (recognitionRef.current) {
-      setPttStatus('processing')
-      recognitionRef.current.stop()
-      return
-    }
-    if (mediaRecorderRef.current) {
-      try { mediaRecorderRef.current.stop() } catch { /* ignore */ }
-    }
-  }, [])
+  // Legacy PTT supprimé en v2.63.15 — remplacé par le composant <VoiceInput>
+  // qui utilise Whisper WASM dans le navigateur (aucune donnée ne quitte la
+  // machine, zéro clé API, zéro backend). Voir `components/VoiceInput.tsx`.
 
   // Listen for Ctrl+B custom event from useKeyboard hook
   const toggleSidebar = useCallback(() => {
@@ -2741,15 +2541,15 @@ export default function Chat() {
                     : <Wand2 className="w-3.5 h-3.5" />}
                 </button>
 
-                {/* Mic PTT */}
-                <button onClick={() => pttStatus === 'recording' ? stopPTT() : startPTT()}
-                  className="flex items-center justify-center rounded-lg transition-colors"
-                  style={pttStatus === 'recording'
-                    ? { width: '30px', height: '30px', background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent)', color: 'var(--accent-primary)' }
-                    : { width: '30px', height: '30px', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
-                  title={t('chat.speak')}>
-                  {pttStatus === 'recording' ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                </button>
+                {/* Saisie vocale — Whisper local dans le navigateur via
+                    transformers.js. Aucune donnée ne quitte la machine ;
+                    pas de clé API, pas de backend. Premier usage télécharge
+                    ~80 MB de modèle (cached ensuite en IndexedDB). */}
+                <VoiceInput
+                  onTranscript={(text) => setInput(prev => prev ? prev + ' ' + text : text)}
+                  disabled={isLoading}
+                  title={t('chat.speak')}
+                />
 
                 {/* TTS toggle — lit les réponses LLM à voix haute via Web Speech API */}
                 <button onClick={toggleTts}

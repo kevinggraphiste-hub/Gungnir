@@ -1,7 +1,7 @@
 {
   "name": "gungnir-frontend",
   "private": true,
-  "version": "2.63.14",
+  "version": "2.63.15",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -24,6 +24,7 @@
     "@codemirror/lang-yaml": "^6.1.3",
     "@replit/codemirror-minimap": "^0.5.2",
     "@uiw/react-codemirror": "^4.25.9",
+    "@xenova/transformers": "^2.17.2",
     "codemirror-languageserver": "^1.22.0",
     "i18next": "^24.2.1",
     "lucide-react": "^0.468.0",
