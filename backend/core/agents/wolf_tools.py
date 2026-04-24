@@ -1251,36 +1251,37 @@ async def _subagent_invoke(name: str, task: str) -> dict:
     agent = subagent_library.get_agent(name)
     if not agent:
         return {"ok": False, "error": f"Sous-agent '{name}' introuvable."}
-    settings = Settings.load()
-    provider_name = agent.provider or "openrouter"
-    provider_meta = settings.providers.get(provider_name)
 
-    # STRICT per-user: resolve the caller's own key via the wolf user context.
-    # chat.py sets this before invoking a tool, so the sub-agent runs on the
-    # caller's credits instead of falling back to a global fallback.
+    # STRICT per-user : on résout dynamiquement le meilleur modèle disponible
+    # pour cet agent via le `model_router`. Le routeur lit le `model_profile`
+    # du sous-agent (ex: reasoning_heavy, fast_cheap, code, vision...) et
+    # choisit le premier provider/modèle configuré chez l'utilisateur dans la
+    # liste de préférences. Si l'agent a un `model` explicite, il prime.
+    from backend.core.agents.model_router import resolve_model_for_agent
+    from backend.core.db.engine import async_session as _sa_sm
+
     _uid_sa = get_user_context() or 0
-    _user_api_key = None
-    _user_base_url = None
-    if _uid_sa > 0:
-        try:
-            from backend.core.db.engine import async_session as _sa_sm
-            from backend.core.api.auth_helpers import (
-                get_user_settings as _sa_gus,
-                get_user_provider_key as _sa_gpk,
-            )
-            async with _sa_sm() as _sa_s:
-                _uset = await _sa_gus(_uid_sa, _sa_s)
-                _decoded = _sa_gpk(_uset, provider_name)
-                if _decoded and _decoded.get("api_key"):
-                    _user_api_key = _decoded["api_key"]
-                    _user_base_url = _decoded.get("base_url")
-        except Exception as _e:
-            print(f"[Wolf] Sub-agent key lookup failed for uid={_uid_sa}: {_e}")
+    if _uid_sa <= 0:
+        return {"ok": False, "error": "Aucun utilisateur en contexte — impossible de résoudre la clé API du sous-agent."}
 
-    if not _user_api_key:
-        return {"ok": False, "error": f"Provider '{provider_name}' non configuré pour cet utilisateur."}
+    try:
+        async with _sa_sm() as _sa_s:
+            resolved = await resolve_model_for_agent(agent, _uid_sa, _sa_s)
+    except Exception as _e:
+        print(f"[Wolf] Sub-agent model routing failed for uid={_uid_sa}: {_e}")
+        resolved = None
 
-    model = agent.model or (provider_meta.default_model if provider_meta else None)
+    if not resolved:
+        return {"ok": False, "error": f"Aucun provider compatible avec le profil '{getattr(agent, 'model_profile', 'general')}' n'est configuré pour cet utilisateur. Ajoute une clé API (Paramètres → Providers)."}
+
+    provider_name = resolved.provider
+    _user_api_key = resolved.api_key
+    _user_base_url = resolved.base_url
+    model = resolved.model
+    print(f"[Wolf Router] agent={name} profile={getattr(agent, 'model_profile', 'general')} → provider={provider_name} model={model} ({resolved.source})")
+
+    settings = Settings.load()
+    provider_meta = settings.providers.get(provider_name)
     llm = get_provider(provider_name, _user_api_key, _user_base_url or (provider_meta.base_url if provider_meta else None))
 
     # Start recording this inter-agent conversation (context-aware: parent_id is set

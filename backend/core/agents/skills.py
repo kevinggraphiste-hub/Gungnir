@@ -830,7 +830,7 @@ class SubAgent(BaseModel):
     system_prompt: str
     tools: list[str] = []
     provider: str = "openrouter"
-    model: str = ""          # vide = utiliser le modèle par défaut du provider
+    model: str = ""          # vide = résolution via model_profile par model_router
     created_at: Optional[datetime] = None
     # --- Champs standards enrichis ---
     description: str = ""
@@ -838,6 +838,13 @@ class SubAgent(BaseModel):
     tags: list[str] = []
     max_iterations: int = 5
     author: str = "gungnir"
+    # --- Routing modèle auto ---
+    # Profil de tâche utilisé par `model_router.resolve_model_for_agent()` pour
+    # choisir le meilleur modèle disponible chez l'utilisateur. Ignoré si
+    # `model` est déjà spécifié explicitement.
+    # Profils valides : general, reasoning_heavy, fast_cheap, code, vision,
+    # long_context, research. Voir backend/core/agents/model_router.py.
+    model_profile: str = "general"
 
 
 class SubAgentLibrary:

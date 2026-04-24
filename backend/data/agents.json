@@ -12,7 +12,9 @@
         "kb_write",
         "skill_seo_complete"
       ],
-      "created_at": "2026-03-28T02:02:03.997584"
+      "created_at": "2026-03-28T02:02:03.997584",
+      "model_profile": "reasoning_heavy",
+      "model": ""
     },
     {
       "id": "518bb134",
@@ -25,7 +27,9 @@
         "kb_write",
         "kb_list"
       ],
-      "created_at": "2026-03-28T02:05:50.488879"
+      "created_at": "2026-03-28T02:05:50.488879",
+      "model_profile": "reasoning_heavy",
+      "model": ""
     },
     {
       "id": "0ba93169",
@@ -38,7 +42,9 @@
         "kb_write",
         "kb_list"
       ],
-      "created_at": "2026-03-28T02:08:28.792529"
+      "created_at": "2026-03-28T02:08:28.792529",
+      "model_profile": "reasoning_heavy",
+      "model": ""
     },
     {
       "id": "10ce9136",
@@ -56,7 +62,9 @@
         "kb_write",
         "kb_list"
       ],
-      "created_at": "2026-04-23T23:15:59.611464"
+      "created_at": "2026-04-23T23:15:59.611464",
+      "model_profile": "code",
+      "model": ""
     },
     {
       "id": "352b21f7",
@@ -72,7 +80,9 @@
         "kb_write",
         "kb_list"
       ],
-      "created_at": "2026-04-23T23:15:59.611464"
+      "created_at": "2026-04-23T23:15:59.611464",
+      "model_profile": "general",
+      "model": ""
     },
     {
       "id": "db81d85b",
@@ -87,7 +97,9 @@
         "kb_write",
         "kb_list"
       ],
-      "created_at": "2026-04-23T23:15:59.611464"
+      "created_at": "2026-04-23T23:15:59.611464",
+      "model_profile": "reasoning_heavy",
+      "model": ""
     },
     {
       "id": "1a6fb6c4",
@@ -105,7 +117,9 @@
         "kb_write",
         "kb_list"
       ],
-      "created_at": "2026-04-23T23:15:59.611464"
+      "created_at": "2026-04-23T23:15:59.611464",
+      "model_profile": "research",
+      "model": ""
     },
     {
       "id": "78f6add1",
@@ -120,7 +134,9 @@
         "kb_write",
         "kb_list"
       ],
-      "created_at": "2026-04-23T23:15:59.611464"
+      "created_at": "2026-04-23T23:15:59.611464",
+      "model_profile": "general",
+      "model": ""
     },
     {
       "id": "34de222e",
@@ -136,7 +152,9 @@
         "subagent_invoke_parallel",
         "subagent_list"
       ],
-      "created_at": "2026-04-23T23:15:59.611464"
+      "created_at": "2026-04-23T23:15:59.611464",
+      "model_profile": "reasoning_heavy",
+      "model": ""
     }
   ]
 }
