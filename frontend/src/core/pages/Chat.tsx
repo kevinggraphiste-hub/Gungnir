@@ -964,7 +964,13 @@ export default function Chat() {
       const raw = localStorage.getItem('chat.ptt.prefs')
       if (raw) prefs = JSON.parse(raw)
     } catch { /* ignore */ }
-    const engine = prefs?.engine || 'browser'
+    // Default = 'openai' (Whisper via notre backend) au lieu de 'browser'
+    // (Web Speech API). Le moteur browser échouait systématiquement avec
+    // erreur `network` sur les setups où Chrome ne peut pas contacter
+    // speech.googleapis.com (VPS avec firewall sortant, adblockers, etc.).
+    // OpenAI Whisper passe par notre backend donc pas de dépendance Google.
+    // L'user peut toujours forcer 'browser' via Settings → Voix s'il préfère.
+    const engine = prefs?.engine || 'openai'
     const forcedLang = prefs?.lang && prefs.lang !== 'auto' ? prefs.lang : null
     console.info('[PTT] startPTT', { engine, lang: forcedLang, prefs })
 
@@ -1074,6 +1080,7 @@ export default function Chat() {
     }
 
     // ─── Engine cloud (Whisper…) : MediaRecorder → POST /stt au stop ───
+    console.info('[PTT] Using cloud engine:', engine)
     if (mediaRecorderRef.current) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -1115,14 +1122,18 @@ export default function Chat() {
           }
           const r = await apiFetch('/api/chat/stt', { method: 'POST', body: form })
           const data = await r.json()
+          console.info('[PTT] /api/chat/stt response:', { ok: data?.ok, text_len: data?.text?.length, error: data?.error })
           if (data?.ok && data.text) {
             setInput(prev => (prev ? prev + ' ' : '') + data.text.trim())
             setTimeout(() => inputRef.current?.focus(), 50)
           } else {
-            console.warn('Cloud STT failed:', data?.error)
+            const msg = data?.error || `Échec Whisper (${engine}) — clé API manquante ou invalide ?`
+            console.warn('[PTT] Cloud STT failed:', msg)
+            alert(msg)
           }
-        } catch (e) {
-          console.warn('Cloud STT network error:', e)
+        } catch (e: any) {
+          console.warn('[PTT] Cloud STT network error:', e?.message)
+          alert(`Erreur réseau STT : ${e?.message || 'inconnue'}`)
         } finally {
           setPttStatus('idle')
           mediaRecorderRef.current = null
