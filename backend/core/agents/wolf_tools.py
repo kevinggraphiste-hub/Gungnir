@@ -2750,7 +2750,7 @@ async def _voice_manage(action: str, provider: str = None, api_key: str = None,
         try:
             from backend.core.db.engine import async_session
             from backend.core.api.auth_helpers import get_user_settings
-            from backend.core.security import encrypt_value
+            from backend.core.config.settings import encrypt_value
             from sqlalchemy.orm.attributes import flag_modified
             async with async_session() as session:
                 us = await get_user_settings(uid, session)
