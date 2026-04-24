@@ -1916,6 +1916,18 @@ async def _get_user_openai_key(user_id: int) -> str | None:
 
 async def _get_user_elevenlabs_key(user_id: int) -> str | None:
     """Retourne la clé ElevenLabs per-user (depuis voice_config)."""
+    cfg = await _get_user_elevenlabs_cfg(user_id)
+    return (cfg or {}).get("api_key")
+
+
+async def _get_user_elevenlabs_cfg(user_id: int) -> dict | None:
+    """Retourne la config ElevenLabs complète per-user (api_key déchiffrée,
+    voice_id, agent_id, model_id, language). Source : `voice_config.elevenlabs`.
+
+    Centralise la lecture pour que /chat/tts utilise le voice_id préféré de
+    l'user (au lieu du fallback Rachel hardcodé) — sinon l'agent ne change
+    jamais de voix même quand l'user en sauvegarde une dans Settings → Voix.
+    """
     from backend.core.db.engine import get_session
     from backend.core.db.models import UserSettings
     from backend.core.config.settings import decrypt_value
@@ -1928,13 +1940,17 @@ async def _get_user_elevenlabs_key(user_id: int) -> str | None:
             us = r.scalar_one_or_none()
             if us is None:
                 return None
-            vc = (us.voice_config or {}).get("elevenlabs") or {}
-            key = vc.get("api_key")
-            if not key:
+            vc = dict((us.voice_config or {}).get("elevenlabs") or {})
+            if not vc:
                 return None
-            return decrypt_value(key)
+            if vc.get("api_key"):
+                try:
+                    vc["api_key"] = decrypt_value(vc["api_key"])
+                except Exception:
+                    vc["api_key"] = None
+            return vc
     except Exception as e:
-        logger.warning(f"ElevenLabs key lookup failed for user {user_id}: {e}")
+        logger.warning(f"ElevenLabs cfg lookup failed for user {user_id}: {e}")
     return None
 
 
@@ -2098,13 +2114,25 @@ async def chat_tts(data: dict, request: Request):
             return JSONResponse({"error": f"Erreur réseau : {e}"}, status_code=502)
 
     if provider == "elevenlabs":
-        api_key = await _get_user_elevenlabs_key(uid)
+        # Lit toute la config ElevenLabs de l'user (api_key + voice_id + model_id)
+        cfg = await _get_user_elevenlabs_cfg(uid) or {}
+        api_key = cfg.get("api_key")
         if not api_key:
             return JSONResponse({"error": "Aucune clé ElevenLabs configurée"}, status_code=400)
-        # voice_id ElevenLabs : le user doit le fournir via settings. Sinon
-        # on utilise "Rachel" (voice_id public par défaut, accepté par tous les comptes).
-        voice_id = str(data.get("voice") or "21m00Tcm4TlvDq8ikWAM").strip()
-        model_id = str(data.get("model") or "eleven_multilingual_v2").strip()
+        # Priorité : voice fournie dans la requête > voice_id sauvegardée dans
+        # les settings user > Rachel (voice publique par défaut). Sans le
+        # fallback settings, l'agent restait coincé sur Rachel même quand
+        # l'user avait sauvegardé son voice_id préféré.
+        voice_id = (
+            str(data.get("voice") or "").strip()
+            or str(cfg.get("voice_id") or "").strip()
+            or "21m00Tcm4TlvDq8ikWAM"
+        )
+        model_id = (
+            str(data.get("model") or "").strip()
+            or str(cfg.get("model_id") or "").strip()
+            or "eleven_multilingual_v2"
+        )
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
         headers = {"xi-api-key": api_key, "Content-Type": "application/json",
                    "Accept": "audio/mpeg"}
