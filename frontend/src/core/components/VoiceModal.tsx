@@ -107,9 +107,16 @@ export default function VoiceModal({ isOpen, onClose }: VoiceModalProps) {
         setError('Backend non joignable'); setStatus('error'); stream.getTracks().forEach(t => t.stop()); return
       }
       const data = await resp.json()
-      if (!resp.ok || data.error) {
-        if (data.error?.includes('Agent ID')) setNeedsAgent(true)
-        setError(data.error || 'Erreur signed URL'); setStatus('error'); stream.getTracks().forEach(t => t.stop()); return
+      // FastAPI emits HTTPException as {"detail": "..."}, mais certains endpoints
+      // renvoient aussi {"error": "..."}. On matche les deux pour ne pas perdre
+      // le vrai message d'erreur — sinon l'user voit "Erreur signed URL" générique
+      // sans pouvoir diagnostiquer (clé invalide ? agent introuvable ? timeout ?).
+      const realError = data?.error || data?.detail
+      if (!resp.ok || realError) {
+        const msg = realError || `Erreur signed URL (HTTP ${resp.status})`
+        console.warn('[VoiceModal] signed-url error:', msg, data)
+        if (typeof msg === 'string' && (msg.includes('Agent ID') || msg.includes('agent'))) setNeedsAgent(true)
+        setError(msg); setStatus('error'); stream.getTracks().forEach(t => t.stop()); return
       }
       const ws = new WebSocket(data.signed_url)
       wsRef.current = ws

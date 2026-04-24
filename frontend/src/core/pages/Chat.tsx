@@ -2211,17 +2211,32 @@ export default function Chat() {
 
           {messages.length === 0 && (!onboardingState || onboardingState.step === 'done' || onboardingState.has_api_key) && (
             <div className="flex flex-col items-center justify-center h-full text-center">
-              <div className="w-16 h-16 rounded-2xl mb-5 flex items-center justify-center"
-                style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 12%, transparent), color-mix(in srgb, var(--ember) 8%, transparent))' }}>
-                <AgentIcon size={32} />
+              {/* Logo plus imposant pour asseoir l'identité du produit */}
+              <div className="w-24 h-24 rounded-3xl mb-6 flex items-center justify-center"
+                style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--scarlet) 18%, transparent), color-mix(in srgb, var(--ember) 12%, transparent))', boxShadow: '0 4px 24px color-mix(in srgb, var(--scarlet) 15%, transparent)' }}>
+                <AgentIcon size={52} />
               </div>
-              <h3 className="text-lg font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>{t('chat.helpIntro')}</h3>
-              <p className="text-sm max-w-sm mb-6" style={{ color: 'var(--text-muted)' }}>{agentName}{t('chat.helpDesc')}</p>
-              <div className="flex flex-wrap gap-2 justify-center max-w-md">
-                {[t('chat.codeHelp'), t('chat.explainConcept'), t('chat.writeText'), t('chat.analyzeData')].map((s, i) => (
-                  <button key={i} onClick={() => setInput(s)} className="px-3 py-1.5 rounded-lg text-xs transition-colors"
-                    style={{ color: 'var(--text-secondary)', background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
-                    {s}
+              <h3 className="text-2xl font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>{t('chat.helpIntro')}</h3>
+              <p className="text-sm max-w-md mb-8" style={{ color: 'var(--text-muted)' }}>{agentName}{t('chat.helpDesc')}</p>
+              {/* Grille 2x2 de suggestions étoffées (titre + description + icône) */}
+              <div className="grid grid-cols-2 gap-3 w-full max-w-xl px-4">
+                {[
+                  { icon: Code, title: t('chat.codeHelp'), desc: t('chat.codeHelpDesc') },
+                  { icon: Sparkles, title: t('chat.explainConcept'), desc: t('chat.explainConceptDesc') },
+                  { icon: FileText, title: t('chat.writeText'), desc: t('chat.writeTextDesc') },
+                  { icon: BarChart3, title: t('chat.analyzeData'), desc: t('chat.analyzeDataDesc') },
+                ].map(({ icon: Icon, title, desc }, i) => (
+                  <button key={i} onClick={() => setInput(title)}
+                    className="group flex flex-col items-start text-left p-3.5 rounded-xl transition-all hover:-translate-y-0.5"
+                    style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--scarlet) 40%, transparent)'; e.currentTarget.style.background = 'color-mix(in srgb, var(--scarlet) 5%, var(--bg-secondary))' }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'var(--bg-secondary)' }}>
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-2"
+                      style={{ background: 'color-mix(in srgb, var(--scarlet) 12%, transparent)', color: 'var(--scarlet)' }}>
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <div className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>{title}</div>
+                    <div className="text-[11px] leading-snug" style={{ color: 'var(--text-muted)' }}>{desc}</div>
                   </button>
                 ))}
               </div>
