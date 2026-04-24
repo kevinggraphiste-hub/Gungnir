@@ -982,20 +982,45 @@ export default function Chat() {
       recognition.interimResults   = prefs?.interim    === undefined ? true : !!prefs.interim
       recognition.continuous       = prefs?.continuous === undefined ? true : !!prefs.continuous
       recognition.maxAlternatives  = 1
+
+      // Snapshot de l'input au moment de démarrer — on préfixe toutes les
+      // transcriptions (interim + final) à partir d'ici pour afficher le texte
+      // EN DIRECT. Sinon avec `continuous=true`, les navigateurs gardent les
+      // résultats en interim très longtemps (parfois sans jamais les passer
+      // en final), et le code précédent qui n'ajoutait que les finals
+      // donnait l'impression que rien n'était retranscrit.
+      const snapshot = (inputRef.current?.value ?? input ?? '')
       recognition.onstart = () => setPttStatus('recording')
       recognition.onresult = (event: any) => {
-        let finalText = ''
-        for (let i = event.resultIndex; i < event.results.length; i++) {
+        // On reconstruit TOUT le transcript (interim + final) depuis le début
+        // de la session, puis on replace sur le snapshot. Pas de risque de
+        // doublon : on réécrit intégralement à chaque update.
+        let transcript = ''
+        for (let i = 0; i < event.results.length; i++) {
           const res = event.results[i]
-          if (res.isFinal && res[0]?.transcript) finalText += res[0].transcript
+          if (res[0]?.transcript) transcript += res[0].transcript
         }
-        finalText = finalText.trim()
-        if (finalText) {
-          setInput(prev => (prev ? prev + ' ' : '') + finalText)
-          setTimeout(() => inputRef.current?.focus(), 50)
+        transcript = transcript.trim()
+        if (transcript) {
+          const sep = snapshot && !/\s$/.test(snapshot) ? ' ' : ''
+          setInput(snapshot + sep + transcript)
         }
       }
-      recognition.onerror = () => { setPttStatus('idle'); recognitionRef.current = null }
+      // Log explicite des erreurs — sans ça, un "not-allowed" ou un
+      // "no-speech" ou un "network" plante silencieusement et l'user
+      // croit que le bouton "ne marche pas".
+      recognition.onerror = (e: any) => {
+        const err = e?.error || 'unknown'
+        console.warn('[PTT] SpeechRecognition error:', err, e)
+        // "no-speech" est normal en continuous mode si l'user se tait un moment.
+        // On laisse tourner sans arrêter ni alerter.
+        if (err === 'no-speech') return
+        if (err === 'not-allowed') {
+          alert('Le micro est bloqué par le navigateur. Autorise l\'accès audio puis réessaie.')
+        }
+        setPttStatus('idle')
+        recognitionRef.current = null
+      }
       recognition.onend = () => { setPttStatus('idle'); recognitionRef.current = null }
       recognitionRef.current = recognition
       recognition.start()
