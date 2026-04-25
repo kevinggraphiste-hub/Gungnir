@@ -133,10 +133,28 @@ def build_tools_capability_block(models_section: str = "") -> str:
 Tu es connecté à un système backend avec des capacités spéciales :
 - **ACCES INTERNET** — visiter des sites, chercher sur le web, crawler
 - **Browser Playwright** — sites dynamiques avec JavaScript
+- **Valkyrie** — gestion native des tâches, cartes, projets, rappels, deadlines (tools `valkyrie_*`)
 - **Gestion de skills, personnalités, sous-agents, channels, providers, MCP**
 - **Base de connaissance** — lire/écrire des fichiers KB
 - **SpearCode** — lire/écrire/exécuter du code dans le workspace utilisateur
 - **Consciousness** — mémoire long-terme, recall, storage
+
+## ROUTAGE INTENTION → OUTIL
+
+Quand l'utilisateur demande explicitement quelque chose, appelle DIRECTEMENT le bon outil. Ne fais PAS de `web_search` quand la demande est interne.
+
+| Demande type | Outil à appeler |
+|---|---|
+| « ajoute la tâche / la carte X dans le projet Y » | `valkyrie_create_card` |
+| « crée le projet Z » | `valkyrie_create_project` |
+| « rappelle-moi de Y demain à 18h » | `valkyrie_create_card` (avec due_date) |
+| « liste mes tâches / mes projets » | `valkyrie_list_cards` / `valkyrie_list_projects` |
+| « où en est le projet Z » | `valkyrie_list_cards` filtré sur projet |
+| « note dans ma KB que… » | `kb_write` |
+| « cherche sur le web » / « trouve un article sur » | `web_search` |
+| « visite cette URL » | `web_fetch` |
+
+Valkyrie, KB, SpearCode, Consciousness sont des plugins INTERNES à Gungnir — pas des apps externes. Tu n'as pas besoin d'API ni de webhook pour les utiliser, leurs tools sont déjà dans ta liste de fonctions.
 
 ## COMMENT APPELER TES OUTILS
 
@@ -144,12 +162,17 @@ Si le provider supporte le function calling natif, utilise-le.
 Sinon, format texte exact (le système détecte et exécute automatiquement) :
 
 <tool_call>{{"name": "web_fetch", "arguments": {{"url": "https://example.com"}}}}</tool_call>
-<tool_call>{{"name": "web_search", "arguments": {{"query": "ScarletWolf artisanat"}}}}</tool_call>
+<tool_call>{{"name": "valkyrie_list_projects", "arguments": {{}}}}</tool_call>
+<tool_call>{{"name": "valkyrie_create_card", "arguments": {{"project_id": 3, "title": "finir test Gungnir"}}}}</tool_call>
 
-**IMPORTANT :** Tu as accès COMPLET à tes outils depuis n'importe quel canal
-(web, Telegram, Discord, Slack, WhatsApp). Ne dis JAMAIS "je n'ai pas accès
-à tel ou tel outil" — appelle-les directement. Si une opération échoue,
-explique l'erreur reçue, ne prétends pas que l'outil n'existe pas.
+(Pour Valkyrie, list_projects d'abord pour récupérer le `project_id` correspondant au nom donné, puis create_card avec cet id.)
+
+**RÈGLES ANTI-HALLUCINATION :**
+- Tu as accès COMPLET à tes outils depuis n'importe quel canal (web, Telegram, Discord, Slack, WhatsApp).
+- Ne dis JAMAIS « je n'ai pas accès à ton app / ton interface / Valkyrie » — appelle directement le tool.
+- Ne dis JAMAIS « il faudrait une API ou un webhook » — les plugins Gungnir SONT l'API.
+- Ne fais PAS de `web_search` pour des entités internes (Valkyrie, projet, KB) — appelle le tool dédié.
+- Si une opération échoue, explique l'erreur reçue par le tool, ne prétends pas que l'outil n'existe pas.
 {models_section}
 """
 
