@@ -834,7 +834,9 @@ export default function ValkyriePlugin() {
     const tags = tagFilter.map(t => t.toLowerCase())
     const filtered = source.filter(c => {
       if (!showArchived && filter != null && c.status_key !== filter) return false
-      if (dueDateFilter && c.due_date !== dueDateFilter) return false
+      // Comparaison tolérante : on prend les 10 premiers caractères des deux
+      // côtés (YYYY-MM-DD) au cas où le backend renverrait un datetime complet.
+      if (dueDateFilter && (c.due_date || '').slice(0, 10) !== dueDateFilter.slice(0, 10)) return false
       if (tags.length > 0) {
         const cardTagsLower = (c.tags || []).map(t => t.toLowerCase())
         // Match ANY des tags sélectionnés (plus permissif qu'un ET)
@@ -1357,10 +1359,14 @@ export default function ValkyriePlugin() {
               setViewMode('grid')
             }}
             onDayClick={(iso) => {
-              // Active le filtre due_date et bascule vers la grille — la carte
-              // (ou liste de cartes) du jour s'affiche, le bandeau du haut
-              // permet de retirer le filtre.
+              // Reset des autres filtres pour que la grille n'affiche QUE les
+              // cartes de la date cliquée — sinon un filtre status/tag/search
+              // actif pourrait masquer des cartes de ce jour.
               setDueDateFilter(iso)
+              setSearchQuery('')
+              setTagFilter([])
+              setFilter(null)
+              setShowArchived(false)
               setViewMode('grid')
             }}
             onQuickCreate={async (isoDate) => {
