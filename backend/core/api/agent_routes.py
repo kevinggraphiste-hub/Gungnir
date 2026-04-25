@@ -235,8 +235,17 @@ async def create_skill(request: Request, data: dict, session: AsyncSession = Dep
 
 
 @router.post("/skills/import")
-async def import_skill(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
-    name = data.get("name", "").strip()
+async def import_skill(request: Request, session: AsyncSession = Depends(get_session)):
+    """Import un skill depuis JSON, MD ou TXT.
+
+    MD/TXT : front-matter YAML optionnel (name, description, tags, …) puis le
+    corps devient le `prompt`. Le premier `# Titre` sert de nom si absent du
+    front-matter.
+    """
+    data = await _parse_import_body(request, body_key="prompt")
+    if data.get("__error__"):
+        return {"error": data["__error__"]}
+    name = (data.get("name") or "").strip()
     if name:
         ok, err = _validate_display_name(name)
         if not ok:
@@ -345,8 +354,16 @@ async def create_sub_agent(request: Request, data: dict, session: AsyncSession =
 
 
 @router.post("/sub-agents/import")
-async def import_sub_agent(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
-    """Import a sub-agent from JSON, reuses create logic."""
+async def import_sub_agent(request: Request, session: AsyncSession = Depends(get_session)):
+    """Import un sous-agent depuis JSON, MD ou TXT.
+
+    MD/TXT : front-matter YAML optionnel (name, role, expertise, tools, …)
+    puis le corps devient le `system_prompt`. Le premier `# Titre` sert de
+    nom si absent.
+    """
+    data = await _parse_import_body(request, body_key="system_prompt")
+    if data.get("__error__"):
+        return {"success": False, "error": data["__error__"]}
     name = (data.get("name") or "").strip()
     raw_name = name[6:] if name.startswith("agent_") else name
     ok, err = _validate_display_name(raw_name)
@@ -765,6 +782,33 @@ async def create_personality(request: Request, data: dict, session: AsyncSession
         "traits": data.get("traits", []),
         "id": str(_uuid_mod.uuid4())[:8],
     }
+    return await ud.create_personality(session, _uid(request), name, personality_data)
+
+
+@router.post("/personality/import")
+async def import_personality(request: Request, session: AsyncSession = Depends(get_session)):
+    """Import une personnalité depuis JSON, MD ou TXT.
+
+    MD/TXT : front-matter YAML optionnel (name, description, traits, …) puis
+    le corps devient le `system_prompt`. Le premier `# Titre` sert de nom si
+    absent.
+    """
+    data = await _parse_import_body(request, body_key="system_prompt")
+    if data.get("__error__"):
+        return {"success": False, "error": data["__error__"]}
+    name = (data.get("name") or "").strip()
+    ok, err = _validate_display_name(name)
+    if not ok:
+        return {"success": False, "error": err}
+    personality_data = {
+        "description": data.get("description", ""),
+        "system_prompt": data.get("system_prompt", ""),
+        "traits": data.get("traits", []),
+        "id": str(_uuid_mod.uuid4())[:8],
+    }
+    for field in ("tags", "version", "author"):
+        if field in data and data[field] is not None:
+            personality_data[field] = data[field]
     return await ud.create_personality(session, _uid(request), name, personality_data)
 
 

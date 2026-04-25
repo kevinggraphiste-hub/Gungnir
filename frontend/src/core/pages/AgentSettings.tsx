@@ -105,6 +105,7 @@ export default function AgentSettings() {
   const [importStatus, setImportStatus] = useState<{ type: string; success: boolean; message: string; score?: number; violations?: any[] } | null>(null)
   const skillFileRef = useRef<HTMLInputElement>(null)
   const agentFileRef = useRef<HTMLInputElement>(null)
+  const personalityFileRef = useRef<HTMLInputElement>(null)
 
   // Drag-and-drop (shared for personalities and skills) — refs to avoid race conditions
   const dragRef = useRef<{ idx: number; context: 'personality' | 'skill' } | null>(null)
@@ -376,7 +377,8 @@ export default function AgentSettings() {
     e.target.value = ''
     try {
       const text = await file.text()
-      const data = file.name.endsWith('.md') ? parseSkillMarkdown(text) : JSON.parse(text)
+      const isText = file.name.endsWith('.md') || file.name.endsWith('.txt')
+      const data = isText ? parseSkillMarkdown(text) : JSON.parse(text)
       setImportStatus({ type: 'skill', success: false, message: 'Analyse de sécurité en cours...' })
       const scanRes = await apiFetch('/api/security/scan/skill', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -404,7 +406,8 @@ export default function AgentSettings() {
     e.target.value = ''
     try {
       const text = await file.text()
-      const data = file.name.endsWith('.md') ? parseAgentMarkdown(text) : JSON.parse(text)
+      const isText = file.name.endsWith('.md') || file.name.endsWith('.txt')
+      const data = isText ? parseAgentMarkdown(text) : JSON.parse(text)
       setImportStatus({ type: 'agent', success: false, message: 'Analyse de sécurité en cours...' })
       const scanRes = await apiFetch('/api/security/scan/skill', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -422,6 +425,54 @@ export default function AgentSettings() {
       }
     } catch (err: any) {
       setImportStatus({ type: 'agent', success: false, message: `Erreur: ${err.message || 'fichier invalide'}` })
+    }
+    setTimeout(() => setImportStatus(null), 12000)
+  }
+
+  const parsePersonalityMarkdown = (text: string): Record<string, any> => {
+    const data: Record<string, any> = {}
+    const nameMatch = text.match(/^#\s*(?:Personnalité|Personality|Personnalite)\s*[:\-–]\s*(.+)/m)
+    if (nameMatch) data.name = nameMatch[1].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+    const fieldMap: Record<string, string> = { 'description': 'description', 'auteur': 'author', 'author': 'author', 'version': 'version', 'tags': 'tags', 'traits': 'traits' }
+    for (const [frKey, jsonKey] of Object.entries(fieldMap)) {
+      const re = new RegExp(`\\*\\*${frKey}\\s*[:：]\\s*\\*\\*\\s*(.+)`, 'im')
+      const match = text.match(re)
+      if (match) data[jsonKey] = (jsonKey === 'tags' || jsonKey === 'traits') ? match[1].split(',').map((t: string) => t.trim()) : match[1].trim()
+    }
+    const promptMatch = text.match(/##\s*(?:System\s*Prompt|Prompt|Instructions?)\s*\n+([\s\S]*?)(?=\n##\s|\n---|\s*$)/i)
+    if (promptMatch) data.system_prompt = promptMatch[1].trim()
+    if (!data.system_prompt && !data.name) {
+      data.system_prompt = text.trim()
+      data.name = 'imported_personality'
+    }
+    return data
+  }
+
+  const handleImportPersonality = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    try {
+      const text = await file.text()
+      const isText = file.name.endsWith('.md') || file.name.endsWith('.txt')
+      const data = isText ? parsePersonalityMarkdown(text) : JSON.parse(text)
+      setImportStatus({ type: 'personality', success: false, message: 'Analyse de sécurité en cours...' })
+      const scanRes = await apiFetch('/api/security/scan/skill', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: data.system_prompt || '', code: '' }),
+      }).then(r => r.json())
+      if ((scanRes.score ?? 100) >= SECURITY_THRESHOLD) {
+        await apiFetch('/api/personality/import', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        })
+        await loadData()
+        setImportStatus({ type: 'personality', success: true, message: `Personnalité importée avec succès (score: ${scanRes.score?.toFixed(0)}/100)`, score: scanRes.score })
+      } else {
+        setImportStatus({ type: 'personality', success: false, message: `Import rejeté — score ${scanRes.score?.toFixed(0)}/100 (minimum: ${SECURITY_THRESHOLD})`, score: scanRes.score, violations: scanRes.violations })
+      }
+    } catch (err: any) {
+      setImportStatus({ type: 'personality', success: false, message: `Erreur: ${err.message || 'fichier invalide'}` })
     }
     setTimeout(() => setImportStatus(null), 12000)
   }
@@ -824,7 +875,7 @@ export default function AgentSettings() {
                   style={{ borderColor: 'var(--accent-primary)', color: 'var(--accent-primary)' }}>
                   <Upload className="w-3.5 h-3.5" /> Importer
                 </button>
-                <input ref={skillFileRef} type="file" accept=".json,.md" className="hidden" onChange={handleImportSkill} />
+                <input ref={skillFileRef} type="file" accept=".json,.md,.txt" className="hidden" onChange={handleImportSkill} />
               </div>
               {importStatus?.type === 'skill' && (
                 <div className="mb-4 p-3 rounded-lg border text-sm" style={{
@@ -1260,7 +1311,7 @@ export default function AgentSettings() {
                   style={{ borderColor: 'var(--accent-primary)', color: 'var(--accent-primary)' }}>
                   <Upload className="w-3.5 h-3.5" /> Importer
                 </button>
-                <input ref={agentFileRef} type="file" accept=".json,.md" className="hidden" onChange={handleImportAgent} />
+                <input ref={agentFileRef} type="file" accept=".json,.md,.txt" className="hidden" onChange={handleImportAgent} />
               </div>
               {importStatus?.type === 'agent' && (
                 <div className="p-3 rounded-lg border text-sm" style={{
@@ -1598,14 +1649,32 @@ export default function AgentSettings() {
                   La personnalité active est injectée après l'âme dans chaque message.
                 </p>
               </div>
-              <button
-                onClick={() => { setShowNewForm(!showNewForm); setNewFormError('') }}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors"
-                style={{ background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-primary))', color: 'var(--text-primary)' }}
-              >
-                {showNewForm ? <><X className="w-4 h-4" /> Fermer</> : <><Plus className="w-4 h-4" /> Nouvelle</>}
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => personalityFileRef.current?.click()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors hover:opacity-80"
+                  style={{ borderColor: 'var(--accent-primary)', color: 'var(--accent-primary)' }}>
+                  <Upload className="w-3.5 h-3.5" /> Importer
+                </button>
+                <input ref={personalityFileRef} type="file" accept=".json,.md,.txt" className="hidden" onChange={handleImportPersonality} />
+                <button
+                  onClick={() => { setShowNewForm(!showNewForm); setNewFormError('') }}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors"
+                  style={{ background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-primary))', color: 'var(--text-primary)' }}
+                >
+                  {showNewForm ? <><X className="w-4 h-4" /> Fermer</> : <><Plus className="w-4 h-4" /> Nouvelle</>}
+                </button>
+              </div>
             </div>
+
+            {importStatus?.type === 'personality' && (
+              <div className="p-3 rounded-lg border text-sm" style={{
+                borderColor: importStatus.success ? 'var(--accent-success)' : 'var(--accent-danger)',
+                background: importStatus.success ? 'color-mix(in srgb, var(--accent-success) 8%, transparent)' : 'color-mix(in srgb, var(--accent-danger) 8%, transparent)',
+                color: importStatus.success ? 'var(--accent-success)' : 'var(--accent-danger)',
+              }}>
+                {importStatus.message}
+              </div>
+            )}
 
             {/* New personality form */}
             {showNewForm && (
