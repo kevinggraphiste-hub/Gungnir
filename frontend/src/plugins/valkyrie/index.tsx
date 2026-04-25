@@ -201,6 +201,10 @@ export default function ValkyriePlugin() {
   // Recherche + filtre tags
   const [searchQuery, setSearchQuery] = useState('')
   const [tagFilter, setTagFilter] = useState<string[]>([])
+  // Filtre due_date — alimenté par un clic sur une journée du calendrier.
+  // Format ISO (YYYY-MM-DD) ou null. Quand actif, la grille n'affiche que les
+  // cartes avec exactement cette due_date.
+  const [dueDateFilter, setDueDateFilter] = useState<string | null>(null)
   const [allTags, setAllTags] = useState<TagEntryT[]>([])
   const [showExportMenu, setShowExportMenu] = useState(false)
 
@@ -830,6 +834,7 @@ export default function ValkyriePlugin() {
     const tags = tagFilter.map(t => t.toLowerCase())
     const filtered = source.filter(c => {
       if (!showArchived && filter != null && c.status_key !== filter) return false
+      if (dueDateFilter && c.due_date !== dueDateFilter) return false
       if (tags.length > 0) {
         const cardTagsLower = (c.tags || []).map(t => t.toLowerCase())
         // Match ANY des tags sélectionnés (plus permissif qu'un ET)
@@ -878,7 +883,7 @@ export default function ValkyriePlugin() {
       }
     }
     return [...filtered].sort(cmp)
-  }, [cards, archivedCards, showArchived, filter, searchQuery, tagFilter, sortBy])
+  }, [cards, archivedCards, showArchived, filter, searchQuery, tagFilter, sortBy, dueDateFilter])
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -1351,6 +1356,13 @@ export default function ValkyriePlugin() {
               jsend(`${API}/cards/${cid}`, 'PUT', { expanded: true }).catch(() => {})
               setViewMode('grid')
             }}
+            onDayClick={(iso) => {
+              // Active le filtre due_date et bascule vers la grille — la carte
+              // (ou liste de cartes) du jour s'affiche, le bandeau du haut
+              // permet de retirer le filtre.
+              setDueDateFilter(iso)
+              setViewMode('grid')
+            }}
             onQuickCreate={async (isoDate) => {
               if (!activeProjectId) return
               try {
@@ -1363,6 +1375,32 @@ export default function ValkyriePlugin() {
               } catch (err) { console.warn('calendar create failed:', err) }
             }}
           />
+        )}
+
+        {/* ── Bandeau filtre due_date (cliquer sur un jour du calendrier) ─ */}
+        {activeProject && viewMode === 'grid' && dueDateFilter && (
+          <div className="flex items-center justify-between rounded-lg px-3 py-2 mb-3" style={{
+            background: 'color-mix(in srgb, var(--scarlet) 8%, var(--bg-secondary))',
+            border: '1px solid color-mix(in srgb, var(--scarlet) 25%, transparent)',
+          }}>
+            <div className="flex items-center gap-2 text-xs">
+              <CalendarDays className="w-3.5 h-3.5" style={{ color: 'var(--scarlet)' }} />
+              <span style={{ color: 'var(--text-secondary)' }}>
+                Filtré sur le{' '}
+                <strong style={{ color: 'var(--text-primary)' }}>
+                  {new Date(dueDateFilter + 'T12:00:00').toLocaleDateString('fr-FR', {
+                    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+                  })}
+                </strong>
+                {' '}— {visibleCards.length} carte{visibleCards.length > 1 ? 's' : ''}
+              </span>
+            </div>
+            <button onClick={() => setDueDateFilter(null)} title="Retirer le filtre"
+              className="flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors hover:bg-[var(--bg-tertiary)]"
+              style={{ color: 'var(--text-muted)' }}>
+              <X className="w-3 h-3" /> Retirer
+            </button>
+          </div>
         )}
 
         {/* ── Grid board ───────────────────────────────────────── */}
@@ -1378,7 +1416,7 @@ export default function ValkyriePlugin() {
             backgroundSize: '274px 274px',
             backgroundPosition: '16px 16px',
           }}>
-            {visibleCards.length === 0 && (searchQuery || tagFilter.length > 0 || filter != null) ? (
+            {visibleCards.length === 0 && (searchQuery || tagFilter.length > 0 || filter != null || dueDateFilter) ? (
               <div className="flex items-center justify-center h-96 text-sm" style={{ color: 'var(--text-muted)' }}>
                 Aucune carte ne correspond aux filtres.
               </div>
@@ -3717,29 +3755,27 @@ function SortMenu({
 
 
 // ════════════════════════════════════════════════════════════════════════
-// CalendarView — mois courant, cartes placées par due_date
+// CalendarView — vues jour / semaine / mois, cartes placées par due_date
 // ════════════════════════════════════════════════════════════════════════
 
+type CalendarMode = 'day' | 'week' | 'month'
+
 function CalendarView({
-  cards, statuses, onOpenCard, onQuickCreate,
+  cards, statuses, onOpenCard, onQuickCreate, onDayClick,
 }: {
   cards: CardT[]
   statuses: StatusT[]
   onOpenCard: (cardId: number) => void
   onQuickCreate: (isoDate: string) => void
+  onDayClick?: (isoDate: string) => void
 }) {
-  const [cursor, setCursor] = useState(() => {
-    const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() }
+  const [mode, setMode] = useState<CalendarMode>('month')
+  // Curseur unique en Date — utilisé par les 3 modes (jour/semaine/mois) en
+  // se calant sur le jour, le lundi de la semaine, ou le 1er du mois.
+  const [cursorDate, setCursorDate] = useState<Date>(() => {
+    const n = new Date(); n.setHours(0, 0, 0, 0); return n
   })
-  const monthLabel = new Date(cursor.y, cursor.m, 1).toLocaleDateString('fr-FR', {
-    month: 'long', year: 'numeric',
-  })
-  const firstDay = new Date(cursor.y, cursor.m, 1)
-  const lastDay = new Date(cursor.y, cursor.m + 1, 0)
-  // Semaine commence lundi (1 = lundi en fr) — getDay() retourne 0=dim..6=sam
-  const firstCol = ((firstDay.getDay() + 6) % 7) // 0=lun..6=dim
-  const daysInMonth = lastDay.getDate()
-  const totalCells = Math.ceil((firstCol + daysInMonth) / 7) * 7
+
   // Index cartes par date ISO
   const byDate = useMemo(() => {
     const idx: Record<string, CardT[]> = {}
@@ -3753,45 +3789,262 @@ function CalendarView({
     statuses.find(s => s.key === key)?.color || 'var(--scarlet)'
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const todayIso = today.toISOString().slice(0, 10)
+  const isoOf = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+  // Helpers de navigation selon le mode
+  const goPrev = () => {
+    setCursorDate(d => {
+      const n = new Date(d)
+      if (mode === 'day') n.setDate(n.getDate() - 1)
+      else if (mode === 'week') n.setDate(n.getDate() - 7)
+      else n.setMonth(n.getMonth() - 1)
+      return n
+    })
+  }
+  const goNext = () => {
+    setCursorDate(d => {
+      const n = new Date(d)
+      if (mode === 'day') n.setDate(n.getDate() + 1)
+      else if (mode === 'week') n.setDate(n.getDate() + 7)
+      else n.setMonth(n.getMonth() + 1)
+      return n
+    })
+  }
+  const goToday = () => {
+    const n = new Date(); n.setHours(0, 0, 0, 0); setCursorDate(n)
+  }
+
+  // Label dynamique selon le mode
+  const cursorLabel = (() => {
+    if (mode === 'day') {
+      return cursorDate.toLocaleDateString('fr-FR', {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+      })
+    }
+    if (mode === 'week') {
+      // Lundi de la semaine
+      const monday = new Date(cursorDate)
+      const dow = (monday.getDay() + 6) % 7
+      monday.setDate(monday.getDate() - dow)
+      const sunday = new Date(monday)
+      sunday.setDate(sunday.getDate() + 6)
+      const fmt = (d: Date) => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
+      return `Semaine du ${fmt(monday)} au ${fmt(sunday)} ${sunday.getFullYear()}`
+    }
+    return cursorDate.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+  })()
+
+  // Bouton de mode commun
+  const ModeBtn = ({ id, label }: { id: CalendarMode; label: string }) => (
+    <button onClick={() => setMode(id)}
+      style={{
+        padding: '4px 10px', borderRadius: 6, fontSize: 12,
+        background: mode === id ? 'color-mix(in srgb, var(--scarlet) 18%, var(--bg-tertiary))' : 'var(--bg-tertiary)',
+        border: `1px solid ${mode === id ? 'color-mix(in srgb, var(--scarlet) 35%, transparent)' : 'var(--border)'}`,
+        color: mode === id ? 'var(--scarlet)' : 'var(--text-secondary)',
+        fontWeight: mode === id ? 700 : 500, cursor: 'pointer',
+      }}>{label}</button>
+  )
+
+  // Header commun aux 3 modes
+  const Header = (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      marginBottom: 10, gap: 8, flexWrap: 'wrap',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <CalendarDays className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
+        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+          {cursorLabel}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 2, marginRight: 4 }}>
+          <ModeBtn id="day" label="Jour" />
+          <ModeBtn id="week" label="Semaine" />
+          <ModeBtn id="month" label="Mois" />
+        </div>
+        <button onClick={goPrev}
+          style={{
+            padding: '4px 10px', borderRadius: 6, fontSize: 12,
+            background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+            color: 'var(--text-secondary)', cursor: 'pointer',
+          }}>←</button>
+        <button onClick={goToday}
+          style={{
+            padding: '4px 10px', borderRadius: 6, fontSize: 12,
+            background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+            color: 'var(--text-secondary)', cursor: 'pointer',
+          }}>Aujourd'hui</button>
+        <button onClick={goNext}
+          style={{
+            padding: '4px 10px', borderRadius: 6, fontSize: 12,
+            background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
+            color: 'var(--text-secondary)', cursor: 'pointer',
+          }}>→</button>
+      </div>
+    </div>
+  )
+
+  // Cellule d'une carte (réutilisée par les 3 vues, taille variable)
+  const renderCard = (c: CardT, iso: string, opts: { size: 'sm' | 'md' | 'lg' }) => {
+    const c_color = statusColor(c.status_key)
+    const isOverdue = c.status_key !== 'done' && iso < todayIso
+    const fontSize = opts.size === 'lg' ? 13 : opts.size === 'md' ? 11 : 10
+    const padding = opts.size === 'lg' ? '6px 10px' : '2px 4px'
+    return (
+      <button key={c.id}
+        onClick={() => onOpenCard(c.id)}
+        style={{
+          textAlign: 'left', fontSize, padding, borderRadius: 4,
+          background: isOverdue ? 'rgba(239,68,68,0.15)' : `color-mix(in srgb, ${c_color} 12%, transparent)`,
+          borderLeft: `2px solid ${isOverdue ? '#ef4444' : c_color}`,
+          border: 'none', borderLeftWidth: opts.size === 'lg' ? 3 : 2, borderLeftStyle: 'solid',
+          color: 'var(--text-primary)', cursor: 'pointer',
+          whiteSpace: opts.size === 'lg' ? 'normal' : 'nowrap',
+          overflow: 'hidden', textOverflow: 'ellipsis',
+        }}
+        title={`${c.title} · ${statuses.find(s => s.key === c.status_key)?.label || c.status_key}`}>
+        {opts.size === 'lg' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontWeight: 600 }}>{c.title}</span>
+            {c.subtitle && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.subtitle}</span>}
+          </div>
+        ) : c.title}
+      </button>
+    )
+  }
+
+  // Header cliquable d'une cellule (numéro du jour + bouton + + clic = filtre)
+  const renderDayHeader = (d: Date, opts: { highlight?: boolean; large?: boolean } = {}) => {
+    const iso = isoOf(d)
+    const isToday = iso === todayIso
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        fontSize: opts.large ? 12 : 10, fontFamily: 'JetBrains Mono, monospace',
+        color: isToday ? 'var(--scarlet)' : 'var(--text-muted)',
+        fontWeight: isToday ? 700 : 500,
+      }}>
+        <button onClick={(e) => { e.stopPropagation(); onDayClick?.(iso) }}
+          style={{
+            background: 'transparent', border: 'none', padding: 0, cursor: onDayClick ? 'pointer' : 'default',
+            color: 'inherit', fontWeight: 'inherit', fontSize: 'inherit', fontFamily: 'inherit',
+            textDecoration: onDayClick ? 'underline dotted color-mix(in srgb, var(--scarlet) 40%, transparent)' : 'none',
+            textUnderlineOffset: 2,
+          }}
+          title={onDayClick ? 'Filtrer la grille sur ce jour' : ''}>
+          {opts.large ? d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' }) : d.getDate()}
+        </button>
+        <button onClick={(e) => { e.stopPropagation(); onQuickCreate(iso) }}
+          style={{
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            padding: 0, color: 'var(--text-muted)', opacity: 0.4,
+          }}
+          onMouseOver={e => { e.currentTarget.style.opacity = '1' }}
+          onMouseOut={e => { e.currentTarget.style.opacity = '0.4' }}
+          title="Créer une carte pour ce jour">
+          <Plus className="w-3 h-3" />
+        </button>
+      </div>
+    )
+  }
+
+  // ── Vue JOUR : liste verticale détaillée ─────────────────────────────
+  if (mode === 'day') {
+    const iso = isoOf(cursorDate)
+    const dayCards = byDate[iso] || []
+    return (
+      <div className="rounded-xl p-4" style={{
+        background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+      }}>
+        {Header}
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 6,
+          padding: 12, borderRadius: 8,
+          background: 'var(--bg-tertiary)',
+          border: `1px solid ${iso === todayIso ? 'var(--scarlet)' : 'var(--border)'}`,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button onClick={() => onQuickCreate(iso)}
+              style={{
+                background: 'transparent', border: '1px dashed var(--border)',
+                borderRadius: 6, padding: '4px 10px', fontSize: 11,
+                color: 'var(--text-muted)', cursor: 'pointer',
+              }}>
+              <Plus className="w-3 h-3 inline mr-1" /> Nouvelle carte ce jour
+            </button>
+          </div>
+          {dayCards.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: 20 }}>
+              Aucune carte pour cette journée.
+            </div>
+          ) : (
+            dayCards.map(c => renderCard(c, iso, { size: 'lg' }))
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ── Vue SEMAINE : 7 colonnes lundi → dimanche ─────────────────────────
+  if (mode === 'week') {
+    const monday = new Date(cursorDate)
+    const dow = (monday.getDay() + 6) % 7
+    monday.setDate(monday.getDate() - dow)
+    monday.setHours(0, 0, 0, 0)
+    const days = Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date(monday); d.setDate(monday.getDate() + i); return d
+    })
+    return (
+      <div className="rounded-xl p-4" style={{
+        background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+      }}>
+        {Header}
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4,
+        }}>
+          {days.map(d => {
+            const iso = isoOf(d)
+            const dayCards = byDate[iso] || []
+            const isToday = iso === todayIso
+            return (
+              <div key={iso} style={{
+                background: 'var(--bg-tertiary)',
+                border: `1px solid ${isToday ? 'var(--scarlet)' : 'var(--border)'}`,
+                borderRadius: 6, padding: 6,
+                display: 'flex', flexDirection: 'column', gap: 4,
+                minHeight: 220,
+              }}>
+                {renderDayHeader(d, { large: true })}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, overflow: 'auto', flex: 1 }}>
+                  {dayCards.map(c => renderCard(c, iso, { size: 'md' }))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  // ── Vue MOIS : grille 7×N (par défaut) ────────────────────────────────
+  const cy = cursorDate.getFullYear()
+  const cm = cursorDate.getMonth()
+  const firstDay = new Date(cy, cm, 1)
+  const lastDay = new Date(cy, cm + 1, 0)
+  const firstCol = ((firstDay.getDay() + 6) % 7)
+  const daysInMonth = lastDay.getDate()
+  const totalCells = Math.ceil((firstCol + daysInMonth) / 7) * 7
   const cellIso = (day: number) =>
-    `${cursor.y}-${String(cursor.m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    `${cy}-${String(cm + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 
   return (
     <div className="rounded-xl p-4" style={{
       background: 'var(--bg-secondary)', border: '1px solid var(--border)',
     }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 10,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <CalendarDays className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
-          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
-            {monthLabel}
-          </span>
-        </div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <button onClick={() => setCursor(({ y, m }) => m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 })}
-            style={{
-              padding: '4px 10px', borderRadius: 6, fontSize: 12,
-              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-              color: 'var(--text-secondary)', cursor: 'pointer',
-            }}>← Mois préc.</button>
-          <button onClick={() => { const n = new Date(); setCursor({ y: n.getFullYear(), m: n.getMonth() }) }}
-            style={{
-              padding: '4px 10px', borderRadius: 6, fontSize: 12,
-              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-              color: 'var(--text-secondary)', cursor: 'pointer',
-            }}>Aujourd'hui</button>
-          <button onClick={() => setCursor(({ y, m }) => m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 })}
-            style={{
-              padding: '4px 10px', borderRadius: 6, fontSize: 12,
-              background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-              color: 'var(--text-secondary)', cursor: 'pointer',
-            }}>Mois suiv. →</button>
-        </div>
-      </div>
-      {/* Header jours */}
+      {Header}
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4,
         marginBottom: 4,
@@ -3804,7 +4057,6 @@ function CalendarView({
           }}>{d}</div>
         ))}
       </div>
-      {/* Cells */}
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)',
         gridAutoRows: 110, gap: 4,
@@ -3826,48 +4078,12 @@ function CalendarView({
             }}>
               {inMonth && (
                 <>
-                  <div style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
-                    color: isToday ? 'var(--scarlet)' : 'var(--text-muted)',
-                    fontWeight: isToday ? 700 : 500,
-                  }}>
-                    <span>{dayNum}</span>
-                    <button onClick={() => onQuickCreate(iso)}
-                      style={{
-                        background: 'transparent', border: 'none', cursor: 'pointer',
-                        padding: 0, color: 'var(--text-muted)', opacity: 0.4,
-                      }}
-                      onMouseOver={e => { e.currentTarget.style.opacity = '1' }}
-                      onMouseOut={e => { e.currentTarget.style.opacity = '0.4' }}
-                      title="Créer une carte pour ce jour">
-                      <Plus className="w-3 h-3" />
-                    </button>
-                  </div>
+                  {renderDayHeader(new Date(cy, cm, dayNum))}
                   <div style={{
                     flex: 1, display: 'flex', flexDirection: 'column', gap: 2,
                     overflow: 'hidden',
                   }}>
-                    {dayCards.slice(0, 3).map(c => {
-                      const c_color = statusColor(c.status_key)
-                      const isOverdue = c.status_key !== 'done' && iso < todayIso
-                      return (
-                        <button key={c.id}
-                          onClick={() => onOpenCard(c.id)}
-                          style={{
-                            textAlign: 'left', fontSize: 10, padding: '2px 4px',
-                            borderRadius: 3,
-                            background: isOverdue ? 'rgba(239,68,68,0.15)' : `color-mix(in srgb, ${c_color} 12%, transparent)`,
-                            borderLeft: `2px solid ${isOverdue ? '#ef4444' : c_color}`,
-                            border: 'none', borderLeftWidth: 2, borderLeftStyle: 'solid',
-                            color: 'var(--text-primary)', cursor: 'pointer',
-                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                          }}
-                          title={`${c.title} · ${statuses.find(s => s.key === c.status_key)?.label || c.status_key}`}>
-                          {c.title}
-                        </button>
-                      )
-                    })}
+                    {dayCards.slice(0, 3).map(c => renderCard(c, iso, { size: 'sm' }))}
                     {dayCards.length > 3 && (
                       <span style={{
                         fontSize: 9, color: 'var(--text-muted)',
