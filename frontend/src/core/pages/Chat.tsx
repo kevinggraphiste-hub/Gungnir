@@ -509,11 +509,27 @@ export default function Chat() {
   const [modelSearch, setModelSearch] = useState('')
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set())
 
-  // Favoris modèles (max 5, partagé via localStorage)
+  // Favoris modèles (max 5, partagé via localStorage). Format strict :
+  // "provider::model". On filtre tout ce qui ne respecte pas ce format au
+  // chargement pour éviter qu'un ancien favori malformé fasse planter le
+  // sélecteur (mod.split('/') sur undefined).
   const [favoriteModels, setFavoriteModels] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('gungnir_favorite_models') || '[]') } catch { return [] }
+    try {
+      const raw = JSON.parse(localStorage.getItem('gungnir_favorite_models') || '[]')
+      if (!Array.isArray(raw)) return []
+      const sanitized = raw.filter((f: unknown): f is string => {
+        if (typeof f !== 'string') return false
+        const [p, m] = f.split('::')
+        return !!p && !!m
+      })
+      if (sanitized.length !== raw.length) {
+        localStorage.setItem('gungnir_favorite_models', JSON.stringify(sanitized))
+      }
+      return sanitized
+    } catch { return [] }
   })
   const toggleFavorite = (provider: string, model: string) => {
+    if (!provider || !model) return
     const key = `${provider}::${model}`
     setFavoriteModels(prev => {
       const next = prev.includes(key) ? prev.filter(f => f !== key) : prev.length >= 5 ? prev : [...prev, key]
@@ -2385,12 +2401,13 @@ export default function Chat() {
                               <Star className="w-2.5 h-2.5" /> Favoris
                             </div>
                             {favoriteModels.map(fav => {
-                              const [prov, mod] = fav.split('::')
+                              const [prov, mod] = (fav || '').split('::')
+                              if (!prov || !mod) return null
                               return (
                                 <button key={fav} onClick={() => { setSelectedModel(mod); setSelectedProvider(prov); setShowModelMenu(false); setModelSearch('') }}
                                   className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between"
                                   style={selectedModel === mod && selectedProvider === prov ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
-                                  <span className="truncate">{mod.split('/').pop()} <span style={{ color: 'var(--text-muted)' }}>({prov})</span></span>
+                                  <span className="truncate">{mod.split('/').pop() || mod} <span style={{ color: 'var(--text-muted)' }}>({prov})</span></span>
                                   <Star className="w-3 h-3 flex-shrink-0 fill-current" style={{ color: 'var(--accent-tertiary)' }}
                                     onClick={e => { e.stopPropagation(); toggleFavorite(prov, mod) }} />
                                 </button>

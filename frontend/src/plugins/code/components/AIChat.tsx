@@ -59,6 +59,21 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
   const [selectedProvider, setSelectedProvider] = useState('')
   const [selectedModel, setSelectedModel] = useState('')
   const [showModelMenu, setShowModelMenu] = useState(false)
+  const modelMenuRef = useRef<HTMLDivElement>(null)
+  // Ferme le menu si on clique en dehors. Avant on utilisait une div fixed
+  // inset:0 qui couvrait toute la page (sidebar comprise) — résultat : impossible
+  // de naviguer vers un autre plugin tant que le menu était ouvert. Le pattern
+  // outside-click via document listener ne bloque pas la propagation.
+  useEffect(() => {
+    if (!showModelMenu) return
+    const onDocDown = (e: MouseEvent) => {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
+        setShowModelMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocDown)
+    return () => document.removeEventListener('mousedown', onDocDown)
+  }, [showModelMenu])
   const [modelSearch, setModelSearch] = useState('')
   const [loadingModels, setLoadingModels] = useState(false)
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -431,7 +446,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
       {/* ── Header: Model + Context ─────────────────────────────── */}
       <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', background: 'var(--bg-tertiary)' }}>
         {/* Model selector row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, position: 'relative' }}>
+        <div ref={modelMenuRef} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, position: 'relative' }}>
           <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Modele</span>
           <button onClick={() => setShowModelMenu(!showModelMenu)} title="Changer de modele IA"
             style={{
@@ -447,10 +462,7 @@ export function AIPanel({ filePath, language, onApplyCode, openFiles = [] }: { f
             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
-          {/* Model dropdown */}
-          {showModelMenu && (
-            <div onClick={() => setShowModelMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 49 }} />
-          )}
+          {/* Model dropdown — fermeture via outside-click handler ci-dessus */}
           {showModelMenu && (
             <div style={{
               position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, marginTop: 4,
