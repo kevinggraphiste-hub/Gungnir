@@ -4,7 +4,7 @@
  * Core routes are always loaded. Plugin routes are lazy-loaded and wrapped in ErrorBoundary.
  */
 import { Suspense, useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 
 import Sidebar from './components/Sidebar'
@@ -169,34 +169,46 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
     <div className="min-h-screen flex" style={{ background: 'var(--bg-primary)' }}>
       <Sidebar />
       <main className="flex-1 h-screen overflow-hidden flex flex-col">
-        <Suspense fallback={<PluginLoading />}>
-          <Routes>
-            {/* Core routes — always present, wrapped in ErrorBoundary to prevent blank page crashes */}
-            <Route path="/" element={<PluginErrorBoundary pluginName="Chat"><Chat /></PluginErrorBoundary>} />
-            <Route path="/agent" element={<PluginErrorBoundary pluginName="Agent"><AgentSettings /></PluginErrorBoundary>} />
-            <Route path="/settings" element={<PluginErrorBoundary pluginName="Paramètres"><Settings /></PluginErrorBoundary>} />
-
-            {/* Plugin routes — dynamic, lazy-loaded, error-isolated */}
-            {plugins
-              .filter((p) => p.enabled)
-              .map((plugin) => (
-                <Route
-                  key={plugin.name}
-                  path={plugin.route}
-                  element={
-                    <PluginErrorBoundary pluginName={plugin.display_name}>
-                      <PluginPage name={plugin.name} />
-                    </PluginErrorBoundary>
-                  }
-                />
-              ))}
-
-            {pluginsLoaded && <Route path="*" element={<Navigate to="/" />} />}
-          </Routes>
-        </Suspense>
+        <RoutesShell plugins={plugins} pluginsLoaded={pluginsLoaded} />
       </main>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
+  )
+}
+
+// `key={pathname}` sur Suspense force React à démonter intégralement l'arbre
+// précédent à chaque changement de route. Sans ça, des side-effects persistants
+// (WebSocket LSP de CodeMirror dans SpearCode, listeners globaux non cleanés,
+// etc.) peuvent empêcher l'affichage du nouveau plugin alors que l'URL a déjà
+// changé — symptôme observé : URL change, contenu reste sur le plugin précédent.
+function RoutesShell({ plugins, pluginsLoaded }: { plugins: any[]; pluginsLoaded: boolean }) {
+  const location = useLocation()
+  return (
+    <Suspense key={location.pathname} fallback={<PluginLoading />}>
+      <Routes>
+        {/* Core routes — always present, wrapped in ErrorBoundary to prevent blank page crashes */}
+        <Route path="/" element={<PluginErrorBoundary pluginName="Chat"><Chat /></PluginErrorBoundary>} />
+        <Route path="/agent" element={<PluginErrorBoundary pluginName="Agent"><AgentSettings /></PluginErrorBoundary>} />
+        <Route path="/settings" element={<PluginErrorBoundary pluginName="Paramètres"><Settings /></PluginErrorBoundary>} />
+
+        {/* Plugin routes — dynamic, lazy-loaded, error-isolated */}
+        {plugins
+          .filter((p) => p.enabled)
+          .map((plugin) => (
+            <Route
+              key={plugin.name}
+              path={plugin.route}
+              element={
+                <PluginErrorBoundary pluginName={plugin.display_name}>
+                  <PluginPage name={plugin.name} />
+                </PluginErrorBoundary>
+              }
+            />
+          ))}
+
+        {pluginsLoaded && <Route path="*" element={<Navigate to="/" />} />}
+      </Routes>
+    </Suspense>
   )
 }
 
