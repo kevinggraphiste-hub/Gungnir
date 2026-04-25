@@ -3895,7 +3895,9 @@ function CalendarView({
     const padding = opts.size === 'lg' ? '6px 10px' : '2px 4px'
     return (
       <button key={c.id}
-        onClick={() => onOpenCard(c.id)}
+        // stopPropagation : la cellule de jour parent a un onClick qui filtre
+        // sur la date ; sans ce stop, cliquer sur une carte filtrerait aussi.
+        onClick={(e) => { e.stopPropagation(); onOpenCard(c.id) }}
         style={{
           textAlign: 'left', fontSize, padding, borderRadius: 4,
           background: isOverdue ? 'rgba(239,68,68,0.15)' : `color-mix(in srgb, ${c_color} 12%, transparent)`,
@@ -3916,7 +3918,9 @@ function CalendarView({
     )
   }
 
-  // Header cliquable d'une cellule (numéro du jour + bouton + + clic = filtre)
+  // Header d'une cellule : numéro + bouton + (la cellule entière déclenche
+  // déjà le filtre via son propre onClick, donc le numéro n'est plus
+  // cliquable séparément — évite la double-décoration et libère la zone).
   const renderDayHeader = (d: Date, opts: { highlight?: boolean; large?: boolean } = {}) => {
     const iso = isoOf(d)
     const isToday = iso === todayIso
@@ -3927,16 +3931,9 @@ function CalendarView({
         color: isToday ? 'var(--scarlet)' : 'var(--text-muted)',
         fontWeight: isToday ? 700 : 500,
       }}>
-        <button onClick={(e) => { e.stopPropagation(); onDayClick?.(iso) }}
-          style={{
-            background: 'transparent', border: 'none', padding: 0, cursor: onDayClick ? 'pointer' : 'default',
-            color: 'inherit', fontWeight: 'inherit', fontSize: 'inherit', fontFamily: 'inherit',
-            textDecoration: onDayClick ? 'underline dotted color-mix(in srgb, var(--scarlet) 40%, transparent)' : 'none',
-            textUnderlineOffset: 2,
-          }}
-          title={onDayClick ? 'Filtrer la grille sur ce jour' : ''}>
+        <span>
           {opts.large ? d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' }) : d.getDate()}
-        </button>
+        </span>
         <button onClick={(e) => { e.stopPropagation(); onQuickCreate(iso) }}
           style={{
             background: 'transparent', border: 'none', cursor: 'pointer',
@@ -4010,13 +4007,26 @@ function CalendarView({
             const dayCards = byDate[iso] || []
             const isToday = iso === todayIso
             return (
-              <div key={iso} style={{
-                background: 'var(--bg-tertiary)',
-                border: `1px solid ${isToday ? 'var(--scarlet)' : 'var(--border)'}`,
-                borderRadius: 6, padding: 6,
-                display: 'flex', flexDirection: 'column', gap: 4,
-                minHeight: 220,
-              }}>
+              <div key={iso}
+                onClick={() => onDayClick?.(iso)}
+                style={{
+                  background: 'var(--bg-tertiary)',
+                  border: `1px solid ${isToday ? 'var(--scarlet)' : 'var(--border)'}`,
+                  borderRadius: 6, padding: 6,
+                  display: 'flex', flexDirection: 'column', gap: 4,
+                  minHeight: 220,
+                  cursor: onDayClick ? 'pointer' : 'default',
+                  transition: 'background 0.15s, border-color 0.15s',
+                }}
+                onMouseOver={onDayClick ? (e) => {
+                  e.currentTarget.style.background = 'color-mix(in srgb, var(--scarlet) 6%, var(--bg-tertiary))'
+                  e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--scarlet) 35%, var(--border))'
+                } : undefined}
+                onMouseOut={onDayClick ? (e) => {
+                  e.currentTarget.style.background = 'var(--bg-tertiary)'
+                  e.currentTarget.style.borderColor = isToday ? 'var(--scarlet)' : 'var(--border)'
+                } : undefined}
+                title={onDayClick ? `Filtrer la grille sur ${d.toLocaleDateString('fr-FR')}` : ''}>
                 {renderDayHeader(d, { large: true })}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3, overflow: 'auto', flex: 1 }}>
                   {dayCards.map(c => renderCard(c, iso, { size: 'md' }))}
@@ -4067,15 +4077,30 @@ function CalendarView({
           const iso = inMonth ? cellIso(dayNum) : ''
           const dayCards = inMonth ? (byDate[iso] || []) : []
           const isToday = iso === todayIso
+          const isClickable = inMonth && !!onDayClick
           return (
-            <div key={i} style={{
-              background: inMonth ? 'var(--bg-tertiary)' : 'transparent',
-              border: `1px solid ${isToday ? 'var(--scarlet)' : 'var(--border)'}`,
-              borderRadius: 6, padding: 4, opacity: inMonth ? 1 : 0.3,
-              display: 'flex', flexDirection: 'column', gap: 2,
-              minHeight: 0, overflow: 'hidden',
-              position: 'relative',
-            }}>
+            <div key={i}
+              onClick={isClickable ? () => onDayClick!(iso) : undefined}
+              style={{
+                background: inMonth ? 'var(--bg-tertiary)' : 'transparent',
+                border: `1px solid ${isToday ? 'var(--scarlet)' : 'var(--border)'}`,
+                borderRadius: 6, padding: 4, opacity: inMonth ? 1 : 0.3,
+                display: 'flex', flexDirection: 'column', gap: 2,
+                minHeight: 0, overflow: 'hidden',
+                position: 'relative',
+                cursor: isClickable ? 'pointer' : 'default',
+                transition: 'background 0.15s, border-color 0.15s',
+              }}
+              onMouseOver={isClickable ? (e) => {
+                e.currentTarget.style.background = 'color-mix(in srgb, var(--scarlet) 6%, var(--bg-tertiary))'
+                e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--scarlet) 35%, var(--border))'
+              } : undefined}
+              onMouseOut={isClickable ? (e) => {
+                e.currentTarget.style.background = 'var(--bg-tertiary)'
+                e.currentTarget.style.borderColor = isToday ? 'var(--scarlet)' : 'var(--border)'
+              } : undefined}
+              title={isClickable ? `Filtrer la grille sur le ${dayNum}` : ''}>
+
               {inMonth && (
                 <>
                   {renderDayHeader(new Date(cy, cm, dayNum))}
