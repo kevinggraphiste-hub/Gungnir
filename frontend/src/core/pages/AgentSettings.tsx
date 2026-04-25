@@ -19,20 +19,41 @@ const SKILL_EMOJIS = [
 
 function SkillIconPicker({ icon, onChange }: { icon: string; onChange: (emoji: string) => void }) {
   const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
 
+  // Positionnement en `position: fixed` calé sur le bouton — nécessaire parce
+  // que la carte parent a `overflow: hidden`, ce qui clipperait un popover en
+  // position: absolute. Recalcule à chaque ouverture + sur scroll/resize.
   useEffect(() => {
     if (!open) return
+    const updatePos = () => {
+      const r = btnRef.current?.getBoundingClientRect()
+      if (!r) return
+      setPos({ top: r.bottom + 4, left: r.left })
+    }
+    updatePos()
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (ref.current?.contains(target) || popoverRef.current?.contains(target)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    window.addEventListener('scroll', updatePos, true)
+    window.addEventListener('resize', updatePos)
+    return () => {
+      document.removeEventListener('mousedown', handler)
+      window.removeEventListener('scroll', updatePos, true)
+      window.removeEventListener('resize', updatePos)
+    }
   }, [open])
 
   return (
     <div className="relative flex-shrink-0" ref={ref}>
       <button
+        ref={btnRef}
         onClick={() => setOpen(!open)}
         className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:bg-[var(--bg-elevated)]"
         title="Choisir une icône"
@@ -40,9 +61,12 @@ function SkillIconPicker({ icon, onChange }: { icon: string; onChange: (emoji: s
       >
         {icon || <Code className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />}
       </button>
-      {open && (
-        <div className="absolute z-50 top-8 left-0 p-2 rounded-lg shadow-lg grid grid-cols-6 gap-1"
-          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', minWidth: 180 }}>
+      {open && pos && (
+        <div ref={popoverRef} className="p-2 rounded-lg shadow-lg grid grid-cols-6 gap-1"
+          style={{
+            position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000,
+            background: 'var(--bg-elevated)', border: '1px solid var(--border)', minWidth: 180,
+          }}>
           {icon && (
             <button
               onClick={() => { onChange(''); setOpen(false) }}
