@@ -518,11 +518,31 @@ async def _simulate_for_user(user_id: int, force: bool = False) -> int:
     return added
 
 
-def _build_goals_prompt(engine, signals: dict) -> tuple[str, str]:
+_LANG_NAMES: dict[str, str] = {
+    "fr": "français", "en": "English", "es": "español", "pt": "português",
+    "it": "italiano", "de": "Deutsch", "nl": "Nederlands", "ca": "català",
+    "sv": "svenska", "ja": "日本語", "zh": "中文", "ru": "русский",
+}
+
+
+async def _get_user_language(user_id: int) -> str:
+    """Récupère la langue préférée de l'user, fallback 'fr'."""
+    try:
+        from backend.core.db.engine import async_session
+        from backend.core.api.auth_helpers import get_user_settings
+        async with async_session() as session:
+            us = await get_user_settings(user_id, session)
+            return (us.language or "fr").lower()
+    except Exception:
+        return "fr"
+
+
+def _build_goals_prompt(engine, signals: dict, language: str = "fr") -> tuple[str, str]:
     """Prompt LLM pour proposer 1 à N goals à partir de signaux structurels."""
     state = engine.state or {}
     mood = state.get("mood", "neutre")
     existing = engine.get_active_goals(10) or []
+    lang_name = _LANG_NAMES.get(language, language)
 
     persistent_block = "\n".join(
         f"- {n['name']} (urgence {n.get('urgency', 0):.2f}, priorité {n.get('priority', 0)})"
@@ -548,7 +568,10 @@ def _build_goals_prompt(engine, signals: dict) -> tuple[str, str]:
         "Chaque goal doit être CONCRET, MESURABLE, et directement lié à un signal "
         "observé. Évite les goals vagues type 'mieux réfléchir' ou 'être plus utile'. "
         "Ne re-propose PAS un goal déjà actif ou récemment abandonné. Réponds "
-        "STRICTEMENT en JSON valide, aucun texte avant/après, aucun bloc markdown."
+        "STRICTEMENT en JSON valide, aucun texte avant/après, aucun bloc markdown.\n\n"
+        f"IMPORTANT : rédige les champs `title`, `description` et `origin_evidence` "
+        f"en {lang_name} (langue préférée de l'utilisateur). Garde les valeurs "
+        "techniques (`origin`, `linked_needs`) telles que demandées dans le format."
     )
     user = (
         f"Humeur courante : {mood}\n\n"
@@ -753,7 +776,8 @@ async def _goals_for_user(user_id: int, force: bool = False) -> int:
             pass
         return 0
 
-    system_prompt, user_prompt = _build_goals_prompt(engine, signals)
+    user_language = await _get_user_language(user_id)
+    system_prompt, user_prompt = _build_goals_prompt(engine, signals, user_language)
 
     logger.info(
         f"Goals tick for user {user_id} "

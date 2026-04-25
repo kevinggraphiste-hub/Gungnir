@@ -466,6 +466,22 @@ async def challenger_audit_now(request: Request):
         return {"ok": False, "error": str(e)[:300]}
 
 
+@router.post("/challenger/finding/{sig}/resolve")
+async def resolve_finding(sig: str, request: Request):
+    """Marque un finding (par sa signature courte) comme résolu."""
+    c = _get_consciousness(request)
+    ok = c.resolve_finding(sig, by="user")
+    return {"ok": ok}
+
+
+@router.post("/challenger/finding/{sig}/reopen")
+async def reopen_finding(sig: str, request: Request):
+    """Réouvre un finding résolu (cas d'erreur de résolution)."""
+    c = _get_consciousness(request)
+    ok = c.reopen_finding(sig)
+    return {"ok": ok}
+
+
 @router.get("/challenger/llm-options")
 async def challenger_llm_options(request: Request):
     """Return the LLM picker payload for the Challenger settings UI.

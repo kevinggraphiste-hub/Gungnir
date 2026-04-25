@@ -55,6 +55,9 @@ interface Finding {
   finding: string
   evidence: string[]
   action_suggested: string
+  _sig?: string
+  resolved_at?: string | null
+  resolved_by?: string | null
 }
 
 interface Simulation {
@@ -1370,7 +1373,7 @@ function ChallengerTab({ data, refresh }: any) {
           </div>
           <div className="space-y-2">
             {data.critical_findings.map((f: Finding, i: number) => (
-              <FindingCard key={i} finding={f} />
+              <FindingCard key={i} finding={f} refresh={refresh} />
             ))}
           </div>
         </div>
@@ -1383,7 +1386,7 @@ function ChallengerTab({ data, refresh }: any) {
         </div>
         <div className="space-y-2">
           {(data.recent_findings || []).slice().reverse().map((f: Finding, i: number) => (
-            <FindingCard key={i} finding={f} />
+            <FindingCard key={i} finding={f} refresh={refresh} />
           ))}
           {!data.recent_findings?.length && (
             <div className="text-xs py-2" style={{ color: 'var(--text-muted)' }}>
@@ -1396,20 +1399,52 @@ function ChallengerTab({ data, refresh }: any) {
   )
 }
 
-function FindingCard({ finding }: { finding: Finding }) {
+function FindingCard({ finding, refresh }: { finding: Finding; refresh?: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const isResolved = !!finding.resolved_at
+  const resolve = async () => {
+    if (!finding._sig || busy) return
+    setBusy(true)
+    try {
+      await fetch(`${API}/challenger/finding/${finding._sig}/resolve`, { method: 'POST' })
+      refresh?.()
+    } finally { setBusy(false) }
+  }
+  const reopen = async () => {
+    if (!finding._sig || busy) return
+    setBusy(true)
+    try {
+      await fetch(`${API}/challenger/finding/${finding._sig}/reopen`, { method: 'POST' })
+      refresh?.()
+    } finally { setBusy(false) }
+  }
   return (
-    <div className="px-3 py-2.5 rounded-lg" style={{ background: 'var(--bg-tertiary)' }}>
+    <div className="px-3 py-2.5 rounded-lg" style={{ background: 'var(--bg-tertiary)', opacity: isResolved ? 0.6 : 1 }}>
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full" style={{ background: SEVERITY_COLORS[finding.severity] || '#888' }} />
-          <span className="text-[10px] uppercase font-medium" style={{ color: SEVERITY_COLORS[finding.severity] || '#888' }}>
-            {finding.type} · {finding.severity}
+          <span className="w-2 h-2 rounded-full" style={{ background: isResolved ? '#22c55e' : (SEVERITY_COLORS[finding.severity] || '#888') }} />
+          <span className="text-[10px] uppercase font-medium" style={{ color: isResolved ? '#22c55e' : (SEVERITY_COLORS[finding.severity] || '#888') }}>
+            {finding.type} · {isResolved ? `résolu${finding.resolved_by === 'auto' ? ' (auto)' : ''}` : finding.severity}
           </span>
         </div>
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{timeAgo(finding.timestamp)}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{timeAgo(finding.timestamp)}</span>
+          {finding._sig && !isResolved && (
+            <button onClick={resolve} disabled={busy} title="Marquer comme résolu"
+              className="p-0.5 rounded hover:bg-white/10 transition-colors disabled:opacity-50">
+              <Check className="w-3 h-3" style={{ color: '#22c55e' }} />
+            </button>
+          )}
+          {finding._sig && isResolved && (
+            <button onClick={reopen} disabled={busy} title="Rouvrir"
+              className="p-0.5 rounded hover:bg-white/10 transition-colors disabled:opacity-50">
+              <X className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
+            </button>
+          )}
+        </div>
       </div>
-      <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{finding.finding}</div>
-      {finding.action_suggested && (
+      <div className="text-xs" style={{ color: 'var(--text-secondary)', textDecoration: isResolved ? 'line-through' : undefined }}>{finding.finding}</div>
+      {finding.action_suggested && !isResolved && (
         <div className="text-[10px] mt-1.5 flex items-center gap-1" style={{ color: 'var(--accent-primary)' }}>
           <Lightbulb className="w-3 h-3" /> {finding.action_suggested}
         </div>

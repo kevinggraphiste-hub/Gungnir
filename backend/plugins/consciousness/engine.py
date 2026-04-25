@@ -1135,6 +1135,12 @@ class ConsciousnessEngine:
                 # plutôt que de créer une nouvelle entrée.
                 prev["timestamp"] = _now()
                 prev["_count"] = int(prev.get("_count", 1)) + 1
+                # Si le finding avait été résolu (auto ou user) mais que le
+                # Challenger le re-signale, on le rouvre — il n'était donc pas
+                # vraiment résolu.
+                if prev.get("resolved_at"):
+                    prev.pop("resolved_at", None)
+                    prev.pop("resolved_by", None)
                 _save_json(self._paths["challenger_log"], self._challenger_log)
                 # Pattern récurrent (≥ 3 occurrences du même finding) →
                 # comprehension. Cooldown par signature pour ne pas re-émettre
@@ -1200,10 +1206,81 @@ class ConsciousnessEngine:
                 pass
 
     def get_recent_findings(self, limit: int = 20) -> list:
+        # Auto-résolution avant lecture pour que le caller ne voie jamais un
+        # finding obsolète. Cheap : itère ≤ 200 éléments en mémoire.
+        self._auto_resolve_stale_findings()
         return self._challenger_log.get("findings", [])[-limit:]
 
     def get_critical_findings(self) -> list:
-        return [f for f in self._challenger_log.get("findings", []) if f.get("severity") == "high"]
+        """Findings `severity=high` non résolus.
+
+        Auto-résolution : si un finding n'a pas été re-vu (timestamp inchangé)
+        depuis `auto_resolve_after_hours` (défaut 24h), il est marqué résolu
+        automatiquement — la conscience considère qu'il a été corrigé puisque
+        le Challenger ne le re-signale plus à chaque audit.
+        """
+        self._auto_resolve_stale_findings()
+        return [
+            f for f in self._challenger_log.get("findings", [])
+            if f.get("severity") == "high" and not f.get("resolved_at")
+        ]
+
+    def _auto_resolve_stale_findings(self) -> int:
+        """Marque comme résolus les findings non re-vus depuis N heures.
+
+        Le `timestamp` est touché à chaque doublon détecté dans `add_finding`.
+        Donc un finding dont le timestamp date de > N heures n'est plus émis
+        par le Challenger → considéré naturellement résolu.
+        """
+        cfg = (self._config.get("challenger") or {}).get("auto_resolve_after_hours", 24)
+        try:
+            max_age = float(cfg)
+        except Exception:
+            max_age = 24
+        if max_age <= 0:
+            return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age)
+        changed = 0
+        for f in self._challenger_log.get("findings", []):
+            if f.get("resolved_at"):
+                continue
+            raw = f.get("timestamp") or ""
+            try:
+                iso = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+                ts = datetime.fromisoformat(iso) if iso else None
+                if ts is not None and ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+            except Exception:
+                ts = None
+            if ts is None or ts < cutoff:
+                f["resolved_at"] = _now()
+                f["resolved_by"] = "auto"
+                changed += 1
+        if changed:
+            _save_json(self._paths["challenger_log"], self._challenger_log)
+        return changed
+
+    def resolve_finding(self, sig: str, by: str = "user") -> bool:
+        """Marque un finding comme résolu (clic UI). Idempotent."""
+        for f in self._challenger_log.get("findings", []):
+            if f.get("_sig") == sig:
+                if not f.get("resolved_at"):
+                    f["resolved_at"] = _now()
+                    f["resolved_by"] = by
+                    _save_json(self._paths["challenger_log"], self._challenger_log)
+                return True
+        return False
+
+    def reopen_finding(self, sig: str) -> bool:
+        """Réouvre un finding résolu (cas d'erreur de résolution)."""
+        for f in self._challenger_log.get("findings", []):
+            if f.get("_sig") == sig and f.get("resolved_at"):
+                f.pop("resolved_at", None)
+                f.pop("resolved_by", None)
+                f["timestamp"] = _now()
+                _save_json(self._paths["challenger_log"], self._challenger_log)
+                return True
+        return False
 
     def build_challenger_audit_prompt(self) -> tuple[str, str]:
         """Construct (system, user) prompts for one Challenger audit pass."""
