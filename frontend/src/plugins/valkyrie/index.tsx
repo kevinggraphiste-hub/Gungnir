@@ -828,15 +828,22 @@ export default function ValkyriePlugin() {
 
   // ── Render ──────────────────────────────────────────────────────────
   const visibleCards = useMemo(() => {
+    // ISOLATION STRICTE quand un filtre date est actif : on prend cards (pas
+    // archivedCards), on ignore tous les autres filtres, on ne garde QUE
+    // celles dont due_date matche exactement (slice 0..10 pour tolérer un
+    // éventuel datetime complet renvoyé par le backend).
+    if (dueDateFilter) {
+      const target = dueDateFilter.slice(0, 10)
+      const onlyDate = cards.filter(c => (c.due_date || '').slice(0, 10) === target)
+      // Tri par position pour stabilité d'affichage
+      return [...onlyDate].sort((a, b) => a.position - b.position)
+    }
     // En mode archive, on affiche les archivedCards sans filtre
     const source = showArchived ? archivedCards : cards
     const q = searchQuery.trim().toLowerCase()
     const tags = tagFilter.map(t => t.toLowerCase())
     const filtered = source.filter(c => {
       if (!showArchived && filter != null && c.status_key !== filter) return false
-      // Comparaison tolérante : on prend les 10 premiers caractères des deux
-      // côtés (YYYY-MM-DD) au cas où le backend renverrait un datetime complet.
-      if (dueDateFilter && (c.due_date || '').slice(0, 10) !== dueDateFilter.slice(0, 10)) return false
       if (tags.length > 0) {
         const cardTagsLower = (c.tags || []).map(t => t.toLowerCase())
         // Match ANY des tags sélectionnés (plus permissif qu'un ET)
@@ -1398,7 +1405,7 @@ export default function ValkyriePlugin() {
                     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
                   })}
                 </strong>
-                {' '}— {visibleCards.length} carte{visibleCards.length > 1 ? 's' : ''}
+                {' '}— <strong>{visibleCards.length}</strong> carte{visibleCards.length > 1 ? 's' : ''} sur {cards.length} au total
               </span>
             </div>
             <button onClick={() => setDueDateFilter(null)} title="Retirer le filtre"
@@ -1469,7 +1476,7 @@ export default function ValkyriePlugin() {
                     On ajoute plusieurs slots pour combler visuellement la grille
                     même quand elle est quasi-pleine. N'apparaît pas quand un
                     filtre est actif (la grille est "filtrée", pas vide). */}
-                {!showArchived && filter == null && !searchQuery && tagFilter.length === 0 && (
+                {!showArchived && filter == null && !searchQuery && tagFilter.length === 0 && !dueDateFilter && (
                   Array.from({ length: Math.max(3, 8 - visibleCards.length % 8) }).map((_, i) => (
                     <EmptySlot
                       key={`empty-${i}`}
