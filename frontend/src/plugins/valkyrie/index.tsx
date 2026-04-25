@@ -1392,27 +1392,58 @@ export default function ValkyriePlugin() {
 
         {/* ── Bandeau filtre due_date (cliquer sur un jour du calendrier) ─ */}
         {activeProject && viewMode === 'grid' && dueDateFilter && (
-          <div className="flex items-center justify-between rounded-lg px-3 py-2 mb-3" style={{
+          <div className="rounded-lg px-3 py-2 mb-3" style={{
             background: 'color-mix(in srgb, var(--scarlet) 8%, var(--bg-secondary))',
             border: '1px solid color-mix(in srgb, var(--scarlet) 25%, transparent)',
           }}>
-            <div className="flex items-center gap-2 text-xs">
-              <CalendarDays className="w-3.5 h-3.5" style={{ color: 'var(--scarlet)' }} />
-              <span style={{ color: 'var(--text-secondary)' }}>
-                Filtré sur le{' '}
-                <strong style={{ color: 'var(--text-primary)' }}>
-                  {new Date(dueDateFilter + 'T12:00:00').toLocaleDateString('fr-FR', {
-                    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-                  })}
-                </strong>
-                {' '}— <strong>{visibleCards.length}</strong> carte{visibleCards.length > 1 ? 's' : ''} sur {cards.length} au total
-              </span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs">
+                <CalendarDays className="w-3.5 h-3.5" style={{ color: 'var(--scarlet)' }} />
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  Filtré sur le{' '}
+                  <strong style={{ color: 'var(--text-primary)' }}>
+                    {new Date(dueDateFilter + 'T12:00:00').toLocaleDateString('fr-FR', {
+                      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+                    })}
+                  </strong>
+                  {' '}— <strong>{visibleCards.length}</strong> carte{visibleCards.length > 1 ? 's' : ''} sur {cards.length} au total
+                </span>
+              </div>
+              <button onClick={() => setDueDateFilter(null)} title="Retirer le filtre"
+                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors hover:bg-[var(--bg-tertiary)]"
+                style={{ color: 'var(--text-muted)' }}>
+                <X className="w-3 h-3" /> Retirer
+              </button>
             </div>
-            <button onClick={() => setDueDateFilter(null)} title="Retirer le filtre"
-              className="flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors hover:bg-[var(--bg-tertiary)]"
-              style={{ color: 'var(--text-muted)' }}>
-              <X className="w-3 h-3" /> Retirer
-            </button>
+            {/* Debug : montre la valeur brute du filtre + les due_date des
+                cartes du projet pour identifier un mismatch de format. À retirer
+                quand le bug est confirmé fixé. */}
+            <details className="mt-1.5 text-[10px]" style={{ color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
+              <summary style={{ cursor: 'pointer' }}>Debug filtre</summary>
+              <div className="mt-1 px-2 py-1 rounded" style={{ background: 'var(--bg-tertiary)' }}>
+                <div>filtre brut: <code>{JSON.stringify(dueDateFilter)}</code></div>
+                <div>filtre (slice 10): <code>"{dueDateFilter.slice(0, 10)}"</code></div>
+                <div className="mt-1">cartes avec une due_date :</div>
+                <ul style={{ paddingLeft: 14, margin: 0 }}>
+                  {cards.filter(c => c.due_date).slice(0, 12).map(c => {
+                    const raw = c.due_date || ''
+                    const sliced = raw.slice(0, 10)
+                    const matches = sliced === dueDateFilter.slice(0, 10)
+                    return (
+                      <li key={c.id} style={{ color: matches ? 'var(--accent-success)' : 'var(--text-muted)' }}>
+                        #{c.id} — <code>{JSON.stringify(raw)}</code> → slice <code>"{sliced}"</code> {matches ? '✓ MATCH' : ''}
+                      </li>
+                    )
+                  })}
+                  {cards.filter(c => c.due_date).length > 12 && (
+                    <li>… +{cards.filter(c => c.due_date).length - 12} autres</li>
+                  )}
+                  {cards.filter(c => c.due_date).length === 0 && (
+                    <li style={{ color: 'var(--accent-danger)' }}>(aucune carte du projet n'a de due_date renseignée — donc le calendrier est vide)</li>
+                  )}
+                </ul>
+              </div>
+            </details>
           </div>
         )}
 
