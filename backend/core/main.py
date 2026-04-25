@@ -650,7 +650,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def security_headers(request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    # SAMEORIGIN (vs DENY) : SpearCode est rendu via une iframe interne pointée
+    # vers /code-frame pour isoler ses side-effects (LSP WebSocket, listeners).
+    # On garde la protection contre l'embed sur un autre domaine.
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     # Fix sécu M6 : Content-Security-Policy conservateur.
@@ -661,8 +664,8 @@ async def security_headers(request, call_next):
     # - img-src 'self' data: https: : avatars, captures HuntR, images LLM.
     # - connect-src 'self' https: wss: : appels API providers (OpenRouter,
     #   Anthropic, etc.) + WebSocket voice.
-    # - frame-ancestors 'none' : pas embeddable en iframe (double-check vs
-    #   X-Frame-Options DENY, qui est déjà posé).
+    # - frame-ancestors 'self' : embeddable uniquement par notre propre origine
+    #   (SpearCode est rendu via iframe interne /code-frame). Pas d'embed externe.
     # - object-src 'none' : bloque plugins Flash/Java.
     # On pose le header UNIQUEMENT sur les réponses HTML (pas les JSON API)
     # pour ne pas impacter les clients programmatiques qui ne rendent pas de
@@ -678,7 +681,7 @@ async def security_headers(request, call_next):
             "connect-src 'self' https: wss: ws:; "
             "media-src 'self' blob: data:; "
             "worker-src 'self' blob:; "
-            "frame-ancestors 'none'; "
+            "frame-ancestors 'self'; "
             "object-src 'none'; "
             "base-uri 'self'; "
             "form-action 'self'"
