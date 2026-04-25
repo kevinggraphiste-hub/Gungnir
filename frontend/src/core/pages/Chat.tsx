@@ -11,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, Pencil, Check, X, Key,
   Paperclip, Image as ImageIcon, Copy, Folder, FolderMinus, GripVertical,
   Calendar, Play, Pause, CheckCircle2, AlertCircle, Clock,
-  RefreshCw, ThumbsUp, ThumbsDown, Hash, Wand2, Volume2, VolumeX, Loader2,
+  RefreshCw, ThumbsUp, ThumbsDown, Zap, Wand2, Volume2, VolumeX, Loader2,
   ShieldCheck, ShieldAlert, Square, Pin
 } from 'lucide-react'
 import { SecondaryButton } from '../components/ui'
@@ -110,7 +110,7 @@ function TokenBadge({ tokens }: { tokens: number }) {
       }}
       title={`${tokens} tokens`}
     >
-      <Hash className="w-2.5 h-2.5" />
+      <Zap className="w-2.5 h-2.5" />
       <span>{tokens > 999 ? `${(tokens / 1000).toFixed(1)}K` : tokens}</span>
     </span>
   )
@@ -2532,7 +2532,7 @@ export default function Chat() {
                   <div className="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg text-[10px]"
                     style={{ color: 'var(--text-muted)', background: 'transparent' }}
                     title={`Tokens cumulés dans cette session : ${sessionTokens.toLocaleString()}`}>
-                    <Hash className="w-3 h-3" />
+                    <Zap className="w-3 h-3" />
                     <span>{sessionTokens.toLocaleString()} tok</span>
                   </div>
                 )}
