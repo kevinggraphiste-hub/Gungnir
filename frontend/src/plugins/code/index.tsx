@@ -36,7 +36,38 @@ const PLUGIN_VERSION = (manifest as { version?: string }).version || '?'
 // MAIN
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Wrapper iframe — utilisé sur la route normale `/code` du plugin.
+//
+// Pourquoi : SpearCode embarque CodeMirror + WebSocket LSP + plein de
+// listeners globaux. Au démontage React, certains de ces side-effects
+// persistent dans le DOM/JS et empêchent l'affichage du plugin suivant
+// (URL change ✓ mais contenu reste sur SpearCode). Symptôme observé en
+// production sans erreur console — diagnostic chirurgical impossible
+// sans devtools live.
+//
+// Solution : rendre tout SpearCode dans une iframe pointée vers
+// `/code-frame` (route servie par la même SPA, mais sans layout/sidebar).
+// Au démontage, l'iframe disparaît du DOM → le navigateur kill l'isolat
+// JS → tout est nettoyé, garanti par la spec.
 export default function SpearCodePlugin() {
+  return (
+    <iframe
+      src="/code-frame"
+      title="SpearCode"
+      style={{
+        flex: 1,
+        width: '100%',
+        height: '100%',
+        border: 'none',
+        background: 'var(--bg-primary)',
+      }}
+      // sandbox volontairement omis : on a besoin de l'auth (localStorage
+      // partagé via same-origin), des popups (export), et des downloads.
+    />
+  )
+}
+
+export function SpearCodeContent() {
   const saved = useRef(loadSession())
 
   const [tabs, setTabs] = useState<OpenTab[]>([])

@@ -22,6 +22,7 @@ import Chat from './pages/Chat'
 import AgentSettings from './pages/AgentSettings'
 import Settings from './pages/Settings'
 import Login from './pages/Login'
+import { SpearCodeContent } from '../plugins/code/index'
 
 // ── Loading fallback ────────────────────────────────────────────────────────
 function PluginLoading() {
@@ -167,11 +168,28 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
 
   return (
     <div className="min-h-screen flex" style={{ background: 'var(--bg-primary)' }}>
-      <Sidebar />
-      <main className="flex-1 h-screen overflow-hidden flex flex-col">
-        <RoutesShell plugins={plugins} pluginsLoaded={pluginsLoaded} />
-      </main>
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <Routes>
+        {/* Mode "frame standalone" : sert SpearCode sans sidebar/layout — utilisé
+            via iframe par la route `/code` du plugin pour isoler ses side-effects
+            (WebSocket LSP, listeners globaux) du reste de l'app. */}
+        <Route path="/code-frame" element={
+          <main className="flex-1 h-screen overflow-hidden flex flex-col" style={{ width: '100vw' }}>
+            <PluginErrorBoundary pluginName="SpearCode">
+              <SpearCodeContent />
+            </PluginErrorBoundary>
+          </main>
+        } />
+        {/* Mode normal : sidebar + main avec routes plugin classiques. */}
+        <Route path="*" element={
+          <>
+            <Sidebar />
+            <main className="flex-1 h-screen overflow-hidden flex flex-col">
+              <RoutesShell plugins={plugins} pluginsLoaded={pluginsLoaded} />
+            </main>
+            <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+          </>
+        } />
+      </Routes>
     </div>
   )
 }
