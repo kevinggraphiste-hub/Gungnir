@@ -100,7 +100,11 @@ export default function AgentSettings() {
   const [subAgents, setSubAgents] = useState<any[]>([])
   const [personalities, setPersonalities] = useState<any[]>([])
   const [securityScan, setSecurityScan] = useState<any>(null)
-  const [currentMode, setCurrentMode] = useState('ask_permission')
+  // null tant que le fetch initial /api/agent/mode n'a pas répondu — évite le
+  // flash "Demande surligné → puis bascule sur le vrai mode" au retour sur la
+  // page (avant : default `ask_permission` faisait briller la mauvaise carte
+  // pendant ~200ms).
+  const [currentMode, setCurrentMode] = useState<string | null>(null)
   const [pendingRequests, setPendingRequests] = useState<any[]>([])
   const [newSkill, setNewSkill] = useState({
     name: '', description: '', prompt: '', tools: [] as string[],
