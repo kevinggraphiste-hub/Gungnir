@@ -324,23 +324,74 @@ export default function AgentSettings() {
 
   const SECURITY_THRESHOLD = 85
 
-  // Parse a .md skill file into a JSON-compatible object
+  // Extrait un bloc YAML front-matter en tête du texte (--- key: val --- body).
+  // Format aligné sur celui supporté par le backend (`_parse_frontmatter`).
+  // Renvoie {meta, body} — meta = {} si pas de front-matter.
+  const parseFrontmatter = (text: string): { meta: Record<string, any>; body: string } => {
+    const t = text.replace(/^﻿/, '') // strip BOM
+    const stripped = t.trimStart()
+    if (!stripped.startsWith('---')) return { meta: {}, body: t }
+    const after = stripped.slice(3)
+    const closeIdx = after.search(/\n---/)
+    if (closeIdx === -1) return { meta: {}, body: t }
+    const yamlBlock = after.slice(0, closeIdx)
+    const body = after.slice(closeIdx + 4).replace(/^\n+/, '')
+    const meta: Record<string, any> = {}
+    for (const rawLine of yamlBlock.split('\n')) {
+      const line = rawLine.trim()
+      if (!line || line.startsWith('#')) continue
+      const colonIdx = line.indexOf(':')
+      if (colonIdx === -1) continue
+      const key = line.slice(0, colonIdx).trim()
+      let value: any = line.slice(colonIdx + 1).trim()
+      if (!key) continue
+      if (value.startsWith('[') && value.endsWith(']')) {
+        value = value.slice(1, -1).split(',').map((x: string) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
+      } else if (/^(true|false)$/i.test(value)) {
+        value = value.toLowerCase() === 'true'
+      } else if (/^(null|none|)$/i.test(value)) {
+        value = null
+      } else {
+        value = value.replace(/^["']|["']$/g, '')
+      }
+      meta[key] = value
+    }
+    return { meta, body }
+  }
+
+  // Cherche le premier `# Titre` du body si name pas dans le frontmatter
+  const extractFirstHeading = (body: string): string | null => {
+    const m = body.match(/^\s*#\s+(.+?)\s*$/m)
+    return m ? m[1].trim() : null
+  }
+
+  // Parse a .md skill file → JSON. Priorité au YAML frontmatter (format
+  // standard, aligné avec le backend). Fallback : format custom historique
+  // `# Skill : nom` + `**catégorie :** xxx` + `## Prompt`. Fallback final :
+  // tout le texte est le prompt.
   const parseSkillMarkdown = (text: string): Record<string, any> => {
+    const { meta, body } = parseFrontmatter(text)
+    if (Object.keys(meta).length > 0) {
+      const data: Record<string, any> = { ...meta }
+      if (!data.name) {
+        const h = extractFirstHeading(body)
+        if (h) data.name = h
+      }
+      if (body.trim()) data.prompt = body.trim()
+      return data
+    }
+    // Fallback custom legacy
     const data: Record<string, any> = {}
-    // Extract name from # Skill : <name>
     const nameMatch = text.match(/^#\s*(?:Skill|skill)\s*[:\-–]\s*(.+)/m)
     if (nameMatch) data.name = nameMatch[1].trim()
-    // Extract bold fields: **Key :** Value
     const fieldMap: Record<string, string> = { 'catégorie': 'category', 'categorie': 'category', 'category': 'category', 'description': 'description', 'auteur': 'author', 'author': 'author', 'version': 'version', 'tags': 'tags' }
     for (const [frKey, jsonKey] of Object.entries(fieldMap)) {
       const re = new RegExp(`\\*\\*${frKey}\\s*[:：]\\s*\\*\\*\\s*(.+)`, 'im')
       const match = text.match(re)
       if (match) data[jsonKey] = jsonKey === 'tags' ? match[1].split(',').map((t: string) => t.trim()) : match[1].trim()
     }
-    // Extract prompt from ## Prompt section
     const promptMatch = text.match(/##\s*Prompt\s*\n+([\s\S]*?)(?=\n##\s|\n---|\s*$)/i)
     if (promptMatch) data.prompt = promptMatch[1].trim()
-    // If no structured sections found, use the whole text as prompt
     if (!data.prompt && !data.name) {
       data.prompt = text.trim()
       data.name = 'imported_skill'
@@ -348,8 +399,20 @@ export default function AgentSettings() {
     return data
   }
 
-  // Parse a .md agent file into a JSON-compatible object
   const parseAgentMarkdown = (text: string): Record<string, any> => {
+    const { meta, body } = parseFrontmatter(text)
+    if (Object.keys(meta).length > 0) {
+      const data: Record<string, any> = { ...meta }
+      if (!data.name) {
+        const h = extractFirstHeading(body)
+        if (h) data.name = h
+      }
+      if (typeof data.name === 'string') {
+        data.name = data.name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+      }
+      if (body.trim()) data.system_prompt = body.trim()
+      return data
+    }
     const data: Record<string, any> = {}
     const nameMatch = text.match(/^#\s*(?:Agent|Sub-?agent|Sous-?agent)\s*[:\-–]\s*(.+)/m)
     if (nameMatch) data.name = nameMatch[1].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
@@ -430,6 +493,19 @@ export default function AgentSettings() {
   }
 
   const parsePersonalityMarkdown = (text: string): Record<string, any> => {
+    const { meta, body } = parseFrontmatter(text)
+    if (Object.keys(meta).length > 0) {
+      const data: Record<string, any> = { ...meta }
+      if (!data.name) {
+        const h = extractFirstHeading(body)
+        if (h) data.name = h
+      }
+      if (typeof data.name === 'string') {
+        data.name = data.name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+      }
+      if (body.trim()) data.system_prompt = body.trim()
+      return data
+    }
     const data: Record<string, any> = {}
     const nameMatch = text.match(/^#\s*(?:Personnalité|Personality|Personnalite)\s*[:\-–]\s*(.+)/m)
     if (nameMatch) data.name = nameMatch[1].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
