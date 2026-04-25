@@ -1416,6 +1416,43 @@ async def _tick_once():
                         await emit_trigger(user_id, "disk_low", cooldown_seconds=24 * 3600)
             except Exception as _dl_err:
                 logger.debug(f"disk_low check failed for user {user_id}: {_dl_err}")
+
+            # Low urgency elsewhere → curiosity : tous les besoins de priorité
+            # ≥ 2 (survival/integrity/progression/comprehension) sont calmes,
+            # donc la conscience a de la bande passante pour explorer. Cooldown
+            # 4h pour ne pas spammer en période d'idle prolongé.
+            try:
+                from backend.plugins.consciousness.engine import consciousness_manager as _cm
+                _eng = _cm.get(user_id)
+                urgencies = _eng.calculate_urgencies() or {}
+                non_curiosity = {n: u for n, u in urgencies.items() if n != "curiosity"}
+                if non_curiosity and all(
+                    (u.get("urgency") or 0) <= 0.3 for u in non_curiosity.values()
+                ):
+                    await emit_trigger(user_id, "low_urgency_elsewhere", cooldown_seconds=4 * 3600)
+            except Exception as _lue_err:
+                logger.debug(f"low_urgency_elsewhere check failed for user {user_id}: {_lue_err}")
+
+            # Error in logs → survival : si le compteur global d'erreurs récentes
+            # (alimenté par _ErrorRateHandler attaché au logger root) dépasse le
+            # seuil dans la fenêtre courante. Émis pour tous les users (signal
+            # système, pas user-specific). Cooldown 1h.
+            try:
+                from backend.plugins.consciousness.error_watcher import recent_error_count
+                if recent_error_count() >= 3:
+                    await emit_trigger(user_id, "error_in_logs", cooldown_seconds=3600)
+            except Exception as _eil_err:
+                logger.debug(f"error_in_logs check failed for user {user_id}: {_eil_err}")
+
+            # Feature needed → progression : scan TODO/FIXME du workspace de
+            # l'user (data/workspace/{uid}). Si > 5 TODOs → l'user a du grain
+            # à moudre. Cooldown 24h (scan coûteux + signal lent à évoluer).
+            try:
+                from backend.plugins.consciousness.workspace_scan import count_workspace_todos
+                if count_workspace_todos(user_id) >= 5:
+                    await emit_trigger(user_id, "feature_needed", cooldown_seconds=24 * 3600)
+            except Exception as _fn_err:
+                logger.debug(f"feature_needed check failed for user {user_id}: {_fn_err}")
         except Exception as e:
             logger.debug(f"System triggers emit failed for user {user_id}: {e}")
 
@@ -1472,6 +1509,12 @@ async def on_startup(app: Any = None):
     global _daemon_task
     if _daemon_task and not _daemon_task.done():
         return
+    # Compteur d'erreurs runtime pour le trigger `error_in_logs`.
+    try:
+        from backend.plugins.consciousness.error_watcher import attach_root_handler
+        attach_root_handler()
+    except Exception as e:
+        logger.debug(f"Error watcher attach failed: {e}")
     _daemon_task = asyncio.create_task(_consciousness_loop())
     # Warm enabled users so Qdrant reconnects itself after a redeploy.
     asyncio.create_task(_warm_vector_memories())

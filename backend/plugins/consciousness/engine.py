@@ -1136,6 +1136,19 @@ class ConsciousnessEngine:
                 prev["timestamp"] = _now()
                 prev["_count"] = int(prev.get("_count", 1)) + 1
                 _save_json(self._paths["challenger_log"], self._challenger_log)
+                # Pattern récurrent (≥ 3 occurrences du même finding) →
+                # comprehension. Cooldown par signature pour ne pas re-émettre
+                # à chaque incrément au-delà du seuil.
+                if prev["_count"] >= 3:
+                    try:
+                        from backend.plugins.consciousness.triggers import emit_trigger_sync
+                        emit_trigger_sync(
+                            self.user_id or 0, "new_pattern",
+                            entity_id=sig,
+                            cooldown_seconds=12 * 3600,
+                        )
+                    except Exception:
+                        pass
                 return
 
         self._prune_stale_findings()
@@ -1169,6 +1182,19 @@ class ConsciousnessEngine:
                     self.user_id or 0, "bias_detected",
                     entity_id=sig,  # cooldown par signature → ne respam pas si même bias
                     cooldown_seconds=12 * 3600,
+                )
+            except Exception:
+                pass
+
+        # Trigger : une contradiction explicitement notée par le Challenger
+        # pousse le besoin `comprehension`. Cooldown par signature.
+        if finding_type == "contradiction":
+            try:
+                from backend.plugins.consciousness.triggers import emit_trigger_sync
+                emit_trigger_sync(
+                    self.user_id or 0, "contradiction_found",
+                    entity_id=sig,
+                    cooldown_seconds=6 * 3600,
                 )
             except Exception:
                 pass
