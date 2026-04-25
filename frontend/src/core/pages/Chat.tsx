@@ -2283,7 +2283,18 @@ export default function Chat() {
                       })}
                     </div>
                   )}
-                  <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
+                  {/* Pendant le tool-calling avant le premier token texte, la
+                      bulle assistant est créée vide. Au lieu d'afficher rien
+                      (qui ressemblait à un bug avec le « ... » loader en
+                      dessous), on annonce explicitement ce qui se passe. */}
+                  {msg.role === 'assistant' && !msg.content && loadingConvoId === currentConversation ? (
+                    <div className="flex items-center gap-2 text-xs italic" style={{ color: 'var(--text-muted)' }}>
+                      <Sparkles className="w-3 h-3 animate-pulse" style={{ color: 'var(--accent-primary)' }} />
+                      <span>Appel d'outils en cours…</span>
+                    </div>
+                  ) : (
+                    <MessageContent content={msg.content.replace(/\n\[Image jointe\]/g, '')} />
+                  )}
                 </div>
                 {/* Barre d'actions (copie + régénération + 👍/👎) */}
                 {msg.content && (
