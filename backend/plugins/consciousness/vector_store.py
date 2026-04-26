@@ -93,20 +93,62 @@ class EmbeddingGenerator:
             return [item["embedding"] for item in data["data"]]
 
     async def _embed_google(self, texts: list[str]) -> list[list[float]]:
-        """Google Generative AI embedding API (v1 + v1beta fallback)."""
-        model = self.model
-        requests_body = [{"model": f"models/{model}", "content": {"parts": [{"text": t}]}} for t in texts]
+        """Google Generative AI embedding API.
+
+        Essaie le modèle configuré, puis fallback sur des alternatives connues
+        (Google a migré/renommé certains modèles selon régions et plans). Le
+        premier modèle qui répond sans 404 gagne. La dim est capturée à partir
+        du résultat — pas besoin de la connaître à l'avance.
+        """
+        # Ordre de fallback : modèle configuré d'abord, puis alternatives.
+        candidates = [self.model]
+        for alt in ("text-embedding-004", "gemini-embedding-001", "embedding-001", "text-embedding-005"):
+            if alt not in candidates:
+                candidates.append(alt)
+
+        last_error: str | None = None
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Try v1 first, then v1beta
-            for version in ("v1", "v1beta"):
-                url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:batchEmbedContents?key={self.api_key}"
-                resp = await client.post(url, json={"requests": requests_body})
-                if resp.status_code == 404:
+            for model_name in candidates:
+                requests_body = [
+                    {"model": f"models/{model_name}", "content": {"parts": [{"text": t}]}}
+                    for t in texts
+                ]
+                # v1beta supporte batchEmbedContents pour tous les modèles
+                # embedding actuels — on n'essaie plus v1 (souvent 404 sur ces
+                # modèles, polluait les logs).
+                url = (
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}"
+                    f":batchEmbedContents?key={self.api_key}"
+                )
+                try:
+                    resp = await client.post(url, json={"requests": requests_body})
+                except Exception as e:
+                    last_error = f"connect error sur {model_name}: {e}"
                     continue
-                resp.raise_for_status()
+                if resp.status_code == 404:
+                    last_error = f"404 sur {model_name}"
+                    continue
+                if resp.status_code >= 400:
+                    last_error = f"{resp.status_code} sur {model_name}: {resp.text[:200]}"
+                    if resp.status_code in (401, 403):
+                        # Clé invalide / permissions — inutile d'essayer d'autres modèles
+                        break
+                    continue
                 data = resp.json()
-                return [item["values"] for item in data["embeddings"]]
-            raise ValueError(f"Modèle embedding Google '{model}' introuvable (v1 et v1beta)")
+                emb = [item["values"] for item in data["embeddings"]]
+                # Si on a fallback sur un autre modèle, sync self.model pour
+                # cohérence + log.
+                if model_name != self.model:
+                    logger.info(
+                        f"Google embedding fallback: {self.model} → {model_name} "
+                        f"(dim={len(emb[0]) if emb else '?'})"
+                    )
+                    self.model = model_name
+                return emb
+        raise ValueError(
+            f"Aucun modèle embedding Google ne répond. Dernière erreur : "
+            f"{last_error or 'inconnue'}. Modèles essayés : {', '.join(candidates)}."
+        )
 
     async def embed_single(self, text: str) -> list[float]:
         """Embed a single text."""
