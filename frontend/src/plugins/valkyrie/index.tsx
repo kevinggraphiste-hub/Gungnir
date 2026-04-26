@@ -1390,10 +1390,13 @@ export default function ValkyriePlugin() {
               setViewMode('grid')
             }}
             onDayClick={(iso) => {
-              // Alimente le filtre Date de la toolbar (input natif visible) +
-              // bascule en grille. Les autres filtres restent intacts — l'user
-              // les contrôle indépendamment dans la toolbar.
+              // Reset des autres filtres pour partir d'une vue propre — l'user
+              // peut en réappliquer ensuite manuellement via la toolbar.
               setDueDateFilter(iso)
+              setSearchQuery('')
+              setTagFilter([])
+              setFilter(null)
+              setShowArchived(false)
               setViewMode('grid')
             }}
             onQuickCreate={async (isoDate) => {
