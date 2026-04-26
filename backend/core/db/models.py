@@ -111,6 +111,10 @@ class Message(Base):
     # en base64 dans le payload de requête, pas persistées). Format :
     # [{"url": "...", "b64": "...", "mime_type": "image/png", "size": "1024x1024", "revised_prompt": "..."}]
     images_out = Column(JSON, nullable=True)
+    # Coût USD calculé via le pricing dynamique (OpenRouter live + fallback
+    # statique) au moment du write. Permet à l'UI de sommer les coûts réels
+    # par bulle pour le compteur « coût session » sans estimation approximative.
+    cost_usd = Column(Float, default=0.0)
 
     conversation = relationship("Conversation", back_populates="messages")
 
@@ -353,6 +357,7 @@ async def init_db(engine):
         ("ALTER TABLE messages ADD COLUMN model VARCHAR(255) DEFAULT ''", "model -> messages"),
         ("ALTER TABLE messages ADD COLUMN provider VARCHAR(100) DEFAULT ''", "provider -> messages"),
         ("ALTER TABLE messages ADD COLUMN images_out JSONB DEFAULT NULL", "images_out -> messages"),
+        ("ALTER TABLE messages ADD COLUMN cost_usd DOUBLE PRECISION DEFAULT 0.0", "cost_usd -> messages"),
         ("ALTER TABLE conversations ADD COLUMN is_pinned BOOLEAN DEFAULT FALSE", "is_pinned -> conversations"),
     ]
 

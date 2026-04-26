@@ -164,6 +164,7 @@ async def get_messages(convo_id: int, request: Request, session: AsyncSession = 
             "tool_calls": m.tool_calls,
             "tokens_input": m.tokens_input or 0,
             "tokens_output": m.tokens_output or 0,
+            "cost_usd": float(getattr(m, "cost_usd", 0) or 0),
             "model": m.model or "",
             "provider": m.provider or "",
             "images_out": m.images_out or None,

@@ -1208,8 +1208,17 @@ export default function Chat() {
   }, [currentConversation])
   useEffect(() => {
     const totalMsgs = messages.length
-    const totalTokens = messages.reduce((acc, m) => acc + (m.content.length / 4), 0)
-    setStats({ tokens: Math.round(totalTokens), messages: totalMsgs, cost: totalTokens * 0.00001 })
+    // Tokens : somme des tokens_output réels remontés par le backend (les
+    // assistants ont tokens_output, les users ont tokens_input dans la bulle
+    // assistant suivante). On somme les deux pour avoir le total session.
+    const totalTokens = messages.reduce(
+      (acc, m) => acc + ((m as any).tokens_input || 0) + ((m as any).tokens_output || 0),
+      0,
+    )
+    // Coût : somme des `cost_usd` réels (pricing dynamique OpenRouter calculé
+    // côté backend au write time). Plus de formule fictive client-side.
+    const totalCost = messages.reduce((acc, m) => acc + ((m as any).cost_usd || 0), 0)
+    setStats({ tokens: totalTokens, messages: totalMsgs, cost: totalCost })
   }, [messages])
 
   const loadMessages = async () => {

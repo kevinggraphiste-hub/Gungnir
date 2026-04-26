@@ -1134,6 +1134,10 @@ async def _chat_impl(
         mode_manager = mode_pool.get(user_id or 0)
         MAX_TOOL_ROUNDS = 12
         tool_events: list[dict] = []
+        # Accumule le coût USD des rounds tool-calling pour retourner un coût
+        # réel (basé sur le pricing dynamique OpenRouter) au frontend, plutôt
+        # que de laisser celui-ci l'estimer au pifomètre côté client.
+        total_cost_usd: float = 0.0
 
         # ══════════════════════════════════════════════════════════════════
         # WEB GATEWAY -- style OpenClaw
@@ -1421,11 +1425,12 @@ Tu operes en mode **demande**. Comportement :
 
             # Trace le coût de CE round (sinon seul le round final serait
             # enregistré et les rounds intermédiaires tool-calling disparaîtraient
-            # des analytics).
+            # des analytics). Le retour est accumulé pour exposer un coût réel
+            # au frontend via le payload de réponse.
             if response is not None:
                 try:
                     from backend.core.cost.manager import get_cost_manager
-                    await get_cost_manager().record_message_cost(
+                    _round_cost = await get_cost_manager().record_message_cost(
                         session,
                         convo_id,
                         response.model or chosen_model,
@@ -1433,6 +1438,7 @@ Tu operes en mode **demande**. Comportement :
                         response.tokens_output or 0,
                         user_id=_current_uid or None,
                     )
+                    total_cost_usd += float(_round_cost or 0.0)
                 except Exception as _round_err:
                     print(f"[Wolf] Round cost recording skipped: {_round_err}")
 
@@ -1664,6 +1670,8 @@ Tu operes en mode **demande**. Comportement :
             # peut changer ensuite via /switch ou provider_manage).
             model=(response.model or chosen_model or "")[:255],
             provider=provider_name or "",
+            # Coût USD réel (somme des rounds tool-calling) — pricing dynamique
+            cost_usd=round(total_cost_usd, 6),
         )
         session.add(user_msg)
         session.add(assistant_msg)
@@ -1744,6 +1752,10 @@ Tu operes en mode **demande**. Comportement :
             "provider": provider_name,
             "tokens_input": response.tokens_input,
             "tokens_output": response.tokens_output,
+            # Coût réel calculé via pricing dynamique (OpenRouter live + fallback
+            # statique). Somme des rounds tool-calling. Le frontend l'affiche
+            # tel quel — plus de fausse estimation côté client.
+            "cost_usd": round(total_cost_usd, 6),
             "tool_events": tool_events if tool_events else None,
             **({"switch_provider": _switch_info} if _switch_info else {}),
         }

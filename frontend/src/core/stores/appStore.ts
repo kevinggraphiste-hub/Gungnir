@@ -15,6 +15,7 @@ interface Message {
   created_at: string
   tokens_input?: number
   tokens_output?: number
+  cost_usd?: number
   model?: string
   provider?: string
   images?: string[]
