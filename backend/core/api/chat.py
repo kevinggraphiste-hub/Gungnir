@@ -1306,6 +1306,20 @@ Tu operes en mode **demande**. Comportement :
             if _user_consciousness is not None and _user_consciousness.enabled:
                 consciousness_block = _user_consciousness.get_consciousness_prompt_block()
                 _user_consciousness.record_interaction()
+                # Recall sémantique sur le message courant — parité avec les
+                # channels externes (commit 027dcad). Sans ça Qdrant était
+                # alimenté par l'auto-index mais jamais lu sur le canal web.
+                try:
+                    _memories = await _user_consciousness.vector_recall(
+                        message, top_k=3, collection="memories"
+                    )
+                    if _memories:
+                        consciousness_block += "\n\n## Souvenirs pertinents\n" + "\n".join(
+                            f"- {m.get('text') or m.get('content') or ''}".strip()[:200]
+                            for m in _memories
+                        )
+                except Exception as _recall_err:
+                    print(f"[Wolf] Vector recall skipped: {_recall_err}")
         except Exception:
             pass  # Plugin non chargé ou erreur — pas bloquant
 
