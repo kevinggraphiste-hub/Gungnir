@@ -668,13 +668,27 @@ class ConsciousnessVectorMemory:
 
     async def recall(self, query: str, collection: str | None = None,
                      top_k: int = 5, filter_meta: dict | None = None) -> list[dict]:
-        """Semantic search across consciousness memories."""
+        """Semantic search across consciousness memories.
+
+        `collection` accepte un nom court (`memories`, `thoughts`, `interactions`)
+        OU le nom complet (`consciousness_memories`). On normalise en interne
+        pour rester cohérent avec store_memory/store_thought/store_interaction
+        qui écrivent dans `consciousness_*` (sans quoi le recall cherchait dans
+        `memories_u1` alors que les writes étaient dans `consciousness_memories_u1`).
+        """
         if not self._ready:
             return []
+        # Mapping nom court → constante (préfixée `consciousness_*`)
+        SHORT_TO_FULL = {
+            "thoughts": COLLECTION_THOUGHTS,
+            "memories": COLLECTION_MEMORIES,
+            "interactions": COLLECTION_INTERACTIONS,
+        }
         try:
             embedding = await self._embedder.embed_single(query)
             if collection:
-                collections = [_user_collection(collection, self._user_id)]
+                full_name = SHORT_TO_FULL.get(collection, collection)
+                collections = [_user_collection(full_name, self._user_id)]
             else:
                 collections = [
                     _user_collection(COLLECTION_THOUGHTS, self._user_id),
