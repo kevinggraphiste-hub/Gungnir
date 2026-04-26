@@ -3922,21 +3922,23 @@ function CalendarView({
   )
 
   // Cellule d'une carte (réutilisée par les 3 vues, taille variable)
+  // Clic sur une carte = filtrer la grille sur cette date (intent attendu :
+  // « je veux voir les cartes de ce jour »). On n'ouvre PAS la carte ici —
+  // l'user verra la liste filtrée et pourra ouvrir n'importe laquelle dans
+  // la grille. Pas de stopPropagation donc le clic « bubble » jusqu'à la
+  // cellule parent, qui appelle onDayClick (effet identique).
   const renderCard = (c: CardT, iso: string, opts: { size: 'sm' | 'md' | 'lg' }) => {
     const c_color = statusColor(c.status_key)
     const isOverdue = c.status_key !== 'done' && iso < todayIso
     const fontSize = opts.size === 'lg' ? 13 : opts.size === 'md' ? 11 : 10
     const padding = opts.size === 'lg' ? '6px 10px' : '2px 4px'
     return (
-      <button key={c.id}
-        // stopPropagation : la cellule de jour parent a un onClick qui filtre
-        // sur la date ; sans ce stop, cliquer sur une carte filtrerait aussi.
-        onClick={(e) => { e.stopPropagation(); onOpenCard(c.id) }}
+      <div key={c.id}
         style={{
           textAlign: 'left', fontSize, padding, borderRadius: 4,
           background: isOverdue ? 'rgba(239,68,68,0.15)' : `color-mix(in srgb, ${c_color} 12%, transparent)`,
           borderLeft: `2px solid ${isOverdue ? '#ef4444' : c_color}`,
-          border: 'none', borderLeftWidth: opts.size === 'lg' ? 3 : 2, borderLeftStyle: 'solid',
+          borderLeftWidth: opts.size === 'lg' ? 3 : 2, borderLeftStyle: 'solid',
           color: 'var(--text-primary)', cursor: 'pointer',
           whiteSpace: opts.size === 'lg' ? 'normal' : 'nowrap',
           overflow: 'hidden', textOverflow: 'ellipsis',
@@ -3948,7 +3950,7 @@ function CalendarView({
             {c.subtitle && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.subtitle}</span>}
           </div>
         ) : c.title}
-      </button>
+      </div>
     )
   }
 
