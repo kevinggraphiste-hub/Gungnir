@@ -1515,10 +1515,24 @@ export default function Chat() {
                 content: response.content ?? streamedSoFar,
                 model: response.model, provider: response.provider,
                 tokens_input: response.tokens_input, tokens_output: response.tokens_output,
+                cost_usd: (response as any).cost_usd,
                 tool_events: collectedToolEvents.length > 0 ? collectedToolEvents : undefined,
               } as any)
             : m))
         }
+        // Event-bus interne : notifie l'analytics (et tout autre listener)
+        // qu'un coût vient d'être enregistré côté backend → refresh immédiat
+        // au lieu d'attendre le polling 30s. Best-effort, no-op si personne
+        // n'écoute.
+        try {
+          window.dispatchEvent(new CustomEvent('gungnir-cost-recorded', {
+            detail: {
+              model: response.model, provider: response.provider,
+              tokens_input: response.tokens_input, tokens_output: response.tokens_output,
+              cost_usd: (response as any).cost_usd,
+            },
+          }))
+        } catch { /* ignore */ }
         // If agent switched provider/model, update the frontend selection
         if (response.switch_provider) {
           const sw = response.switch_provider

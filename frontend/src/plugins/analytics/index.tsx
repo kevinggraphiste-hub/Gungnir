@@ -251,14 +251,19 @@ export default function AnalyticsPlugin() {
   useEffect(() => {
     const onFocus = () => loadData()
     const onVisibility = () => { if (document.visibilityState === 'visible') loadData() }
+    // Push event-based : Chat émet `gungnir-cost-recorded` après chaque
+    // réponse facturée → refresh immédiat sans attendre le polling.
+    const onCost = () => loadData()
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('gungnir-cost-recorded', onCost)
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') loadData()
-    }, 30000)
+    }, 15000)  // 30s → 15s pour un quasi-temps réel
     return () => {
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('gungnir-cost-recorded', onCost)
       window.clearInterval(interval)
     }
   }, [loadData])

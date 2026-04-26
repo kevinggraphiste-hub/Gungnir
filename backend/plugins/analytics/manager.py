@@ -81,18 +81,51 @@ class CostManager:
             return {"total_cost": 0, "total_tokens": 0, "message_count": 0, "avg_cost_per_message": 0}
 
     async def get_by_model(self, session: AsyncSession, user_id: Optional[int] = None) -> List[dict]:
+        """Coûts ventilés par modèle, avec canonicalisation post-fetch.
+
+        Pourquoi : la base contient potentiellement plusieurs noms pour le
+        même modèle selon le provider (OpenRouter renvoie « anthropic/X »,
+        Anthropic direct renvoie « X-20250514 », etc.). Sans canonicalisation,
+        l'analytics affiche 2 lignes pour ce qui est le même modèle.
+        On regroupe via extract_model_name (mêmes règles que l'écriture).
+        """
         try:
             q = select(
                 CostAnalytics.model,
                 func.sum(CostAnalytics.cost).label("tc"),
                 func.sum(CostAnalytics.tokens_input + CostAnalytics.tokens_output).label("tt"),
                 func.count().label("mc"),
-            ).group_by(CostAnalytics.model).order_by(func.sum(CostAnalytics.cost).desc())
+            ).group_by(CostAnalytics.model)
             q = _user_filter(q, user_id)
             r = await session.execute(q)
-            return [{"model": row.model, "total_cost": round(float(row.tc), 4),
-                      "total_tokens": int(row.tt or 0), "message_count": int(row.mc or 0)}
-                     for row in r.all()]
+
+            # Re-groupement par nom canonique
+            agg: dict[str, dict] = {}
+            for row in r.all():
+                raw = row.model or "unknown"
+                canonical = extract_model_name(raw) or raw
+                slot = agg.setdefault(canonical, {
+                    "model": canonical, "total_cost": 0.0,
+                    "total_tokens": 0, "message_count": 0,
+                    "_raw_aliases": set(),
+                })
+                slot["total_cost"] += float(row.tc or 0)
+                slot["total_tokens"] += int(row.tt or 0)
+                slot["message_count"] += int(row.mc or 0)
+                if raw != canonical:
+                    slot["_raw_aliases"].add(raw)
+
+            out = []
+            for k, v in agg.items():
+                v["total_cost"] = round(v["total_cost"], 4)
+                # On expose les alias regroupés pour transparence (ex: l'UI
+                # peut afficher en tooltip « regroupe : anthropic/X, X-2025... »)
+                aliases = sorted(v.pop("_raw_aliases"))
+                if aliases:
+                    v["aliases"] = aliases
+                out.append(v)
+            out.sort(key=lambda x: x["total_cost"], reverse=True)
+            return out
         except Exception as e:
             logger.error(f"By model error: {e}")
             return []
