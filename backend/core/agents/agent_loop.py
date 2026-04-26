@@ -150,6 +150,9 @@ Quand l'utilisateur demande explicitement quelque chose, appelle DIRECTEMENT le 
 | « rappelle-moi de Y demain à 18h » | `valkyrie_create_card` (avec due_date) |
 | « liste mes tâches / mes projets » | `valkyrie_list_cards` / `valkyrie_list_projects` |
 | « où en est le projet Z » | `valkyrie_list_cards` filtré sur projet |
+| « combien j'ai dépensé / quel est mon budget » | `cost_summary` ou `budget_status` |
+| « quel modèle me coûte le plus » | `cost_by_model` |
+| « notifie sur Slack / Discord / déclenche le webhook X » | `webhook_trigger` (faire `webhook_list` d'abord pour récupérer l'id) |
 | « note / rappelle-toi / souviens-toi que… » | `consciousness_remember` (key+value) |
 | « tu te souviens de… ? / qu'est-ce que je t'ai dit sur… » | `consciousness_recall` (query) |
 | « quels sont tes objectifs / goals » | `consciousness_list_goals` |
