@@ -41,34 +41,21 @@ class CostManager:
         message_date: Optional[datetime] = None,
         user_id: Optional[int] = None,
     ) -> float:
-        """Record cost for a message. Returns calculated cost."""
-        try:
-            std_model = extract_model_name(model)
-            cost = calculate_cost(std_model, tokens_input, tokens_output)
-
-            # Resolve user_id from the conversation if the caller didn't pass one
-            resolved_uid = user_id
-            if resolved_uid is None and conversation_id is not None:
-                conv = await session.get(Conversation, conversation_id)
-                if conv and conv.user_id is not None:
-                    resolved_uid = conv.user_id
-
-            record = CostAnalytics(
-                user_id=resolved_uid,
-                date=(message_date or datetime.utcnow()).date(),
-                conversation_id=conversation_id,
-                model=std_model,
-                tokens_input=tokens_input,
-                tokens_output=tokens_output,
-                cost=cost,
-            )
-            session.add(record)
-            await session.commit()
-            return cost
-        except Exception as e:
-            logger.error(f"Record cost error: {e}")
-            await session.rollback()
-            return 0.0
+        """Record cost for a message — délègue au core pour utiliser le
+        pricing DYNAMIQUE (OpenRouter live + fallback statique). Avant cette
+        délégation, ce manager utilisait uniquement MODEL_PRICING statique →
+        risque que les nouveaux modèles non listés soient enregistrés à $0.
+        """
+        from backend.core.cost.manager import get_cost_manager as _core_cm
+        return await _core_cm().record_message_cost(
+            session=session,
+            conversation_id=conversation_id,
+            model=model,
+            tokens_input=tokens_input,
+            tokens_output=tokens_output,
+            message_date=message_date,
+            user_id=user_id,
+        )
 
     async def get_summary(self, session: AsyncSession, user_id: Optional[int] = None) -> dict:
         try:
