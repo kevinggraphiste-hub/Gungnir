@@ -135,8 +135,47 @@ async def _consciousness_remember(key: str, value: str, category: str = "context
     if err:
         return {"ok": False, "error": err}
     try:
+        # 1) Mémoire de travail (JSON local, succès garanti)
         eng.add_to_working_memory(key=key, value=value, category=category)
-        return {"ok": True, "stored": {"key": key, "category": category, "value": value[:200]}}
+
+        # 2) Vector store (Qdrant) — appel SYNCHRONE pour remonter le vrai
+        # statut. Avant : add_to_working_memory faisait un asyncio.create_task
+        # fire-and-forget, ce qui retournait silencieusement False si Qdrant
+        # n'était pas ready / embedder cassé / collection manquante. Le tool
+        # agent indiquait alors « ok: true » à tort.
+        await eng.ensure_vector_ready()
+        vector_ok = False
+        vector_error = None
+        if eng._vector_memory and eng._vector_memory.ready:
+            from datetime import datetime, timezone as _tz
+            ts = datetime.now(_tz.utc).isoformat().replace(":", "-").replace("+", "_")
+            memory_id = f"mem_{key}_{ts}"
+            try:
+                vector_ok = await eng._vector_memory.store_memory(
+                    memory_id, value, category, key
+                )
+                if not vector_ok:
+                    vector_error = "store_memory a retourné False (voir logs backend)"
+            except Exception as e:
+                vector_error = str(e)[:300]
+        else:
+            vm_config = eng.config.get("vector_memory", {}) or {}
+            provider = vm_config.get("vector_provider", "none")
+            if provider == "none":
+                vector_error = "vector_provider non configuré (Settings → Services → Qdrant)"
+            else:
+                vector_error = (
+                    f"Qdrant non prêt (provider={provider}, ready=False) — "
+                    "vérifie l'URL et la clé d'embedding (Google API key requise)."
+                )
+
+        return {
+            "ok": True,
+            "stored": {"key": key, "category": category, "value": value[:200]},
+            "working_memory": True,
+            "vector_indexed": vector_ok,
+            "vector_error": vector_error,
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}
 
@@ -193,9 +232,30 @@ async def _consciousness_status() -> dict:
         return {"ok": False, "error": err}
     try:
         urgencies = eng.calculate_urgencies() or {}
-        # Top 3 besoins par score (priority × urgency)
         top_needs = list(urgencies.items())[:3]
         state = eng.state or {}
+        # État vector store (Qdrant) — pour diagnostiquer pourquoi un
+        # consciousness_remember n'arriverait pas à indexer.
+        vector_status: dict = {}
+        try:
+            await eng.ensure_vector_ready()
+            vm = eng._vector_memory
+            vm_config = eng.config.get("vector_memory", {}) or {}
+            if vm and vm.ready:
+                info = await vm._store.info() if vm._store else {"status": "no_store"}
+                vector_status = {
+                    "ready": True,
+                    "provider": vm_config.get("vector_provider", "?"),
+                    **info,
+                }
+            else:
+                vector_status = {
+                    "ready": False,
+                    "provider": vm_config.get("vector_provider", "none"),
+                    "reason": "non initialisé (provider non configuré ou échec connexion)",
+                }
+        except Exception as e:
+            vector_status = {"ready": False, "error": str(e)[:200]}
         return {
             "ok": True,
             "mood": state.get("mood", "neutre"),
@@ -206,6 +266,7 @@ async def _consciousness_status() -> dict:
             "pending_impulse": (state.get("volition") or {}).get("pending_impulse"),
             "kill_switch_tier": state.get("safety_tier", "OK"),
             "stats": state.get("stats", {}),
+            "vector_memory": vector_status,
         }
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}
