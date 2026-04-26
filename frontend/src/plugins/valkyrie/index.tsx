@@ -828,22 +828,14 @@ export default function ValkyriePlugin() {
 
   // ── Render ──────────────────────────────────────────────────────────
   const visibleCards = useMemo(() => {
-    // ISOLATION STRICTE quand un filtre date est actif : on prend cards (pas
-    // archivedCards), on ignore tous les autres filtres, on ne garde QUE
-    // celles dont due_date matche exactement (slice 0..10 pour tolérer un
-    // éventuel datetime complet renvoyé par le backend).
-    if (dueDateFilter) {
-      const target = dueDateFilter.slice(0, 10)
-      const onlyDate = cards.filter(c => (c.due_date || '').slice(0, 10) === target)
-      // Tri par position pour stabilité d'affichage
-      return [...onlyDate].sort((a, b) => a.position - b.position)
-    }
     // En mode archive, on affiche les archivedCards sans filtre
     const source = showArchived ? archivedCards : cards
     const q = searchQuery.trim().toLowerCase()
     const tags = tagFilter.map(t => t.toLowerCase())
     const filtered = source.filter(c => {
       if (!showArchived && filter != null && c.status_key !== filter) return false
+      // Filtre date (slice 0..10 pour tolérer un datetime complet côté backend)
+      if (dueDateFilter && (c.due_date || '').slice(0, 10) !== dueDateFilter.slice(0, 10)) return false
       if (tags.length > 0) {
         const cardTagsLower = (c.tags || []).map(t => t.toLowerCase())
         // Match ANY des tags sélectionnés (plus permissif qu'un ET)
@@ -1285,6 +1277,38 @@ export default function ValkyriePlugin() {
           </div>
         )}
 
+        {/* ── Filter bar (date due_date) — input natif, citoyen 1ʳᵉ classe ── */}
+        {activeProject && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] font-mono uppercase tracking-[2px]"
+              style={{ color: 'var(--text-muted)', marginRight: 4 }}>
+              Date
+            </span>
+            <input type="date"
+              value={dueDateFilter || ''}
+              onChange={e => setDueDateFilter(e.target.value || null)}
+              className="px-2 py-1 rounded-lg text-[11px] font-medium"
+              style={{
+                background: dueDateFilter ? 'color-mix(in srgb, var(--scarlet) 14%, var(--bg-secondary))' : 'var(--bg-secondary)',
+                border: `1px solid ${dueDateFilter ? 'color-mix(in srgb, var(--scarlet) 50%, transparent)' : 'var(--border)'}`,
+                color: dueDateFilter ? 'var(--scarlet)' : 'var(--text-secondary)',
+                colorScheme: 'dark',
+              }} />
+            {dueDateFilter && (
+              <>
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  → <strong style={{ color: 'var(--text-secondary)' }}>{visibleCards.length}</strong>/{cards.length} carte{cards.length > 1 ? 's' : ''}
+                </span>
+                <button onClick={() => setDueDateFilter(null)}
+                  className="text-[10px] font-medium px-2 py-1 rounded-lg transition-colors"
+                  style={{ color: 'var(--text-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}>
+                  Effacer
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {/* ── Filter bar (tags) — affichée si au moins un tag existe ── */}
         {activeProject && allTags.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
@@ -1366,14 +1390,10 @@ export default function ValkyriePlugin() {
               setViewMode('grid')
             }}
             onDayClick={(iso) => {
-              // Reset des autres filtres pour que la grille n'affiche QUE les
-              // cartes de la date cliquée — sinon un filtre status/tag/search
-              // actif pourrait masquer des cartes de ce jour.
+              // Alimente le filtre Date de la toolbar (input natif visible) +
+              // bascule en grille. Les autres filtres restent intacts — l'user
+              // les contrôle indépendamment dans la toolbar.
               setDueDateFilter(iso)
-              setSearchQuery('')
-              setTagFilter([])
-              setFilter(null)
-              setShowArchived(false)
               setViewMode('grid')
             }}
             onQuickCreate={async (isoDate) => {
@@ -1390,62 +1410,6 @@ export default function ValkyriePlugin() {
           />
         )}
 
-        {/* ── Bandeau filtre due_date (cliquer sur un jour du calendrier) ─ */}
-        {activeProject && viewMode === 'grid' && dueDateFilter && (
-          <div className="rounded-lg px-3 py-2 mb-3" style={{
-            background: 'color-mix(in srgb, var(--scarlet) 8%, var(--bg-secondary))',
-            border: '1px solid color-mix(in srgb, var(--scarlet) 25%, transparent)',
-          }}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs">
-                <CalendarDays className="w-3.5 h-3.5" style={{ color: 'var(--scarlet)' }} />
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  Filtré sur le{' '}
-                  <strong style={{ color: 'var(--text-primary)' }}>
-                    {new Date(dueDateFilter + 'T12:00:00').toLocaleDateString('fr-FR', {
-                      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-                    })}
-                  </strong>
-                  {' '}— <strong>{visibleCards.length}</strong> carte{visibleCards.length > 1 ? 's' : ''} sur {cards.length} au total
-                </span>
-              </div>
-              <button onClick={() => setDueDateFilter(null)} title="Retirer le filtre"
-                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors hover:bg-[var(--bg-tertiary)]"
-                style={{ color: 'var(--text-muted)' }}>
-                <X className="w-3 h-3" /> Retirer
-              </button>
-            </div>
-            {/* Debug : montre la valeur brute du filtre + les due_date des
-                cartes du projet pour identifier un mismatch de format. À retirer
-                quand le bug est confirmé fixé. */}
-            <details className="mt-1.5 text-[10px]" style={{ color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
-              <summary style={{ cursor: 'pointer' }}>Debug filtre</summary>
-              <div className="mt-1 px-2 py-1 rounded" style={{ background: 'var(--bg-tertiary)' }}>
-                <div>filtre brut: <code>{JSON.stringify(dueDateFilter)}</code></div>
-                <div>filtre (slice 10): <code>"{dueDateFilter.slice(0, 10)}"</code></div>
-                <div className="mt-1">cartes avec une due_date :</div>
-                <ul style={{ paddingLeft: 14, margin: 0 }}>
-                  {cards.filter(c => c.due_date).slice(0, 12).map(c => {
-                    const raw = c.due_date || ''
-                    const sliced = raw.slice(0, 10)
-                    const matches = sliced === dueDateFilter.slice(0, 10)
-                    return (
-                      <li key={c.id} style={{ color: matches ? 'var(--accent-success)' : 'var(--text-muted)' }}>
-                        #{c.id} — <code>{JSON.stringify(raw)}</code> → slice <code>"{sliced}"</code> {matches ? '✓ MATCH' : ''}
-                      </li>
-                    )
-                  })}
-                  {cards.filter(c => c.due_date).length > 12 && (
-                    <li>… +{cards.filter(c => c.due_date).length - 12} autres</li>
-                  )}
-                  {cards.filter(c => c.due_date).length === 0 && (
-                    <li style={{ color: 'var(--accent-danger)' }}>(aucune carte du projet n'a de due_date renseignée — donc le calendrier est vide)</li>
-                  )}
-                </ul>
-              </div>
-            </details>
-          </div>
-        )}
 
         {/* ── Grid board ───────────────────────────────────────── */}
         {activeProject && viewMode === 'grid' && (
