@@ -201,9 +201,12 @@ export default function ValkyriePlugin() {
   // Recherche + filtre tags
   const [searchQuery, setSearchQuery] = useState('')
   const [tagFilter, setTagFilter] = useState<string[]>([])
-  // Filtre due_date — alimenté par un clic sur une journée du calendrier.
-  // Format ISO (YYYY-MM-DD) ou null. Quand actif, la grille n'affiche que les
-  // cartes avec exactement cette due_date.
+  // Verrou date — alimenté UNIQUEMENT par un clic sur une journée du
+  // calendrier. Format ISO local YYYY-MM-DD ou null. Quand actif, c'est un
+  // filtre PRIORITAIRE qui bypass tous les autres : la grille n'affiche
+  // strictement que les cartes avec cette due_date, peu importe status/tags/
+  // search/archive. Pour le retirer : bouton X dans le bandeau scarlet, ou
+  // rebascule en vue calendrier puis re-clique sur une autre date.
   const [dueDateFilter, setDueDateFilter] = useState<string | null>(null)
   const [allTags, setAllTags] = useState<TagEntryT[]>([])
   const [showExportMenu, setShowExportMenu] = useState(false)
@@ -828,14 +831,21 @@ export default function ValkyriePlugin() {
 
   // ── Render ──────────────────────────────────────────────────────────
   const visibleCards = useMemo(() => {
+    // VERROU DATE PRIORITAIRE : si actif, on bypass tous les autres filtres
+    // et on retourne UNIQUEMENT les cartes du jour cliqué — comportement
+    // demandé pour le clic calendrier (isolation totale).
+    if (dueDateFilter) {
+      const target = dueDateFilter.slice(0, 10)
+      return cards
+        .filter(c => (c.due_date || '').slice(0, 10) === target)
+        .sort((a, b) => a.position - b.position)
+    }
     // En mode archive, on affiche les archivedCards sans filtre
     const source = showArchived ? archivedCards : cards
     const q = searchQuery.trim().toLowerCase()
     const tags = tagFilter.map(t => t.toLowerCase())
     const filtered = source.filter(c => {
       if (!showArchived && filter != null && c.status_key !== filter) return false
-      // Filtre date (slice 0..10 pour tolérer un datetime complet côté backend)
-      if (dueDateFilter && (c.due_date || '').slice(0, 10) !== dueDateFilter.slice(0, 10)) return false
       if (tags.length > 0) {
         const cardTagsLower = (c.tags || []).map(t => t.toLowerCase())
         // Match ANY des tags sélectionnés (plus permissif qu'un ET)
@@ -1277,35 +1287,29 @@ export default function ValkyriePlugin() {
           </div>
         )}
 
-        {/* ── Filter bar (date due_date) — input natif, citoyen 1ʳᵉ classe ── */}
-        {activeProject && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] font-mono uppercase tracking-[2px]"
-              style={{ color: 'var(--text-muted)', marginRight: 4 }}>
-              Date
-            </span>
-            <input type="date"
-              value={dueDateFilter || ''}
-              onChange={e => setDueDateFilter(e.target.value || null)}
-              className="px-2 py-1 rounded-lg text-[11px] font-medium"
-              style={{
-                background: dueDateFilter ? 'color-mix(in srgb, var(--scarlet) 14%, var(--bg-secondary))' : 'var(--bg-secondary)',
-                border: `1px solid ${dueDateFilter ? 'color-mix(in srgb, var(--scarlet) 50%, transparent)' : 'var(--border)'}`,
-                color: dueDateFilter ? 'var(--scarlet)' : 'var(--text-secondary)',
-                colorScheme: 'dark',
-              }} />
-            {dueDateFilter && (
-              <>
-                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                  → <strong style={{ color: 'var(--text-secondary)' }}>{visibleCards.length}</strong>/{cards.length} carte{cards.length > 1 ? 's' : ''}
-                </span>
-                <button onClick={() => setDueDateFilter(null)}
-                  className="text-[10px] font-medium px-2 py-1 rounded-lg transition-colors"
-                  style={{ color: 'var(--text-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}>
-                  Effacer
-                </button>
-              </>
-            )}
+        {/* ── Verrou date prioritaire (clic calendrier) ── */}
+        {activeProject && viewMode === 'grid' && dueDateFilter && (
+          <div className="flex items-center justify-between rounded-lg px-3 py-2" style={{
+            background: 'color-mix(in srgb, var(--scarlet) 12%, var(--bg-secondary))',
+            border: '1px solid color-mix(in srgb, var(--scarlet) 40%, transparent)',
+          }}>
+            <div className="flex items-center gap-2 text-xs">
+              <CalendarDays className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
+              <span style={{ color: 'var(--text-secondary)' }}>
+                Verrou date —{' '}
+                <strong style={{ color: 'var(--scarlet)' }}>
+                  {new Date(dueDateFilter + 'T12:00:00').toLocaleDateString('fr-FR', {
+                    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+                  })}
+                </strong>
+                {' '}· <strong>{visibleCards.length}</strong> carte{visibleCards.length > 1 ? 's' : ''} (les autres filtres sont ignorés)
+              </span>
+            </div>
+            <button onClick={() => setDueDateFilter(null)}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors"
+              style={{ color: 'var(--scarlet)', background: 'transparent', border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)', cursor: 'pointer' }}>
+              <X className="w-3 h-3" /> Retirer le verrou
+            </button>
           </div>
         )}
 
