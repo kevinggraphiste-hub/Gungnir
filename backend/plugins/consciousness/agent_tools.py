@@ -155,9 +155,14 @@ async def _consciousness_remember(key: str, value: str, category: str = "context
                     memory_id, value, category, key
                 )
                 if not vector_ok:
-                    vector_error = "store_memory a retourné False (voir logs backend)"
+                    # On lit le dernier message d'erreur posé par store_memory
+                    # (embed/upsert) — sinon l'agent voyait un False opaque.
+                    vector_error = (
+                        getattr(eng._vector_memory, "_last_error", None)
+                        or "store_memory a retourné False sans détail"
+                    )
             except Exception as e:
-                vector_error = str(e)[:300]
+                vector_error = f"{type(e).__name__}: {str(e)[:300]}"
         else:
             vm_config = eng.config.get("vector_memory", {}) or {}
             provider = vm_config.get("vector_provider", "none")
@@ -246,6 +251,7 @@ async def _consciousness_status() -> dict:
                 vector_status = {
                     "ready": True,
                     "provider": vm_config.get("vector_provider", "?"),
+                    "last_write_error": getattr(vm, "_last_error", None),
                     **info,
                 }
             else:

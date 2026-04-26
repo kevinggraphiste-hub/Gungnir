@@ -425,6 +425,9 @@ class ConsciousnessVectorMemory:
         self._embedder: EmbeddingGenerator | None = None
         self._ready = False
         self._user_id = config.get("_user_id", 0)
+        # Trace de la dernière erreur d'écriture (embed/upsert) — exposée par
+        # les tools agent (consciousness_remember) pour diagnostic en live.
+        self._last_error: str | None = None
 
     @property
     def enabled(self) -> bool:
@@ -471,6 +474,7 @@ class ConsciousnessVectorMemory:
                             source_files: list[str] | None = None) -> bool:
         """Store a thought with semantic embedding."""
         if not self._ready:
+            self._last_error = "vector memory not ready"
             return False
         try:
             embedding = await self._embedder.embed_single(content)
@@ -486,8 +490,10 @@ class ConsciousnessVectorMemory:
                 },
                 text=content,
             )
+            self._last_error = None
             return True
         except Exception as e:
+            self._last_error = f"{type(e).__name__}: {str(e)[:300]}"
             logger.error(f"Failed to store thought vector: {e}")
             return False
 
@@ -495,6 +501,7 @@ class ConsciousnessVectorMemory:
                            category: str, key: str = "") -> bool:
         """Store a working memory item with semantic embedding."""
         if not self._ready:
+            self._last_error = "vector memory not ready (init failed or provider=none)"
             return False
         try:
             embedding = await self._embedder.embed_single(content)
@@ -509,8 +516,10 @@ class ConsciousnessVectorMemory:
                 },
                 text=content,
             )
+            self._last_error = None
             return True
         except Exception as e:
+            self._last_error = f"{type(e).__name__}: {str(e)[:300]}"
             logger.error(f"Failed to store memory vector: {e}")
             return False
 
