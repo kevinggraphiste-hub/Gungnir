@@ -24,15 +24,48 @@ logger = logging.getLogger("gungnir.consciousness.vector")
 class EmbeddingGenerator:
     """Generates embeddings via external API (OpenAI-compatible or Google)."""
 
+    # Dimensions connues — évite que la collection Qdrant soit créée avec une
+    # mauvaise taille (ex: 1536 par défaut alors que text-embedding-004 fait
+    # 768 → tout upsert ensuite throw « dimension mismatch »).
+    KNOWN_DIMENSIONS = {
+        # Google
+        "text-embedding-004": 768,
+        "embedding-001": 768,
+        "text-embedding-005": 768,
+        # OpenAI
+        "text-embedding-3-small": 1536,
+        "text-embedding-3-large": 3072,
+        "text-embedding-ada-002": 1536,
+        # Cohere
+        "embed-english-v3.0": 1024,
+        "embed-multilingual-v3.0": 1024,
+    }
+
     def __init__(self, config: dict):
         self.provider = config.get("embedding_provider", "openai")
         self.model = config.get("embedding_model", "text-embedding-3-small")
         self.api_key = config.get("embedding_api_key", "")
         self.base_url = config.get("embedding_base_url", "")
-        self._dimension = config.get("embedding_dimension", 1536)
+        # Dim : on prend la valeur connue pour ce modèle si possible, sinon
+        # la config user, sinon 1536 par défaut. Sera affinée par
+        # `detect_dimension()` au moment de l'init.
+        configured = config.get("embedding_dimension")
+        known = self.KNOWN_DIMENSIONS.get(self.model)
+        self._dimension = known or configured or 1536
 
     @property
     def dimension(self) -> int:
+        return self._dimension
+
+    async def detect_dimension(self) -> int:
+        """Embed un texte test et retourne la VRAIE dimension. Met à jour
+        self._dimension. À appeler après init si la valeur configurée est
+        suspecte (ex: collection existante avec dim != réelle)."""
+        try:
+            sample = await self.embed_single("ping")
+            self._dimension = len(sample)
+        except Exception:
+            pass
         return self._dimension
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -454,11 +487,15 @@ class ConsciousnessVectorMemory:
                 logger.warning("Vector store connection failed")
                 return False
 
-            # Create per-user collections
-            dim = self._embedder.dimension
+            # Détecte la VRAIE dim via un embed test — corrige le cas où la
+            # config user/global avait une dim incorrecte (ex: 1536 par défaut
+            # alors que text-embedding-004 fait 768). Sans ça, les collections
+            # étaient créées avec une mauvaise taille → tout upsert ensuite
+            # plantait silencieusement.
+            real_dim = await self._embedder.detect_dimension()
             for base_col in [COLLECTION_THOUGHTS, COLLECTION_MEMORIES, COLLECTION_INTERACTIONS]:
                 col = _user_collection(base_col, self._user_id)
-                await self._store.ensure_collection(col, dim)
+                await self._ensure_collection_with_correct_dim(col, real_dim)
 
             self._ready = True
             logger.info(f"Vector memory initialized: {self._config.get('vector_provider')}")
@@ -468,6 +505,47 @@ class ConsciousnessVectorMemory:
             logger.error(f"Vector memory init failed: {e}")
             self._ready = False
             return False
+
+    async def _ensure_collection_with_correct_dim(self, col: str, expected_dim: int) -> None:
+        """Crée la collection si absente, ou la drop+recrée si la dim diffère.
+
+        Spécifique Qdrant : on inspecte `info` pour récupérer la dim courante.
+        Pour les autres providers (Chroma/Pinecone), on délègue à `ensure_collection`
+        qui fera son propre check.
+        """
+        store = self._store
+        if store is None:
+            return
+        # Cas simple : on essaie ensure_collection (créera si absente)
+        await store.ensure_collection(col, expected_dim)
+
+        # Vérification spécifique Qdrant : si la collection existait avec une
+        # mauvaise dim, on la drop+recrée. On ne perd que des vecteurs déjà
+        # invalides (jamais utilisables avec la nouvelle dim).
+        try:
+            from .vector_store import QdrantVectorStore  # noqa
+            if not isinstance(store, QdrantVectorStore):
+                return
+        except Exception:
+            return
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{store.url}/collections/{col}", headers=store._headers())
+                if resp.status_code != 200:
+                    return
+                data = resp.json().get("result", {})
+                vectors = data.get("config", {}).get("params", {}).get("vectors", {})
+                current_dim = vectors.get("size") if isinstance(vectors, dict) else None
+                if current_dim and int(current_dim) != int(expected_dim):
+                    logger.warning(
+                        f"Collection {col} dim mismatch (got {current_dim}, "
+                        f"expected {expected_dim}) — recreating"
+                    )
+                    await client.delete(f"{store.url}/collections/{col}", headers=store._headers())
+                    await store.ensure_collection(col, expected_dim)
+        except Exception as e:
+            logger.debug(f"Could not verify Qdrant collection dim for {col}: {e}")
 
     async def store_thought(self, thought_id: str, content: str,
                             thought_type: str, confidence: float,
