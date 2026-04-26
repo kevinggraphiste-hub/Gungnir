@@ -71,6 +71,8 @@ MODEL_PRICING = {
     # ── Xiaomi ────────────────────────────────────────────────────────────────
     "xiaomi/mimo-v2-pro": {"input": 0.1, "output": 0.3},
     "xiaomi/mimo-v2-omni": {"input": 0.2, "output": 0.6},
+    "xiaomi/mimo-v2.5-pro": {"input": 0.15, "output": 0.45},
+    "xiaomi/mimo-v2.5-omni": {"input": 0.3, "output": 0.9},
     # ── Qwen ──────────────────────────────────────────────────────────────────
     "qwen/qwen-2.5-72b-instruct": {"input": 0.4, "output": 0.4},
     "qwen/qwen-2.5-coder-32b-instruct": {"input": 0.2, "output": 0.2},
@@ -122,7 +124,10 @@ def extract_model_from_response(response_model: str) -> str:
 
     # Fuzzy matching — ordered from specific to general
     patterns = [
-        # Xiaomi (specific first — omni supporte la vision, pro non)
+        # Xiaomi — VERSIONS RÉCENTES en premier sinon le catch-all « mimo »
+        # mappait mimo-v2.5-pro vers mimo-v2-pro (faux, dans analytics).
+        ("mimo-v2.5-pro", "xiaomi/mimo-v2.5-pro"),
+        ("mimo-v2.5-omni", "xiaomi/mimo-v2.5-omni"),
         ("mimo-v2-omni", "xiaomi/mimo-v2-omni"),
         ("mimo-omni", "xiaomi/mimo-v2-omni"),
         ("mimo-v2-pro", "xiaomi/mimo-v2-pro"),
