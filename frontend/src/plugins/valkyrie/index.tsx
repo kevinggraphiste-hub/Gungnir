@@ -251,6 +251,23 @@ export default function ValkyriePlugin() {
     return () => clearTimeout(id)
   }, [toast])
 
+  // ── Verrou date : source unique de vérité ────────────────────────────
+  // Quand `dueDateFilter` est posé (par le clic calendrier ou un setter
+  // externe), on force atomiquement la vue grille + reset de tous les autres
+  // filtres. Ça garantit que peu importe l'ordre/le timing des setters
+  // appelants, l'état converge toujours vers « verrou date pur ».
+  useEffect(() => {
+    if (dueDateFilter) {
+      setViewMode('grid')
+      setSearchQuery('')
+      setTagFilter([])
+      setFilter(null)
+      setShowArchived(false)
+      // eslint-disable-next-line no-console
+      console.log('[valkyrie] verrou date activé →', dueDateFilter)
+    }
+  }, [dueDateFilter])
+
   // Import docs modal
   const [showImportModal, setShowImportModal] = useState(false)
 
@@ -1394,14 +1411,11 @@ export default function ValkyriePlugin() {
               setViewMode('grid')
             }}
             onDayClick={(iso) => {
-              // Reset des autres filtres pour partir d'une vue propre — l'user
-              // peut en réappliquer ensuite manuellement via la toolbar.
+              // Suffit de poser le filtre — le useEffect [dueDateFilter] reset
+              // les autres filtres et bascule en grille atomiquement.
+              // eslint-disable-next-line no-console
+              console.log('[valkyrie] onDayClick →', iso)
               setDueDateFilter(iso)
-              setSearchQuery('')
-              setTagFilter([])
-              setFilter(null)
-              setShowArchived(false)
-              setViewMode('grid')
             }}
             onQuickCreate={async (isoDate) => {
               if (!activeProjectId) return
