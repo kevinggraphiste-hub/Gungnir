@@ -1415,6 +1415,7 @@ export default function ValkyriePlugin() {
               // les autres filtres et bascule en grille atomiquement.
               // eslint-disable-next-line no-console
               console.log('[valkyrie] onDayClick →', iso)
+              showToast(`Filtre date posé : ${iso}`)
               setDueDateFilter(iso)
             }}
             onQuickCreate={async (isoDate) => {
@@ -3951,9 +3952,8 @@ function CalendarView({
     )
   }
 
-  // Header d'une cellule : numéro + bouton + (la cellule entière déclenche
-  // déjà le filtre via son propre onClick, donc le numéro n'est plus
-  // cliquable séparément — évite la double-décoration et libère la zone).
+  // Header d'une cellule : numéro cliquable (filtre date — fallback robuste
+  // si la cellule parent n'attrape pas le clic) + bouton + (quick create).
   const renderDayHeader = (d: Date, opts: { highlight?: boolean; large?: boolean } = {}) => {
     const iso = isoOf(d)
     const isToday = iso === todayIso
@@ -3964,9 +3964,18 @@ function CalendarView({
         color: isToday ? 'var(--scarlet)' : 'var(--text-muted)',
         fontWeight: isToday ? 700 : 500,
       }}>
-        <span>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDayClick?.(iso) }}
+          style={{
+            background: 'transparent', border: 'none', padding: 0,
+            color: 'inherit', font: 'inherit',
+            cursor: onDayClick ? 'pointer' : 'default',
+            textDecoration: onDayClick ? 'underline dotted' : 'none',
+            textUnderlineOffset: 2,
+          }}
+          title={onDayClick ? 'Filtrer la grille sur ce jour' : ''}>
           {opts.large ? d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' }) : d.getDate()}
-        </span>
+        </button>
         <button onClick={(e) => { e.stopPropagation(); onQuickCreate(iso) }}
           style={{
             background: 'transparent', border: 'none', cursor: 'pointer',
