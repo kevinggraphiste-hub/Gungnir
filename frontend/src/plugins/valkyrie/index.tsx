@@ -3798,10 +3798,14 @@ function CalendarView({
   }, [cards])
   const statusColor = (key: string) =>
     statuses.find(s => s.key === key)?.color || 'var(--scarlet)'
-  const today = new Date(); today.setHours(0, 0, 0, 0)
-  const todayIso = today.toISOString().slice(0, 10)
+  // ISO LOCALE — toIsoString() retourne du UTC, donc à minuit en heure locale
+  // on tombe sur la VEILLE en UTC (ex: 2026-04-26 00:00 Europe/Paris = 2026-04-25 22:00 UTC).
+  // Ça décalait la cellule « aujourd'hui » d'un jour. On reconstruit à la main
+  // depuis getFullYear/getMonth/getDate qui sont en heure locale.
   const isoOf = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const todayIso = isoOf(today)
 
   // Helpers de navigation selon le mode
   const goPrev = () => {
