@@ -23,7 +23,7 @@ import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 import { humanizeTool, groupByCategory } from './toolLabels'
 
-const PLUGIN_VERSION = '0.5.0'
+const PLUGIN_VERSION = '0.6.0'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -290,23 +290,87 @@ function WorkflowsTab() {
     await load()
   }
 
+  // Run async + SSE streaming : on lance via /run-async (retour immédiat
+  // avec un run_id), puis on consomme /runs/{id}/stream pour afficher
+  // les events au fur et à mesure. À la fin, on récupère le run final
+  // pour avoir l'output complet.
   const handleRun = async () => {
     if (!active || !draft) return
-    // Sauvegarde d'abord pour que le run tape la dernière version éditée.
     if (draft.yaml_def !== active.yaml_def
         || draft.name !== active.name
         || draft.description !== active.description) {
       await handleSave()
     }
     setRunning(true)
-    setLastRun(null)
-    const r = await api<{ ok: boolean; run: ForgeRun; detail?: string }>(
-      `/workflows/${active.id}/run`,
+    // On affiche un run "vide" en cours pour que l'UI réagisse direct.
+    const liveRun: ForgeRun = {
+      id: 0, workflow_id: active.id, status: 'running',
+      inputs: {}, output: {}, logs: [], error: '',
+      trigger_source: 'manual',
+      started_at: new Date().toISOString(),
+      finished_at: null, duration_ms: null,
+    }
+    setLastRun(liveRun)
+    setRightPanel('run')
+
+    const launch = await api<{ ok: boolean; run_id: number; detail?: string }>(
+      `/workflows/${active.id}/run-async`,
       { method: 'POST', body: JSON.stringify({ inputs: {} }) },
     )
+    if (!launch?.run_id) {
+      setRunning(false)
+      return
+    }
+    const runId = launch.run_id
+    liveRun.id = runId
+    setLastRun({ ...liveRun })
+
+    // Stream SSE via fetch + ReadableStream (pas d'EventSource car il ne
+    // supporte pas les headers Authorization).
+    try {
+      const headers: Record<string, string> = {}
+      const token = localStorage.getItem('gungnir_auth_token')
+      if (token) headers['Authorization'] = `Bearer ${token}`
+      const resp = await fetch(`${API}/runs/${runId}/stream`, { headers, cache: 'no-store' })
+      if (!resp.ok || !resp.body) throw new Error(`stream HTTP ${resp.status}`)
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      const aggregateLogs: ForgeRunLog[] = []
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        // Parse `data: ...\n\n` events.
+        let idx
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const chunk = buf.slice(0, idx)
+          buf = buf.slice(idx + 2)
+          for (const line of chunk.split('\n')) {
+            if (!line.startsWith('data:')) continue
+            try {
+              const evt = JSON.parse(line.slice(5).trim())
+              if (evt.type === 'run_start') {
+                // rien — déjà initialisé
+              } else if (evt.type === 'run_end') {
+                // On va recharger l'état final via GET /runs/{id}
+              } else if (evt.step_id) {
+                aggregateLogs.push(evt as ForgeRunLog)
+                setLastRun(prev => prev ? { ...prev, logs: [...aggregateLogs] } : prev)
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Forge] stream failed', e)
+    }
+
+    // Final fetch — l'output complet n'est pas dans les events SSE.
+    const final = await api<{ ok: boolean; run: ForgeRun }>(`/runs/${runId}`, undefined, true)
+    if (final?.run) setLastRun(final.run)
     setRunning(false)
-    if (r?.run) setLastRun(r.run)
-    else alert(`Exécution échouée${r?.detail ? ` : ${r.detail}` : ''}`)
   }
 
   return (

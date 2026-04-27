@@ -228,7 +228,11 @@ const nodeTypes = { forgeStep: StepNodeView }
 
 // ── Tool palette (sidebar gauche) ────────────────────────────────────────
 
-function ToolPalette({ tools, onAdd }: { tools: ForgeTool[]; onAdd: (tool: ForgeTool) => void }) {
+function ToolPalette({ tools, onAdd, onAddControl }: {
+  tools: ForgeTool[]
+  onAdd: (tool: ForgeTool) => void
+  onAddControl: (kind: 'parallel' | 'if' | 'subworkflow') => void
+}) {
   const [q, setQ] = useState('')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   // Filtre + groupage par catégorie. Si l'user tape une recherche, on
@@ -257,6 +261,31 @@ function ToolPalette({ tools, onAdd }: { tools: ForgeTool[]; onAdd: (tool: Forge
         />
       </div>
       <div style={{ flex: 1, overflow: 'auto' }}>
+        {/* Section "Contrôle de flow" — toujours visible en haut, indépendante
+            de la recherche (les pseudo-blocs ne sont pas dans la liste tools
+            backend mais générés côté UI). */}
+        {!isSearching && (
+          <div>
+            <div style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 5, background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border)' }}>
+              <Wand2 size={12} style={{ color: '#dc2626' }} />
+              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: 0.5, textTransform: 'uppercase', flex: 1 }}>Contrôle de flow</span>
+            </div>
+            {[
+              { key: 'parallel' as const, title: 'Bloc parallèle', desc: 'Exécute plusieurs steps en simultané', tag: '⫿ parallel' },
+              { key: 'if' as const, title: 'Condition', desc: 'Saute le step si la condition est fausse', tag: 'if:' },
+              { key: 'subworkflow' as const, title: 'Sous-workflow', desc: 'Appelle un autre workflow Forge', tag: 'forge_run_workflow' },
+            ].map(it => (
+              <div key={it.key} onClick={() => onAddControl(it.key)}
+                style={{ padding: '7px 10px 7px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)', transition: 'background 0.08s' }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(220,38,38,0.10)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{it.title}</div>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', marginTop: 2 }}>{it.tag}</div>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>{it.desc}</div>
+              </div>
+            ))}
+          </div>
+        )}
         {groups.length === 0 && (
           <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Aucun outil ne correspond.</div>
         )}
@@ -553,6 +582,69 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
     })
   }, [setNodes, setEdges, edges, pushYaml, direction])
 
+  // Ajout d'un step "spécial" (contrôle de flow) depuis la palette.
+  // - parallel : crée un step avec 2 sub-steps web_fetch (template à éditer)
+  // - if : crée un step avec un `if:` placeholder qu'on a juste à remplir
+  // - subworkflow : crée un step `tool: forge_run_workflow` (l'user choisira
+  //   le workflow_id dans l'inspector via un input integer)
+  const handleAddControl = useCallback((kind: 'parallel' | 'if' | 'subworkflow') => {
+    setNodes(prev => {
+      const used = new Set(prev.map(n => n.id))
+      const baseId = kind === 'parallel' ? 'parallel' : kind === 'if' ? 'condition' : 'subwf'
+      let id = baseId, i = 1
+      while (used.has(id)) { i += 1; id = `${baseId}_${i}` }
+      const last = prev.length > 0
+        ? [...prev].sort((a, b) => direction === 'horizontal'
+            ? b.position.x - a.position.x
+            : b.position.y - a.position.y)[0]
+        : null
+      const offset = direction === 'horizontal'
+        ? { x: NODE_GAP_HORIZONTAL, y: 0 } : { x: 0, y: NODE_GAP_VERTICAL }
+      const stepBase: any = { id }
+      let toolForCatalog: ForgeTool | null = null
+      if (kind === 'parallel') {
+        stepBase.parallel = [
+          { tool: 'web_fetch', args: { url: 'https://example.com/a' } },
+          { tool: 'web_fetch', args: { url: 'https://example.com/b' } },
+        ]
+      } else if (kind === 'if') {
+        stepBase.tool = 'web_fetch'
+        stepBase.args = { url: '{{ inputs.url }}' }
+        stepBase.if = '{{ inputs.url }}'
+      } else {
+        stepBase.tool = 'forge_run_workflow'
+        stepBase.args = { workflow_id: 0, inputs: {} }
+        toolForCatalog = toolMap.get('forge_run_workflow') || null
+      }
+      const newNode: StepNode = {
+        id, type: 'forgeStep',
+        position: last
+          ? { x: last.position.x + offset.x, y: last.position.y + offset.y }
+          : nodePositionFor(direction, 0),
+        data: {
+          step: stepBase, tool: toolForCatalog,
+          unsupported: kind === 'parallel',  // parallel reste éditable seulement en YAML
+          direction,
+        },
+      }
+      const next = [...prev, newNode]
+      if (last) {
+        setEdges(prevEdges => {
+          const nextEdges = [...prevEdges, {
+            id: `e-${last.id}-${id}`, source: last.id, target: id,
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#dc2626' },
+            style: { stroke: '#dc2626', strokeWidth: 2 },
+          } as Edge]
+          pushYaml(next, nextEdges)
+          return nextEdges
+        })
+      } else {
+        pushYaml(next, edges)
+      }
+      return next
+    })
+  }, [setNodes, setEdges, edges, pushYaml, direction, toolMap])
+
   // Édition d'un node.
   const handleNodeChange = useCallback((nodeId: string, patch: Partial<StepData['step']> & { id?: string }) => {
     setNodes(prev => {
@@ -638,7 +730,7 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
 
   return (
     <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
-      <ToolPalette tools={tools} onAdd={handleAdd} />
+      <ToolPalette tools={tools} onAdd={handleAdd} onAddControl={handleAddControl} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, position: 'relative' }}>
         <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-muted)' }}>
           <span>{nodes.length} step{nodes.length > 1 ? 's' : ''} · {edges.length} connexion{edges.length > 1 ? 's' : ''}</span>

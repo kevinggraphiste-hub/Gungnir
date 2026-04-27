@@ -10,7 +10,9 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, delete as _sqldelete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +23,7 @@ from backend.core.api.auth_helpers import open_mode_fallback_user_id
 from .models import ForgeWorkflow, ForgeWorkflowRun, ForgeTrigger
 from .runner import run_workflow, parse_workflow_yaml
 from .n8n_import import n8n_to_forge
+from . import streams as forge_streams
 from backend.core.agents.wolf_tools import (
     WOLF_TOOL_SCHEMAS,
     set_user_context,
@@ -297,6 +300,138 @@ async def run(wf_id: int, body: RunIn, request: Request,
     await session.commit()
     await session.refresh(run_row)
     return {"ok": True, "run": _serialize_run(run_row)}
+
+
+# Worker background pour run async — fait tourner le workflow et met à
+# jour la DB hors de la requête HTTP.  La queue de stream est créée par
+# le endpoint /run-async avant de spawn la task pour éviter les races.
+async def _run_async_worker(run_id: int, user_id: int, yaml_text: str, inputs: dict):
+    from backend.core.db.engine import async_session
+    async def _on_event(evt: dict):
+        await forge_streams.push_event(run_id, evt)
+
+    prev_uid = get_user_context()
+    set_user_context(user_id)
+    try:
+        await forge_streams.push_event(run_id, {
+            "ts": datetime.utcnow().isoformat(), "type": "run_start", "run_id": run_id,
+        })
+        try:
+            res = await run_workflow(yaml_text, inputs, on_event=_on_event)
+        except Exception as e:
+            logger.exception("[forge.async] crash run_id=%s", run_id)
+            res = type("R", (), {"status": "error", "logs": [], "output": {}, "error": str(e)})
+
+        async with async_session() as session:
+            rs = await session.execute(
+                select(ForgeWorkflowRun).where(ForgeWorkflowRun.id == run_id)
+            )
+            run_row = rs.scalar_one_or_none()
+            if run_row:
+                run_row.status = res.status
+                run_row.logs_json = res.logs
+                run_row.output_json = res.output if isinstance(res.output, dict) else {"value": res.output}
+                run_row.error = res.error or ""
+                run_row.finished_at = datetime.utcnow()
+                await session.commit()
+
+        await forge_streams.push_event(run_id, {
+            "ts": datetime.utcnow().isoformat(), "type": "run_end", "run_id": run_id,
+            "status": res.status, "error": res.error or None,
+        })
+    finally:
+        set_user_context(prev_uid)
+        forge_streams.mark_finished(run_id)
+
+
+@router.post("/workflows/{wf_id}/run-async")
+async def run_async(wf_id: int, body: RunIn, request: Request,
+                    session: AsyncSession = Depends(get_session)):
+    """Lance le workflow en background et retourne immédiatement le run_id.
+    Le client peut ensuite consommer /runs/{id}/stream pour suivre les
+    events en SSE, ou poller /runs/{id} pour le statut final."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == wf_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    w = rs.scalar_one_or_none()
+    if not w:
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    if not w.enabled:
+        raise HTTPException(status_code=400, detail="Workflow désactivé")
+
+    run_row = ForgeWorkflowRun(
+        workflow_id=w.id, user_id=uid, status="running",
+        inputs_json=body.inputs or {}, trigger_source="manual",
+    )
+    session.add(run_row)
+    await session.commit()
+    await session.refresh(run_row)
+
+    # Crée la queue AVANT de spawn pour qu'aucun event ne soit perdu si
+    # le client SSE se connecte très vite après le retour de cet endpoint.
+    forge_streams.register_run(run_row.id)
+    asyncio.create_task(_run_async_worker(run_row.id, uid, w.yaml_def, body.inputs or {}))
+    return {"ok": True, "run_id": run_row.id, "status": "running"}
+
+
+@router.get("/runs/{run_id}/stream")
+async def run_stream(run_id: int, request: Request,
+                     session: AsyncSession = Depends(get_session)):
+    """SSE — pousse les events du runner au client en live.
+
+    Format Server-Sent Events standard : `data: <json>\\n\\n` par event.
+    Termine sur l'event `run_end` (puis garde la connexion ouverte 5s
+    pour laisser le client traiter le dernier message)."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    # Vérifie ownership avant de stream.
+    rs = await session.execute(
+        select(ForgeWorkflowRun).where(
+            ForgeWorkflowRun.id == run_id, ForgeWorkflowRun.user_id == uid,
+        )
+    )
+    if not rs.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Run introuvable")
+
+    forge_streams.cleanup_finished_queues()
+    queue = forge_streams.get_queue(run_id)
+
+    async def _gen():
+        import json as _json
+        if queue is None:
+            # Run déjà fini ou queue cleanup → on retourne juste les logs DB
+            # en un event `final_state` puis on ferme.
+            async with (await session.execute(
+                select(ForgeWorkflowRun).where(ForgeWorkflowRun.id == run_id)
+            )) as _:
+                pass
+            yield "data: " + _json.dumps({"type": "final_state", "run_id": run_id}) + "\n\n"
+            return
+        # Heartbeat toutes les 15s pour que les proxies ne ferment pas la conn.
+        last_send = 0.0
+        import time as _t
+        while True:
+            try:
+                evt = await asyncio.wait_for(queue.get(), timeout=15.0)
+            except asyncio.TimeoutError:
+                yield ": ping\n\n"
+                last_send = _t.time()
+                continue
+            yield "data: " + _json.dumps(evt) + "\n\n"
+            last_send = _t.time()
+            if evt.get("type") == "run_end":
+                # Petit délai pour que le client reçoive bien le dernier event
+                await asyncio.sleep(0.2)
+                return
+
+    return StreamingResponse(_gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",  # nginx : disable buffering
+    })
 
 
 @router.get("/runs")

@@ -49,7 +49,10 @@ import logging
 import re
 import time
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
+
+# Type du callback passé à run_workflow pour streamer les events.
+EventCallback = Optional[Callable[[dict], Awaitable[None]]]
 
 import yaml
 
@@ -172,42 +175,62 @@ async def _run_tool(tool_name: str, args: dict, log: list) -> dict:
         return {"ok": False, "error": f"Erreur outil {tool_name} : {e}"}
 
 
-async def _exec_step(step: dict, ctx: dict, logs: list) -> dict:
-    """Exécute un step (atomique ou parallèle). Retourne son output."""
+async def _emit(on_event: EventCallback, evt: dict):
+    """Pousse l'event au callback s'il est défini, en silence sur erreur
+    (ne doit jamais casser l'exécution du workflow)."""
+    if on_event is None:
+        return
+    try:
+        await on_event(evt)
+    except Exception as e:
+        logger.warning("[forge] on_event callback failed: %s", e)
+
+
+async def _exec_step(step: dict, ctx: dict, logs: list,
+                     on_event: EventCallback = None) -> dict:
+    """Exécute un step (atomique ou parallèle). Retourne son output.
+    `on_event` (optionnel) reçoit chaque entrée de log au fur et à mesure
+    pour le streaming SSE."""
     sid = step.get("id") or f"step_{len(logs)}"
 
     # Condition skip ?
     if "if" in step:
         cond = step["if"]
         if not _safe_eval_condition(str(cond), ctx):
-            logs.append({
+            evt = {
                 "ts": datetime.utcnow().isoformat(),
                 "step_id": sid, "type": "skip",
                 "reason": f"condition fausse : {cond}",
-            })
+            }
+            logs.append(evt)
+            await _emit(on_event, evt)
             return {"skipped": True, "ok": True}
 
     started = time.time()
-    logs.append({
+    evt_start = {
         "ts": datetime.utcnow().isoformat(),
         "step_id": sid, "type": "start",
         "tool": step.get("tool") or ("parallel" if "parallel" in step else "?"),
-    })
+    }
+    logs.append(evt_start)
+    await _emit(on_event, evt_start)
 
     # Bloc parallèle : exécute les sous-steps en asyncio.gather.
     if "parallel" in step:
         sub_outputs = await asyncio.gather(
-            *[_exec_step(sub, ctx, logs) for sub in step["parallel"]],
+            *[_exec_step(sub, ctx, logs, on_event) for sub in step["parallel"]],
             return_exceptions=False,
         )
         out = {"ok": all(o.get("ok", True) for o in sub_outputs),
                "results": sub_outputs}
-        logs.append({
+        evt_end = {
             "ts": datetime.utcnow().isoformat(),
             "step_id": sid, "type": "end",
             "duration_ms": int((time.time() - started) * 1000),
             "ok": out["ok"],
-        })
+        }
+        logs.append(evt_end)
+        await _emit(on_event, evt_end)
         return out
 
     # Step atomique : invoke un tool.
@@ -218,13 +241,15 @@ async def _exec_step(step: dict, ctx: dict, logs: list) -> dict:
         args = _interpolate(step.get("args") or {}, ctx)
         out = await _run_tool(tool, args, logs)
 
-    logs.append({
+    evt_end = {
         "ts": datetime.utcnow().isoformat(),
         "step_id": sid, "type": "end",
         "duration_ms": int((time.time() - started) * 1000),
         "ok": out.get("ok", True),
         "error": out.get("error") if not out.get("ok", True) else None,
-    })
+    }
+    logs.append(evt_end)
+    await _emit(on_event, evt_end)
     return out
 
 
@@ -262,11 +287,15 @@ def parse_workflow_yaml(yaml_text: str) -> dict:
 
 
 async def run_workflow(yaml_text: str, inputs: Optional[dict] = None,
-                       max_seconds: int = 300) -> ForgeRunResult:
+                       max_seconds: int = 300,
+                       on_event: EventCallback = None) -> ForgeRunResult:
     """Exécute un workflow YAML. Retourne ForgeRunResult.
 
     `max_seconds` : timeout global (défaut 5 min). Au-delà, on annule et
     on retourne status='error' avec les logs partiels.
+
+    `on_event` (optionnel) : callback async appelé à chaque entrée de log
+    pour le streaming temps réel (SSE).  Si None, run en mode batch.
     """
     inputs = inputs or {}
     logs: list = []
@@ -282,7 +311,7 @@ async def run_workflow(yaml_text: str, inputs: Optional[dict] = None,
         nonlocal output
         for step in wf.get("steps", []):
             sid = step.get("id") or f"step_{len(ctx['steps'])}"
-            out = await _exec_step(step, ctx, logs)
+            out = await _exec_step(step, ctx, logs, on_event)
             # Expose l'output sous steps.<id>.* + steps.<id>.output (raw).
             ctx["steps"][sid] = {**(out if isinstance(out, dict) else {}),
                                  "output": out}
