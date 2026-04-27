@@ -88,12 +88,27 @@ export function SpearCodeContent() {
   const [sidePanelWidth, setSidePanelWidth] = useState<number>(() => {
     try {
       const v = Number(localStorage.getItem('spearcode_side_width') || '')
-      return Number.isFinite(v) && v >= 220 && v <= 720 ? v : 300
-    } catch { return 300 }
+      return Number.isFinite(v) && v >= 180 && v <= 720 ? v : 280
+    } catch { return 280 }
   })
   useEffect(() => {
     try { localStorage.setItem('spearcode_side_width', String(sidePanelWidth)) } catch { /* ignore */ }
   }, [sidePanelWidth])
+
+  // Largeur du body (contient panneau + éditeur) — observée via ResizeObserver
+  // pour clamper le panneau quand l'iframe rétrécit. Sans ça, le panneau reste
+  // fixe en px et l'éditeur se fait écraser sur fenêtre étroite. On garde
+  // toujours au moins 320px pour l'éditeur (lisible).
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const [bodyWidth, setBodyWidth] = useState(0)
+  useEffect(() => {
+    if (!bodyRef.current) return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setBodyWidth(entry.contentRect.width)
+    })
+    ro.observe(bodyRef.current)
+    return () => ro.disconnect()
+  }, [])
   // Paramètres en overlay pleine page (masque terminal/preview) — séparé
   // de sideView pour avoir vraiment une vue maximisée.
   const [showSettings, setShowSettings] = useState(false)
@@ -279,6 +294,23 @@ export function SpearCodeContent() {
   const canLivePreview = !!(activeFile && previewableLangs.has(activeFile.language))
   const [previewCollapsed, setPreviewCollapsed] = useState(false)
 
+  // Largeur effective du panneau latéral — clampée selon la place dispo.
+  // On réserve toujours assez d'espace pour l'éditeur (et pour la preview/
+  // split si elles sont actives). Sur écran large rien ne bouge ; sur
+  // fenêtre étroite ou quand on ouvre la preview, le panneau rétrécit
+  // automatiquement (sans toucher à la préférence persistée).
+  const HANDLE_WIDTH = 4
+  const previewActive = showPreview && canLivePreview && !previewCollapsed
+  const splitActive = !!splitPath && !showPreview
+  // Espace minimum à garder pour la zone éditeur :
+  // - simple : 320px
+  // - + preview ouverte : 320 (éditeur) + 320 (preview) = 640
+  // - + split ouvert : idem 640
+  const reservedForEditor = (previewActive || splitActive) ? 640 : 320
+  const effectiveSideWidth = bodyWidth > 0
+    ? Math.max(180, Math.min(sidePanelWidth, bodyWidth - reservedForEditor - HANDLE_WIDTH))
+    : sidePanelWidth
+
   return (
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column', height: '100%',
@@ -390,10 +422,11 @@ export function SpearCodeContent() {
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Side panel (redimensionnable via drag handle) */}
+      <div ref={bodyRef} style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* Side panel (redimensionnable via drag handle, auto-clampé selon
+            l'espace dispo — préférence user préservée mais bornée). */}
         <div style={{
-          width: sidePanelWidth, flexShrink: 0, display: 'flex', flexDirection: 'column',
+          width: effectiveSideWidth, flexShrink: 0, display: 'flex', flexDirection: 'column',
           borderRight: '1px solid var(--border)', background: 'var(--bg-secondary)', overflow: 'hidden',
         }}>
           {sideView === 'files' && <FileExplorer onOpenFile={openFile} />}
@@ -416,9 +449,15 @@ export function SpearCodeContent() {
           onMouseDown={(e) => {
             e.preventDefault()
             const startX = e.clientX
-            const startW = sidePanelWidth
+            const startW = effectiveSideWidth
             const onMove = (ev: MouseEvent) => {
-              const next = Math.max(220, Math.min(720, startW + (ev.clientX - startX)))
+              // Borne haute dynamique : on ne dépasse jamais ce que la
+              // largeur du body peut accepter compte tenu de la zone
+              // réservée à l'éditeur (et à la preview/split si actives).
+              const upperBound = bodyWidth > 0
+                ? Math.min(720, bodyWidth - reservedForEditor - HANDLE_WIDTH)
+                : 720
+              const next = Math.max(180, Math.min(upperBound, startW + (ev.clientX - startX)))
               setSidePanelWidth(next)
             }
             const onUp = () => {
