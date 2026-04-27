@@ -307,6 +307,44 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
   )
 }
 
+// ── Validation des URLs des liens markdown ─────────────────────────
+//
+// Bloque les schemes dangereux qui peuvent exécuter du JS quand on clique
+// (javascript:, data:text/html, vbscript:) ou exposer le filesystem
+// local (file://). Whitelist des schemes inoffensifs : http(s), mailto,
+// tel + chemins relatifs / ancres / routes internes Gungnir.
+//
+// Si une URL n'est pas safe, le markdown `[label](url)` se render en
+// texte brut (label seulement, pas clickable). Audit XSS — le label
+// reste lisible donc l'user voit ce qui était proposé.
+function isSafeUrl(url: string): boolean {
+  if (!url) return false
+  const trimmed = url.trim()
+  // Schemes dangereux explicites — case-insensitive + tolère les
+  // espaces/tabs internes que certains XSS payloads utilisent pour
+  // contourner les filtres naïfs.
+  const lower = trimmed.toLowerCase().replace(/\s+/g, '')
+  if (lower.startsWith('javascript:')) return false
+  if (lower.startsWith('vbscript:')) return false
+  if (lower.startsWith('file:')) return false
+  if (lower.startsWith('data:')) {
+    // On bloque tous les data: par défaut ; les usages légitimes
+    // (images base64) seraient dans un <img src> pas un <a href>.
+    return false
+  }
+  // Whitelist explicite
+  return (
+    lower.startsWith('https://') ||
+    lower.startsWith('http://') ||
+    lower.startsWith('mailto:') ||
+    lower.startsWith('tel:') ||
+    lower.startsWith('/') ||      // routes Gungnir internes
+    lower.startsWith('#') ||      // ancres locales
+    !lower.includes(':')          // chemins relatifs (sans scheme)
+  )
+}
+
+
 // ── Inline markdown rendering ────────────────────────────────────────
 // Supports: **bold**, *italic* / _italic_, `code`, [label](url)
 function renderInline(text: string): React.ReactNode[] {
@@ -334,12 +372,27 @@ function renderInline(text: string): React.ReactNode[] {
     } else if (tok.startsWith('[')) {
       const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok)
       if (linkMatch) {
-        out.push(
-          <a key={key++} href={linkMatch[2]} target="_blank" rel="noopener noreferrer"
-            style={{ color: 'var(--scarlet)', textDecoration: 'underline' }}>
-            {linkMatch[1]}
-          </a>
-        )
+        const label = linkMatch[1]
+        const url = linkMatch[2]
+        if (isSafeUrl(url)) {
+          out.push(
+            <a key={key++} href={url} target="_blank" rel="noopener noreferrer"
+              style={{ color: 'var(--scarlet)', textDecoration: 'underline' }}>
+              {label}
+            </a>
+          )
+        } else {
+          // URL bloquée (javascript:, data:, file:, vbscript:…). On
+          // affiche le label en texte brut + pastille « lien bloqué »
+          // au survol pour que l'user comprenne qu'on a filtré.
+          out.push(
+            <span key={key++}
+              title={`Lien bloqué (scheme non autorisé) : ${url.slice(0, 80)}`}
+              style={{ color: 'var(--text-secondary)', textDecoration: 'underline dotted', cursor: 'help' }}>
+              {label}
+            </span>
+          )
+        }
       } else {
         out.push(<span key={key++}>{tok}</span>)
       }
