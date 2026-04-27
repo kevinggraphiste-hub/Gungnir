@@ -53,6 +53,37 @@ class ForgeWorkflow(Base):
                         server_default=func.now(), onupdate=datetime.utcnow)
 
 
+class ForgeWorkflowVersion(Base):
+    """Snapshot historique d'un workflow.
+
+    Auto-créé à chaque PUT /workflows/{id} qui change yaml_def, avec un
+    rate limit de 5 min entre snapshots (sinon l'édition live spam la table).
+    Permet de visualiser l'historique et restaurer une version antérieure.
+
+    On garde le nom + description au moment du snapshot pour que les
+    rollbacks soient bien round-trip safe (sinon on perdrait le titre
+    si l'user a renommé le workflow).
+    """
+    __tablename__ = "forge_workflow_versions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workflow_id = Column(Integer, ForeignKey("forge_workflows.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    version_num = Column(Integer, nullable=False)
+    name = Column(String(200), default="")
+    description = Column(Text, default="")
+    yaml_def = Column(Text, nullable=False, default="")
+    # Source du snapshot : 'auto' (à chaque save), 'manual' (bouton dédié),
+    # 'pre_restore' (avant un rollback, pour pouvoir undo le rollback).
+    source = Column(String(20), default="auto")
+    # Message libre (optionnel, type git commit message).
+    message = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow,
+                        server_default=func.now())
+
+
 class ForgeGlobal(Base):
     """Variable globale user-scoped, accessible depuis tous les workflows
     de l'user via `{{ globals.<key> }}`.

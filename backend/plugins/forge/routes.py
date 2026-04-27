@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.db.engine import get_session
 from backend.core.api.auth_helpers import open_mode_fallback_user_id
 
-from .models import ForgeWorkflow, ForgeWorkflowRun, ForgeTrigger
+from .models import ForgeWorkflow, ForgeWorkflowRun, ForgeTrigger, ForgeWorkflowVersion
 from .runner import run_workflow, parse_workflow_yaml
 from .n8n_import import n8n_to_forge
 from . import streams as forge_streams
@@ -262,6 +262,12 @@ async def update_workflow(wf_id: int, body: WorkflowIn, request: Request,
     w = rs.scalar_one_or_none()
     if not w:
         raise HTTPException(status_code=404, detail="Workflow introuvable")
+    # Snapshot AVANT la modification, si le YAML change réellement et que
+    # le dernier snapshot a > 5 min (rate limit pour ne pas spammer la
+    # table à chaque keystroke quand l'user édite en live).
+    yaml_changing = body.yaml_def is not None and body.yaml_def != (w.yaml_def or "")
+    if yaml_changing and (w.yaml_def or "").strip():
+        await _maybe_snapshot(session, w, source="auto")
     if body.name is not None:
         w.name = body.name
     if body.description is not None:
@@ -284,6 +290,200 @@ async def update_workflow(wf_id: int, body: WorkflowIn, request: Request,
     await session.commit()
     await session.refresh(w)
     return {"ok": True, "workflow": _serialize_wf(w)}
+
+
+# ── Versioning helpers ────────────────────────────────────────────────────
+
+_SNAPSHOT_RATE_LIMIT_MINUTES = 5
+
+
+async def _last_version_at(session: AsyncSession, workflow_id: int) -> Optional[datetime]:
+    rs = await session.execute(
+        select(ForgeWorkflowVersion.created_at)
+        .where(ForgeWorkflowVersion.workflow_id == workflow_id)
+        .order_by(ForgeWorkflowVersion.version_num.desc()).limit(1)
+    )
+    row = rs.scalar_one_or_none()
+    return row
+
+
+async def _next_version_num(session: AsyncSession, workflow_id: int) -> int:
+    rs = await session.execute(
+        select(ForgeWorkflowVersion.version_num)
+        .where(ForgeWorkflowVersion.workflow_id == workflow_id)
+        .order_by(ForgeWorkflowVersion.version_num.desc()).limit(1)
+    )
+    last = rs.scalar_one_or_none()
+    return (last or 0) + 1
+
+
+async def _maybe_snapshot(session: AsyncSession, w: ForgeWorkflow,
+                          *, source: str = "auto", message: str = "",
+                          force: bool = False) -> Optional[ForgeWorkflowVersion]:
+    """Crée un snapshot du workflow si la rate limit est passée (ou si force=True).
+
+    On commit pas ici — le caller commit dans son propre flow.
+    """
+    if not force:
+        last_at = await _last_version_at(session, w.id)
+        if last_at:
+            elapsed_min = (datetime.utcnow() - last_at).total_seconds() / 60.0
+            if elapsed_min < _SNAPSHOT_RATE_LIMIT_MINUTES:
+                return None
+    ver = await _next_version_num(session, w.id)
+    snap = ForgeWorkflowVersion(
+        workflow_id=w.id, user_id=w.user_id, version_num=ver,
+        name=w.name or "", description=w.description or "",
+        yaml_def=w.yaml_def or "",
+        source=source, message=message or "",
+    )
+    session.add(snap)
+    return snap
+
+
+def _serialize_version(v: ForgeWorkflowVersion, include_yaml: bool = False) -> dict:
+    out = {
+        "id": v.id,
+        "workflow_id": v.workflow_id,
+        "version_num": v.version_num,
+        "name": v.name or "",
+        "description": v.description or "",
+        "source": v.source or "auto",
+        "message": v.message or "",
+        "created_at": v.created_at.isoformat() if v.created_at else None,
+    }
+    if include_yaml:
+        out["yaml_def"] = v.yaml_def or ""
+    return out
+
+
+# ── Versioning routes ────────────────────────────────────────────────────
+
+@router.get("/workflows/{wf_id}/versions")
+async def list_versions(wf_id: int, request: Request,
+                        session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == wf_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    if not rs.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    rs = await session.execute(
+        select(ForgeWorkflowVersion).where(ForgeWorkflowVersion.workflow_id == wf_id)
+        .order_by(ForgeWorkflowVersion.version_num.desc())
+    )
+    return {"ok": True, "versions": [_serialize_version(v) for v in rs.scalars().all()]}
+
+
+@router.get("/workflows/{wf_id}/versions/{ver_id}")
+async def get_version(wf_id: int, ver_id: int, request: Request,
+                      session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflowVersion).where(
+            ForgeWorkflowVersion.id == ver_id,
+            ForgeWorkflowVersion.workflow_id == wf_id,
+            ForgeWorkflowVersion.user_id == uid,
+        )
+    )
+    v = rs.scalar_one_or_none()
+    if not v:
+        raise HTTPException(status_code=404, detail="Version introuvable")
+    return {"ok": True, "version": _serialize_version(v, include_yaml=True)}
+
+
+class SnapshotIn(BaseModel):
+    message: Optional[str] = None
+
+
+@router.post("/workflows/{wf_id}/versions")
+async def create_snapshot(wf_id: int, body: SnapshotIn, request: Request,
+                          session: AsyncSession = Depends(get_session)):
+    """Snapshot manuel (force=True, ignore le rate limit). Permet de marquer
+    un point précis de l'historique avec un message custom."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == wf_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    w = rs.scalar_one_or_none()
+    if not w:
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    snap = await _maybe_snapshot(session, w, source="manual",
+                                 message=(body.message or "").strip()[:500],
+                                 force=True)
+    await session.commit()
+    if snap is None:
+        raise HTTPException(status_code=500, detail="Snapshot a échoué")
+    await session.refresh(snap)
+    return {"ok": True, "version": _serialize_version(snap)}
+
+
+@router.post("/workflows/{wf_id}/versions/{ver_id}/restore")
+async def restore_version(wf_id: int, ver_id: int, request: Request,
+                          session: AsyncSession = Depends(get_session)):
+    """Restaure une version antérieure. Crée d'abord un snapshot 'pre_restore'
+    de l'état courant pour que l'user puisse annuler le rollback.
+    """
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == wf_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    w = rs.scalar_one_or_none()
+    if not w:
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    rs = await session.execute(
+        select(ForgeWorkflowVersion).where(
+            ForgeWorkflowVersion.id == ver_id,
+            ForgeWorkflowVersion.workflow_id == wf_id,
+            ForgeWorkflowVersion.user_id == uid,
+        )
+    )
+    v = rs.scalar_one_or_none()
+    if not v:
+        raise HTTPException(status_code=404, detail="Version introuvable")
+    # Snapshot 'pre_restore' de l'état actuel pour pouvoir undo.
+    await _maybe_snapshot(session, w, source="pre_restore",
+                          message=f"Avant restauration v{v.version_num}",
+                          force=True)
+    # Restore.
+    w.yaml_def = v.yaml_def or ""
+    if v.name: w.name = v.name
+    if v.description: w.description = v.description
+    w.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(w)
+    return {"ok": True, "workflow": _serialize_wf(w),
+            "restored_from_version": v.version_num}
+
+
+@router.delete("/workflows/{wf_id}/versions/{ver_id}")
+async def delete_version(wf_id: int, ver_id: int, request: Request,
+                         session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflowVersion).where(
+            ForgeWorkflowVersion.id == ver_id,
+            ForgeWorkflowVersion.workflow_id == wf_id,
+            ForgeWorkflowVersion.user_id == uid,
+        )
+    )
+    v = rs.scalar_one_or_none()
+    if not v:
+        raise HTTPException(status_code=404, detail="Version introuvable")
+    await session.delete(v)
+    await session.commit()
+    return {"ok": True}
 
 
 @router.delete("/workflows/{wf_id}")

@@ -16,14 +16,14 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { yaml as yamlLang } from '@codemirror/lang-yaml'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch, Upload, Download, Link as LinkIcon, Copy, X, Sparkles } from 'lucide-react'
+import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch, Upload, Download, Link as LinkIcon, Copy, X, Sparkles, History, RotateCcw, BookmarkPlus } from 'lucide-react'
 import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/components/ui'
 import InfoButton from '@core/components/InfoButton'
 import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 import { humanizeTool, groupByCategory } from './toolLabels'
 
-const PLUGIN_VERSION = '0.9.0'
+const PLUGIN_VERSION = '0.10.0'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -81,6 +81,17 @@ interface ForgeTrigger {
   created_at: string | null
   webhook_url?: string
   secret_token?: string
+}
+
+interface ForgeVersion {
+  id: number
+  workflow_id: number
+  version_num: number
+  name: string
+  description: string
+  source: 'auto' | 'manual' | 'pre_restore'
+  message: string
+  created_at: string | null
 }
 
 const TABS = [
@@ -198,8 +209,8 @@ function WorkflowsTab() {
     })()
   }, [])
 
-  // Panneau latéral droit : 'run' (dernière exécution) ou 'triggers' (déclencheurs).
-  const [rightPanel, setRightPanel] = useState<'run' | 'triggers'>('run')
+  // Panneau latéral droit : run / triggers / versions.
+  const [rightPanel, setRightPanel] = useState<'run' | 'triggers' | 'versions'>('run')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -529,7 +540,7 @@ function WorkflowsTab() {
             {/* Panel droit : toggle Run ↔ Triggers */}
             <div style={{ width: 340, flexShrink: 0, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-secondary)' }}>
               <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
-                {(['run', 'triggers'] as const).map(k => (
+                {(['run', 'triggers', 'versions'] as const).map(k => (
                   <button key={k} onClick={() => setRightPanel(k)}
                     style={{
                       flex: 1, padding: '8px 10px', fontSize: 10, fontWeight: 700, letterSpacing: 1,
@@ -538,7 +549,7 @@ function WorkflowsTab() {
                       border: 'none', borderBottom: rightPanel === k ? '2px solid var(--scarlet)' : '2px solid transparent',
                       textTransform: 'uppercase',
                     }}>
-                    {k === 'run' ? 'Exécution' : 'Déclencheurs'}
+                    {k === 'run' ? 'Exécution' : k === 'triggers' ? 'Déclencheurs' : 'Versions'}
                   </button>
                 ))}
               </div>
@@ -548,8 +559,16 @@ function WorkflowsTab() {
                   {!running && !lastRun && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.6 }}>Cliquez <strong>Exécuter</strong> pour lancer ce workflow.</div>}
                   {lastRun && <RunDisplay run={lastRun} />}
                 </div>
-              ) : (
+              ) : rightPanel === 'triggers' ? (
                 <TriggersPanel workflowId={active.id} />
+              ) : (
+                <VersionsPanel workflowId={active.id}
+                  onRestored={async () => {
+                    // Recharge la liste + le workflow actif après restauration
+                    await load()
+                    const wf = (await api<{ ok: boolean; workflow: ForgeWorkflow }>(`/workflows/${active.id}`, undefined, true))?.workflow
+                    if (wf) setActive(wf)
+                  }} />
               )}
             </div>
           </div>
@@ -560,6 +579,97 @@ function WorkflowsTab() {
           <div>Sélectionnez un workflow ou créez-en un nouveau</div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Composant — Versions (historique + restauration)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function VersionsPanel({ workflowId, onRestored }: {
+  workflowId: number
+  onRestored: () => void | Promise<void>
+}) {
+  const [versions, setVersions] = useState<ForgeVersion[]>([])
+  const [loading, setLoading] = useState(true)
+  const load = useCallback(async () => {
+    setLoading(true)
+    const r = await api<{ ok: boolean; versions: ForgeVersion[] }>(`/workflows/${workflowId}/versions`, undefined, true)
+    setVersions(r?.versions || [])
+    setLoading(false)
+  }, [workflowId])
+  useEffect(() => { load() }, [load])
+
+  const snapshotNow = async () => {
+    const msg = window.prompt('Message du snapshot (optionnel)', '') || ''
+    const r = await api<{ ok: boolean; version: ForgeVersion }>(`/workflows/${workflowId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ message: msg }),
+    })
+    if (r?.version) load()
+  }
+
+  const restore = async (v: ForgeVersion) => {
+    if (!confirm(`Restaurer la version v${v.version_num} (${fmtDate(v.created_at)}) ?\n\nL'état actuel sera sauvegardé en snapshot 'pre_restore' pour pouvoir annuler.`)) return
+    const r = await api<{ ok: boolean; restored_from_version: number }>(`/workflows/${workflowId}/versions/${v.id}/restore`, { method: 'POST' })
+    if (r?.ok) {
+      await load()
+      await onRestored()
+    }
+  }
+
+  const remove = async (v: ForgeVersion) => {
+    if (!confirm(`Supprimer la version v${v.version_num} ?`)) return
+    await api(`/workflows/${workflowId}/versions/${v.id}`, { method: 'DELETE' })
+    load()
+  }
+
+  return (
+    <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+      <button onClick={snapshotNow}
+        style={{ width: '100%', padding: '8px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 14 }}>
+        <BookmarkPlus size={13} /> Snapshot manuel
+      </button>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 8 }}>
+        Snapshots auto-créés à chaque sauvegarde du YAML (rate limit 5 min).
+        Cliquez "Restaurer" pour revenir à une version. L'état actuel sera
+        snapshotté avant pour pouvoir annuler.
+      </div>
+      {loading && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Chargement…</div>}
+      {!loading && versions.length === 0 && (
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 4px' }}>
+          Aucune version pour l'instant. Modifie ton workflow et sauvegarde, ou clique <strong>Snapshot manuel</strong>.
+        </div>
+      )}
+      {versions.map(v => {
+        const sourceColor = v.source === 'manual' ? '#10b981' : v.source === 'pre_restore' ? '#f59e0b' : '#737373'
+        const sourceLabel = v.source === 'manual' ? 'manuel' : v.source === 'pre_restore' ? 'avant rollback' : 'auto'
+        return (
+          <div key={v.id} style={{ padding: 8, marginBottom: 6, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 5, borderLeft: `3px solid ${sourceColor}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--scarlet)', fontFamily: 'ui-monospace, monospace' }}>v{v.version_num}</span>
+              <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${sourceColor}25`, color: sourceColor, fontWeight: 600, textTransform: 'uppercase' }}>{sourceLabel}</span>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => restore(v)} title="Restaurer"
+                style={{ padding: 3, fontSize: 11, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                <RotateCcw size={11} />
+              </button>
+              <button onClick={() => remove(v)} title="Supprimer"
+                style={{ padding: 3, fontSize: 11, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                <X size={11} />
+              </button>
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {v.name || <span style={{ color: 'var(--text-muted)' }}>—</span>}
+            </div>
+            {v.message && (
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 2 }}>"{v.message}"</div>
+            )}
+            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 3 }}>{fmtDate(v.created_at)}</div>
+          </div>
+        )
+      })}
     </div>
   )
 }
