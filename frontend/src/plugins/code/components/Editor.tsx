@@ -88,7 +88,10 @@ export function CodeEditor({ file, onChange, onSave, onRun, onCursorChange }: {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    // flex:1 + minWidth:0 indispensable : sinon, en mode solo (sans wrapper
+    // flex parent comme split/preview), le root prend la largeur intrinsèque
+    // du contenu (= ligne la plus longue ~200px) au lieu de remplir l'espace.
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0, fontSize: 10 }}>
         <span style={{ ...S.badge(langColor, true), fontSize: 8 }}>{file.language}</span>
         <span style={{ color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 10 }}>{file.path}</span>
