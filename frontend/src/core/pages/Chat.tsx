@@ -2961,9 +2961,37 @@ export default function Chat() {
                 disabled={imgGenLoading || !imgGenPrompt.trim() || !imgGenProvider || !imgGenModel}
                 onClick={async () => {
                   setImgGenError('')
-                  if (!currentConversation) {
-                    setImgGenError("Ouvre ou crée une conversation d'abord.")
-                    return
+                  // Auto-création de la conversation si aucune n'est ouverte
+                  // (mêmes patterns que pour l'envoi de message normal).
+                  let convoId: number | null = currentConversation
+                  if (!convoId) {
+                    try {
+                      const payload = {
+                        title: 'Nouveau chat',
+                        provider: selectedProvider,
+                        model: selectedModel || 'mistralai/mistral-large',
+                        user_id: currentUser?.id,
+                      }
+                      const newConvo = await api.createConversation(payload)
+                      const targetFolder = typeof folderFilter === 'number' ? folderFilter : null
+                      if (targetFolder !== null && newConvo.id) {
+                        try { await api.moveConversationToFolder(newConvo.id, targetFolder) } catch { /* ignore */ }
+                      }
+                      const fullConvo = {
+                        ...payload,
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                        ...newConvo,
+                        folder_id: targetFolder,
+                      }
+                      setConversations([fullConvo, ...conversations])
+                      skipLoadForRef.current = fullConvo.id
+                      setCurrentConversation(fullConvo.id)
+                      convoId = fullConvo.id
+                    } catch (err: any) {
+                      setImgGenError(`Création de conversation échouée : ${err?.message || 'inconnue'}`)
+                      return
+                    }
                   }
                   setImgGenLoading(true)
                   try {
@@ -2976,7 +3004,7 @@ export default function Chat() {
                         model: imgGenModel,
                         size: imgGenSize,
                         n: 1,
-                        conversation_id: currentConversation,
+                        conversation_id: convoId,
                       }),
                     })
                     const data = await res.json()
@@ -2984,9 +3012,8 @@ export default function Chat() {
                       setImgGenError(data?.error || 'Échec de la génération')
                       return
                     }
-                    // Recharge les messages pour afficher le nouveau couple user/assistant
                     try {
-                      const msgs = await api.getMessages(currentConversation)
+                      const msgs = await api.getMessages(convoId!)
                       setMessages(msgs)
                     } catch { /* ignore */ }
                     setShowImageGenModal(false)
