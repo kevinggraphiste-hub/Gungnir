@@ -637,6 +637,52 @@ export default function Chat() {
   const [stats, setStats] = useState({ tokens: 0, messages: 0, cost: 0 })
   const [providerModelsMap, setProviderModelsMap] = useState<Record<string, string[]>>({})
   const [modelSearch, setModelSearch] = useState('')
+  // Cache tier des modèles : model_id → { tier, input_1m, output_1m }.
+  // Chargé une fois au mount via /api/plugins/model_guide/catalog. Sert à
+  // afficher un avertissement de prix avant le switch sur un modèle
+  // Premium/Flagship.
+  const [modelTierCache, setModelTierCache] = useState<Record<string, { tier: string; input: number; output: number; provider: string }>>({})
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await apiFetch('/api/plugins/model_guide/catalog')
+        if (!r.ok) return
+        const data = await r.json()
+        const map: Record<string, { tier: string; input: number; output: number; provider: string }> = {}
+        for (const [provName, prov] of Object.entries(data || {})) {
+          const models = (prov as any)?.models || []
+          for (const m of models) {
+            if (m && m.id && m.pricing) {
+              map[m.id] = {
+                tier: m.pricing.tier || 'unknown',
+                input: m.pricing.input || 0,
+                output: m.pricing.output || 0,
+                provider: provName,
+              }
+            }
+          }
+        }
+        setModelTierCache(map)
+      } catch { /* silent — pas de blocage si catalog down */ }
+    })()
+  }, [])
+
+  // Garde-fou prix : si le modèle cible est Premium ou Flagship, confirm()
+  // avec les détails. Retourne true si l'user accepte (ou si tier sûr).
+  const confirmExpensiveModelSwitch = useCallback((provider: string, model: string): boolean => {
+    const meta = modelTierCache[model]
+    if (!meta) return true  // Pas dans le cache → pas de blocage (ex: modèle local Ollama)
+    if (meta.tier !== 'premium' && meta.tier !== 'flagship') return true
+    const tierLabel = meta.tier === 'flagship' ? 'FLAGSHIP (très cher)' : 'PREMIUM (cher)'
+    const msg = (
+      `⚠️ Modèle ${tierLabel}\n\n` +
+      `${model} (${provider})\n\n` +
+      `Prix : $${meta.input}/M tokens en entrée, $${meta.output}/M en sortie.\n\n` +
+      `Une longue conversation peut coûter plusieurs dollars. Continuer ?`
+    )
+    return window.confirm(msg)
+  }, [modelTierCache])
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set())
 
   // Favoris modèles (max 5, partagé via localStorage). Format strict :
@@ -2569,7 +2615,10 @@ export default function Chat() {
                               const [prov, mod] = (fav || '').split('::')
                               if (!prov || !mod) return null
                               return (
-                                <button key={fav} onClick={() => { setSelectedModel(mod); setSelectedProvider(prov); setShowModelMenu(false); setModelSearch('') }}
+                                <button key={fav} onClick={() => {
+                                  if (!confirmExpensiveModelSwitch(prov, mod)) return
+                                  setSelectedModel(mod); setSelectedProvider(prov); setShowModelMenu(false); setModelSearch('')
+                                }}
                                   className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between"
                                   style={selectedModel === mod && selectedProvider === prov ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
                                   <span className="truncate">{mod.split('/').pop() || mod} <span style={{ color: 'var(--text-muted)' }}>({prov})</span></span>
@@ -2593,7 +2642,10 @@ export default function Chat() {
                               {displayModels.map(m => {
                                 const isFav = favoriteModels.includes(`${group.name}::${m}`)
                                 return (
-                                  <button key={m} onClick={() => { setSelectedModel(m); setSelectedProvider(group.name); setShowModelMenu(false); setModelSearch('') }}
+                                  <button key={m} onClick={() => {
+                                    if (!confirmExpensiveModelSwitch(group.name, m)) return
+                                    setSelectedModel(m); setSelectedProvider(group.name); setShowModelMenu(false); setModelSearch('')
+                                  }}
                                     className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between group"
                                     style={selectedModel === m ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
                                     <span className="truncate">{m}</span>
