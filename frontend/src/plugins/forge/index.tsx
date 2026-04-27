@@ -21,7 +21,7 @@ import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/compon
 import InfoButton from '@core/components/InfoButton'
 import { apiFetch } from '@core/services/api'
 
-const PLUGIN_VERSION = '0.1.1'
+const PLUGIN_VERSION = '0.1.2'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -76,17 +76,30 @@ const TABS = [
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-async function api<T = any>(path: string, init?: RequestInit): Promise<T | null> {
+// Helper API : lève une Error visible (alert) sur échec pour pouvoir
+// diagnostiquer en prod. Le `silent` permet aux fetchs de fond (load list)
+// de ne pas spammer si le réseau hoquète.
+async function api<T = any>(path: string, init?: RequestInit, silent = false): Promise<T | null> {
+  const headers: Record<string, string> = { ...(init?.headers as any || {}) }
+  // Force Content-Type pour les bodies JSON — certains backends refusent
+  // sans (FastAPI accepte mais on est défensif).
+  if (init?.body && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json'
+  }
   try {
-    const r = await apiFetch(`${API}${path}`, init)
+    const r = await apiFetch(`${API}${path}`, { ...init, headers })
     if (!r.ok) {
       const t = await r.text().catch(() => '')
-      console.warn(`[Forge] ${path} → ${r.status}`, t)
+      const msg = `[Forge] ${path} → HTTP ${r.status}\n${t.slice(0, 500)}`
+      console.warn(msg)
+      if (!silent) alert(msg)
       return null
     }
     return await r.json()
-  } catch (e) {
-    console.warn('[Forge] api error', e)
+  } catch (e: any) {
+    const msg = `[Forge] ${path} — réseau ou parse JSON : ${e?.message || e}`
+    console.warn(msg, e)
+    if (!silent) alert(msg)
     return null
   }
 }
@@ -150,7 +163,10 @@ function WorkflowsTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const r = await api<{ ok: boolean; workflows: ForgeWorkflow[] }>('/workflows')
+    // silent=true : pas d'alert au boot, juste un état vide si l'API
+    // échoue (l'user verra "Aucun workflow" et pourra cliquer Nouveau
+    // pour avoir l'erreur explicite).
+    const r = await api<{ ok: boolean; workflows: ForgeWorkflow[] }>('/workflows', undefined, true)
     setList(r?.workflows || [])
     setLoading(false)
   }, [])
@@ -399,7 +415,7 @@ function RunsTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const r = await api<{ ok: boolean; runs: ForgeRun[] }>('/runs?limit=100')
+    const r = await api<{ ok: boolean; runs: ForgeRun[] }>('/runs?limit=100', undefined, true)
     setRuns(r?.runs || [])
     setLoading(false)
   }, [])
@@ -456,7 +472,7 @@ function ToolsTab() {
   useEffect(() => {
     (async () => {
       setLoading(true)
-      const r = await api<{ ok: boolean; tools: ForgeTool[] }>('/tools')
+      const r = await api<{ ok: boolean; tools: ForgeTool[] }>('/tools', undefined, true)
       setTools(r?.tools || [])
       setLoading(false)
     })()
