@@ -928,6 +928,27 @@ async def oauth_disconnect(provider: str, request: Request, session: AsyncSessio
     return await disconnect(provider, uid, session)
 
 
+@router.post("/oauth/{provider}/device_start")
+async def oauth_device_start(provider: str, request: Request):
+    """OAuth Device Flow — démarre le flow et retourne user_code + verification_uri."""
+    from backend.plugins.webhooks.oauth_core import device_flow_start
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+    return await device_flow_start(provider, uid)
+
+
+@router.post("/oauth/device_poll")
+async def oauth_device_poll(payload: dict, session: AsyncSession = Depends(get_session)):
+    """OAuth Device Flow — poll pour vérifier si l'user a complété l'auth.
+    Body : {"device_code": "..."}. Retour : {status: pending|complete|error}."""
+    from backend.plugins.webhooks.oauth_core import device_flow_poll
+    device_code = (payload or {}).get("device_code", "")
+    if not device_code:
+        return {"ok": False, "error": "device_code manquant"}
+    return await device_flow_poll(device_code, session)
+
+
 @router.post("/oauth/{provider}/manual_token")
 async def oauth_set_manual_token(
     provider: str, payload: dict, request: Request,

@@ -34,6 +34,10 @@ OAUTH_PROVIDERS: dict[str, dict[str, Any]] = {
         "manual_token_label": "Personal Access Token (PAT)",
         "manual_token_url": "https://github.com/settings/tokens/new?scopes=repo,read:user&description=Gungnir",
         "manual_token_help": "Crée un PAT classic avec les scopes 'repo' et 'read:user'. Format: ghp_... ou github_pat_...",
+        # OAuth Device Flow (« Login simple ») — UX la plus fluide pour les
+        # users self-hosted : pas de callback URL à configurer, juste un code
+        # à 8 chars à taper sur github.com/login/device.
+        "device_flow_supported": True,
     },
     "google": {
         "display_name": "Google (Drive + Gmail)",
@@ -107,6 +111,7 @@ def list_providers() -> list[dict[str, Any]]:
             "manual_token_label": cfg.get("manual_token_label", ""),
             "manual_token_url": cfg.get("manual_token_url", ""),
             "manual_token_help": cfg.get("manual_token_help", ""),
+            "device_flow_supported": bool(cfg.get("device_flow_supported") and client_id),
         })
     return out
 

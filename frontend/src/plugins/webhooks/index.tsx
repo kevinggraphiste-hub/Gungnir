@@ -992,16 +992,21 @@ export default function WebhooksPlugin() {
 }
 
 
-// ── ConnectorsTab : connecteurs OAuth + BYOT (GitHub, Google, Notion) ──────
+// ── ConnectorsTab : connecteurs OAuth + Device Flow + BYOT ────────────────
 function ConnectorsTab() {
   const [providers, setProviders] = useState<any[]>([])
   const [connections, setConnections] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
-  // Provider currently in « manual token » input mode (clicked « Saisir un token »)
   const [manualMode, setManualMode] = useState<string | null>(null)
   const [manualToken, setManualToken] = useState('')
   const [manualError, setManualError] = useState('')
+  // Device Flow : code à afficher pendant l'auth + polling actif
+  const [deviceFlow, setDeviceFlow] = useState<{
+    provider: string; user_code: string; verification_uri: string;
+    device_code: string; interval: number; status: 'waiting' | 'complete' | 'error';
+    error?: string;
+  } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1055,6 +1060,42 @@ function ConnectorsTab() {
       setBusy(null)
     }
   }
+
+  const startDeviceFlow = async (provider: string) => {
+    setBusy(provider)
+    try {
+      const r = await fetch(`${API}/oauth/${provider}/device_start`, { method: 'POST' }).then(r => r.json())
+      if (!r.ok) {
+        alert(r.error || 'Échec du démarrage du Device Flow')
+        return
+      }
+      setDeviceFlow({
+        provider, user_code: r.user_code, verification_uri: r.verification_uri,
+        device_code: r.device_code, interval: r.interval || 5, status: 'waiting',
+      })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Auto-poll pendant que la modal Device Flow est ouverte
+  useEffect(() => {
+    if (!deviceFlow || deviceFlow.status !== 'waiting') return
+    const tick = async () => {
+      const r = await fetch(`${API}/oauth/device_poll`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_code: deviceFlow.device_code }),
+      }).then(r => r.json())
+      if (r.status === 'complete') {
+        setDeviceFlow(null)
+        await load()
+      } else if (r.status === 'error') {
+        setDeviceFlow(d => d ? { ...d, status: 'error', error: r.error } : null)
+      }
+    }
+    const id = window.setInterval(tick, Math.max(2, deviceFlow.interval) * 1000)
+    return () => window.clearInterval(id)
+  }, [deviceFlow, load])
 
   const submitManualToken = async (provider: string) => {
     if (!manualToken.trim()) {
@@ -1139,12 +1180,26 @@ function ConnectorsTab() {
                   </SecondaryButton>
                 ) : (
                   <>
-                    {p.configured && (
+                    {p.device_flow_supported && (
+                      <PrimaryButton size="sm"
+                        onClick={() => startDeviceFlow(p.provider)}
+                        disabled={busy === p.provider}>
+                        Login simple
+                      </PrimaryButton>
+                    )}
+                    {p.configured && !p.device_flow_supported && (
                       <PrimaryButton size="sm"
                         onClick={() => connect(p.provider)}
                         disabled={busy === p.provider}>
                         Connecter (OAuth)
                       </PrimaryButton>
+                    )}
+                    {p.configured && p.device_flow_supported && (
+                      <SecondaryButton size="sm"
+                        onClick={() => connect(p.provider)}
+                        disabled={busy === p.provider}>
+                        OAuth popup
+                      </SecondaryButton>
                     )}
                     {p.manual_token_supported && (
                       <SecondaryButton size="sm"
@@ -1203,6 +1258,65 @@ function ConnectorsTab() {
           </div>
         )
       })}
+
+      {/* Modal Device Flow — affiche le code à 8 chars + lien GitHub */}
+      {deviceFlow && (
+        <div className="fixed inset-0 flex items-center justify-center z-50"
+          style={{ background: 'rgba(0,0,0,0.6)' }}
+          onClick={() => deviceFlow.status !== 'waiting' && setDeviceFlow(null)}>
+          <div className="rounded-xl p-6 max-w-md w-full mx-4"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)' }}
+            onClick={e => e.stopPropagation()}>
+            <h3 className="font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
+              Connexion {deviceFlow.provider}
+            </h3>
+            {deviceFlow.status === 'waiting' && (
+              <>
+                <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
+                  1. Va sur cette URL :
+                </p>
+                <a href={deviceFlow.verification_uri} target="_blank" rel="noopener noreferrer"
+                  className="block text-center font-mono text-sm py-2 mb-4 rounded"
+                  style={{ background: 'var(--bg-secondary)', color: 'var(--accent-primary)',
+                           border: '1px solid var(--border)' }}>
+                  {deviceFlow.verification_uri} <ExternalLink size={12} className="inline ml-1" />
+                </a>
+                <p className="text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  2. Tape ce code :
+                </p>
+                <div className="text-center my-3">
+                  <code className="text-2xl font-mono px-4 py-2 rounded inline-block tracking-widest"
+                    style={{ background: 'var(--bg-secondary)', color: 'var(--scarlet)',
+                             border: '1px solid var(--border)' }}>
+                    {deviceFlow.user_code}
+                  </code>
+                  <button onClick={() => navigator.clipboard.writeText(deviceFlow.user_code)}
+                    className="ml-2 p-2 rounded hover:bg-[var(--bg-secondary)]"
+                    title="Copier" style={{ color: 'var(--text-muted)' }}>
+                    <Copy size={14} />
+                  </button>
+                </div>
+                <p className="text-xs mt-4 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+                  <Loader2 className="animate-spin" size={12} /> En attente de ton autorisation…
+                </p>
+                <div className="flex justify-end mt-4">
+                  <SecondaryButton size="sm" onClick={() => setDeviceFlow(null)}>Annuler</SecondaryButton>
+                </div>
+              </>
+            )}
+            {deviceFlow.status === 'error' && (
+              <>
+                <p className="text-sm mb-3" style={{ color: 'var(--accent-danger, #ef4444)' }}>
+                  Échec : {deviceFlow.error || 'erreur inconnue'}
+                </p>
+                <div className="flex justify-end">
+                  <PrimaryButton size="sm" onClick={() => setDeviceFlow(null)}>Fermer</PrimaryButton>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

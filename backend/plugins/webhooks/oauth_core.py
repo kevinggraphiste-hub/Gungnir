@@ -326,6 +326,146 @@ async def set_manual_token(
     return {"ok": True, "provider": provider, "account_label": label or provider}
 
 
+# ── OAuth Device Flow ────────────────────────────────────────────────────
+# Variante du flow OAuth pour les apps qui ne peuvent pas servir un callback
+# (CLI, desktop, ou ici : self-hosted où la callback URL n'existe pas chez
+# tous les users). L'user reçoit un code court à 8 caractères, va sur une
+# URL de vérification et tape le code → on poll jusqu'à recevoir le token.
+#
+# Pas de client_secret nécessaire (le device_code remplace le code+state du
+# flow standard). Côté admin Gungnir : créer une OAuth app GitHub avec
+# « Device Flow enabled » et set GUNGNIR_OAUTH_GITHUB_CLIENT_ID. Une seule
+# fois — tous les users self-hosted en bénéficient sans action de leur côté.
+
+# Dict en mémoire : {device_code: {provider, user_id, expires_at, interval}}
+# TTL court (15 min max selon GitHub). Cleanup paresseux à chaque accès.
+_pending_device_flows: dict[str, dict[str, Any]] = {}
+
+
+def _cleanup_pending_device_flows() -> None:
+    now = int(time.time())
+    stale = [k for k, v in _pending_device_flows.items() if v.get("expires_at", 0) < now]
+    for k in stale:
+        _pending_device_flows.pop(k, None)
+
+
+async def device_flow_start(provider: str, user_id: int) -> dict[str, Any]:
+    """Démarre un Device Flow. Retourne user_code + verification_uri pour l'UI.
+    Stocke le device_code côté backend, l'user n'a pas à le manipuler."""
+    cfg = provider_config(provider)
+    if not cfg:
+        return {"ok": False, "error": "Provider inconnu"}
+    creds = get_credentials(provider)
+    if not creds:
+        return {"ok": False, "error": (
+            "OAuth GitHub non configuré côté serveur. L'admin doit créer une "
+            "OAuth app GitHub avec « Device Flow enabled » et set "
+            "GUNGNIR_OAUTH_GITHUB_CLIENT_ID."
+        )}
+    client_id, _ = creds
+    # GitHub : POST /login/device/code avec client_id + scope
+    if provider != "github":
+        return {"ok": False, "error": f"Device Flow non supporté pour {provider}."}
+    scope = " ".join(cfg.get("default_scopes", []))
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                "https://github.com/login/device/code",
+                data={"client_id": client_id, "scope": scope},
+                headers={"Accept": "application/json"},
+            )
+            if r.status_code != 200:
+                return {"ok": False, "error": f"GitHub device code: HTTP {r.status_code} — {r.text[:200]}"}
+            data = r.json()
+    except Exception as e:
+        return {"ok": False, "error": f"Connexion GitHub échouée : {e}"}
+
+    device_code = data.get("device_code", "")
+    user_code = data.get("user_code", "")
+    verification_uri = data.get("verification_uri") or data.get("verification_uri_complete", "")
+    expires_in = int(data.get("expires_in", 900))
+    interval = int(data.get("interval", 5))
+    if not device_code or not user_code:
+        return {"ok": False, "error": "Réponse GitHub invalide"}
+
+    _cleanup_pending_device_flows()
+    _pending_device_flows[device_code] = {
+        "provider": provider,
+        "user_id": int(user_id),
+        "client_id": client_id,
+        "expires_at": int(time.time()) + expires_in,
+        "interval": interval,
+    }
+    return {
+        "ok": True,
+        "device_code": device_code,
+        "user_code": user_code,
+        "verification_uri": verification_uri,
+        "expires_in": expires_in,
+        "interval": interval,
+    }
+
+
+async def device_flow_poll(device_code: str, session: AsyncSession) -> dict[str, Any]:
+    """Poll le provider pour savoir si l'user a complété l'autorisation.
+
+    Retourne {status: pending|complete|error, account_label?}. Le frontend
+    appelle ça toutes les `interval` secondes.
+    """
+    _cleanup_pending_device_flows()
+    pending = _pending_device_flows.get(device_code)
+    if not pending:
+        return {"ok": False, "status": "error", "error": "device_code expiré ou inconnu"}
+    provider = pending["provider"]
+    user_id = pending["user_id"]
+    client_id = pending["client_id"]
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                "https://github.com/login/oauth/access_token",
+                data={
+                    "client_id": client_id,
+                    "device_code": device_code,
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                },
+                headers={"Accept": "application/json"},
+            )
+            data = r.json() if r.status_code == 200 else {}
+    except Exception as e:
+        return {"ok": False, "status": "error", "error": str(e)[:200]}
+
+    if data.get("error") == "authorization_pending":
+        return {"ok": True, "status": "pending"}
+    if data.get("error") == "slow_down":
+        return {"ok": True, "status": "pending", "slow_down": True}
+    if data.get("error") in ("expired_token", "access_denied", "incorrect_device_code"):
+        _pending_device_flows.pop(device_code, None)
+        return {"ok": False, "status": "error", "error": data.get("error")}
+    access_token = data.get("access_token")
+    if not access_token:
+        return {"ok": False, "status": "error", "error": data.get("error", "réponse invalide")}
+
+    # OK : persister le token comme un OAuth standard
+    _pending_device_flows.pop(device_code, None)
+    label = await _fetch_user_label(provider, access_token)
+    us = await get_user_settings(user_id, session)
+    sk = dict(us.service_keys or {})
+    sk[_sk_key(provider)] = {
+        "access_token": encrypt_value(access_token),
+        "refresh_token": "",  # GitHub Device Flow ne renvoie pas de refresh
+        "expires_at": 0,
+        "scope": data.get("scope", ""),
+        "account_label": label or provider,
+        "connected_at": int(time.time()),
+        "device_flow": True,
+    }
+    us.service_keys = sk
+    await session.commit()
+    logger.info(f"GitHub Device Flow connected user={user_id} label={label}")
+    return {"ok": True, "status": "complete", "account_label": label or provider}
+
+
 async def _validate_notion_token(token: str) -> str | None:
     """Notion n'a pas d'endpoint /user — on ping /search pour valider."""
     try:
