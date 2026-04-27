@@ -17,10 +17,11 @@ DATA_DIR.mkdir(exist_ok=True)
 PLUGINS_DIR = BASE_DIR / "backend" / "plugins"
 
 # ── API Key encryption (at rest) ──────────────────────────────────────────────
-# Fernet (AES-128-CBC + HMAC) avec rotation de clé supportée (fix sécu H4).
+# Format actuel (à partir de v2.94.0) : AES-256-GCM (AEAD)
+#   "GCM:v3:<b64(nonce||ct||tag)>"
 #
-# Formats de valeur stockés sur disque / DB :
-#   "FERNET:v2:<token>"   — format versionné (à partir de v2.48.0)
+# Format legacy : Fernet (AES-128-CBC + HMAC-SHA256)
+#   "FERNET:v2:<token>"   — format versionné (v2.48.0 → v2.93.2)
 #   "FERNET:<token>"      — format legacy sans version (avant v2.48.0)
 #   "enc:<b64>"           — XOR legacy (avant Fernet)
 #
@@ -28,11 +29,15 @@ PLUGINS_DIR = BASE_DIR / "backend" / "plugins"
 # Rotation : pour tourner la clé, on met l'ancienne dans GUNGNIR_SECRET_KEY_PREV
 # et la nouvelle dans GUNGNIR_SECRET_KEY. Au decrypt, on essaie d'abord la
 # courante puis l'ancienne ; au encrypt, on utilise TOUJOURS la courante.
-# Les valeurs legacy (sans version) sont toujours lues avec GUNGNIR_SECRET_KEY
-# (pas la prev) — ça fait qu'on peut tourner la clé en douceur : les nouvelles
-# écritures prennent "v2:", et un second tour de clé pourra lire les deux.
+#
+# Migration douce : encrypt_value écrit toujours en GCM:v3 désormais. Au
+# fil des sauvegardes (édition de provider key, refresh token OAuth, etc.)
+# les valeurs Fernet existantes sont remplacées par du GCM. Le fallback
+# Fernet sera retiré dans une release majeure (v3.x) une fois la migration
+# complète en prod.
 _ENCRYPTION_SALT = b"gungnir-scarletwolf-2026"
-_CURRENT_KEY_VERSION = "v2"
+_CURRENT_KEY_VERSION = "v2"  # version Fernet courante (legacy)
+_GCM_KEY_VERSION = "v3"      # version GCM courante
 
 
 def _derive_key_from_secret(secret: str) -> bytes:
@@ -55,6 +60,65 @@ def _derive_key() -> bytes:
 
 
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import os as _os
+
+
+# ── AES-256-GCM (format courant) ─────────────────────────────────────────
+
+
+def _aes_key_for_secret(secret: str) -> bytes:
+    """Dérive une clé 256 bits depuis un secret texte (PBKDF2-HMAC-SHA256).
+
+    On réutilise la même fonction que pour Fernet → mêmes secrets dans
+    `GUNGNIR_SECRET_KEY` et `GUNGNIR_SECRET_KEY_PREV`. Pas besoin de
+    rotation forcée à l'upgrade.
+    """
+    return _derive_key_from_secret(secret)  # déjà 32 bytes (sha256)
+
+
+def _candidate_aes_keys() -> list[bytes]:
+    """Liste ordonnée des clés à tester au decrypt GCM (courante puis prev)."""
+    keys = [_aes_key_for_secret(_os.getenv("GUNGNIR_SECRET_KEY", ""))]
+    prev = _os.getenv("GUNGNIR_SECRET_KEY_PREV", "").strip()
+    if prev:
+        keys.append(_aes_key_for_secret(prev))
+    return keys
+
+
+def _gcm_encrypt(value: str) -> str:
+    """Chiffre via AES-256-GCM. Format : GCM:v3:<b64(nonce||ct||tag)>.
+    Le tag d'authentification (16 bytes) est concaténé par AESGCM.encrypt
+    à la fin du ciphertext, donc on le sérialise tel quel."""
+    key = _aes_key_for_secret(_os.getenv("GUNGNIR_SECRET_KEY", ""))
+    aesgcm = AESGCM(key)
+    nonce = _os.urandom(12)  # 96 bits — recommandé pour GCM
+    ct_and_tag = aesgcm.encrypt(nonce, value.encode("utf-8"), associated_data=None)
+    blob = base64.urlsafe_b64encode(nonce + ct_and_tag).decode()
+    return f"GCM:{_GCM_KEY_VERSION}:{blob}"
+
+
+def _gcm_decrypt(blob_b64: str) -> Optional[str]:
+    """Tente de déchiffrer un blob GCM. Essaie la clé courante puis prev.
+    Retourne None si aucune clé ne marche (l'appelant fallback alors sur
+    Fernet legacy)."""
+    try:
+        raw = base64.urlsafe_b64decode(blob_b64.encode())
+    except Exception:
+        return None
+    if len(raw) < 12 + 16:  # nonce + tag minimum
+        return None
+    nonce, ct_and_tag = raw[:12], raw[12:]
+    for key in _candidate_aes_keys():
+        try:
+            aesgcm = AESGCM(key)
+            return aesgcm.decrypt(nonce, ct_and_tag, associated_data=None).decode("utf-8")
+        except Exception:
+            continue
+    return None
+
+
+# ── Fernet (legacy, fallback decrypt pour migration douce) ───────────────
 
 
 def _fernet_for_secret(secret: str) -> Fernet:
@@ -70,8 +134,8 @@ def _get_fernet() -> Fernet:
 
 
 def _candidate_fernets() -> list[tuple[str, Fernet]]:
-    """Liste ordonnée (version, Fernet) utilisée pour essayer le decrypt.
-    Ordre : clé courante d'abord (la plus probable), puis ancienne si définie."""
+    """Liste ordonnée (version, Fernet) utilisée pour essayer le decrypt
+    legacy. Ordre : clé courante d'abord, puis ancienne si définie."""
     out: list[tuple[str, Fernet]] = [(_CURRENT_KEY_VERSION, _get_fernet())]
     prev = os.getenv("GUNGNIR_SECRET_KEY_PREV", "").strip()
     if prev:
@@ -79,29 +143,47 @@ def _candidate_fernets() -> list[tuple[str, Fernet]]:
     return out
 
 
+# ── API publique ─────────────────────────────────────────────────────────
+
+
 def encrypt_value(value: str) -> str:
-    """Encrypt a string value using Fernet (AES-128-CBC + HMAC).
-    Émet le nouveau format versionné `FERNET:v2:<token>`."""
-    if not value or value.startswith("FERNET:"):
+    """Chiffre une string avec AES-256-GCM. Format : `GCM:v3:<b64>`.
+
+    Idempotent : si la valeur est déjà chiffrée (préfixe GCM: ou FERNET:),
+    on la retourne telle quelle (évite double-chiffrement à des callers
+    qui appellent encrypt sur des champs déjà chiffrés).
+    """
+    if not value or value.startswith("GCM:") or value.startswith("FERNET:"):
         return value
-    token = _get_fernet().encrypt(value.encode())
-    return f"FERNET:{_CURRENT_KEY_VERSION}:" + token.decode()
+    return _gcm_encrypt(value)
 
 
 def decrypt_value(value: str) -> str:
-    """Decrypt a Fernet-encrypted value. Handles legacy XOR values too.
-    Ordre d'essai : v2 avec clé courante, v1 avec clé prev si dispo,
-    legacy sans version avec clé courante (compat ancien format)."""
+    """Déchiffre une valeur. Ordre d'essai :
+    1. GCM:v3:... (format courant, AES-256-GCM)
+    2. FERNET:v2:... (Fernet versionné, AES-128-CBC + HMAC)
+    3. FERNET:... (Fernet legacy sans version)
+    4. enc:... (XOR legacy)
+    5. Valeur en clair (compat data non chiffrée)
+    """
     if not value:
         return value
-    # Nouveau format versionné
+
+    # 1. AES-256-GCM (format courant)
+    if value.startswith("GCM:v"):
+        try:
+            _, _version, blob = value.split(":", 2)
+        except ValueError:
+            return ""
+        result = _gcm_decrypt(blob)
+        return result if result is not None else ""
+
+    # 2-3. Fernet legacy
     if value.startswith("FERNET:v"):
-        # FERNET:v2:<token> ou FERNET:v1:<token>
         try:
             _, version, token = value.split(":", 2)
         except ValueError:
             return ""
-        # Essaie d'abord la clé correspondant à la version déclarée
         candidates = _candidate_fernets()
         matched = [f for v, f in candidates if v == version]
         others = [f for v, f in candidates if v != version]
@@ -111,7 +193,6 @@ def decrypt_value(value: str) -> str:
             except (InvalidToken, Exception):
                 continue
         return ""
-    # Format legacy sans version (FERNET:<token>)
     if value.startswith("FERNET:"):
         token = value[7:]
         for _, f in _candidate_fernets():
@@ -120,8 +201,9 @@ def decrypt_value(value: str) -> str:
             except (InvalidToken, Exception):
                 continue
         return ""
+
+    # 4. XOR legacy
     if value.startswith("enc:"):
-        # Legacy XOR — decrypt then re-encrypt on next save
         try:
             key = _derive_key()
             data = base64.b64decode(value[4:])
@@ -129,6 +211,8 @@ def decrypt_value(value: str) -> str:
             return decrypted.decode("utf-8")
         except Exception:
             return ""
+
+    # 5. Valeur en clair
     return value
 
 

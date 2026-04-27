@@ -9,7 +9,8 @@ Ce qu'on redacte :
 - `password=...`
 - `secret=...`, `client_secret=...`
 - Header `Authorization: Bearer <token>`
-- Valeurs Fernet (`FERNET:...`) — déjà chiffrées, mais inutile en logs
+- Valeurs chiffrées (`GCM:v3:...` AES-GCM ; `FERNET:...` Fernet legacy) —
+  déjà chiffrées, mais inutile en logs
 - Tokens hexadécimaux longs (32+ caractères) qui ressemblent à des clés
 
 Fix sécu M9. Non-intrusif : si un pattern n'est pas matché, le message
@@ -33,8 +34,10 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     # Authorization: Bearer <token>
     (re.compile(r'(?i)(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._\-+/=]+'),
      r'\1***REDACTED***'),
-    # Valeurs FERNET:xxx
+    # Valeurs FERNET:xxx (legacy)
     (re.compile(r'FERNET:[A-Za-z0-9._\-+/=]{20,}'), 'FERNET:***REDACTED***'),
+    # Valeurs GCM:v3:xxx (AES-256-GCM, format courant)
+    (re.compile(r'GCM:v\d+:[A-Za-z0-9._\-+/=]{20,}'), 'GCM:***REDACTED***'),
     # Tokens hex longs (32+ hex chars) — typiquement nos `secrets.token_hex(32)`
     (re.compile(r'\b[0-9a-f]{64,}\b'), '***REDACTED_HEX***'),
 ]
