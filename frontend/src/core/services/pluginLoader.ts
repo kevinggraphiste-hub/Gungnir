@@ -19,6 +19,7 @@ const PLUGIN_COMPONENTS: Record<string, () => Promise<{ default: React.Component
   model_guide: () => import('../../plugins/model_guide/index'),
   consciousness: () => import('../../plugins/consciousness/index'),
   valkyrie: () => import('../../plugins/valkyrie/index'),
+  forge: () => import('../../plugins/forge/index'),
 }
 
 const _cache: Record<string, LazyComponent> = {}

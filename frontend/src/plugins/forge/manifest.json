@@ -1,0 +1,14 @@
+{
+  "name": "forge",
+  "display_name": "Forge",
+  "version": "0.1.0",
+  "icon": "Workflow",
+  "route": "/forge",
+  "sidebar_position": 6,
+  "sidebar_section": "tools",
+  "backend_routes": true,
+  "backend_prefix": "/api/plugins/forge",
+  "enabled_by_default": true,
+  "dependencies": [],
+  "lifecycle_hooks": false
+}
