@@ -1789,12 +1789,19 @@ function VectorTab() {
                     <select value={config.embedding_provider || 'openai'} onChange={e => updateField('embedding_provider', e.target.value)} style={selectStyle}>
                       <option value="openai">OpenAI</option>
                       <option value="google">Google</option>
+                      <option value="mistral">Mistral</option>
+                      <option value="deepseek">DeepSeek</option>
                     </select>
                   </div>
                   <div>
                     <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Modèle</label>
                     <input value={config.embedding_model || ''} onChange={e => updateField('embedding_model', e.target.value)} style={inputStyle}
-                      placeholder={config.embedding_provider === 'google' ? 'gemini-embedding-001' : 'text-embedding-3-small'} />
+                      placeholder={
+                        config.embedding_provider === 'google' ? 'gemini-embedding-001'
+                        : config.embedding_provider === 'mistral' ? 'mistral-embed'
+                        : config.embedding_provider === 'deepseek' ? 'deepseek-embed (à confirmer)'
+                        : 'text-embedding-3-small'
+                      } />
                   </div>
                   <div>
                     <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--text-muted)' }}>API Key embedding</label>

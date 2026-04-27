@@ -39,6 +39,12 @@ class EmbeddingGenerator:
         # Cohere
         "embed-english-v3.0": 1024,
         "embed-multilingual-v3.0": 1024,
+        # Mistral
+        "mistral-embed": 1024,
+        # DeepSeek (API OpenAI-compatible — pas de modèle d'embedding
+        # officiel propre à DeepSeek à ce jour, on tente leur endpoint
+        # générique. Si 404, l'user a un message clair.)
+        "deepseek-embed": 1536,
     }
 
     def __init__(self, config: dict):
@@ -75,6 +81,10 @@ class EmbeddingGenerator:
 
         if self.provider == "google":
             return await self._embed_google(texts)
+        if self.provider == "mistral":
+            return await self._embed_mistral(texts)
+        if self.provider == "deepseek":
+            return await self._embed_deepseek(texts)
         return await self._embed_openai(texts)
 
     async def _embed_openai(self, texts: list[str]) -> list[list[float]]:
@@ -149,6 +159,66 @@ class EmbeddingGenerator:
             f"Aucun modèle embedding Google ne répond. Dernière erreur : "
             f"{last_error or 'inconnue'}. Modèles essayés : {', '.join(candidates)}."
         )
+
+    async def _embed_mistral(self, texts: list[str]) -> list[list[float]]:
+        """Mistral API embedding — endpoint OpenAI-compatible.
+
+        Modèle officiel : `mistral-embed` (1024 dimensions).
+        URL par défaut : https://api.mistral.ai/v1/embeddings (override via
+        embedding_base_url si l'user pointe sur une instance custom).
+        """
+        url = self.base_url or "https://api.mistral.ai/v1/embeddings"
+        model = self.model or "mistral-embed"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json={
+                "model": model,
+                "input": texts,
+            }, headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            })
+            if resp.status_code >= 400:
+                raise ValueError(
+                    f"Mistral embedding {resp.status_code} : "
+                    f"{resp.text[:300]} (modèle: '{model}')"
+                )
+            data = resp.json()
+            return [item["embedding"] for item in data["data"]]
+
+    async def _embed_deepseek(self, texts: list[str]) -> list[list[float]]:
+        """DeepSeek API embedding — endpoint OpenAI-compatible.
+
+        Note : DeepSeek se concentre sur les LLM (chat, code, reasoning)
+        et n'expose pas de modèle d'embedding officiel à ce jour. Leur
+        API est OpenAI-compatible donc on tente `/v1/embeddings` avec
+        le modèle configuré par l'user. Si 404, message d'erreur clair.
+
+        URL par défaut : https://api.deepseek.com/v1/embeddings
+        """
+        url = self.base_url or "https://api.deepseek.com/v1/embeddings"
+        model = self.model or "deepseek-embed"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json={
+                "model": model,
+                "input": texts,
+            }, headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            })
+            if resp.status_code == 404:
+                raise ValueError(
+                    f"DeepSeek n'expose pas de modèle d'embedding officiel "
+                    f"(404 sur '{model}'). Recommandation : utilise OpenAI, "
+                    f"Google ou Mistral pour l'embedding. Tu peux quand même "
+                    f"garder DeepSeek pour le chat (LLM) à part."
+                )
+            if resp.status_code >= 400:
+                raise ValueError(
+                    f"DeepSeek embedding {resp.status_code} : "
+                    f"{resp.text[:300]} (modèle: '{model}')"
+                )
+            data = resp.json()
+            return [item["embedding"] for item in data["data"]]
 
     async def embed_single(self, text: str) -> list[float]:
         """Embed a single text."""
