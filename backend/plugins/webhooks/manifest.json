@@ -1,7 +1,7 @@
 {
   "name": "webhooks",
   "display_name": "Intégrations",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "icon": "Plug",
   "route": "/webhooks",
   "sidebar_position": 7,

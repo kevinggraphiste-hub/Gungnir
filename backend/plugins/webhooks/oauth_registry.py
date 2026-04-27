@@ -29,6 +29,11 @@ OAUTH_PROVIDERS: dict[str, dict[str, Any]] = {
         "client_secret_env": "GUNGNIR_OAUTH_GITHUB_CLIENT_SECRET",
         "icon": "Github",
         "category": "dev",
+        # Mode BYOT (Personal Access Token) — option self-hosting friendly
+        "manual_token_supported": True,
+        "manual_token_label": "Personal Access Token (PAT)",
+        "manual_token_url": "https://github.com/settings/tokens/new?scopes=repo,read:user&description=Gungnir",
+        "manual_token_help": "Crée un PAT classic avec les scopes 'repo' et 'read:user'. Format: ghp_... ou github_pat_...",
     },
     "google": {
         "display_name": "Google (Drive + Gmail)",
@@ -50,6 +55,8 @@ OAUTH_PROVIDERS: dict[str, dict[str, Any]] = {
         "client_secret_env": "GUNGNIR_OAUTH_GOOGLE_CLIENT_SECRET",
         "icon": "Mail",
         "category": "productivity",
+        # Google ne fournit pas de PAT pour Drive/Gmail — OAuth obligatoire
+        "manual_token_supported": False,
     },
     "notion": {
         "display_name": "Notion",
@@ -65,6 +72,11 @@ OAUTH_PROVIDERS: dict[str, dict[str, Any]] = {
         "use_basic_auth_for_token": True,  # Notion exige Basic auth sur token endpoint
         "icon": "FileText",
         "category": "productivity",
+        # Mode BYOT (Internal Integration Token)
+        "manual_token_supported": True,
+        "manual_token_label": "Internal Integration Token",
+        "manual_token_url": "https://www.notion.so/my-integrations",
+        "manual_token_help": "Crée une 'Internal Integration', copie le 'Internal Integration Token' (format: ntn_...). N'oublie pas de partager les pages/databases avec cette intégration via le menu '...' → Connections.",
     },
 }
 
@@ -88,6 +100,13 @@ def list_providers() -> list[dict[str, Any]]:
             "category": cfg.get("category", "other"),
             "configured": bool(client_id and client_secret),
             "supports_refresh": cfg.get("supports_refresh", False),
+            # Mode BYOT — l'user peut coller un PAT/token directement sans
+            # passer par le flow OAuth. Particulièrement utile pour le
+            # self-hosting où l'admin n'a pas créé d'OAuth app.
+            "manual_token_supported": cfg.get("manual_token_supported", False),
+            "manual_token_label": cfg.get("manual_token_label", ""),
+            "manual_token_url": cfg.get("manual_token_url", ""),
+            "manual_token_help": cfg.get("manual_token_help", ""),
         })
     return out
 

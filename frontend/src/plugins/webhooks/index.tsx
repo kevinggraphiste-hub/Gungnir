@@ -992,12 +992,16 @@ export default function WebhooksPlugin() {
 }
 
 
-// ── ConnectorsTab : connecteurs OAuth (GitHub, Google, Notion) ─────────────
+// ── ConnectorsTab : connecteurs OAuth + BYOT (GitHub, Google, Notion) ──────
 function ConnectorsTab() {
   const [providers, setProviders] = useState<any[]>([])
   const [connections, setConnections] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
+  // Provider currently in « manual token » input mode (clicked « Saisir un token »)
+  const [manualMode, setManualMode] = useState<string | null>(null)
+  const [manualToken, setManualToken] = useState('')
+  const [manualError, setManualError] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1017,7 +1021,6 @@ function ConnectorsTab() {
 
   useEffect(() => { load() }, [load])
 
-  // Ré-écoute les postMessage du callback OAuth → refresh
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (e.data?.type === 'gungnir-oauth') {
@@ -1053,70 +1056,153 @@ function ConnectorsTab() {
     }
   }
 
+  const submitManualToken = async (provider: string) => {
+    if (!manualToken.trim()) {
+      setManualError('Token vide')
+      return
+    }
+    setManualError('')
+    setBusy(provider)
+    try {
+      const r = await fetch(`${API}/oauth/${provider}/manual_token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: manualToken.trim() }),
+      }).then(r => r.json())
+      if (!r.ok) {
+        setManualError(r.error || 'Échec de la validation')
+        return
+      }
+      setManualMode(null)
+      setManualToken('')
+      await load()
+    } finally {
+      setBusy(null)
+    }
+  }
+
   if (loading) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Chargement…</div>
 
   return (
     <div className="space-y-3">
       <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-        Connecte des services tiers (GitHub, Google, Notion…) une fois — Gungnir pourra ensuite
-        appeler leurs API depuis le chat (lecture/écriture, sans copier-coller des tokens).
+        Connecte des services tiers une fois — Gungnir appellera leurs API depuis le chat.
+        Deux modes possibles : <strong>OAuth</strong> (popup d'autorisation propre) ou
+        <strong> token manuel</strong> (PAT / Integration Token, idéal en self-hosting).
       </div>
       {providers.map(p => {
         const conn = connections[p.provider] || {}
         const isConnected = conn.connected
+        const isInManualMode = manualMode === p.provider
         return (
           <div key={p.provider}
-            className="flex items-center gap-3 rounded-lg p-4"
+            className="rounded-lg p-4"
             style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <Plug size={14} />
-                <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{p.display_name}</span>
-                {!p.configured && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded"
-                    style={{ background: 'color-mix(in srgb, var(--accent-warning, #f59e0b) 12%, transparent)',
-                             color: 'var(--accent-warning, #f59e0b)' }}>
-                    config serveur manquante
-                  </span>
-                )}
-                {isConnected && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1"
-                    style={{ background: 'color-mix(in srgb, var(--accent-success) 12%, transparent)',
-                             color: 'var(--accent-success)' }}>
-                    <CheckCircle size={10} /> Connecté
-                  </span>
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Plug size={14} />
+                  <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{p.display_name}</span>
+                  {!p.configured && !p.manual_token_supported && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded"
+                      style={{ background: 'color-mix(in srgb, var(--accent-warning, #f59e0b) 12%, transparent)',
+                               color: 'var(--accent-warning, #f59e0b)' }}>
+                      config OAuth serveur requise
+                    </span>
+                  )}
+                  {!p.configured && p.manual_token_supported && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded"
+                      style={{ background: 'color-mix(in srgb, var(--accent-tertiary) 12%, transparent)',
+                               color: 'var(--accent-tertiary)' }}>
+                      OAuth indispo — utilise un token
+                    </span>
+                  )}
+                  {isConnected && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1"
+                      style={{ background: 'color-mix(in srgb, var(--accent-success) 12%, transparent)',
+                               color: 'var(--accent-success)' }}>
+                      <CheckCircle size={10} /> Connecté ({conn.mode === 'manual' ? 'token' : 'OAuth'})
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{p.description}</div>
+                {isConnected && conn.account_label && (
+                  <div className="text-[11px] mt-1" style={{ color: 'var(--text-secondary)' }}>
+                    Compte : <code>{conn.account_label}</code>
+                  </div>
                 )}
               </div>
-              <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{p.description}</div>
-              {isConnected && conn.account_label && (
-                <div className="text-[11px] mt-1" style={{ color: 'var(--text-secondary)' }}>
-                  Compte : <code>{conn.account_label}</code>
+              <div className="flex items-center gap-2">
+                {isConnected ? (
+                  <SecondaryButton size="sm" onClick={() => disconnect(p.provider)} disabled={busy === p.provider}>
+                    Déconnecter
+                  </SecondaryButton>
+                ) : (
+                  <>
+                    {p.configured && (
+                      <PrimaryButton size="sm"
+                        onClick={() => connect(p.provider)}
+                        disabled={busy === p.provider}>
+                        Connecter (OAuth)
+                      </PrimaryButton>
+                    )}
+                    {p.manual_token_supported && (
+                      <SecondaryButton size="sm"
+                        onClick={() => { setManualMode(isInManualMode ? null : p.provider); setManualToken(''); setManualError('') }}>
+                        {isInManualMode ? 'Annuler' : 'Saisir un token'}
+                      </SecondaryButton>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Saisie manuelle du token */}
+            {isInManualMode && !isConnected && (
+              <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+                <div className="text-xs mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  <strong>{p.manual_token_label}</strong>
+                  {p.manual_token_url && (
+                    <>
+                      {' — '}
+                      <a href={p.manual_token_url} target="_blank" rel="noopener noreferrer"
+                        style={{ color: 'var(--accent-primary)' }}>
+                        créer le token <ExternalLink size={10} className="inline" />
+                      </a>
+                    </>
+                  )}
                 </div>
-              )}
-            </div>
-            <div>
-              {isConnected ? (
-                <SecondaryButton size="sm" onClick={() => disconnect(p.provider)} disabled={busy === p.provider}>
-                  Déconnecter
-                </SecondaryButton>
-              ) : (
-                <PrimaryButton size="sm"
-                  onClick={() => connect(p.provider)}
-                  disabled={!p.configured || busy === p.provider}>
-                  Connecter
-                </PrimaryButton>
-              )}
-            </div>
+                {p.manual_token_help && (
+                  <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+                    {p.manual_token_help}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <input type="password" value={manualToken}
+                    onChange={e => { setManualToken(e.target.value); setManualError('') }}
+                    placeholder="Colle ton token ici"
+                    className="flex-1 rounded-lg px-3 py-2 text-xs font-mono"
+                    style={{
+                      background: 'var(--bg-primary)',
+                      border: '1px solid var(--border)',
+                      color: 'var(--text-primary)',
+                    }} />
+                  <PrimaryButton size="sm"
+                    onClick={() => submitManualToken(p.provider)}
+                    disabled={busy === p.provider || !manualToken.trim()}>
+                    Enregistrer
+                  </PrimaryButton>
+                </div>
+                {manualError && (
+                  <div className="text-[11px] mt-2" style={{ color: 'var(--accent-danger, #ef4444)' }}>
+                    {manualError}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )
       })}
-      {providers.some(p => !p.configured) && (
-        <div className="text-[11px] italic mt-2" style={{ color: 'var(--text-muted)' }}>
-          ℹ️ Pour les providers en « config serveur manquante », l'admin Gungnir doit créer une
-          app OAuth chez le provider et renseigner les variables d'env <code>GUNGNIR_OAUTH_*</code>
-          (voir documentation).
-        </div>
-      )}
     </div>
   )
 }

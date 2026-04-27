@@ -928,6 +928,24 @@ async def oauth_disconnect(provider: str, request: Request, session: AsyncSessio
     return await disconnect(provider, uid, session)
 
 
+@router.post("/oauth/{provider}/manual_token")
+async def oauth_set_manual_token(
+    provider: str, payload: dict, request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Mode BYOT : l'user colle un PAT/Integration Token directement.
+
+    Body : {"token": "ghp_..."}.
+    Le token est validé contre l'API du provider avant d'être persisté.
+    """
+    from backend.plugins.webhooks.oauth_core import set_manual_token
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+    token = (payload or {}).get("token", "")
+    return await set_manual_token(provider, uid, token, session)
+
+
 def _oauth_close_page(success: bool, message: str) -> str:
     color = "#22c55e" if success else "#dc2626"
     icon = "✅" if success else "❌"

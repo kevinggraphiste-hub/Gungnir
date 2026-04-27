@@ -229,12 +229,28 @@ async def _refresh_access_token(provider: str, refresh_token: str) -> dict[str, 
 async def get_user_oauth_token(
     user_id: int, provider: str, session: AsyncSession,
 ) -> str | None:
-    """Retourne un access_token valide, refresh auto si expiré + provider le supporte."""
+    """Retourne un token valide pour le provider :
+    - PRIORITÉ 1 : token manuel (PAT/Integration Token saisi directement)
+    - PRIORITÉ 2 : access_token OAuth (avec refresh auto si expiré)
+
+    Le mode manuel est ce qui permet à un user self-hosted d'utiliser le
+    connector sans avoir d'OAuth app configurée côté serveur.
+    """
     us = await get_user_settings(user_id, session)
     sk = dict(us.service_keys or {})
     entry = sk.get(provider)
     if not entry:
         return None
+
+    # Mode manuel : l'user a collé un PAT directement
+    manual = entry.get("manual_token", "")
+    if manual:
+        try:
+            return decrypt_value(manual)
+        except Exception:
+            return None
+
+    # Mode OAuth standard
     access = decrypt_value(entry.get("access_token", "")) if entry.get("access_token") else ""
     expires_at = int(entry.get("expires_at") or 0)
     needs_refresh = expires_at and (int(time.time()) > expires_at - 60)
@@ -259,6 +275,67 @@ async def get_user_oauth_token(
     return new_access
 
 
+async def set_manual_token(
+    provider: str, user_id: int, token: str, session: AsyncSession,
+) -> dict[str, Any]:
+    """Stocke un PAT / Integration Token saisi manuellement. Vérifie le
+    token via l'endpoint user-info du provider quand dispo, pour valider
+    qu'il fonctionne avant de le persister."""
+    cfg = provider_config(provider)
+    if not cfg:
+        return {"ok": False, "error": "Provider inconnu"}
+    if not cfg.get("manual_token_supported"):
+        return {"ok": False, "error": "Ce provider n'accepte pas de token manuel — utilise OAuth."}
+    token = (token or "").strip()
+    if not token:
+        return {"ok": False, "error": "Token vide"}
+
+    # Validation : ping un endpoint provider avec le token pour vérifier qu'il
+    # fonctionne avant de le persister.
+    label: str | None = None
+    if provider == "notion":
+        label = await _validate_notion_token(token)
+        if not label:
+            return {"ok": False, "error": "Token Notion invalide (échec sur /v1/search). Vérifie le token et que tu as bien partagé au moins une page avec l'intégration."}
+    elif cfg.get("user_info_url"):
+        label = await _fetch_user_label(provider, token)
+        if not label:
+            return {"ok": False, "error": "Token invalide ou scopes insuffisants (échec sur l'endpoint user_info)."}
+
+    us = await get_user_settings(user_id, session)
+    sk = dict(us.service_keys or {})
+    sk[provider] = {
+        "manual_token": encrypt_value(token),
+        "account_label": label or f"{provider} (token manuel)",
+        "connected_at": int(time.time()),
+        "manual": True,
+    }
+    us.service_keys = sk
+    await session.commit()
+    logger.info(f"Manual token set user={user_id} provider={provider} label={label}")
+    return {"ok": True, "provider": provider, "account_label": label or provider}
+
+
+async def _validate_notion_token(token: str) -> str | None:
+    """Notion n'a pas d'endpoint /user — on ping /search pour valider."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                "https://api.notion.com/v1/search",
+                json={"page_size": 1},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Notion-Version": "2022-06-28",
+                    "Content-Type": "application/json",
+                },
+            )
+            if r.status_code == 200:
+                return "Notion (token manuel)"
+            return None
+    except Exception:
+        return None
+
+
 def list_user_connections(user_settings) -> list[dict[str, Any]]:
     """Retourne le statut connecté/non par provider pour cet user (sans secrets)."""
     sk = dict(user_settings.service_keys or {}) if user_settings else {}
@@ -266,10 +343,11 @@ def list_user_connections(user_settings) -> list[dict[str, Any]]:
     out = []
     for provider in OAUTH_PROVIDERS:
         entry = sk.get(provider)
-        if entry:
+        if entry and (entry.get("manual_token") or entry.get("access_token")):
             out.append({
                 "provider": provider,
                 "connected": True,
+                "mode": "manual" if entry.get("manual_token") else "oauth",
                 "account_label": entry.get("account_label", ""),
                 "connected_at": entry.get("connected_at", 0),
                 "scope": entry.get("scope", ""),
