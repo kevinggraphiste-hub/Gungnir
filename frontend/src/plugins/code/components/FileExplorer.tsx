@@ -80,6 +80,38 @@ export function FileExplorer({ onOpenFile }: { onOpenFile: (path: string, name?:
     loadTree(currentPath)
   }
 
+  // Drag & drop : source (sourcePath) déplacée vers destFolderPath
+  // ('' = racine workspace). Calcule le new_path et appelle /rename. Si le
+  // backend refuse (collision 409, etc.), on alerte l'user et on rafraîchit
+  // pour ne pas laisser un état stale visuel.
+  const handleMove = useCallback(async (sourcePath: string, destFolderPath: string) => {
+    if (!sourcePath) return
+    // Anti-no-op : déjà au bon endroit
+    const sourceParent = sourcePath.includes('/') ? sourcePath.slice(0, sourcePath.lastIndexOf('/')) : ''
+    if (sourceParent === destFolderPath) return
+    // Anti-récursion : déplacer un dossier dans lui-même ou dans ses descendants
+    if (destFolderPath === sourcePath || destFolderPath.startsWith(sourcePath + '/')) {
+      alert("Impossible de déplacer un dossier dans lui-même.")
+      return
+    }
+    const sourceName = sourcePath.includes('/') ? sourcePath.slice(sourcePath.lastIndexOf('/') + 1) : sourcePath
+    const newPath = destFolderPath ? `${destFolderPath}/${sourceName}` : sourceName
+    const r = await apiFetch<{ ok: boolean; error?: string }>('/rename', {
+      method: 'POST',
+      body: JSON.stringify({ old_path: sourcePath, new_path: newPath }),
+    })
+    if (!r?.ok) {
+      alert(`Déplacement impossible${r?.error ? ` : ${r.error}` : ' (le nom existe peut-être déjà à destination)'}`)
+    }
+    loadTree(currentPath)
+  }, [currentPath, loadTree])
+
+  // État du back button quand on glisse un item dessus pour le remonter d'un cran.
+  const [backHover, setBackHover] = useState(false)
+  const parentOfCurrent = currentPath.includes('/')
+    ? currentPath.slice(0, currentPath.lastIndexOf('/'))
+    : ''
+
   const handleUpload = async (filesList: FileList | null) => {
     if (!filesList || filesList.length === 0) return
     setUploading(true)
@@ -130,7 +162,26 @@ export function FileExplorer({ onOpenFile }: { onOpenFile: (path: string, name?:
       <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }}
         onChange={e => handleUpload(e.target.files)} />
       <div style={{ padding: '7px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 4 }}>
-        {currentPath && <IconBtn onClick={navBack}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg></IconBtn>}
+        {currentPath && (
+          <span
+            onDragOver={e => {
+              if (!e.dataTransfer.types.includes('application/x-gungnir-path')) return
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'move'
+              if (!backHover) setBackHover(true)
+            }}
+            onDragLeave={() => setBackHover(false)}
+            onDrop={e => {
+              e.preventDefault()
+              setBackHover(false)
+              const src = e.dataTransfer.getData('application/x-gungnir-path')
+              if (src) handleMove(src, parentOfCurrent)
+            }}
+            style={{ display: 'inline-flex', borderRadius: 4, background: backHover ? 'rgba(220,38,38,0.22)' : 'transparent', boxShadow: backHover ? 'inset 0 0 0 1px var(--scarlet)' : undefined }}
+          >
+            <IconBtn onClick={navBack}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg></IconBtn>
+          </span>
+        )}
         <span style={{ ...S.sl, padding: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentPath || 'Workspace'}</span>
         <IconBtn onClick={handleNewProject} title="Nouveau projet (sous-dossier à la racine du workspace)">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--scarlet)" strokeWidth="2">
@@ -165,6 +216,7 @@ export function FileExplorer({ onOpenFile }: { onOpenFile: (path: string, name?:
         : tree.map(e => <FileRow key={e.path} entry={e}
             onClick={() => e.is_dir ? navIn(e.path) : onOpenFile(e.path, e.name)}
             onDelete={() => handleDelete(e.path, e.name)}
+            onMove={handleMove}
             onRename={async (newName) => {
               const parent = currentPath
               const newPath = parent ? `${parent}/${newName}` : newName
@@ -185,15 +237,17 @@ export function FileExplorer({ onOpenFile }: { onOpenFile: (path: string, name?:
   )
 }
 
-export function FileRow({ entry, onClick, onDelete, onRename }: {
+export function FileRow({ entry, onClick, onDelete, onRename, onMove }: {
   entry: TreeEntry
   onClick: () => void
   onDelete: () => void
   onRename?: (newName: string) => void | Promise<void>
+  onMove?: (sourcePath: string, destFolderPath: string) => void | Promise<void>
 }) {
   const [h, setH] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(entry.name)
+  const [dropOver, setDropOver] = useState(false)
   const icon = entry.is_dir ? null : FI[entry.ext || '']
 
   const commitRename = async () => {
@@ -229,7 +283,28 @@ export function FileRow({ entry, onClick, onDelete, onRename }: {
 
   return (
     <div onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '3px 12px', cursor: 'pointer', fontSize: 11.5, background: h ? 'var(--bg-tertiary)' : 'transparent', transition: 'background 0.06s' }}>
+      draggable={true}
+      onDragStart={e => {
+        e.dataTransfer.setData('application/x-gungnir-path', entry.path)
+        e.dataTransfer.effectAllowed = 'move'
+      }}
+      onDragEnd={() => setDropOver(false)}
+      onDragOver={entry.is_dir && onMove ? e => {
+        const src = e.dataTransfer.types.includes('application/x-gungnir-path')
+        if (!src) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (!dropOver) setDropOver(true)
+      } : undefined}
+      onDragLeave={entry.is_dir && onMove ? () => setDropOver(false) : undefined}
+      onDrop={entry.is_dir && onMove ? e => {
+        e.preventDefault()
+        e.stopPropagation()
+        setDropOver(false)
+        const src = e.dataTransfer.getData('application/x-gungnir-path')
+        if (src && src !== entry.path) onMove(src, entry.path)
+      } : undefined}
+      style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '3px 12px', cursor: 'pointer', fontSize: 11.5, background: dropOver ? 'rgba(220,38,38,0.18)' : (h ? 'var(--bg-tertiary)' : 'transparent'), boxShadow: dropOver ? 'inset 0 0 0 1px var(--scarlet)' : undefined, transition: 'background 0.06s' }}>
       {entry.is_dir
         ? <svg width="13" height="13" viewBox="0 0 24 24" fill="var(--text-muted)" stroke="none" opacity={0.4}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
         : <span style={{ width: 13, textAlign: 'center', fontSize: 10, flexShrink: 0 }}>{icon || '\u{1F4C4}'}</span>}
