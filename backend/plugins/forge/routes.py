@@ -24,6 +24,7 @@ from .models import ForgeWorkflow, ForgeWorkflowRun, ForgeTrigger
 from .runner import run_workflow, parse_workflow_yaml
 from .n8n_import import n8n_to_forge
 from . import streams as forge_streams
+from .templates import list_templates as _list_tpls, get_template as _get_tpl
 from backend.core.agents.wolf_tools import (
     WOLF_TOOL_SCHEMAS,
     set_user_context,
@@ -119,6 +120,47 @@ def _serialize_run(r: ForgeWorkflowRun) -> dict:
 @router.get("/health")
 async def health():
     return {"ok": True, "plugin": "forge"}
+
+
+@router.get("/templates")
+async def templates_list():
+    """Catalogue de templates pré-construits (sans YAML — usage liste)."""
+    return {"ok": True, "templates": _list_tpls()}
+
+
+@router.get("/templates/{tid}")
+async def templates_get(tid: str):
+    t = _get_tpl(tid)
+    if not t:
+        raise HTTPException(status_code=404, detail="Template introuvable")
+    return {"ok": True, "template": t}
+
+
+@router.post("/templates/{tid}/use")
+async def templates_use(tid: str, request: Request,
+                        session: AsyncSession = Depends(get_session)):
+    """Crée un workflow chez l'user à partir du template."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    t = _get_tpl(tid)
+    if not t:
+        raise HTTPException(status_code=404, detail="Template introuvable")
+    try:
+        parse_workflow_yaml(t["yaml"])
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=f"Template corrompu : {e}")
+    w = ForgeWorkflow(
+        user_id=uid,
+        name=t["name"],
+        description=t["description"],
+        yaml_def=t["yaml"],
+        tags_json=list(t.get("tags") or []),
+        enabled=True,
+    )
+    session.add(w)
+    await session.commit()
+    await session.refresh(w)
+    return {"ok": True, "workflow_id": w.id, "name": w.name}
 
 
 @router.get("/tools")

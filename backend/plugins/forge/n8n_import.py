@@ -94,6 +94,54 @@ def _map_function(node: dict) -> Optional[dict]:
     }
 
 
+def _map_slack(node: dict) -> Optional[dict]:
+    """Slack node → channels_send_slack si dispo, sinon placeholder."""
+    p = node.get("parameters") or {}
+    channel = p.get("channel") or p.get("channelId") or ""
+    msg = p.get("text") or p.get("message") or ""
+    return {
+        "tool": "channels_send_slack",
+        "args": {"channel": channel, "message": msg},
+        "_n8n_unmapped": True,
+        "_reason": "Slack mappé sur channels_send_slack — vérifie que le canal Slack est connecté côté Channels.",
+    }
+
+
+def _map_telegram(node: dict) -> Optional[dict]:
+    """Telegram node → channels_send_telegram."""
+    p = node.get("parameters") or {}
+    return {
+        "tool": "channels_send_telegram",
+        "args": {"message": p.get("text") or p.get("message") or ""},
+        "_n8n_unmapped": True,
+        "_reason": "Telegram mappé sur channels_send_telegram — connecte un bot Telegram dans Channels.",
+    }
+
+
+def _map_email(node: dict) -> Optional[dict]:
+    """Email/Gmail/SMTP nodes → channels_send_email (placeholder pour l'instant)."""
+    return {
+        "_n8n_unmapped": True,
+        "_reason": "Email N8N : utilise plutôt les channels Gungnir (IMAP/SMTP configurés) ou un wolf_tool MCP.",
+    }
+
+
+def _map_notion(node: dict) -> Optional[dict]:
+    """Notion node → utiliser webhooks_notion_* via OAuth Notion."""
+    return {
+        "_n8n_unmapped": True,
+        "_reason": "Notion N8N : connecte ton compte Notion dans Intégrations puis utilise les wolf_tools webhooks_notion_*.",
+    }
+
+
+def _map_github(node: dict) -> Optional[dict]:
+    """GitHub node → utiliser webhooks_github_* via OAuth GitHub."""
+    return {
+        "_n8n_unmapped": True,
+        "_reason": "GitHub N8N : connecte GitHub dans Intégrations (OAuth ou PAT) puis utilise webhooks_github_*.",
+    }
+
+
 # Mapping par type N8N. Les types sont stables sur les versions n8n
 # depuis longtemps. Pas exhaustif — on couvre le top utilisé.
 N8N_TYPE_MAPPERS: dict[str, Any] = {
@@ -107,6 +155,15 @@ N8N_TYPE_MAPPERS: dict[str, Any] = {
     "n8n-nodes-base.function":        _map_function,
     "n8n-nodes-base.functionItem":    _map_function,
     "n8n-nodes-base.code":            _map_function,
+    # Intégrations courantes : mapping vers les wolf_tools Gungnir
+    # quand un équivalent existe, sinon placeholder explicite.
+    "n8n-nodes-base.slack":           _map_slack,
+    "n8n-nodes-base.telegram":        _map_telegram,
+    "n8n-nodes-base.gmail":           _map_email,
+    "n8n-nodes-base.emailSend":       _map_email,
+    "n8n-nodes-base.smtp":            _map_email,
+    "n8n-nodes-base.notion":          _map_notion,
+    "n8n-nodes-base.github":          _map_github,
 }
 
 
