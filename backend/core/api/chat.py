@@ -1719,6 +1719,21 @@ Tu operes en mode **demande**. Comportement :
             except Exception:
                 pass
 
+        # Skill auto-écriture (closed learning loop) — fire-and-forget.
+        # Gating interne : ≥ 2 tool_events dont ≥ 1 « actif », score auto OK.
+        if user_id and (response.content or "").strip() and tool_events:
+            try:
+                from backend.core.agents.skill_synthesizer import synthesize_skill
+                asyncio.ensure_future(synthesize_skill(
+                    user_id=int(user_id),
+                    convo_id=convo_id,
+                    user_msg=message,
+                    assistant_msg=response.content or "",
+                    tool_events=tool_events,
+                ))
+            except Exception:
+                pass
+
         # Triggers conscience tirés du message user. Best-effort, fire-and-forget.
         # Détections volontairement simples (regex + heuristique courte) :
         # - user_asked_status → besoin `progression` (l'user cherche du reporting)

@@ -11,7 +11,7 @@ import hashlib
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException, Request, Response
 
@@ -1690,3 +1690,24 @@ async def discord_oauth_callback(channel_id: str, request: Request):
         ),
         media_type="text/html"
     )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Lifecycle hooks — démarrage des workers Email (polling IMAP)
+# ════════════════════════════════════════════════════════════════════════════
+
+async def on_startup(app: Any = None):
+    """Démarre les pollings IMAP pour chaque channel email enabled au boot."""
+    try:
+        from backend.plugins.channels.email_worker import restart_all_active_workers
+        await restart_all_active_workers()
+    except Exception as e:
+        logger.warning(f"Email workers startup failed: {e}")
+
+
+async def on_shutdown(*args, **kwargs):
+    try:
+        from backend.plugins.channels.email_worker import stop_all
+        stop_all()
+    except Exception:
+        pass

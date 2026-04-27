@@ -266,6 +266,49 @@ WOLF_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "task_queue_enqueue",
+            "description": (
+                "Empile une tâche que sub-agent traitera EN BACKGROUND pendant "
+                "que la conversation continue. Tu récupères les résultats plus "
+                "tard via `task_queue_results`. Idéal pour les tâches longues "
+                "(crawl multi-pages, scraping en profondeur, audit) où l'user "
+                "veut continuer à parler pendant que ça mouline. Pour de la "
+                "parallélisation immédiate avec attente, préfère `subagent_invoke_parallel`."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "Description de la tâche à exécuter en background."},
+                    "agent_name": {"type": "string", "description": "Sous-agent cible (default: agent_dev_senior)."},
+                },
+                "required": ["task"],
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "task_queue_results",
+            "description": "Récupère les résultats des tâches background terminées (et les retire de la queue). Liste aussi les tâches encore pending. Appelle dès que tu veux remonter des résultats à l'user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "drain": {"type": "boolean", "description": "Retirer les tâches terminées de la queue après lecture (default true).", "default": True},
+                },
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "task_queue_status",
+            "description": "Liste l'état de toutes les tâches background (pending/running/done) sans rien retirer.",
+            "parameters": {"type": "object", "properties": {}},
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "subagent_invoke_parallel",
             "description": "Délègue plusieurs tâches à plusieurs sous-agents EN PARALLÈLE (asyncio.gather). Usage réservé à agent_coordinator pour orchestrer une tâche complexe multi-domaines. Retourne un dict {nom_agent: résultat}. Max 4 invocations simultanées.",
             "parameters": {
@@ -1266,8 +1309,8 @@ def _get_tools_for_agent(agent_tools: list[str] | None) -> list[dict]:
 # mais jamais au-delà de _MAX_PARALLEL_PER_AGENT (garde-fou anti-récursion
 # vraie A → B → A, qui resterait bloqué par la profondeur de pile).
 _active_invocations: dict[str, int] = {}
-_MAX_DELEGATION_DEPTH = 4  # Max chain: super → coordinator → specialized → skill
-_MAX_PARALLEL_PER_AGENT = 2  # Un même agent ne peut tourner qu'à 2x max en parallèle
+_MAX_DELEGATION_DEPTH = 6  # Bumpé 4 → 6 (worktree parallelism Hermes-style)
+_MAX_PARALLEL_PER_AGENT = 4  # Bumpé 2 → 4 — un même agent peut tourner 4× en parallèle
 
 async def _subagent_invoke(name: str, task: str) -> dict:
     from backend.core.agents.skills import subagent_library
@@ -1471,6 +1514,31 @@ TU AS INTERNET. Ne dis JAMAIS que tu n'as pas accès au web."""
             _recorder.__exit__(None, None, None)
         except Exception:
             pass
+
+
+# ── Task queue wrappers (per-user via _current_user_id) ───────────────────
+async def _tq_enqueue(task: str, agent_name: str = "agent_dev_senior") -> dict:
+    from backend.core.agents.task_queue import enqueue
+    uid = _current_user_id or 0
+    if not uid:
+        return {"ok": False, "error": "task_queue requires authenticated user"}
+    return await enqueue(uid, task, agent_name)
+
+
+async def _tq_results(drain: bool = True) -> dict:
+    from backend.core.agents.task_queue import collect_results
+    uid = _current_user_id or 0
+    if not uid:
+        return {"ok": False, "error": "task_queue requires authenticated user"}
+    return collect_results(uid, drain=drain)
+
+
+async def _tq_status() -> dict:
+    from backend.core.agents.task_queue import list_tasks
+    uid = _current_user_id or 0
+    if not uid:
+        return {"ok": False, "error": "task_queue requires authenticated user"}
+    return {"ok": True, "tasks": list_tasks(uid)}
 
 
 async def _subagent_invoke_parallel(invocations: list) -> dict:
@@ -3415,6 +3483,9 @@ WOLF_EXECUTORS: dict[str, Any] = {
     "subagent_invoke":       _subagent_invoke,
     "subagent_run":          _subagent_invoke,  # alias anti-hallucination LLM
     "subagent_invoke_parallel": _subagent_invoke_parallel,
+    "task_queue_enqueue":    _tq_enqueue,
+    "task_queue_results":    _tq_results,
+    "task_queue_status":     _tq_status,
     "kb_write":              _kb_write,
     "kb_read":               _kb_read,
     "kb_list":               _kb_list,

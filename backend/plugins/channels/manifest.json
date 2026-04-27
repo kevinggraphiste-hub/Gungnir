@@ -1,7 +1,7 @@
 {
   "name": "channels",
   "display_name": "Channels",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "icon": "RadioTower",
   "route": "/channels",
   "sidebar_position": 6,
@@ -10,5 +10,5 @@
   "backend_prefix": "/api/plugins/channels",
   "enabled_by_default": true,
   "dependencies": [],
-  "lifecycle_hooks": false
+  "lifecycle_hooks": true
 }
