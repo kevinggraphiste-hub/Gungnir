@@ -18,13 +18,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.db.engine import get_session
 from backend.core.api.auth_helpers import open_mode_fallback_user_id
 
-from .models import ForgeWorkflow, ForgeWorkflowRun
+from .models import ForgeWorkflow, ForgeWorkflowRun, ForgeTrigger
 from .runner import run_workflow, parse_workflow_yaml
+from .n8n_import import n8n_to_forge
 from backend.core.agents.wolf_tools import (
     WOLF_TOOL_SCHEMAS,
     set_user_context,
     get_user_context,
 )
+import json
+import secrets
+import yaml as _yaml
 
 logger = logging.getLogger("gungnir.plugins.forge")
 router = APIRouter()
@@ -56,6 +60,20 @@ class WorkflowIn(BaseModel):
 
 class RunIn(BaseModel):
     inputs: Optional[dict] = None
+
+
+class TriggerIn(BaseModel):
+    type: str  # 'webhook' | 'cron' | 'manual'
+    config: Optional[dict] = None
+    enabled: Optional[bool] = None
+
+
+class ImportIn(BaseModel):
+    """Import flexible : soit `yaml` (texte natif Forge), soit `n8n_json`
+    (dict export N8N), soit `data` qu'on auto-détecte."""
+    yaml: Optional[str] = None
+    n8n_json: Optional[dict] = None
+    data: Optional[str] = None  # raw text / JSON, auto-détection
 
 
 # ── Serialization ─────────────────────────────────────────────────────────
@@ -309,6 +327,336 @@ async def get_run(run_id: int, request: Request,
     if not r:
         raise HTTPException(status_code=404, detail="Run introuvable")
     return {"ok": True, "run": _serialize_run(r)}
+
+
+# ── Triggers ──────────────────────────────────────────────────────────────
+
+def _serialize_trigger(t: ForgeTrigger, base_url: str = "") -> dict:
+    out = {
+        "id": t.id,
+        "workflow_id": t.workflow_id,
+        "type": t.type,
+        "config": t.config_json or {},
+        "enabled": bool(t.enabled),
+        "last_fire_at": t.last_fire_at.isoformat() if t.last_fire_at else None,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+    }
+    if t.type == "webhook" and t.secret_token:
+        out["webhook_url"] = f"{base_url}/api/plugins/forge/webhook/{t.secret_token}"
+        out["secret_token"] = t.secret_token
+    return out
+
+
+@router.get("/workflows/{wf_id}/triggers")
+async def list_triggers(wf_id: int, request: Request,
+                        session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == wf_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    if not rs.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    rs = await session.execute(
+        select(ForgeTrigger).where(ForgeTrigger.workflow_id == wf_id)
+        .order_by(ForgeTrigger.created_at.desc())
+    )
+    base = str(request.base_url).rstrip("/")
+    return {"ok": True, "triggers": [_serialize_trigger(t, base) for t in rs.scalars().all()]}
+
+
+@router.post("/workflows/{wf_id}/triggers")
+async def create_trigger(wf_id: int, body: TriggerIn, request: Request,
+                         session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == wf_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    if not rs.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    if body.type not in ("webhook", "cron", "manual"):
+        raise HTTPException(status_code=400, detail="Type de trigger invalide")
+    # Validation cron : on importe croniter (déjà dans requirements pour
+    # le scheduler core) et on tente un parse — rejet immédiat si invalide.
+    if body.type == "cron":
+        expr = (body.config or {}).get("expression", "").strip()
+        if not expr:
+            raise HTTPException(status_code=400, detail="Expression cron requise")
+        try:
+            from croniter import croniter
+            if not croniter.is_valid(expr):
+                raise ValueError("expression cron invalide")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Cron invalide : {e}")
+    token = secrets.token_urlsafe(24) if body.type == "webhook" else None
+    t = ForgeTrigger(
+        workflow_id=wf_id, user_id=uid,
+        type=body.type, config_json=body.config or {},
+        enabled=True if body.enabled is None else bool(body.enabled),
+        secret_token=token,
+    )
+    session.add(t)
+    await session.commit()
+    await session.refresh(t)
+    base = str(request.base_url).rstrip("/")
+    return {"ok": True, "trigger": _serialize_trigger(t, base)}
+
+
+@router.put("/triggers/{tid}")
+async def update_trigger(tid: int, body: TriggerIn, request: Request,
+                         session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeTrigger).where(
+            ForgeTrigger.id == tid, ForgeTrigger.user_id == uid,
+        )
+    )
+    t = rs.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Trigger introuvable")
+    if body.config is not None:
+        t.config_json = body.config
+    if body.enabled is not None:
+        t.enabled = bool(body.enabled)
+    await session.commit()
+    await session.refresh(t)
+    base = str(request.base_url).rstrip("/")
+    return {"ok": True, "trigger": _serialize_trigger(t, base)}
+
+
+@router.delete("/triggers/{tid}")
+async def delete_trigger(tid: int, request: Request,
+                         session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeTrigger).where(
+            ForgeTrigger.id == tid, ForgeTrigger.user_id == uid,
+        )
+    )
+    t = rs.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Trigger introuvable")
+    await session.delete(t)
+    await session.commit()
+    return {"ok": True}
+
+
+# Endpoint webhook public — PAS d'auth, sécurisé uniquement par le secret_token.
+# Attention : ce path est intentionnellement non préfixé /workflows pour
+# rester court côté URL générée (ex: gungnir.scarletwolf.cloud/api/plugins/forge/webhook/abc123).
+@router.api_route("/webhook/{token}", methods=["GET", "POST", "PUT"])
+async def webhook_trigger(token: str, request: Request,
+                          session: AsyncSession = Depends(get_session)):
+    """Déclenche un workflow via webhook. Le body de la requête (JSON ou
+    form-data) devient les `inputs` du run. Le run est créé avec
+    `trigger_source='webhook'` et l'user_id du propriétaire du trigger."""
+    rs = await session.execute(
+        select(ForgeTrigger).where(
+            ForgeTrigger.secret_token == token,
+            ForgeTrigger.type == "webhook",
+        )
+    )
+    t = rs.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Webhook inconnu")
+    if not t.enabled:
+        raise HTTPException(status_code=403, detail="Webhook désactivé")
+
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == t.workflow_id, ForgeWorkflow.user_id == t.user_id,
+        )
+    )
+    w = rs.scalar_one_or_none()
+    if not w or not w.enabled:
+        raise HTTPException(status_code=400, detail="Workflow indisponible")
+
+    # Récupère le body sous forme la plus utile possible.
+    body_raw: dict = {}
+    try:
+        if request.headers.get("content-type", "").startswith("application/json"):
+            body_raw = await request.json()
+        else:
+            form = await request.form()
+            body_raw = {k: v for k, v in form.items()} if form else {}
+    except Exception:
+        body_raw = {}
+    inputs = {
+        "_webhook": {
+            "method": request.method,
+            "headers": {k: v for k, v in request.headers.items()
+                        if k.lower() not in ("authorization", "cookie")},
+            "query": dict(request.query_params),
+        },
+        "body": body_raw,
+        # Aussi à plat les clés du body pour les patterns simples.
+        **(body_raw if isinstance(body_raw, dict) else {}),
+    }
+
+    # Lance le workflow synchroniquement (Phase 2 : sera async via worker).
+    run_row = ForgeWorkflowRun(
+        workflow_id=w.id, user_id=t.user_id, status="running",
+        inputs_json=inputs, trigger_source="webhook",
+    )
+    session.add(run_row)
+    await session.commit()
+    await session.refresh(run_row)
+
+    prev_uid = get_user_context()
+    set_user_context(t.user_id)
+    try:
+        res = await run_workflow(w.yaml_def, inputs)
+    finally:
+        set_user_context(prev_uid)
+
+    run_row.status = res.status
+    run_row.logs_json = res.logs
+    run_row.output_json = res.output if isinstance(res.output, dict) else {"value": res.output}
+    run_row.error = res.error or ""
+    run_row.finished_at = datetime.utcnow()
+    t.last_fire_at = datetime.utcnow()
+    await session.commit()
+
+    return {"ok": res.status == "success", "run_id": run_row.id,
+            "status": res.status, "output": run_row.output_json,
+            "error": res.error or None}
+
+
+# ── Import / Export ──────────────────────────────────────────────────────
+
+@router.get("/workflows/{wf_id}/export")
+async def export_workflow(wf_id: int, request: Request,
+                          session: AsyncSession = Depends(get_session)):
+    """Exporte un workflow en YAML enrichi (avec name + description).
+    Format : YAML natif Forge, importable tel quel ailleurs."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == wf_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    w = rs.scalar_one_or_none()
+    if not w:
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    # On garantit que name + description sont dans le YAML exporté
+    # (sinon perte d'info à l'import). Si déjà présents → no-op.
+    try:
+        parsed = _yaml.safe_load(w.yaml_def or "") or {}
+    except Exception:
+        parsed = {}
+    if w.name and not parsed.get("name"):
+        parsed["name"] = w.name
+    if w.description and not parsed.get("description"):
+        parsed["description"] = w.description
+    out_yaml = _yaml.dump(parsed, allow_unicode=True, sort_keys=False, lineWidth=120) if parsed else (w.yaml_def or "")
+    return {
+        "ok": True,
+        "filename": f"{(w.name or 'workflow').replace(' ', '_')}.forge.yaml",
+        "yaml": out_yaml,
+    }
+
+
+@router.post("/workflows/import")
+async def import_workflow(body: ImportIn, request: Request,
+                          session: AsyncSession = Depends(get_session)):
+    """Importe un workflow depuis YAML natif ou JSON N8N (auto-détection
+    si `data` est passé). Retourne le workflow créé + warnings éventuels."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    yaml_text: Optional[str] = body.yaml
+    n8n_json: Optional[dict] = body.n8n_json
+    warnings: list[str] = []
+    triggers_to_create: list[dict] = []
+
+    # Auto-détection si data brut.
+    if not yaml_text and not n8n_json and body.data:
+        raw = body.data.strip()
+        if raw.startswith("{"):
+            try:
+                n8n_json = json.loads(raw)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"JSON invalide : {e}")
+        else:
+            yaml_text = raw
+
+    # Conversion N8N si applicable.
+    if n8n_json is not None:
+        if not isinstance(n8n_json, dict):
+            raise HTTPException(status_code=400, detail="n8n_json doit être un dict")
+        if "nodes" not in n8n_json:
+            raise HTTPException(status_code=400, detail="JSON N8N invalide (champ 'nodes' manquant)")
+        try:
+            converted = n8n_to_forge(n8n_json)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        warnings.extend(converted["warnings"])
+        triggers_to_create = converted["triggers"]
+        wf_dict = {
+            "name": converted["name"],
+            "description": converted["description"],
+            "steps": converted["yaml_steps"],
+        }
+        yaml_text = _yaml.dump(wf_dict, allow_unicode=True, sort_keys=False)
+
+    if not yaml_text:
+        raise HTTPException(status_code=400, detail="Aucune donnée à importer (yaml ou n8n_json requis)")
+
+    # Validation YAML.
+    try:
+        wf = parse_workflow_yaml(yaml_text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"YAML invalide : {e}")
+
+    # Création.
+    name = wf.get("name") or "Workflow importé"
+    description = wf.get("description") or ""
+    new_wf = ForgeWorkflow(
+        user_id=uid, name=name, description=description,
+        yaml_def=yaml_text, enabled=True,
+    )
+    session.add(new_wf)
+    await session.commit()
+    await session.refresh(new_wf)
+
+    # Création des triggers détectés à l'import (ex: webhook N8N → trigger Forge).
+    created_triggers: list[dict] = []
+    for tr in triggers_to_create:
+        ttype = tr.get("type", "manual")
+        token = secrets.token_urlsafe(24) if ttype == "webhook" else None
+        # Mapping config N8N cron → Forge cron expression
+        cfg: dict = {}
+        if ttype == "cron":
+            # N8N exprime le cron de plusieurs façons selon node version ;
+            # on prend tout ce qui ressemble à une expression standard.
+            n8n_cfg = tr.get("config") or {}
+            expr = (n8n_cfg.get("triggerTimes", {}).get("item", [{}])[0].get("expression")
+                    if isinstance(n8n_cfg.get("triggerTimes"), dict) else None)
+            cfg = {"expression": expr or "0 9 * * *"}
+        new_t = ForgeTrigger(
+            workflow_id=new_wf.id, user_id=uid,
+            type=ttype, config_json=cfg,
+            enabled=True, secret_token=token,
+        )
+        session.add(new_t)
+        created_triggers.append({"type": ttype})
+    if triggers_to_create:
+        await session.commit()
+
+    return {
+        "ok": True,
+        "workflow_id": new_wf.id,
+        "name": new_wf.name,
+        "warnings": warnings,
+        "triggers_created": created_triggers,
+    }
 
 
 @router.delete("/runs/{run_id}")

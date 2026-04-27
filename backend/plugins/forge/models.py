@@ -49,6 +49,41 @@ class ForgeWorkflow(Base):
                         server_default=func.now(), onupdate=datetime.utcnow)
 
 
+class ForgeTrigger(Base):
+    """Trigger qui déclenche automatiquement un workflow.
+
+    Types supportés :
+    - 'webhook' : un POST sur `/api/plugins/forge/webhook/{secret_token}` lance
+      le workflow (le body du POST devient les inputs).
+    - 'cron'    : exécution planifiée via expression cron (croniter).
+    - 'manual'  : pas d'auto-déclenchement (placeholder ; le run vient du
+      bouton UI ou de l'agent).
+
+    `config_json` :
+    - webhook : { "secret_token": "...", "method": "POST", "ip_allowlist": [...] }
+    - cron    : { "expression": "0 9 * * *", "timezone": "Europe/Paris" }
+
+    `last_fire_at` : last successful trigger (utilisé pour la fenêtre de cron
+    et l'affichage UI).
+    """
+    __tablename__ = "forge_triggers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workflow_id = Column(Integer, ForeignKey("forge_workflows.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    type = Column(String(20), nullable=False, default="manual")
+    config_json = Column(JSON, default=dict)
+    enabled = Column(Boolean, default=True)
+    last_fire_at = Column(DateTime, nullable=True)
+    # Token secret pour les webhooks — indexé pour le lookup rapide depuis
+    # l'endpoint public.
+    secret_token = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow,
+                        server_default=func.now())
+
+
 class ForgeWorkflowRun(Base):
     """Une exécution d'un workflow.
 

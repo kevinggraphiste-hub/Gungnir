@@ -16,14 +16,14 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { yaml as yamlLang } from '@codemirror/lang-yaml'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch } from 'lucide-react'
+import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch, Upload, Download, Link as LinkIcon, Copy, X } from 'lucide-react'
 import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/components/ui'
 import InfoButton from '@core/components/InfoButton'
 import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 import { humanizeTool, groupByCategory } from './toolLabels'
 
-const PLUGIN_VERSION = '0.3.0'
+const PLUGIN_VERSION = '0.4.0'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -68,6 +68,18 @@ interface ForgeTool {
   name: string
   description: string
   params: Array<{ name: string; type: string; description: string; required: boolean }>
+}
+
+interface ForgeTrigger {
+  id: number
+  workflow_id: number
+  type: 'webhook' | 'cron' | 'manual'
+  config: Record<string, any>
+  enabled: boolean
+  last_fire_at: string | null
+  created_at: string | null
+  webhook_url?: string
+  secret_token?: string
 }
 
 const TABS = [
@@ -183,6 +195,9 @@ function WorkflowsTab() {
     })()
   }, [])
 
+  // Panneau latéral droit : 'run' (dernière exécution) ou 'triggers' (déclencheurs).
+  const [rightPanel, setRightPanel] = useState<'run' | 'triggers'>('run')
+
   const load = useCallback(async () => {
     setLoading(true)
     // silent=true : pas d'alert au boot, juste un état vide si l'API
@@ -212,6 +227,46 @@ function WorkflowsTab() {
     })
     if (r?.workflow) { await load(); setActive(r.workflow) }
   }
+
+  // Import depuis un fichier (YAML Forge ou JSON N8N — auto-détection backend).
+  const handleImport = useCallback(async () => {
+    const inp = document.createElement('input')
+    inp.type = 'file'
+    inp.accept = '.yaml,.yml,.json,application/yaml,application/json'
+    inp.onchange = async () => {
+      const f = inp.files?.[0]
+      if (!f) return
+      const text = await f.text()
+      const r = await api<{ ok: boolean; workflow_id: number; warnings: string[] }>('/workflows/import', {
+        method: 'POST',
+        body: JSON.stringify({ data: text }),
+      })
+      if (r?.workflow_id) {
+        await load()
+        if (r.warnings?.length) {
+          alert(`Import réussi avec ${r.warnings.length} avertissement(s) :\n\n${r.warnings.slice(0, 8).join('\n')}`)
+        }
+        // Sélectionne le workflow importé.
+        const wf = (await api<{ ok: boolean; workflow: ForgeWorkflow }>(`/workflows/${r.workflow_id}`, undefined, true))?.workflow
+        if (wf) setActive(wf)
+      }
+    }
+    inp.click()
+  }, [load])
+
+  // Export du workflow sélectionné en YAML (téléchargement).
+  const handleExport = useCallback(async () => {
+    if (!active) return
+    const r = await api<{ ok: boolean; filename: string; yaml: string }>(`/workflows/${active.id}/export`)
+    if (!r?.yaml) return
+    const blob = new Blob([r.yaml], { type: 'application/yaml' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = r.filename || 'workflow.forge.yaml'
+    document.body.appendChild(a); a.click(); a.remove()
+    URL.revokeObjectURL(url)
+  }, [active])
 
   const handleSave = async () => {
     if (!active || !draft) return
@@ -262,8 +317,9 @@ function WorkflowsTab() {
         borderRight: '1px solid var(--border)', background: 'var(--bg-secondary)',
         overflow: 'hidden',
       }}>
-        <div style={{ padding: '10px 12px', display: 'flex', gap: 6, borderBottom: '1px solid var(--border)' }}>
+        <div style={{ padding: '10px 12px', display: 'flex', gap: 6, flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
           <PrimaryButton size="sm" icon={<Plus size={13} />} onClick={handleCreate}>Nouveau</PrimaryButton>
+          <SecondaryButton size="sm" icon={<Upload size={13} />} onClick={handleImport}>Importer</SecondaryButton>
           <SecondaryButton size="sm" icon={<RefreshCw size={13} />} onClick={load}>Actualiser</SecondaryButton>
         </div>
         <div style={{ flex: 1, overflow: 'auto' }}>
@@ -335,6 +391,7 @@ function WorkflowsTab() {
               {running ? 'Exécution…' : 'Exécuter'}
             </PrimaryButton>
             <SecondaryButton size="sm" onClick={handleSave}>Sauvegarder</SecondaryButton>
+            <SecondaryButton size="sm" icon={<Download size={13} />} onClick={handleExport}>Exporter</SecondaryButton>
             <SecondaryButton size="sm" danger icon={<Trash2 size={13} />} onClick={handleDelete}>Supprimer</SecondaryButton>
           </div>
           <input
@@ -370,16 +427,31 @@ function WorkflowsTab() {
               )}
             </div>
 
-            {/* Panel résultat run */}
+            {/* Panel droit : toggle Run ↔ Triggers */}
             <div style={{ width: 340, flexShrink: 0, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-secondary)' }}>
-              <div style={{ padding: '4px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, borderBottom: '1px solid var(--border)' }}>
-                DERNIÈRE EXÉCUTION
+              <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
+                {(['run', 'triggers'] as const).map(k => (
+                  <button key={k} onClick={() => setRightPanel(k)}
+                    style={{
+                      flex: 1, padding: '8px 10px', fontSize: 10, fontWeight: 700, letterSpacing: 1,
+                      cursor: 'pointer', background: rightPanel === k ? 'var(--bg-primary)' : 'transparent',
+                      color: rightPanel === k ? 'var(--scarlet)' : 'var(--text-muted)',
+                      border: 'none', borderBottom: rightPanel === k ? '2px solid var(--scarlet)' : '2px solid transparent',
+                      textTransform: 'uppercase',
+                    }}>
+                    {k === 'run' ? 'Exécution' : 'Déclencheurs'}
+                  </button>
+                ))}
               </div>
-              <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
-                {running && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Exécution en cours…</div>}
-                {!running && !lastRun && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.6 }}>Cliquez <strong>Exécuter</strong> pour lancer ce workflow.</div>}
-                {lastRun && <RunDisplay run={lastRun} />}
-              </div>
+              {rightPanel === 'run' ? (
+                <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+                  {running && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Exécution en cours…</div>}
+                  {!running && !lastRun && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.6 }}>Cliquez <strong>Exécuter</strong> pour lancer ce workflow.</div>}
+                  {lastRun && <RunDisplay run={lastRun} />}
+                </div>
+              ) : (
+                <TriggersPanel workflowId={active.id} />
+              )}
             </div>
           </div>
         </div>
@@ -387,6 +459,145 @@ function WorkflowsTab() {
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, color: 'var(--text-muted)', fontSize: 13 }}>
           <FileText size={40} style={{ opacity: 0.3 }} />
           <div>Sélectionnez un workflow ou créez-en un nouveau</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Composant — Triggers (déclencheurs : webhook + cron)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function TriggersPanel({ workflowId }: { workflowId: number }) {
+  const [triggers, setTriggers] = useState<ForgeTrigger[]>([])
+  const [loading, setLoading] = useState(true)
+  const [cronExpr, setCronExpr] = useState('0 9 * * *')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const r = await api<{ ok: boolean; triggers: ForgeTrigger[] }>(`/workflows/${workflowId}/triggers`, undefined, true)
+    setTriggers(r?.triggers || [])
+    setLoading(false)
+  }, [workflowId])
+
+  useEffect(() => { load() }, [load])
+
+  const addWebhook = async () => {
+    const r = await api<{ ok: boolean; trigger: ForgeTrigger }>(`/workflows/${workflowId}/triggers`, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'webhook', config: {} }),
+    })
+    if (r?.trigger) load()
+  }
+
+  const addCron = async () => {
+    if (!cronExpr.trim()) return
+    const r = await api<{ ok: boolean; trigger: ForgeTrigger }>(`/workflows/${workflowId}/triggers`, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'cron', config: { expression: cronExpr.trim() } }),
+    })
+    if (r?.trigger) load()
+  }
+
+  const toggleTrigger = async (t: ForgeTrigger) => {
+    const r = await api(`/triggers/${t.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled: !t.enabled, config: t.config }),
+    })
+    if (r) load()
+  }
+
+  const deleteTrigger = async (t: ForgeTrigger) => {
+    if (!confirm(`Supprimer ce déclencheur ${t.type} ?`)) return
+    const r = await api(`/triggers/${t.id}`, { method: 'DELETE' })
+    if (r) load()
+  }
+
+  return (
+    <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+      {/* Action : ajouter webhook */}
+      <div style={{ padding: 10, marginBottom: 10, background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>WEBHOOK</div>
+        <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 6 }}>
+          Génère une URL publique. Un POST dessus lance le workflow ; le body devient les <code>inputs</code>.
+        </div>
+        <button onClick={addWebhook}
+          style={{ padding: '4px 10px', fontSize: 10, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <Plus size={11} /> Ajouter
+        </button>
+      </div>
+
+      {/* Action : ajouter cron */}
+      <div style={{ padding: 10, marginBottom: 14, background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>CRON (PLANIFIÉ)</div>
+        <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 6 }}>
+          Expression cron (5 champs : min h jour mois jour-sem). Granularité 30s.
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <input value={cronExpr} onChange={e => setCronExpr(e.target.value)}
+            placeholder="0 9 * * *"
+            style={{ flex: 1, padding: '4px 6px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }} />
+          <button onClick={addCron}
+            style={{ padding: '4px 10px', fontSize: 10, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Plus size={11} /> Ajouter
+          </button>
+        </div>
+      </div>
+
+      {/* Liste des triggers existants */}
+      <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>ACTIFS ({triggers.length})</div>
+      {loading && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Chargement…</div>}
+      {!loading && triggers.length === 0 && (
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 4px' }}>Aucun déclencheur. Ajoute un webhook pour exposer ce workflow à l'extérieur.</div>
+      )}
+      {triggers.map(t => <TriggerCard key={t.id} t={t} onToggle={() => toggleTrigger(t)} onDelete={() => deleteTrigger(t)} />)}
+    </div>
+  )
+}
+
+function TriggerCard({ t, onToggle, onDelete }: { t: ForgeTrigger; onToggle: () => void; onDelete: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const copyUrl = () => {
+    if (!t.webhook_url) return
+    navigator.clipboard.writeText(t.webhook_url)
+    setCopied(true); setTimeout(() => setCopied(false), 1200)
+  }
+  return (
+    <div style={{ padding: 10, marginBottom: 8, background: 'var(--bg-tertiary)', border: `1px solid ${t.enabled ? 'rgba(220,38,38,0.3)' : 'var(--border)'}`, borderRadius: 6, opacity: t.enabled ? 1 : 0.55 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        {t.type === 'webhook' ? <LinkIcon size={11} style={{ color: 'var(--scarlet)' }} />
+                              : t.type === 'cron' ? <Clock size={11} style={{ color: 'var(--scarlet)' }} />
+                              : <Zap size={11} style={{ color: 'var(--text-muted)' }} />}
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--scarlet)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{t.type}</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={onToggle}
+          style={{ fontSize: 9, padding: '1px 5px', background: t.enabled ? 'rgba(34,197,94,0.18)' : 'var(--bg-secondary)', color: t.enabled ? '#22c55e' : 'var(--text-muted)', border: 'none', borderRadius: 3, cursor: 'pointer', fontWeight: 600 }}>
+          {t.enabled ? 'Activé' : 'Désactivé'}
+        </button>
+        <button onClick={onDelete}
+          style={{ fontSize: 11, padding: '0 4px', background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}>
+          <X size={11} />
+        </button>
+      </div>
+      {t.type === 'webhook' && t.webhook_url && (
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', padding: 4, background: 'var(--bg-primary)', borderRadius: 4 }}>
+          <span style={{ flex: 1, fontSize: 9, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.webhook_url}</span>
+          <button onClick={copyUrl}
+            title="Copier l'URL"
+            style={{ padding: 3, background: 'transparent', border: 'none', cursor: 'pointer', color: copied ? '#22c55e' : 'var(--text-muted)' }}>
+            <Copy size={11} />
+          </button>
+        </div>
+      )}
+      {t.type === 'cron' && (
+        <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', padding: '3px 6px', background: 'var(--bg-primary)', borderRadius: 4, display: 'inline-block' }}>
+          {t.config.expression || '?'}
+        </div>
+      )}
+      {t.last_fire_at && (
+        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4 }}>
+          Dernier fire : {fmtDate(t.last_fire_at)}
         </div>
       )}
     </div>
