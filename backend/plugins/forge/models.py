@@ -53,6 +53,37 @@ class ForgeWorkflow(Base):
                         server_default=func.now(), onupdate=datetime.utcnow)
 
 
+class ForgeMarketplaceTemplate(Base):
+    """Workflow publié sur la marketplace communautaire.
+
+    Quand un user clique "Publier" sur un de ses workflows, on snapshot
+    le YAML et on crée une entrée ici. Tous les autres users peuvent
+    alors browser/installer (clone) le template chez eux.
+
+    Strict per-user pour la création/modif/delete (seul l'auteur peut
+    modifier ou retirer son template). La lecture est publique pour les
+    templates `public=true`.
+    """
+    __tablename__ = "forge_marketplace_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    author_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, default="")
+    yaml_def = Column(Text, nullable=False, default="")
+    category = Column(String(80), default="Autre", index=True)
+    tags_json = Column(JSON, default=list)
+    public = Column(Boolean, default=True)
+    downloads = Column(Integer, default=0)
+    rating_sum = Column(Integer, default=0)  # somme des ratings 1-5
+    rating_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow,
+                        server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow,
+                        server_default=func.now(), onupdate=datetime.utcnow)
+
+
 class ForgeWorkflowVersion(Base):
     """Snapshot historique d'un workflow.
 

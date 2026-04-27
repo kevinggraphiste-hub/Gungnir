@@ -95,50 +95,142 @@ def _map_function(node: dict) -> Optional[dict]:
 
 
 def _map_slack(node: dict) -> Optional[dict]:
-    """Slack node → channels_send_slack si dispo, sinon placeholder."""
+    """Slack node → channel_send via le canal Slack Gungnir.
+    L'user doit avoir un canal Slack configuré dans Channels.
+    """
     p = node.get("parameters") or {}
     channel = p.get("channel") or p.get("channelId") or ""
     msg = p.get("text") or p.get("message") or ""
     return {
-        "tool": "channels_send_slack",
-        "args": {"channel": channel, "message": msg},
+        "tool": "channel_send",
+        "args": {
+            "channel_name": "slack",  # heuristique : nom du canal Gungnir
+            "slack_channel": channel,
+            "message": msg,
+        },
         "_n8n_unmapped": True,
-        "_reason": "Slack mappé sur channels_send_slack — vérifie que le canal Slack est connecté côté Channels.",
+        "_reason": "Slack → channel_send (vérifie le 'channel_name' qui pointe vers ton canal Slack Gungnir).",
     }
 
 
 def _map_telegram(node: dict) -> Optional[dict]:
-    """Telegram node → channels_send_telegram."""
+    """Telegram node → channel_send via le canal Telegram Gungnir."""
     p = node.get("parameters") or {}
+    chat_id = p.get("chatId") or p.get("chat_id") or ""
     return {
-        "tool": "channels_send_telegram",
-        "args": {"message": p.get("text") or p.get("message") or ""},
+        "tool": "channel_send",
+        "args": {
+            "channel_name": "telegram",
+            "chat_id": str(chat_id) if chat_id else None,
+            "message": p.get("text") or p.get("message") or "",
+        },
         "_n8n_unmapped": True,
-        "_reason": "Telegram mappé sur channels_send_telegram — connecte un bot Telegram dans Channels.",
+        "_reason": "Telegram → channel_send (configure ton bot Telegram dans Channels).",
     }
 
 
 def _map_email(node: dict) -> Optional[dict]:
-    """Email/Gmail/SMTP nodes → channels_send_email (placeholder pour l'instant)."""
+    """Email/Gmail/SMTP → channel_send via canal email Gungnir."""
+    p = node.get("parameters") or {}
+    to_addr = p.get("toEmail") or p.get("to") or ""
+    subject = p.get("subject") or ""
+    body = p.get("text") or p.get("html") or p.get("message") or ""
     return {
+        "tool": "channel_send",
+        "args": {
+            "channel_name": "email",
+            "chat_id": to_addr,
+            "message": (f"[{subject}]\n\n{body}" if subject else body),
+        },
         "_n8n_unmapped": True,
-        "_reason": "Email N8N : utilise plutôt les channels Gungnir (IMAP/SMTP configurés) ou un wolf_tool MCP.",
+        "_reason": "Email → channel_send via un canal email IMAP/SMTP configuré dans Channels.",
     }
 
 
 def _map_notion(node: dict) -> Optional[dict]:
-    """Notion node → utiliser webhooks_notion_* via OAuth Notion."""
+    """Notion → utilise les wolf_tools webhooks_notion_* (OAuth Notion requis)."""
+    p = node.get("parameters") or {}
+    op = (p.get("operation") or p.get("resource") or "").lower()
+    if "page" in op and ("create" in op or op == "page"):
+        return {
+            "tool": "webhooks_notion_create_page",
+            "args": {
+                "title": p.get("title") or p.get("titleValue") or "",
+                "content": p.get("text") or "",
+                "parent_id": p.get("databaseId") or p.get("pageId") or "",
+            },
+            "_n8n_unmapped": True,
+            "_reason": "Notion → webhooks_notion_create_page (vérifie OAuth Notion connecté).",
+        }
     return {
         "_n8n_unmapped": True,
-        "_reason": "Notion N8N : connecte ton compte Notion dans Intégrations puis utilise les wolf_tools webhooks_notion_*.",
+        "_reason": "Notion → cherche un wolf_tool webhooks_notion_* approprié (forge_list_tools category=webhooks).",
     }
 
 
 def _map_github(node: dict) -> Optional[dict]:
-    """GitHub node → utiliser webhooks_github_* via OAuth GitHub."""
+    """GitHub → wolf_tools webhooks_github_* (OAuth ou PAT GitHub requis)."""
+    p = node.get("parameters") or {}
+    op = (p.get("operation") or p.get("resource") or "").lower()
+    if "issue" in op and "create" in op:
+        return {
+            "tool": "webhooks_github_create_issue",
+            "args": {
+                "owner": p.get("owner") or "",
+                "repo": p.get("repository") or p.get("repo") or "",
+                "title": p.get("title") or "",
+                "body": p.get("body") or p.get("description") or "",
+                "labels": p.get("labels") or [],
+            },
+            "_n8n_unmapped": True,
+            "_reason": "GitHub → webhooks_github_create_issue (vérifie OAuth/PAT GitHub).",
+        }
     return {
         "_n8n_unmapped": True,
-        "_reason": "GitHub N8N : connecte GitHub dans Intégrations (OAuth ou PAT) puis utilise webhooks_github_*.",
+        "_reason": "GitHub → cherche un wolf_tool webhooks_github_* (forge_list_tools category=webhooks).",
+    }
+
+
+def _map_linear(node: dict) -> Optional[dict]:
+    """Linear → wolf_tools webhooks_linear_* (si MCP/intégration configurée)."""
+    p = node.get("parameters") or {}
+    op = (p.get("operation") or p.get("resource") or "").lower()
+    if "issue" in op and ("create" in op or op == "issue"):
+        return {
+            "tool": "mcp_linear_create_issue",
+            "args": {
+                "team_id": p.get("teamId") or "",
+                "title": p.get("title") or "",
+                "description": p.get("description") or "",
+                "priority": p.get("priority") or 0,
+            },
+            "_n8n_unmapped": True,
+            "_reason": "Linear → mcp_linear_create_issue (configure le MCP Linear dans Intégrations).",
+        }
+    return {
+        "_n8n_unmapped": True,
+        "_reason": "Linear → cherche un wolf_tool mcp_linear_* ou webhooks_linear_*.",
+    }
+
+
+def _map_hubspot(node: dict) -> Optional[dict]:
+    return {
+        "_n8n_unmapped": True,
+        "_reason": "HubSpot → MCP HubSpot non encore intégré nativement. Utilise http_request avec Bearer token PAT en attendant.",
+    }
+
+
+def _map_google_sheets(node: dict) -> Optional[dict]:
+    return {
+        "_n8n_unmapped": True,
+        "_reason": "Google Sheets → connecte Google Drive (OAuth) puis utilise un MCP Google Sheets ou http_request.",
+    }
+
+
+def _map_postgres(node: dict) -> Optional[dict]:
+    return {
+        "_n8n_unmapped": True,
+        "_reason": "Postgres N8N → utilise un MCP Postgres ou http_request vers une API REST custom.",
     }
 
 
@@ -164,6 +256,11 @@ N8N_TYPE_MAPPERS: dict[str, Any] = {
     "n8n-nodes-base.smtp":            _map_email,
     "n8n-nodes-base.notion":          _map_notion,
     "n8n-nodes-base.github":          _map_github,
+    "n8n-nodes-base.linear":          _map_linear,
+    "n8n-nodes-base.hubspot":         _map_hubspot,
+    "n8n-nodes-base.googleSheets":    _map_google_sheets,
+    "n8n-nodes-base.googleSheetsTrigger": _map_google_sheets,
+    "n8n-nodes-base.postgres":        _map_postgres,
 }
 
 

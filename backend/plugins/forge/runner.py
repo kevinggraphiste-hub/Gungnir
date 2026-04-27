@@ -240,13 +240,32 @@ async def _exec_step(step: dict, ctx: dict, logs: list,
     await _emit(on_event, evt_start)
 
     # Bloc parallèle : exécute les sous-steps en asyncio.gather.
+    # Options d'agrégation :
+    # - aggregate: "list"     → results = [out1, out2, ...] (défaut)
+    # - aggregate: "merge"    → merge les dicts (last branch wins en collision)
+    # - aggregate: "first_ok" → premier output ok (ou erreur)
+    # - any_ok: true          → ok=true dès qu'une branche réussit (vs all par défaut)
     if "parallel" in step:
         sub_outputs = await asyncio.gather(
             *[_exec_step(sub, ctx, logs, on_event) for sub in step["parallel"]],
             return_exceptions=False,
         )
-        out = {"ok": all(o.get("ok", True) for o in sub_outputs),
-               "results": sub_outputs}
+        any_ok = bool(step.get("any_ok"))
+        ok_flag = (any(o.get("ok", True) for o in sub_outputs) if any_ok
+                   else all(o.get("ok", True) for o in sub_outputs))
+        agg_mode = (step.get("aggregate") or "list").lower()
+        if agg_mode == "merge":
+            merged: dict = {}
+            for o in sub_outputs:
+                if isinstance(o, dict):
+                    merged.update({k: v for k, v in o.items() if k != "ok"})
+            out = {"ok": ok_flag, **merged}
+        elif agg_mode == "first_ok":
+            first = next((o for o in sub_outputs if isinstance(o, dict) and o.get("ok", True)),
+                         sub_outputs[0] if sub_outputs else {"ok": False})
+            out = {"ok": ok_flag, **first} if isinstance(first, dict) else {"ok": ok_flag, "value": first}
+        else:
+            out = {"ok": ok_flag, "results": sub_outputs}
         evt_end = {
             "ts": datetime.utcnow().isoformat(),
             "step_id": sid, "type": "end",
@@ -259,30 +278,43 @@ async def _exec_step(step: dict, ctx: dict, logs: list,
 
     # For each : itère sur une liste (interpolée depuis `for_each`) et
     # exécute `do` (liste de sub-steps) avec une variable nommée par `as`.
+    # Options :
+    # - filter: "{{ ... }}"   → skip l'item si condition fausse
+    # - break_on: "{{ ... }}" → sort de la boucle si condition vraie après l'item
     if "for_each" in step:
         items_raw = _interpolate(step["for_each"], ctx)
         as_name = (step.get("as") or "item").strip() or "item"
         sub_steps = step.get("do") or []
+        filter_cond = step.get("filter")
+        break_cond = step.get("break_on")
         if not isinstance(items_raw, list):
             out = {"ok": False, "error": f"for_each : attendu une liste, reçu {type(items_raw).__name__}"}
         elif not isinstance(sub_steps, list):
             out = {"ok": False, "error": "for_each : champ 'do' (liste de steps) requis"}
         else:
             results: list = []
+            skipped_count = 0
             ok_total = True
-            # Sauvegarde la valeur précédente de la var pour restauration
-            # (éviter d'écraser un global de même nom, surtout en nested).
             previous = ctx.get(as_name)
             try:
                 for idx, item in enumerate(items_raw):
                     ctx[as_name] = item
+                    # Filter : drop l'item si la condition est fausse.
+                    if filter_cond is not None:
+                        if not _safe_eval_condition(str(filter_cond), ctx):
+                            skipped_count += 1
+                            evt_skip = {
+                                "ts": datetime.utcnow().isoformat(),
+                                "step_id": f"{sid}[{idx}]", "type": "skip",
+                                "reason": "filter false",
+                            }
+                            logs.append(evt_skip)
+                            await _emit(on_event, evt_skip)
+                            continue
                     item_outputs = []
                     item_ok = True
                     for ssub in sub_steps:
                         sub_id = ssub.get("id") or f"{sid}.{idx}"
-                        # On ne met PAS à jour ctx.steps depuis l'intérieur
-                        # d'un for_each (sinon collision entre items). On
-                        # collecte les outputs séparément.
                         sout = await _exec_step({**ssub, "id": f"{sid}[{idx}].{sub_id}"},
                                                 ctx, logs, on_event)
                         item_outputs.append(sout)
@@ -293,12 +325,23 @@ async def _exec_step(step: dict, ctx: dict, logs: list,
                     if not item_ok and not step.get("continue_on_error"):
                         ok_total = False
                         break
+                    # break_on : si la condition est vraie après cet item, sort de la boucle.
+                    if break_cond is not None and _safe_eval_condition(str(break_cond), ctx):
+                        evt_break = {
+                            "ts": datetime.utcnow().isoformat(),
+                            "step_id": f"{sid}[{idx}]", "type": "break",
+                            "reason": "break_on true",
+                        }
+                        logs.append(evt_break)
+                        await _emit(on_event, evt_break)
+                        break
             finally:
                 if previous is None:
                     ctx.pop(as_name, None)
                 else:
                     ctx[as_name] = previous
-            out = {"ok": ok_total, "iterations": len(results), "results": results}
+            out = {"ok": ok_total, "iterations": len(results),
+                   "skipped": skipped_count, "results": results}
         evt_end = {
             "ts": datetime.utcnow().isoformat(),
             "step_id": sid, "type": "end",

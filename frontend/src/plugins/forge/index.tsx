@@ -17,14 +17,14 @@ import CodeMirror from '@uiw/react-codemirror'
 import { yaml as yamlLang } from '@codemirror/lang-yaml'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
-import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch, Upload, Download, Link as LinkIcon, Copy, X, Sparkles, History, RotateCcw, BookmarkPlus } from 'lucide-react'
+import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch, Upload, Download, Link as LinkIcon, Copy, X, Sparkles, History, RotateCcw, BookmarkPlus, Store, Star, Send, FlaskConical } from 'lucide-react'
 import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/components/ui'
 import InfoButton from '@core/components/InfoButton'
 import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 import { humanizeTool, groupByCategory } from './toolLabels'
 
-const PLUGIN_VERSION = '0.11.0'
+const PLUGIN_VERSION = '0.12.0'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -98,6 +98,7 @@ interface ForgeVersion {
 const TABS = [
   { key: 'workflows' as const, label: 'Workflows', icon: <Workflow size={14} /> },
   { key: 'templates' as const, label: 'Templates', icon: <Sparkles size={14} /> },
+  { key: 'marketplace' as const, label: 'Marketplace', icon: <Store size={14} /> },
   { key: 'runs' as const, label: 'Historique', icon: <Clock size={14} /> },
   { key: 'tools' as const, label: 'Outils dispo', icon: <Zap size={14} /> },
 ]
@@ -209,7 +210,7 @@ function fmtDuration(ms: number | null | undefined): string {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export default function ForgePlugin() {
-  const [tab, setTab] = useState<'workflows' | 'runs' | 'tools' | 'templates'>('workflows')
+  const [tab, setTab] = useState<'workflows' | 'runs' | 'tools' | 'templates' | 'marketplace'>('workflows')
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -232,6 +233,7 @@ export default function ForgePlugin() {
       </div>
       {tab === 'workflows' && <WorkflowsTab />}
       {tab === 'templates' && <TemplatesTab />}
+      {tab === 'marketplace' && <MarketplaceTab />}
       {tab === 'runs' && <RunsTab />}
       {tab === 'tools' && <ToolsTab />}
     </div>
@@ -1067,6 +1069,134 @@ function TemplatesTab() {
                   style={{ marginTop: 6, padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
                   <Plus size={12} /> Utiliser
                 </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAB — Marketplace (templates communautaires)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface MarketplaceItem {
+  id: number
+  author_id: number
+  name: string
+  description: string
+  category: string
+  tags: string[]
+  downloads: number
+  rating: number | null
+  rating_count: number
+  created_at: string | null
+}
+
+function MarketplaceTab() {
+  const [items, setItems] = useState<MarketplaceItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const qs = search.trim() ? `?q=${encodeURIComponent(search.trim())}` : ''
+    const r = await api<{ ok: boolean; templates: MarketplaceItem[] }>(`/marketplace${qs}`, undefined, true)
+    setItems(r?.templates || [])
+    setLoading(false)
+  }, [search])
+  useEffect(() => { load() }, [load])
+
+  const install = async (it: MarketplaceItem) => {
+    const r = await api<{ ok: boolean; workflow_id: number; name: string }>(`/marketplace/${it.id}/install`, { method: 'POST' })
+    if (r?.workflow_id) alert(`"${r.name}" installé. Va dans Workflows pour l'éditer.`)
+    load()
+  }
+
+  const rate = async (it: MarketplaceItem, rating: number) => {
+    const r = await api(`/marketplace/${it.id}/rate`, { method: 'POST', body: JSON.stringify({ rating }) })
+    if (r) load()
+  }
+
+  const groups = useMemo(() => {
+    const m = new Map<string, MarketplaceItem[]>()
+    for (const it of items) {
+      const arr = m.get(it.category) || []
+      arr.push(it); m.set(it.category, arr)
+    }
+    return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b))
+  }, [items])
+
+  return (
+    <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <input
+          value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Rechercher un workflow communautaire…"
+          style={{ flex: 1, padding: '7px 12px', fontSize: 12, borderRadius: 6, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
+        />
+        <button onClick={load}
+          style={{ padding: '6px 10px', fontSize: 11, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          <RefreshCw size={12} />
+        </button>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+        Workflows partagés par la communauté. Clique <strong>Installer</strong> pour cloner chez toi.
+        Pour publier un de tes workflows : onglet Workflows → bouton "Publier" (à venir Phase 5).
+      </div>
+      {loading && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Chargement…</div>}
+      {!loading && items.length === 0 && (
+        <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+          Aucun template communautaire disponible. Sois le premier à publier !
+        </div>
+      )}
+      {!loading && groups.map(([cat, arr]) => (
+        <div key={cat} style={{ marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, paddingBottom: 5, borderBottom: '1px solid var(--border)' }}>
+            <Store size={13} style={{ color: 'var(--scarlet)' }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--scarlet)', letterSpacing: 0.5, textTransform: 'uppercase' }}>{cat}</span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>· {arr.length}</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 10 }}>
+            {arr.map(it => (
+              <div key={it.id} style={{ padding: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{it.name}</div>
+                {it.description && <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{it.description}</div>}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 10, color: 'var(--text-muted)' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><Download size={10} /> {it.downloads}</span>
+                  {it.rating !== null && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#f59e0b' }}>
+                      <Star size={10} fill="#f59e0b" /> {it.rating}/5 ({it.rating_count})
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                  {it.tags.map(t => (
+                    <span key={t} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>{t}</span>
+                  ))}
+                </div>
+                <div style={{ flex: 1 }} />
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+                  <button onClick={() => install(it)}
+                    style={{ flex: 1, padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                    <Download size={12} /> Installer
+                  </button>
+                  <div style={{ display: 'flex', gap: 1 }}>
+                    {[1, 2, 3, 4, 5].map(n => (
+                      <button key={n} onClick={() => rate(it, n)}
+                        title={`Noter ${n}/5`}
+                        style={{ padding: 0, background: 'transparent', border: 'none', cursor: 'pointer' }}>
+                        <Star size={12}
+                          style={{
+                            color: it.rating && n <= Math.round(it.rating) ? '#f59e0b' : 'var(--text-muted)',
+                            fill: it.rating && n <= Math.round(it.rating) ? '#f59e0b' : 'none',
+                          }} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             ))}
           </div>

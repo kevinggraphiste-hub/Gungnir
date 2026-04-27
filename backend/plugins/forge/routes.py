@@ -20,10 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.db.engine import get_session
 from backend.core.api.auth_helpers import open_mode_fallback_user_id
 
-from .models import ForgeWorkflow, ForgeWorkflowRun, ForgeTrigger, ForgeWorkflowVersion
+from .models import (
+    ForgeWorkflow, ForgeWorkflowRun, ForgeTrigger, ForgeWorkflowVersion,
+    ForgeMarketplaceTemplate,
+)
 from .runner import run_workflow, parse_workflow_yaml
 from .n8n_import import n8n_to_forge
 from . import streams as forge_streams
+from . import webhook_history as forge_history
 from .templates import list_templates as _list_tpls, get_template as _get_tpl
 from backend.core.agents.wolf_tools import (
     WOLF_TOOL_SCHEMAS,
@@ -136,6 +140,181 @@ async def templates_get(tid: str):
     if not t:
         raise HTTPException(status_code=404, detail="Template introuvable")
     return {"ok": True, "template": t}
+
+
+# ── Marketplace communautaire ────────────────────────────────────────────
+
+
+def _serialize_marketplace(t: ForgeMarketplaceTemplate, include_yaml: bool = False) -> dict:
+    rating = (t.rating_sum / t.rating_count) if (t.rating_count or 0) > 0 else None
+    out = {
+        "id": t.id,
+        "author_id": t.author_id,
+        "name": t.name,
+        "description": t.description or "",
+        "category": t.category or "Autre",
+        "tags": list(t.tags_json or []),
+        "public": bool(t.public),
+        "downloads": t.downloads or 0,
+        "rating": round(rating, 2) if rating else None,
+        "rating_count": t.rating_count or 0,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+    }
+    if include_yaml:
+        out["yaml_def"] = t.yaml_def or ""
+    return out
+
+
+@router.get("/marketplace")
+async def marketplace_list(category: Optional[str] = None,
+                           q: Optional[str] = None,
+                           limit: int = 50,
+                           session: AsyncSession = Depends(get_session)):
+    """Liste publique des templates partagés. Pas d'auth requise (public).
+    Filtres optionnels par catégorie ou substring nom/description."""
+    query = select(ForgeMarketplaceTemplate).where(ForgeMarketplaceTemplate.public.is_(True))
+    if category:
+        query = query.where(ForgeMarketplaceTemplate.category == category)
+    query = query.order_by(ForgeMarketplaceTemplate.downloads.desc()).limit(min(200, max(1, limit)))
+    rs = await session.execute(query)
+    items = [_serialize_marketplace(t) for t in rs.scalars().all()]
+    if q:
+        ql = q.lower()
+        items = [it for it in items
+                 if ql in it["name"].lower() or ql in it["description"].lower()
+                 or any(ql in tag.lower() for tag in it["tags"])]
+    return {"ok": True, "templates": items}
+
+
+@router.get("/marketplace/{tid}")
+async def marketplace_get(tid: int, session: AsyncSession = Depends(get_session)):
+    rs = await session.execute(
+        select(ForgeMarketplaceTemplate).where(
+            ForgeMarketplaceTemplate.id == tid,
+            ForgeMarketplaceTemplate.public.is_(True),
+        )
+    )
+    t = rs.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Template introuvable")
+    return {"ok": True, "template": _serialize_marketplace(t, include_yaml=True)}
+
+
+class PublishIn(BaseModel):
+    workflow_id: int
+    name: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    tags: Optional[list] = None
+
+
+@router.post("/marketplace/publish")
+async def marketplace_publish(body: PublishIn, request: Request,
+                              session: AsyncSession = Depends(get_session)):
+    """Publie un de ses workflows sur la marketplace publique."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == body.workflow_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    w = rs.scalar_one_or_none()
+    if not w:
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    t = ForgeMarketplaceTemplate(
+        author_id=uid,
+        name=(body.name or w.name or "Workflow")[:200],
+        description=(body.description or w.description or "")[:2000],
+        yaml_def=w.yaml_def or "",
+        category=(body.category or "Autre")[:80],
+        tags_json=list(body.tags or w.tags_json or []),
+        public=True,
+    )
+    session.add(t)
+    await session.commit()
+    await session.refresh(t)
+    return {"ok": True, "marketplace_id": t.id, "name": t.name}
+
+
+@router.post("/marketplace/{tid}/install")
+async def marketplace_install(tid: int, request: Request,
+                              session: AsyncSession = Depends(get_session)):
+    """Installe un template marketplace : clone le YAML chez l'user courant
+    et incrémente le compteur de downloads de l'auteur."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeMarketplaceTemplate).where(
+            ForgeMarketplaceTemplate.id == tid,
+            ForgeMarketplaceTemplate.public.is_(True),
+        )
+    )
+    t = rs.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Template introuvable")
+    w = ForgeWorkflow(
+        user_id=uid,
+        name=t.name + " (installé)",
+        description=t.description or "",
+        yaml_def=t.yaml_def or "",
+        tags_json=list(t.tags_json or []),
+        enabled=True,
+    )
+    session.add(w)
+    t.downloads = (t.downloads or 0) + 1
+    await session.commit()
+    await session.refresh(w)
+    return {"ok": True, "workflow_id": w.id, "name": w.name}
+
+
+class RatingIn(BaseModel):
+    rating: int  # 1..5
+
+
+@router.post("/marketplace/{tid}/rate")
+async def marketplace_rate(tid: int, body: RatingIn, request: Request,
+                           session: AsyncSession = Depends(get_session)):
+    """Note un template (1-5). Pas de système de votes uniques (l'user peut
+    noter plusieurs fois — assumé pour MVP, à durcir si abus)."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    if not 1 <= body.rating <= 5:
+        raise HTTPException(status_code=400, detail="Rating doit être entre 1 et 5")
+    rs = await session.execute(
+        select(ForgeMarketplaceTemplate).where(
+            ForgeMarketplaceTemplate.id == tid,
+            ForgeMarketplaceTemplate.public.is_(True),
+        )
+    )
+    t = rs.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Template introuvable")
+    t.rating_sum = (t.rating_sum or 0) + body.rating
+    t.rating_count = (t.rating_count or 0) + 1
+    await session.commit()
+    return {"ok": True}
+
+
+@router.delete("/marketplace/{tid}")
+async def marketplace_delete(tid: int, request: Request,
+                             session: AsyncSession = Depends(get_session)):
+    """Retire un template publié (seul l'auteur peut)."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeMarketplaceTemplate).where(
+            ForgeMarketplaceTemplate.id == tid,
+            ForgeMarketplaceTemplate.author_id == uid,
+        )
+    )
+    t = rs.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Template introuvable ou non possédé")
+    await session.delete(t)
+    await session.commit()
+    return {"ok": True}
 
 
 @router.post("/templates/{tid}/use")
@@ -815,6 +994,74 @@ async def update_trigger(tid: int, body: TriggerIn, request: Request,
     return {"ok": True, "trigger": _serialize_trigger(t, base)}
 
 
+@router.get("/triggers/{tid}/history")
+async def trigger_history(tid: int, request: Request,
+                          session: AsyncSession = Depends(get_session)):
+    """Liste les derniers POSTs reçus sur ce webhook (10 max, en mémoire)."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeTrigger).where(
+            ForgeTrigger.id == tid, ForgeTrigger.user_id == uid,
+        )
+    )
+    if not rs.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Trigger introuvable")
+    return {"ok": True, "history": forge_history.list_for_trigger(tid)}
+
+
+@router.post("/triggers/{tid}/replay/{idx}")
+async def trigger_replay(tid: int, idx: int, request: Request,
+                         session: AsyncSession = Depends(get_session)):
+    """Rejoue un POST historique sur ce webhook (lance le workflow comme si
+    la requête arrivait à nouveau). Idéal pour debug une intégration sans
+    avoir à demander à l'expéditeur de re-trigger."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeTrigger).where(
+            ForgeTrigger.id == tid, ForgeTrigger.user_id == uid,
+            ForgeTrigger.type == "webhook",
+        )
+    )
+    t = rs.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Trigger introuvable")
+    payload = forge_history.get_payload(tid, idx)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Payload historique introuvable")
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == t.workflow_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    w = rs.scalar_one_or_none()
+    if not w:
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    inputs = payload.get("inputs") or {}
+    run_row = ForgeWorkflowRun(
+        workflow_id=w.id, user_id=uid, status="running",
+        inputs_json=inputs, trigger_source="webhook_replay",
+    )
+    session.add(run_row)
+    await session.commit()
+    await session.refresh(run_row)
+    prev_uid = get_user_context()
+    set_user_context(uid)
+    try:
+        res = await run_workflow(w.yaml_def, inputs,
+                                 user_id=uid, workflow_id=w.id)
+    finally:
+        set_user_context(prev_uid)
+    run_row.status = res.status
+    run_row.logs_json = res.logs
+    run_row.output_json = res.output if isinstance(res.output, dict) else {"value": res.output}
+    run_row.error = res.error or ""
+    run_row.finished_at = datetime.utcnow()
+    await session.commit()
+    return {"ok": True, "run_id": run_row.id, "status": res.status}
+
+
 @router.delete("/triggers/{tid}")
 async def delete_trigger(tid: int, request: Request,
                          session: AsyncSession = Depends(get_session)):
@@ -833,9 +1080,61 @@ async def delete_trigger(tid: int, request: Request,
     return {"ok": True}
 
 
-# Endpoint webhook public — PAS d'auth, sécurisé uniquement par le secret_token.
-# Attention : ce path est intentionnellement non préfixé /workflows pour
-# rester court côté URL générée (ex: gungnir.scarletwolf.cloud/api/plugins/forge/webhook/abc123).
+# Endpoints webhook publics — PAS d'auth, sécurisés par secret_token.
+# Deux modes :
+# - /webhook/{token}        → mode prod : déclenche le workflow + stocke historique
+# - /webhook/{token}/test   → mode test : stocke l'historique mais NE déclenche PAS
+#                              le workflow (utile pour vérifier qu'un webhook
+#                              externe envoie bien la bonne payload avant prod)
+
+
+async def _build_webhook_inputs(request: Request) -> tuple[dict, dict]:
+    """Extrait body + inputs depuis la requête HTTP. Retourne (body_raw, inputs)."""
+    body_raw: dict = {}
+    try:
+        if request.headers.get("content-type", "").startswith("application/json"):
+            body_raw = await request.json()
+        else:
+            form = await request.form()
+            body_raw = {k: v for k, v in form.items()} if form else {}
+    except Exception:
+        body_raw = {}
+    inputs = {
+        "_webhook": {
+            "method": request.method,
+            "headers": {k: v for k, v in request.headers.items()
+                        if k.lower() not in ("authorization", "cookie")},
+            "query": dict(request.query_params),
+        },
+        "body": body_raw,
+        **(body_raw if isinstance(body_raw, dict) else {}),
+    }
+    return body_raw, inputs
+
+
+@router.api_route("/webhook/{token}/test", methods=["GET", "POST", "PUT"])
+async def webhook_test(token: str, request: Request,
+                       session: AsyncSession = Depends(get_session)):
+    """Mode test : enregistre la payload dans l'historique sans lancer le
+    workflow. L'user peut ensuite la replayer manuellement depuis l'UI."""
+    rs = await session.execute(
+        select(ForgeTrigger).where(
+            ForgeTrigger.secret_token == token,
+            ForgeTrigger.type == "webhook",
+        )
+    )
+    t = rs.scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Webhook inconnu")
+    body_raw, inputs = await _build_webhook_inputs(request)
+    await forge_history.push(t.id, {
+        "mode": "test", "method": request.method,
+        "body": body_raw, "inputs": inputs,
+    })
+    return {"ok": True, "mode": "test", "stored": True,
+            "hint": "Replay depuis l'UI (panel Déclencheurs → bouton Rejouer)"}
+
+
 @router.api_route("/webhook/{token}", methods=["GET", "POST", "PUT"])
 async def webhook_trigger(token: str, request: Request,
                           session: AsyncSession = Depends(get_session)):
@@ -863,27 +1162,12 @@ async def webhook_trigger(token: str, request: Request,
     if not w or not w.enabled:
         raise HTTPException(status_code=400, detail="Workflow indisponible")
 
-    # Récupère le body sous forme la plus utile possible.
-    body_raw: dict = {}
-    try:
-        if request.headers.get("content-type", "").startswith("application/json"):
-            body_raw = await request.json()
-        else:
-            form = await request.form()
-            body_raw = {k: v for k, v in form.items()} if form else {}
-    except Exception:
-        body_raw = {}
-    inputs = {
-        "_webhook": {
-            "method": request.method,
-            "headers": {k: v for k, v in request.headers.items()
-                        if k.lower() not in ("authorization", "cookie")},
-            "query": dict(request.query_params),
-        },
-        "body": body_raw,
-        # Aussi à plat les clés du body pour les patterns simples.
-        **(body_raw if isinstance(body_raw, dict) else {}),
-    }
+    body_raw, inputs = await _build_webhook_inputs(request)
+    # Stocke l'historique pour replay future
+    await forge_history.push(t.id, {
+        "mode": "prod", "method": request.method,
+        "body": body_raw, "inputs": inputs,
+    })
 
     # Lance le workflow synchroniquement (Phase 2 : sera async via worker).
     run_row = ForgeWorkflowRun(
