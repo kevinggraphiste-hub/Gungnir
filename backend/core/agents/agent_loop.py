@@ -461,14 +461,44 @@ async def run_agent_loop(
     # réponse humaine.
     if final_content:
         cleaned = _strip_orphan_tool_tags(final_content)
-        # Si après nettoyage la réponse est vide ou réduite à rien,
-        # on force un fallback humain plutôt que de laisser un blanc.
+        # Si après nettoyage la réponse est vide alors qu'on a exécuté
+        # des tools, on relance le LLM avec un prompt explicite "résume
+        # ce que tu viens de faire en humain". Ça donne une vraie réponse
+        # plutôt qu'un message d'erreur.
         if not cleaned.strip() and tool_events:
-            cleaned = (
-                "J'ai exécuté les outils mais le modèle a retourné un format "
-                "interne au lieu d'un texte humain. Reformule ta demande, "
-                "ou demande-moi de te résumer ce que j'ai trouvé."
-            )
+            try:
+                # Résume les outputs récents pour donner du contexte au LLM.
+                summary_lines = []
+                for ev in tool_events[-12:]:  # les 12 derniers tools max
+                    res_str = _json.dumps(ev.result, ensure_ascii=False, default=str)[:400]
+                    summary_lines.append(f"- **{ev.tool}** → {res_str}")
+                rescue_messages = [
+                    ChatMessage(role="system", content=(
+                        "Tu réponds à l'utilisateur en français, ton naturel et concis. "
+                        "N'écris JAMAIS de tool_call, jamais de balises XML, juste du texte humain. "
+                        "L'utilisateur ne voit pas les tools exécutés — il voit que ta réponse."
+                    )),
+                    ChatMessage(role="user", content=(
+                        "Tu viens d'exécuter ces outils :\n\n"
+                        + "\n".join(summary_lines)
+                        + "\n\nÉcris-moi maintenant une réponse claire, humaine, "
+                          "qui répond à ma demande initiale en t'appuyant sur ces résultats. "
+                          "Pas de balises tool_call, pas de XML — juste du texte naturel."
+                    )),
+                ]
+                rescue = await provider.chat(rescue_messages, model)
+                if rescue:
+                    tokens_input_total += rescue.tokens_input or 0
+                    tokens_output_total += rescue.tokens_output or 0
+                    cleaned = _strip_orphan_tool_tags(rescue.content or "")
+            except Exception:
+                pass
+            # Dernier filet : si le rescue a quand même échoué, message clair.
+            if not cleaned.strip():
+                cleaned = (
+                    "J'ai exécuté les outils mais le modèle ne renvoie pas de texte "
+                    "humain — relance ta demande ou change de modèle (ex: Claude / GPT)."
+                )
         final_content = cleaned
 
     return AgentLoopResult(
