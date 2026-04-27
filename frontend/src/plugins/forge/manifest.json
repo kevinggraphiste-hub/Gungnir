@@ -1,7 +1,7 @@
 {
   "name": "forge",
   "display_name": "Forge",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "icon": "Hammer",
   "route": "/forge",
   "sidebar_position": 6,

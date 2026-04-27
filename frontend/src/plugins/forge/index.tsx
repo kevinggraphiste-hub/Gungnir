@@ -23,7 +23,7 @@ import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 import { humanizeTool, groupByCategory } from './toolLabels'
 
-const PLUGIN_VERSION = '0.7.0'
+const PLUGIN_VERSION = '0.7.1'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────

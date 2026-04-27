@@ -169,9 +169,12 @@ function StepNodeView({ data, selected }: NodeProps<StepNode>) {
   // Titre humain dérivé de la description backend (1ère phrase) +
   // catégorie pour le bandeau couleur. Fallback au nom technique si
   // l'outil n'est pas dans le catalogue (ex: name introuvable).
+  // Si l'outil correspond à un service connu, on utilise le logo de
+  // marque (Slack, GitHub, Notion…) au lieu de l'icône lucide générique.
   const lbl = tool ? humanizeTool(tool) : null
+  const BrandLogo = lbl?.brandIcon
   const CatIcon = lbl?.icon
-  const accent = lbl?.color || '#737373'
+  const accent = lbl?.brandColor || lbl?.color || '#737373'
   // Position des handles : top/bottom en vertical (le flow descend),
   // left/right en horizontal (le flow va de gauche à droite).
   const inPos = direction === 'horizontal' ? Position.Left : Position.Top
@@ -201,8 +204,18 @@ function StepNodeView({ data, selected }: NodeProps<StepNode>) {
           </span>
         )}
       </div>
-      {/* Corps : titre humain + nom technique en petit + preview args */}
-      <div style={{ padding: '8px 12px' }}>
+      {/* Corps : logo brand (si dispo) + titre humain + nom technique + preview args */}
+      <div style={{ padding: '8px 12px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        {BrandLogo && (
+          <div style={{
+            flexShrink: 0, width: 36, height: 36, borderRadius: 6,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: `${accent}1A`,
+          }}>
+            <BrandLogo size={22} color={accent} />
+          </div>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.3, marginBottom: 2 }}>
           {lbl?.title || step.tool || (isParallel ? 'Parallèle' : 'Step')}
         </div>
@@ -218,6 +231,7 @@ function StepNodeView({ data, selected }: NodeProps<StepNode>) {
             ))}
           </div>
         )}
+        </div>
       </div>
       <Handle type="source" position={outPos} style={{ background: '#dc2626', border: 'none', width: 8, height: 8 }} />
     </div>
@@ -311,14 +325,23 @@ function ToolPalette({ tools, onAdd, onAddControl }: {
               </div>
               {!isCollapsed && group.tools.map(t => {
                 const lbl = humanizeTool(t)
+                const Brand = lbl.brandIcon
+                const accent = lbl.brandColor || lbl.color
                 return (
                   <div key={t.name} onClick={() => onAdd(t)}
                     title={t.description}
-                    style={{ padding: '7px 10px 7px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)', transition: 'background 0.08s' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = `${lbl.color}1A`)}
+                    style={{ padding: '7px 10px 7px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)', transition: 'background 0.08s', display: 'flex', alignItems: 'center', gap: 8 }}
+                    onMouseEnter={e => (e.currentTarget.style.background = `${accent}1A`)}
                     onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{lbl.title}</div>
-                    <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{t.name}</div>
+                    {Brand && (
+                      <div style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 4, background: `${accent}1A`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Brand size={14} color={accent} />
+                      </div>
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{lbl.title}</div>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{t.name}</div>
+                    </div>
                   </div>
                 )
               })}
