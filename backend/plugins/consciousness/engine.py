@@ -579,34 +579,75 @@ class ConsciousnessEngine:
         """Calcule l'urgence de chaque besoin basé sur le temps écoulé."""
         needs_config = self._config.get("volition", {}).get("needs", {})
         needs_state = self._state.get("volition", {}).get("needs", {})
+        # Config decay (mêmes valeurs que apply_natural_decay pour la cohérence
+        # affichage / persistance)
+        decay_cfg = (self._config.get("volition", {}) or {}).get("natural_decay", {}) or {}
+        try:
+            half_life = float(decay_cfg.get("half_life_hours", 12))
+        except (TypeError, ValueError):
+            half_life = 12.0
+        try:
+            baseline = float(decay_cfg.get("baseline", 0.1))
+        except (TypeError, ValueError):
+            baseline = 0.1
+        baseline = max(0.0, min(1.0, baseline))
         now = datetime.now(timezone.utc)
         result = {}
 
+        # Anti-saturation : on calcule l'urgency AFFICHÉE comme une décroissance
+        # exponentielle vers baseline depuis le dernier événement (trigger ou
+        # fulfillment). C'est l'inverse du comportement précédent — avant, on
+        # AJOUTAIT du temps écoulé à l'urgency, ce qui faisait saturer à 100%
+        # tous les besoins jamais fulfilled. Maintenant, le temps fait
+        # redescendre vers baseline ; seuls les triggers / pression score
+        # font monter (via leur écriture en state.urgency).
         for need_name, cfg in needs_config.items():
             state = needs_state.get(need_name, {})
             base_priority = cfg.get("priority", 1)
             decay_rate = cfg.get("decay_rate", 0.05)
-            current_urgency = state.get("urgency", 0.1)
+            current_urgency = float(state.get("urgency", baseline))
 
-            last_fulfilled = state.get("last_fulfilled")
-            if last_fulfilled:
+            # Timestamp de référence : le PLUS RÉCENT entre last_triggered
+            # et last_fulfilled. Représente le dernier moment où l'urgency
+            # a été modifiée par un événement réel.
+            last_t = state.get("last_triggered") or ""
+            last_f = state.get("last_fulfilled") or ""
+            last_event = max(last_t, last_f)  # ISO strings comparables
+            hours_since: Optional[float] = None
+            if last_event:
                 try:
-                    last_dt = datetime.fromisoformat(last_fulfilled.replace("Z", "+00:00"))
-                    hours_since = (now - last_dt).total_seconds() / 3600
-                    calculated_urgency = min(1.0, current_urgency + (hours_since * decay_rate * 0.01))
+                    last_dt = datetime.fromisoformat(last_event.replace("Z", "+00:00"))
+                    hours_since = max(0.0, (now - last_dt).total_seconds() / 3600)
                 except Exception:
-                    calculated_urgency = current_urgency
+                    hours_since = None
+
+            if hours_since is None:
+                # Aucun événement de référence → on assume que le bump est
+                # "ancien" et on rebascule vers baseline. Évite les besoins
+                # qui restent à 1.0 indéfiniment quand le state vient d'un
+                # ancien format (sans last_triggered).
+                calculated_urgency = baseline
             else:
-                # Never fulfilled — urgency grows faster
-                calculated_urgency = min(1.0, current_urgency + decay_rate * 0.1)
+                # Decay exponentiel vers baseline. Si current_urgency >
+                # baseline → décroît. Si <= baseline → reste.
+                decay_factor = 0.5 ** (hours_since / half_life) if half_life > 0 else 1.0
+                calculated_urgency = baseline + (current_urgency - baseline) * decay_factor
+                # Le decay_rate par besoin module la vitesse : integrity
+                # (0.10) rebascule plus vite vers baseline que curiosity
+                # (0.01). On amplifie selon la valeur du decay_rate.
+                if decay_rate > 0 and current_urgency > baseline:
+                    pull = (current_urgency - baseline) * (1 - 0.5 ** (hours_since * decay_rate))
+                    calculated_urgency = max(baseline, calculated_urgency - pull)
+            calculated_urgency = max(baseline, min(1.0, calculated_urgency))
 
             result[need_name] = {
                 "priority": base_priority,
                 "urgency": round(calculated_urgency, 3),
                 "score": round(base_priority * calculated_urgency, 3),
-                "last_fulfilled": last_fulfilled,
+                "last_fulfilled": state.get("last_fulfilled"),
+                "last_triggered": state.get("last_triggered"),
                 "triggers": cfg.get("triggers", []),
-                "decay_rate": decay_rate
+                "decay_rate": decay_rate,
             }
 
         return dict(sorted(result.items(), key=lambda x: x[1]["score"], reverse=True))
@@ -635,11 +676,15 @@ class ConsciousnessEngine:
             self.save_state()
 
     def trigger_need(self, need_name: str, trigger: str):
-        """Augmente l'urgence d'un besoin suite à un déclencheur."""
+        """Augmente l'urgence d'un besoin suite à un déclencheur.
+        Persiste last_triggered pour que le decay exponentiel reparte de ce
+        moment (sinon, sans event après reset, l'urgency restait à 1.0
+        indéfiniment côté calculate_urgencies)."""
         needs = self._state.get("volition", {}).get("needs", {})
         if need_name in needs:
             boost = 0.15
             needs[need_name]["urgency"] = min(1.0, round(needs[need_name].get("urgency", 0) + boost, 3))
+            needs[need_name]["last_triggered"] = _now()
             self.save_state()
 
     # ── Score → Mood / Volition (conditionnement local, sans LLM) ──────
@@ -793,6 +838,9 @@ class ConsciousnessEngine:
 
         current = float(needs[target].get("urgency", 0.0))
         needs[target]["urgency"] = min(1.0, round(current + bump, 3))
+        # Aligne last_triggered pour que le decay exponentiel reparte
+        # depuis ce bump (cohérence avec trigger_need).
+        needs[target]["last_triggered"] = _now()
         self._state[last_key] = _now()
         self.save_state()
         return target
