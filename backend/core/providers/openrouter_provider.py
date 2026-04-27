@@ -1,4 +1,4 @@
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional
 import httpx
 from .base import LLMProvider, ChatMessage, ChatResponse, GeneratedImage
 
@@ -102,11 +102,17 @@ class OpenRouterProvider(LLMProvider):
         """OpenRouter route les modèles image-gen via :
         - `/images/generations` compatible OpenAI (dall-e-3, gpt-image-1…)
         - ou `/chat/completions` avec `modalities: ["image","text"]`
-          (Gemini Flash Image, Grok Aurora…)
+          (Gemini Flash Image, Grok Aurora, Imagen 3/4…)
 
         On tente d'abord /images/generations ; fallback sur le chat
         multimodal si le modèle n'est pas pris en charge par cet endpoint.
+
+        Les modèles `imagen-*` ont un format particulier : OpenRouter
+        attend `modalities: ["image"]` sans "text" (sinon 400). On adapte
+        selon la famille du model id.
         """
+        import logging as _log
+        _logger = _log.getLogger("gungnir.providers.openrouter.image")
         out: list[GeneratedImage] = []
 
         # ── /images/generations (OpenAI-compatible) ──────────────────────
@@ -126,18 +132,46 @@ class OpenRouterProvider(LLMProvider):
                     ))
                 if out:
                     return out
-        except httpx.HTTPError:
-            pass
+            else:
+                # Log le body d'erreur pour diag (souvent OpenRouter dit
+                # "model X doesn't support /images/generations").
+                try:
+                    body = resp.json()
+                    _logger.info("[OpenRouter] /images/generations %s → %s : %s",
+                                 model, resp.status_code, body)
+                except Exception:
+                    pass
+        except httpx.HTTPError as e:
+            _logger.info("[OpenRouter] /images/generations exception : %s", e)
 
-        # ── /chat/completions avec modalities:[image,text] ───────────────
-        payload = {
+        # ── /chat/completions avec modalities ────────────────────────────
+        # Imagen veut juste ["image"] ; Gemini Flash Image et Grok Aurora
+        # acceptent ["image","text"]. On adapte sur le préfixe model.
+        m_lower = (model or "").lower()
+        if "imagen" in m_lower:
+            modalities = ["image"]
+        else:
+            modalities = ["image", "text"]
+        payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "modalities": ["image", "text"],
+            "modalities": modalities,
             "stream": False,
         }
         resp = await self.client.post("/chat/completions", json=payload)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            # Récupère le détail de l'erreur OpenRouter pour le remonter
+            # de manière compréhensible (au lieu d'un raise_for_status sec).
+            err_msg = ""
+            try:
+                err_body = resp.json()
+                err = err_body.get("error") or {}
+                err_msg = err.get("message") if isinstance(err, dict) else str(err_body)
+            except Exception:
+                err_msg = resp.text[:300]
+            raise RuntimeError(
+                f"OpenRouter {resp.status_code} pour modèle '{model}' : {err_msg or 'erreur inconnue'}"
+            )
         data = resp.json()
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
