@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from backend.core.agents.wolf_tools import get_user_context
 from .llm_tools import LLM_TOOL_SCHEMAS, LLM_EXECUTORS
+from .flow_tools import FLOW_TOOL_SCHEMAS, FLOW_EXECUTORS
 
 
 TOOL_SCHEMAS: list[dict] = [
@@ -403,7 +404,9 @@ EXECUTORS: dict[str, Any] = {
     # l'auto-discovery — utiles dans les workflows mais aussi accessibles
     # aux sous-agents et au super-agent en chat normal.
     **LLM_EXECUTORS,
+    # Tools utilitaires de flow : wait_seconds, http_request (POST/PUT/etc.)
+    **FLOW_EXECUTORS,
 }
 
-# Concatène les schemas LLM pour qu'ils soient découvert au boot.
-TOOL_SCHEMAS = TOOL_SCHEMAS + LLM_TOOL_SCHEMAS
+# Concatène les schemas LLM + flow pour qu'ils soient découverts au boot.
+TOOL_SCHEMAS = TOOL_SCHEMAS + LLM_TOOL_SCHEMAS + FLOW_TOOL_SCHEMAS

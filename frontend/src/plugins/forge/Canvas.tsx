@@ -245,7 +245,7 @@ const nodeTypes = { forgeStep: StepNodeView }
 function ToolPalette({ tools, onAdd, onAddControl }: {
   tools: ForgeTool[]
   onAdd: (tool: ForgeTool) => void
-  onAddControl: (kind: 'parallel' | 'if' | 'subworkflow') => void
+  onAddControl: (kind: 'parallel' | 'if' | 'subworkflow' | 'foreach' | 'wait') => void
 }) {
   const [q, setQ] = useState('')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -286,7 +286,9 @@ function ToolPalette({ tools, onAdd, onAddControl }: {
             </div>
             {[
               { key: 'parallel' as const, title: 'Bloc parallèle', desc: 'Exécute plusieurs steps en simultané', tag: '⫿ parallel' },
+              { key: 'foreach' as const, title: 'Boucle (for_each)', desc: 'Itère sur une liste, un sub-step par item', tag: 'for_each:' },
               { key: 'if' as const, title: 'Condition', desc: 'Saute le step si la condition est fausse', tag: 'if:' },
+              { key: 'wait' as const, title: 'Attente', desc: 'Pause de N secondes entre deux steps', tag: 'wait_seconds' },
               { key: 'subworkflow' as const, title: 'Sous-workflow', desc: 'Appelle un autre workflow Forge', tag: 'forge_run_workflow' },
             ].map(it => (
               <div key={it.key} onClick={() => onAddControl(it.key)}
@@ -449,6 +451,51 @@ function StepInspector({ node, tool, onChange, onDelete }: {
           onChange={e => onChange({ if: e.target.value || undefined })}
           style={{ width: '100%', padding: '4px 6px', fontSize: 11, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
         />
+
+        {/* Retry policy : count + délai. 0 = pas de retry. */}
+        <div style={{ marginTop: 12, fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>RETRY POLICY</div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 2 }}>count</div>
+            <input
+              type="number" min={0} max={10}
+              value={Number((step.retry || {}).count || 0)}
+              onChange={e => {
+                const c = Math.max(0, Math.min(10, parseInt(e.target.value) || 0))
+                const r = { ...(step.retry || {}), count: c }
+                onChange({ retry: c > 0 ? r : undefined })
+              }}
+              style={{ width: '100%', padding: '4px 6px', fontSize: 11, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 2 }}>delay (ms)</div>
+            <input
+              type="number" min={0}
+              value={Number((step.retry || {}).delay_ms || 1000)}
+              onChange={e => {
+                const d = Math.max(0, parseInt(e.target.value) || 0)
+                const cur = step.retry || {}
+                if (!cur.count) return  // ignore si pas de retry actif
+                onChange({ retry: { ...cur, delay_ms: d } })
+              }}
+              disabled={!(step.retry || {}).count}
+              style={{ width: '100%', padding: '4px 6px', fontSize: 11, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none', opacity: (step.retry || {}).count ? 1 : 0.5 }}
+            />
+          </div>
+        </div>
+
+        {/* Continue on error : si activé, l'échec ne stoppe pas le workflow */}
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox" id="coe"
+            checked={!!step.continue_on_error}
+            onChange={e => onChange({ continue_on_error: e.target.checked || undefined })}
+          />
+          <label htmlFor="coe" style={{ fontSize: 10, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            Continuer si ce step échoue
+          </label>
+        </div>
       </div>
       <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
         <button onClick={onDelete}
@@ -610,11 +657,12 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
   // - if : crée un step avec un `if:` placeholder qu'on a juste à remplir
   // - subworkflow : crée un step `tool: forge_run_workflow` (l'user choisira
   //   le workflow_id dans l'inspector via un input integer)
-  const handleAddControl = useCallback((kind: 'parallel' | 'if' | 'subworkflow') => {
+  const handleAddControl = useCallback((kind: 'parallel' | 'if' | 'subworkflow' | 'foreach' | 'wait') => {
     setNodes(prev => {
       const used = new Set(prev.map(n => n.id))
-      const baseId = kind === 'parallel' ? 'parallel' : kind === 'if' ? 'condition' : 'subwf'
-      let id = baseId, i = 1
+      const baseIdMap: Record<string, string> = { parallel: 'parallel', if: 'condition', subworkflow: 'subwf', foreach: 'foreach', wait: 'wait' }
+      const baseId = baseIdMap[kind]
+      let id: string = baseId, i = 1
       while (used.has(id)) { i += 1; id = `${baseId}_${i}` }
       const last = prev.length > 0
         ? [...prev].sort((a, b) => direction === 'horizontal'
@@ -630,6 +678,16 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
           { tool: 'web_fetch', args: { url: 'https://example.com/a' } },
           { tool: 'web_fetch', args: { url: 'https://example.com/b' } },
         ]
+      } else if (kind === 'foreach') {
+        stepBase.for_each = '{{ inputs.items }}'
+        stepBase.as = 'item'
+        stepBase.do = [
+          { tool: 'web_fetch', args: { url: '{{ item }}' } },
+        ]
+      } else if (kind === 'wait') {
+        stepBase.tool = 'wait_seconds'
+        stepBase.args = { seconds: 5 }
+        toolForCatalog = toolMap.get('wait_seconds') || null
       } else if (kind === 'if') {
         stepBase.tool = 'web_fetch'
         stepBase.args = { url: '{{ inputs.url }}' }
@@ -646,7 +704,9 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
           : nodePositionFor(direction, 0),
         data: {
           step: stepBase, tool: toolForCatalog,
-          unsupported: kind === 'parallel',  // parallel reste éditable seulement en YAML
+          // parallel et foreach restent flag unsupported parce que leurs
+          // sub-steps ne sont pas éditables visuellement (édition YAML).
+          unsupported: kind === 'parallel' || kind === 'foreach',
           direction,
         },
       }

@@ -186,9 +186,32 @@ async def _emit(on_event: EventCallback, evt: dict):
         logger.warning("[forge] on_event callback failed: %s", e)
 
 
+async def _run_with_retry(step: dict, exec_once, ctx: dict) -> dict:
+    """Exécute `exec_once()` avec une retry policy si déclarée sur le step.
+
+    Format : `retry: { count: 3, delay_ms: 1000, backoff: 2.0 }`
+    Retry uniquement sur ok==False (pas sur succès, évidemment).
+    """
+    retry_cfg = step.get("retry") or {}
+    count = max(0, int(retry_cfg.get("count") or 0))
+    delay_ms = max(0, int(retry_cfg.get("delay_ms") or 1000))
+    backoff = float(retry_cfg.get("backoff") or 1.0)
+    attempt = 0
+    out: dict = {}
+    while True:
+        out = await exec_once()
+        if out.get("ok", True) or attempt >= count:
+            if attempt > 0 and isinstance(out, dict):
+                out["_retried"] = attempt
+            return out
+        attempt += 1
+        wait_s = (delay_ms / 1000.0) * (backoff ** (attempt - 1))
+        await asyncio.sleep(wait_s)
+
+
 async def _exec_step(step: dict, ctx: dict, logs: list,
                      on_event: EventCallback = None) -> dict:
-    """Exécute un step (atomique ou parallèle). Retourne son output.
+    """Exécute un step (atomique, parallèle, ou for_each). Retourne son output.
     `on_event` (optionnel) reçoit chaque entrée de log au fur et à mesure
     pour le streaming SSE."""
     sid = step.get("id") or f"step_{len(logs)}"
@@ -210,7 +233,8 @@ async def _exec_step(step: dict, ctx: dict, logs: list,
     evt_start = {
         "ts": datetime.utcnow().isoformat(),
         "step_id": sid, "type": "start",
-        "tool": step.get("tool") or ("parallel" if "parallel" in step else "?"),
+        "tool": (step.get("tool") or ("parallel" if "parallel" in step else
+                  "for_each" if "for_each" in step else "?")),
     }
     logs.append(evt_start)
     await _emit(on_event, evt_start)
@@ -233,13 +257,68 @@ async def _exec_step(step: dict, ctx: dict, logs: list,
         await _emit(on_event, evt_end)
         return out
 
-    # Step atomique : invoke un tool.
+    # For each : itère sur une liste (interpolée depuis `for_each`) et
+    # exécute `do` (liste de sub-steps) avec une variable nommée par `as`.
+    if "for_each" in step:
+        items_raw = _interpolate(step["for_each"], ctx)
+        as_name = (step.get("as") or "item").strip() or "item"
+        sub_steps = step.get("do") or []
+        if not isinstance(items_raw, list):
+            out = {"ok": False, "error": f"for_each : attendu une liste, reçu {type(items_raw).__name__}"}
+        elif not isinstance(sub_steps, list):
+            out = {"ok": False, "error": "for_each : champ 'do' (liste de steps) requis"}
+        else:
+            results: list = []
+            ok_total = True
+            # Sauvegarde la valeur précédente de la var pour restauration
+            # (éviter d'écraser un global de même nom, surtout en nested).
+            previous = ctx.get(as_name)
+            try:
+                for idx, item in enumerate(items_raw):
+                    ctx[as_name] = item
+                    item_outputs = []
+                    item_ok = True
+                    for ssub in sub_steps:
+                        sub_id = ssub.get("id") or f"{sid}.{idx}"
+                        # On ne met PAS à jour ctx.steps depuis l'intérieur
+                        # d'un for_each (sinon collision entre items). On
+                        # collecte les outputs séparément.
+                        sout = await _exec_step({**ssub, "id": f"{sid}[{idx}].{sub_id}"},
+                                                ctx, logs, on_event)
+                        item_outputs.append(sout)
+                        if isinstance(sout, dict) and sout.get("ok") is False and not ssub.get("continue_on_error"):
+                            item_ok = False
+                            break
+                    results.append({"ok": item_ok, "outputs": item_outputs, "item": item})
+                    if not item_ok and not step.get("continue_on_error"):
+                        ok_total = False
+                        break
+            finally:
+                if previous is None:
+                    ctx.pop(as_name, None)
+                else:
+                    ctx[as_name] = previous
+            out = {"ok": ok_total, "iterations": len(results), "results": results}
+        evt_end = {
+            "ts": datetime.utcnow().isoformat(),
+            "step_id": sid, "type": "end",
+            "duration_ms": int((time.time() - started) * 1000),
+            "ok": out.get("ok", True),
+            "error": out.get("error") if not out.get("ok", True) else None,
+        }
+        logs.append(evt_end)
+        await _emit(on_event, evt_end)
+        return out
+
+    # Step atomique : invoke un tool, avec retry policy si déclarée.
     tool = step.get("tool")
     if not tool:
-        out = {"ok": False, "error": "step sans 'tool' ni 'parallel'"}
+        out = {"ok": False, "error": "step sans 'tool', 'parallel' ni 'for_each'"}
     else:
-        args = _interpolate(step.get("args") or {}, ctx)
-        out = await _run_tool(tool, args, logs)
+        async def _run_atomic():
+            args = _interpolate(step.get("args") or {}, ctx)
+            return await _run_tool(tool, args, logs)
+        out = await _run_with_retry(step, _run_atomic, ctx)
 
     evt_end = {
         "ts": datetime.utcnow().isoformat(),
@@ -248,6 +327,8 @@ async def _exec_step(step: dict, ctx: dict, logs: list,
         "ok": out.get("ok", True),
         "error": out.get("error") if not out.get("ok", True) else None,
     }
+    if isinstance(out, dict) and out.get("_retried"):
+        evt_end["retried"] = out["_retried"]
     logs.append(evt_end)
     await _emit(on_event, evt_end)
     return out
