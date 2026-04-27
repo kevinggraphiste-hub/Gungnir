@@ -24,7 +24,7 @@ import {
   Search as SearchIcon, MessageSquare, Settings as SettingsIcon, Bot,
   Brain, Clock, RadioTower, Plug, BarChart3, Globe, Mic, Code, BookOpen,
   Sparkles, Users, Target, ArrowRight, Plus, HardDrive, HeartPulse, Key,
-  Zap, FileText, Workflow,
+  Zap, FileText, Hammer,
 } from 'lucide-react'
 import { api, apiFetch } from '../services/api'
 
@@ -81,7 +81,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
       { id: 'p:voice', kind: 'page', label: 'Voice', sublabel: 'Chat vocal temps réel', icon: Mic, run: go('/plugins/voice'), haystack: 'voice vocal voix chat audio' },
       { id: 'p:code', kind: 'page', label: 'Code (SpearCode)', sublabel: 'IDE intégré avec assistance IA', icon: Code, run: go('/plugins/code'), haystack: 'code spearcode ide éditeur workspace' },
       { id: 'p:model_guide', kind: 'page', label: 'Model Guide', sublabel: 'Catalogue des modèles disponibles', icon: BookOpen, run: go('/plugins/model_guide'), haystack: 'modèles models catalogue guide openrouter anthropic' },
-      { id: 'p:forge', kind: 'page', label: 'Forge', sublabel: 'Workflows YAML — orchestrateur visuel', icon: Workflow, run: go('/plugins/forge'), haystack: 'forge workflow workflows orchestrateur dag yaml automation n8n' },
+      { id: 'p:forge', kind: 'page', label: 'Forge', sublabel: 'Workflows YAML — orchestrateur visuel', icon: Hammer, run: go('/plugins/forge'), haystack: 'forge workflow workflows orchestrateur dag yaml automation n8n' },
 
       // Quick actions
       { id: 'a:newchat', kind: 'action', label: 'Nouvelle conversation', sublabel: 'Créer un nouveau chat', icon: Plus, run: () => { window.dispatchEvent(new CustomEvent('gungnir:new-chat')); onClose() }, haystack: 'nouvelle conversation new chat créer' },

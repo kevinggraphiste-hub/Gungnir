@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next'
 import {
   MessageSquare, Bot, Settings2, ChevronLeft, ChevronRight,
   Globe, Mic, BarChart3, Calendar, Plug, Webhook, BookOpen, Code, RadioTower, Brain,
-  LayoutGrid,
+  LayoutGrid, Hammer, Workflow,
   LogOut,
 } from 'lucide-react'
 import { useSidebarStore } from '../stores/sidebarStore'
@@ -20,6 +20,7 @@ import { useStore } from '../stores/appStore'
 const ICON_MAP: Record<string, any> = {
   Globe, Mic, BarChart3, Calendar, Plug, Webhook, BookOpen, Code,
   MessageSquare, Bot, Settings2, RadioTower, Brain, LayoutGrid,
+  Hammer, Workflow,
 }
 
 export default function Sidebar() {

@@ -1,8 +1,8 @@
 {
   "name": "forge",
   "display_name": "Forge",
-  "version": "0.1.0",
-  "icon": "Workflow",
+  "version": "0.1.1",
+  "icon": "Hammer",
   "route": "/forge",
   "sidebar_position": 6,
   "sidebar_section": "tools",
