@@ -524,6 +524,259 @@ CHANNEL_CATALOG = {
             "Idéal pour connecter des scripts, chatbots tiers, ou workflows n8n."
         ),
     },
+
+    # ── Messageries via bridge externe (POST sur /incoming/{id}) ──────
+    # Pattern : un bot bridge (signal-cli, matrix bot, etc.) tourne séparément
+    # et POST chaque message reçu sur /api/plugins/channels/incoming/{channel_id}
+    # avec Authorization: Bearer <api_key>. La réponse de Gungnir est renvoyée
+    # à l'utilisateur final par le bridge. Le canal est de type "api" en interne
+    # mais présenté avec un setup_guide spécifique.
+
+    "signal": {
+        "display_name": "Signal",
+        "icon": "MessageSquare",
+        "category": "messagerie",
+        "description": "Signal via signal-cli ou signal-cli-rest-api. Chiffré E2E.",
+        "complexity": "avance",
+        "fields": [
+            {"key": "api_key", "label": "Clé API (générée auto)", "type": "password", "required": False},
+            {"key": "phone_number", "label": "Numéro Signal (E.164)", "type": "text", "required": True, "placeholder": "+33612345678"},
+            {"key": "signal_cli_url", "label": "signal-cli-rest-api URL", "type": "text", "required": True, "placeholder": "http://localhost:8080"},
+        ],
+        "doc_url": "https://github.com/bbernhard/signal-cli-rest-api",
+        "setup_guide": (
+            "Signal n'expose pas d'API officielle pour les bots — il faut un BRIDGE :\n"
+            "\n"
+            "OPTION 1 — signal-cli-rest-api (Docker, recommandé) :\n"
+            "1. docker run -d --name signal-api -p 8080:8080 -v signal-data:/home/.local/share/signal-cli bbernhard/signal-cli-rest-api\n"
+            "2. Enregistre ton numéro : POST /v1/register/+33XXXXXXXXX\n"
+            "3. Vérifie via SMS : POST /v1/register/+33XXX/verify/<code>\n"
+            "4. Dans le bridge, configure un script qui POSTe chaque message reçu\n"
+            "   vers /api/plugins/channels/incoming/{channel_id} avec :\n"
+            "   - Authorization: Bearer <api_key>\n"
+            "   - Body: {\"text\": <message>, \"sender_id\": <num expéditeur>}\n"
+            "5. La réponse de Gungnir est renvoyée via POST /v2/send sur signal-cli-rest-api\n"
+            "\n"
+            "OPTION 2 — signald (lib) ou matrix-signal-bridge si tu as déjà Matrix\n"
+            "\n"
+            "LIMITES :\n"
+            "- Le numéro Signal ne doit PAS être déjà associé à un compte perso actif\n"
+            "- Limite ~60 msg/sec sortants (signal-cli)\n"
+            "- Stocke les sessions chiffrées dans le volume Docker"
+        ),
+    },
+    "matrix": {
+        "display_name": "Matrix / Element",
+        "icon": "Hexagon",
+        "category": "messagerie",
+        "description": "Matrix protocol — fédéré, chiffré, open. Compatible Element et autres clients.",
+        "complexity": "avance",
+        "fields": [
+            {"key": "api_key", "label": "Clé API (générée auto)", "type": "password", "required": False},
+            {"key": "homeserver_url", "label": "Homeserver URL", "type": "text", "required": True, "placeholder": "https://matrix.org"},
+            {"key": "user_id", "label": "User ID Matrix", "type": "text", "required": True, "placeholder": "@gungnir-bot:matrix.org"},
+            {"key": "access_token", "label": "Access Token", "type": "password", "required": True},
+        ],
+        "doc_url": "https://matrix.org/docs/older/python-sdk/",
+        "setup_guide": (
+            "Matrix demande un BOT BRIDGE (matrix-nio en Python ou matrix-bot-sdk en JS) :\n"
+            "\n"
+            "1. Créer un compte bot sur ton homeserver (matrix.org, ou self-hosted Synapse)\n"
+            "2. Obtenir l'access_token : Element → Settings → Help & About → Advanced → Access Token\n"
+            "3. Inviter le bot dans la room cible (le bot doit accept l'invitation)\n"
+            "4. Bridge bot Python (exemple) :\n"
+            "   pip install matrix-nio\n"
+            "   Le bot écoute les events RoomMessageText et POST sur :\n"
+            "   /api/plugins/channels/incoming/{channel_id}\n"
+            "   La réponse est renvoyée via room.send_text()\n"
+            "\n"
+            "Alternative : utiliser maubot (framework de bots Matrix open-source).\n"
+            "\n"
+            "LIMITES :\n"
+            "- Si la room est chiffrée (E2E), le bot doit gérer les megolm sessions\n"
+            "- Sur matrix.org public, des limites de rate s'appliquent\n"
+            "- Pour la fédération avec d'autres homeservers, vérifie la connectivité"
+        ),
+    },
+    "mattermost": {
+        "display_name": "Mattermost",
+        "icon": "MessageCircle",
+        "category": "messagerie",
+        "description": "Mattermost (alternative Slack open-source). Bot via webhooks ou WebSocket.",
+        "complexity": "moyen",
+        "fields": [
+            {"key": "api_key", "label": "Clé API (générée auto)", "type": "password", "required": False},
+            {"key": "server_url", "label": "Server URL", "type": "text", "required": True, "placeholder": "https://mattermost.example.com"},
+            {"key": "bot_token", "label": "Bot Token", "type": "password", "required": True},
+            {"key": "outgoing_webhook_token", "label": "Outgoing Webhook Token", "type": "password", "required": False},
+        ],
+        "doc_url": "https://developers.mattermost.com/integrate/reference/bot-accounts/",
+        "setup_guide": (
+            "Mattermost a deux modes — webhooks (simple) ou bot account (puissant).\n"
+            "\n"
+            "MODE OUTGOING WEBHOOK (le plus simple) :\n"
+            "1. System Console → Integrations → Outgoing Webhooks → Add\n"
+            "2. Trigger words : \"@bot\" ou un préfixe\n"
+            "3. Callback URL : ton Gungnir /api/plugins/channels/incoming/{channel_id}\n"
+            "4. Token = le secret affiché — colle-le dans outgoing_webhook_token\n"
+            "5. Le webhook envoie : {trigger_word, text, user_name, channel_name}\n"
+            "   → Gungnir le mappe en {text, sender_id}\n"
+            "\n"
+            "MODE BOT ACCOUNT (pour répondre dans n'importe quel channel) :\n"
+            "1. System Console → Integrations → Bot Accounts → Add\n"
+            "2. Username, display name, copie le Token\n"
+            "3. Inviter le bot dans la team/channel\n"
+            "4. Un bot bridge Python/JS écoute le WebSocket Mattermost et POST sur Gungnir\n"
+            "\n"
+            "Limites : rate limits par défaut généreux (60 msg/min/user)."
+        ),
+    },
+    "teams": {
+        "display_name": "Microsoft Teams",
+        "icon": "Users",
+        "category": "messagerie",
+        "description": "Microsoft Teams via Bot Framework. Setup Azure complexe mais bot officiel.",
+        "complexity": "avance",
+        "fields": [
+            {"key": "api_key", "label": "Clé API (générée auto)", "type": "password", "required": False},
+            {"key": "app_id", "label": "Bot App ID", "type": "text", "required": True},
+            {"key": "app_password", "label": "Bot App Password", "type": "password", "required": True},
+            {"key": "tenant_id", "label": "Tenant ID (optionnel, single-tenant)", "type": "text", "required": False},
+        ],
+        "doc_url": "https://learn.microsoft.com/microsoftteams/platform/bots/how-to/create-a-bot-for-teams",
+        "setup_guide": (
+            "Teams demande un setup Azure complet :\n"
+            "\n"
+            "1. portal.azure.com → Azure Bot → Create\n"
+            "2. Type : Multi tenant ou Single tenant\n"
+            "3. Configuration > Messaging Endpoint :\n"
+            "   https://<ton-domaine>/api/plugins/channels/incoming/{channel_id}\n"
+            "4. Channels → Add → Microsoft Teams (gratuit)\n"
+            "5. Configuration → Microsoft App ID → copie-le\n"
+            "6. Microsoft App ID → Certificates & secrets → New client secret → copie\n"
+            "7. Pour publier le bot : Teams Developer Portal → upload manifest\n"
+            "\n"
+            "ATTENTION :\n"
+            "- Le format des messages Teams (Activity) est complexe — le bridge\n"
+            "  doit utiliser Bot Framework SDK pour décoder/encoder correctement\n"
+            "- Les messages d'install et de désinstall sont aussi des Activities\n"
+            "- 600 req/min par bot, mais varie selon Microsoft 365 plan"
+        ),
+    },
+    "rocket_chat": {
+        "display_name": "Rocket.Chat",
+        "icon": "Rocket",
+        "category": "messagerie",
+        "description": "Rocket.Chat self-hosted ou cloud. Outgoing webhooks ou bot.",
+        "complexity": "moyen",
+        "fields": [
+            {"key": "api_key", "label": "Clé API (générée auto)", "type": "password", "required": False},
+            {"key": "server_url", "label": "Server URL", "type": "text", "required": True, "placeholder": "https://chat.example.com"},
+            {"key": "bot_username", "label": "Bot Username", "type": "text", "required": True, "placeholder": "gungnir-bot"},
+            {"key": "personal_access_token", "label": "Personal Access Token", "type": "password", "required": True},
+            {"key": "user_id", "label": "Bot User ID", "type": "text", "required": True},
+        ],
+        "doc_url": "https://docs.rocket.chat/use-rocket.chat/workspace-administration/integrations",
+        "setup_guide": (
+            "Rocket.Chat — au choix :\n"
+            "\n"
+            "MODE OUTGOING WEBHOOK :\n"
+            "1. Admin → Integrations → New → Outgoing\n"
+            "2. Event Trigger : Message Sent\n"
+            "3. Channel : @all (DMs) ou un channel précis\n"
+            "4. URLs : ton Gungnir /api/plugins/channels/incoming/{channel_id}\n"
+            "5. Le payload reçu inclut text, user_name, channel_name → mappage simple\n"
+            "\n"
+            "MODE BOT ACCOUNT :\n"
+            "1. Admin → Users → Create user (type: bot)\n"
+            "2. Account → Personal Access Tokens → Create → copie token + user_id\n"
+            "3. Bridge bot via Realtime API ou REST polling\n"
+            "\n"
+            "Pour Rocket.Chat self-hosted : penser à autoriser ton domaine Gungnir dans CORS."
+        ),
+    },
+    "twilio_sms": {
+        "display_name": "SMS (Twilio)",
+        "icon": "Phone",
+        "category": "messagerie",
+        "description": "SMS bidirectionnels via Twilio. Coût ~0.05$/SMS.",
+        "complexity": "moyen",
+        "fields": [
+            {"key": "api_key", "label": "Clé API (générée auto)", "type": "password", "required": False},
+            {"key": "account_sid", "label": "Twilio Account SID", "type": "text", "required": True},
+            {"key": "auth_token", "label": "Twilio Auth Token", "type": "password", "required": True},
+            {"key": "phone_number", "label": "Numéro Twilio (E.164)", "type": "text", "required": True, "placeholder": "+33XXXXXXXXX"},
+        ],
+        "doc_url": "https://www.twilio.com/docs/messaging/quickstart",
+        "setup_guide": (
+            "1. Achète un numéro Twilio (~1$/mois) depuis console.twilio.com\n"
+            "2. Account Info → SID + Auth Token → copie-les\n"
+            "3. Phone Number → Configure → Webhook A MESSAGE COMES IN :\n"
+            "   POST → ton Gungnir /api/plugins/channels/incoming/{channel_id}\n"
+            "4. Twilio envoie x-www-form-urlencoded avec From, Body, MessageSid\n"
+            "5. Pour répondre : Gungnir POST sur /Accounts/<sid>/Messages.json\n"
+            "   avec From=numéro Twilio, To=From reçu, Body=réponse\n"
+            "\n"
+            "COÛT :\n"
+            "- ~0.05$ par SMS reçu/envoyé (varie par pays)\n"
+            "- Numéro français: ~5$/mois\n"
+            "- 200 caractères max par segment, +1 segment au-dessus\n"
+            "\n"
+            "ALTERNATIVES MOINS CHÈRES : Vonage, MessageBird, OVH SMS HLR."
+        ),
+    },
+    "line": {
+        "display_name": "LINE Messaging",
+        "icon": "MessageSquare",
+        "category": "messagerie",
+        "description": "LINE (Japon, Asie). API Messaging gratuite jusqu'à 1000 msg/mois.",
+        "complexity": "moyen",
+        "fields": [
+            {"key": "api_key", "label": "Clé API (générée auto)", "type": "password", "required": False},
+            {"key": "channel_access_token", "label": "Channel Access Token", "type": "password", "required": True},
+            {"key": "channel_secret", "label": "Channel Secret", "type": "password", "required": True},
+        ],
+        "doc_url": "https://developers.line.biz/en/docs/messaging-api/",
+        "setup_guide": (
+            "1. developers.line.biz → Create a new channel → Messaging API\n"
+            "2. Channel basic settings → copie le Channel Secret\n"
+            "3. Messaging API → Issue Channel Access Token (long-lived)\n"
+            "4. Webhook URL : /api/plugins/channels/incoming/{channel_id}\n"
+            "5. Use webhook : Enabled\n"
+            "6. Auto-reply messages : Disabled (sinon double réponse)\n"
+            "\n"
+            "FORMAT :\n"
+            "- Messages texte simples supportés direct\n"
+            "- Pour les rich messages (templates, carrousels) : voir doc Flex Messages\n"
+            "\n"
+            "QUOTAS :\n"
+            "- Free tier : 1000 push messages/mois\n"
+            "- Au-delà : ~3 yens/message"
+        ),
+    },
+    "webex": {
+        "display_name": "Cisco Webex",
+        "icon": "Video",
+        "category": "messagerie",
+        "description": "Webex Teams (chat + visio). Bot via webhooks.",
+        "complexity": "moyen",
+        "fields": [
+            {"key": "api_key", "label": "Clé API (générée auto)", "type": "password", "required": False},
+            {"key": "bot_access_token", "label": "Bot Access Token", "type": "password", "required": True},
+        ],
+        "doc_url": "https://developer.webex.com/docs/bots",
+        "setup_guide": (
+            "1. developer.webex.com → My Apps → Create a Bot\n"
+            "2. Username, display name, icon → copie le Bot Access Token\n"
+            "3. Crée un webhook : POST https://webexapis.com/v1/webhooks\n"
+            "   {name, targetUrl: '<gungnir>/api/plugins/channels/incoming/{channel_id}',\n"
+            "    resource: 'messages', event: 'created', filter: 'mentionedPeople=me'}\n"
+            "4. Pour répondre : POST https://webexapis.com/v1/messages\n"
+            "   avec roomId reçu et markdown supporté\n"
+            "\n"
+            "Le bot ne reçoit que les messages où il est @mentionné dans une room."
+        ),
+    },
 }
 
 CHANNEL_CATEGORIES = {
