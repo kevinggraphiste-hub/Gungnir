@@ -85,6 +85,14 @@ def callback_url(base_url: str) -> str:
     return f"{base_url.rstrip('/')}/api/plugins/webhooks/oauth/callback"
 
 
+def _sk_key(provider: str) -> str:
+    """Clé service_keys utilisée par le connector OAuth. Préfixe `oauth_`
+    pour ne JAMAIS collisionner avec les services classiques de Settings →
+    Services (qui stockent en `service_keys.<provider>` directement, ex:
+    `notion` pour la config api_key/base_url historique)."""
+    return f"oauth_{provider}"
+
+
 def build_authorize_url(provider: str, user_id: int, base_url: str, scopes: list[str] | None = None) -> str | None:
     cfg = provider_config(provider)
     creds = get_credentials(provider)
@@ -174,10 +182,11 @@ async def handle_callback(
 
     label = await _fetch_user_label(provider, access_token)
 
-    # Persister chiffré dans service_keys.<provider>
+    # Persister chiffré dans service_keys.oauth_<provider> (namespace dédié,
+    # n'écrase pas les services classiques qui utilisent service_keys.<provider>).
     us = await get_user_settings(user_id, session)
     sk = dict(us.service_keys or {})
-    sk[provider] = {
+    sk[_sk_key(provider)] = {
         "access_token": encrypt_value(access_token),
         "refresh_token": encrypt_value(refresh_token) if refresh_token else "",
         "expires_at": expires_at,
@@ -194,8 +203,9 @@ async def handle_callback(
 async def disconnect(provider: str, user_id: int, session: AsyncSession) -> dict[str, Any]:
     us = await get_user_settings(user_id, session)
     sk = dict(us.service_keys or {})
-    if provider in sk:
-        sk.pop(provider, None)
+    key = _sk_key(provider)
+    if key in sk:
+        sk.pop(key, None)
         us.service_keys = sk
         await session.commit()
     return {"ok": True}
@@ -238,7 +248,7 @@ async def get_user_oauth_token(
     """
     us = await get_user_settings(user_id, session)
     sk = dict(us.service_keys or {})
-    entry = sk.get(provider)
+    entry = sk.get(_sk_key(provider))
     if not entry:
         return None
 
@@ -269,7 +279,7 @@ async def get_user_oauth_token(
     if new_refresh:
         entry["refresh_token"] = encrypt_value(new_refresh)
     entry["expires_at"] = int(time.time()) + expires_in if expires_in else 0
-    sk[provider] = entry
+    sk[_sk_key(provider)] = entry
     us.service_keys = sk
     await session.commit()
     return new_access
@@ -304,7 +314,7 @@ async def set_manual_token(
 
     us = await get_user_settings(user_id, session)
     sk = dict(us.service_keys or {})
-    sk[provider] = {
+    sk[_sk_key(provider)] = {
         "manual_token": encrypt_value(token),
         "account_label": label or f"{provider} (token manuel)",
         "connected_at": int(time.time()),
@@ -342,7 +352,7 @@ def list_user_connections(user_settings) -> list[dict[str, Any]]:
     from backend.plugins.webhooks.oauth_registry import OAUTH_PROVIDERS
     out = []
     for provider in OAUTH_PROVIDERS:
-        entry = sk.get(provider)
+        entry = sk.get(_sk_key(provider))
         if entry and (entry.get("manual_token") or entry.get("access_token")):
             out.append({
                 "provider": provider,
