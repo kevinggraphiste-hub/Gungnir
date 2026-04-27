@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from backend.core.agents.wolf_tools import get_user_context
+from .llm_tools import LLM_TOOL_SCHEMAS, LLM_EXECUTORS
 
 
 TOOL_SCHEMAS: list[dict] = [
@@ -398,4 +399,11 @@ EXECUTORS: dict[str, Any] = {
     "forge_run_workflow":    _forge_run_workflow,
     "forge_list_runs":       _forge_list_runs,
     "forge_get_run":         _forge_get_run,
+    # Tools LLM exposés aussi via le forge plugin pour profiter de
+    # l'auto-discovery — utiles dans les workflows mais aussi accessibles
+    # aux sous-agents et au super-agent en chat normal.
+    **LLM_EXECUTORS,
 }
+
+# Concatène les schemas LLM pour qu'ils soient découvert au boot.
+TOOL_SCHEMAS = TOOL_SCHEMAS + LLM_TOOL_SCHEMAS

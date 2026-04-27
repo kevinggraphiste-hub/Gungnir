@@ -14,7 +14,7 @@
 import {
   Globe, Brain, ListTodo, Hammer, Bot, Code, MessageSquare,
   RadioTower, Sparkles, Webhook, BarChart3, FileText, Layers,
-  Zap, Settings2, BookOpen, Search,
+  Zap, Settings2, BookOpen, Search, Wand,
 } from 'lucide-react'
 
 export interface ToolLabel {
@@ -41,6 +41,8 @@ interface CategoryDef {
 const PREFIX_CATEGORIES: Record<string, CategoryDef> = {
   valkyrie:      { label: 'Valkyrie (tâches)',   icon: ListTodo,      color: '#dc2626' },
   forge:         { label: 'Forge (workflows)',   icon: Hammer,        color: '#dc2626' },
+  llm:           { label: 'IA / LLM',             icon: Wand,          color: '#8b5cf6' },
+  ai:            { label: 'IA / LLM',             icon: Wand,          color: '#8b5cf6' },
   consciousness: { label: 'Conscience',          icon: Brain,         color: '#8b5cf6' },
   conscience:    { label: 'Conscience',          icon: Brain,         color: '#8b5cf6' },
   kb:            { label: 'Mémoire (KB)',        icon: BookOpen,      color: '#0ea5e9' },
