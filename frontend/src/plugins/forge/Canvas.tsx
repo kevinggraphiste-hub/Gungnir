@@ -23,7 +23,8 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import yaml from 'js-yaml'
-import { Plus, Search, X, Trash2, Wand2, AlertTriangle } from 'lucide-react'
+import { Plus, Search, Trash2, Wand2, AlertTriangle, ChevronDown, ChevronRight, MoveDown, MoveRight } from 'lucide-react'
+import { humanizeTool, groupByCategory } from './toolLabels'
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,8 @@ export interface ForgeTool {
   params: Array<{ name: string; type: string; description: string; required: boolean }>
 }
 
+type LayoutDirection = 'vertical' | 'horizontal'
+
 interface StepData {
   // Source de vérité du step : on stocke le step YAML brut dans le node
   // (tool, args, optional id/if/parallel) et on régénère le YAML au save.
@@ -41,6 +44,9 @@ interface StepData {
   // Flag : true si le step contient des features non éditables visuellement
   // (parallel, if conditionnel) — affiche un warning dans le node.
   unsupported: boolean
+  // Orientation du canvas — propagée au node pour positionner ses handles
+  // (top/bottom en vertical, left/right en horizontal).
+  direction: LayoutDirection
 }
 
 // React Flow exige que `data` étende Record<string,unknown>.
@@ -48,9 +54,18 @@ type StepNode = Node<StepData & Record<string, unknown>>
 
 // ── YAML <-> nodes ───────────────────────────────────────────────────────
 
-const NODE_X = 80
-const NODE_Y_START = 60
-const NODE_Y_GAP = 130
+// Vertical : pile colonne (ancien comportement). Horizontal : ligne.
+// Les écarts sont calibrés pour que les nodes (~280px de large) ne se
+// chevauchent pas et restent lisibles.
+const NODE_GAP_VERTICAL = 130
+const NODE_GAP_HORIZONTAL = 320
+
+function nodePositionFor(direction: LayoutDirection, index: number): { x: number; y: number } {
+  if (direction === 'horizontal') {
+    return { x: 60 + index * NODE_GAP_HORIZONTAL, y: 80 }
+  }
+  return { x: 80, y: 60 + index * NODE_GAP_VERTICAL }
+}
 
 interface ParseResult {
   nodes: StepNode[]
@@ -58,7 +73,8 @@ interface ParseResult {
   meta: { name?: string; description?: string; inputs?: any }
 }
 
-export function yamlToNodes(yamlText: string, tools: ForgeTool[]): ParseResult {
+export function yamlToNodes(yamlText: string, tools: ForgeTool[],
+                            direction: LayoutDirection = 'vertical'): ParseResult {
   let parsed: any = {}
   try {
     parsed = yaml.load(yamlText) || {}
@@ -77,8 +93,8 @@ export function yamlToNodes(yamlText: string, tools: ForgeTool[]): ParseResult {
     nodes.push({
       id,
       type: 'forgeStep',
-      position: { x: NODE_X, y: NODE_Y_START + i * NODE_Y_GAP },
-      data: { step: { ...step, id }, tool, unsupported: isParallel || hasIf },
+      position: nodePositionFor(direction, i),
+      data: { step: { ...step, id }, tool, unsupported: isParallel || hasIf, direction },
     })
     if (i > 0) {
       const prev = nodes[i - 1]
@@ -148,47 +164,62 @@ export function nodesToYaml(nodes: StepNode[], edges: Edge[],
 // ── Custom node component ────────────────────────────────────────────────
 
 function StepNodeView({ data, selected }: NodeProps<StepNode>) {
-  const { step, tool, unsupported } = data
+  const { step, tool, unsupported, direction } = data
   const isParallel = !!step.parallel
+  // Titre humain dérivé de la description backend (1ère phrase) +
+  // catégorie pour le bandeau couleur. Fallback au nom technique si
+  // l'outil n'est pas dans le catalogue (ex: name introuvable).
+  const lbl = tool ? humanizeTool(tool) : null
+  const CatIcon = lbl?.icon
+  const accent = lbl?.color || '#737373'
+  // Position des handles : top/bottom en vertical (le flow descend),
+  // left/right en horizontal (le flow va de gauche à droite).
+  const inPos = direction === 'horizontal' ? Position.Left : Position.Top
+  const outPos = direction === 'horizontal' ? Position.Right : Position.Bottom
   return (
     <div style={{
       minWidth: 240, maxWidth: 320,
       background: 'var(--bg-secondary)',
       border: `1.5px solid ${selected ? 'var(--scarlet)' : 'var(--border)'}`,
-      borderRadius: 8, padding: '8px 12px',
+      borderRadius: 8, padding: 0, overflow: 'hidden',
       fontFamily: 'system-ui, sans-serif', fontSize: 11,
       boxShadow: selected ? '0 0 0 3px rgba(220,38,38,0.18)' : 'none',
       transition: 'box-shadow 0.12s',
     }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#dc2626', border: 'none', width: 8, height: 8 }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--scarlet)', letterSpacing: 0.5, textTransform: 'uppercase' }}>{step.id || '?'}</span>
+      <Handle type="target" position={inPos} style={{ background: '#dc2626', border: 'none', width: 8, height: 8 }} />
+      {/* Bandeau catégorie + step id */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderBottom: '1px solid var(--border)', background: `${accent}15` }}>
+        {CatIcon && <CatIcon size={10} style={{ color: accent, flexShrink: 0 }} />}
+        <span style={{ fontSize: 8, fontWeight: 700, color: accent, letterSpacing: 0.5, textTransform: 'uppercase' }}>{lbl?.category || 'Outil'}</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 8, fontWeight: 600, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>#{step.id || '?'}</span>
         {unsupported && (
           <span title="Step contient un bloc parallel ou if — édition limitée au YAML pour l'instant"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 8, color: '#f59e0b', padding: '1px 5px', borderRadius: 3, background: 'rgba(245,158,11,0.12)' }}>
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 8, color: '#f59e0b', padding: '1px 5px', borderRadius: 3, background: 'rgba(245,158,11,0.18)' }}>
             <AlertTriangle size={9} />
             {isParallel ? 'parallel' : 'if'}
           </span>
         )}
       </div>
-      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'ui-monospace, monospace', wordBreak: 'break-word' }}>
-        {step.tool || (isParallel ? '⫿ parallel' : '?')}
+      {/* Corps : titre humain + nom technique en petit + preview args */}
+      <div style={{ padding: '8px 12px' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.3, marginBottom: 2 }}>
+          {lbl?.title || step.tool || (isParallel ? 'Parallèle' : 'Step')}
+        </div>
+        <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {step.tool || (isParallel ? 'parallel' : '—')}
+        </div>
+        {step.args && Object.keys(step.args).length > 0 && (
+          <div style={{ marginTop: 6, padding: '4px 6px', background: 'var(--bg-tertiary)', borderRadius: 4, fontSize: 9, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', maxHeight: 60, overflow: 'hidden' }}>
+            {Object.keys(step.args).slice(0, 3).map(k => (
+              <div key={k} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: accent }}>{k}</span>: {String(step.args[k]).slice(0, 50)}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-      {tool?.description && (
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-          {tool.description}
-        </div>
-      )}
-      {step.args && Object.keys(step.args).length > 0 && (
-        <div style={{ marginTop: 6, padding: '4px 6px', background: 'var(--bg-tertiary)', borderRadius: 4, fontSize: 9, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', maxHeight: 60, overflow: 'hidden' }}>
-          {Object.keys(step.args).slice(0, 3).map(k => (
-            <div key={k} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              <span style={{ color: 'var(--scarlet)' }}>{k}</span>: {String(step.args[k]).slice(0, 50)}
-            </div>
-          ))}
-        </div>
-      )}
-      <Handle type="source" position={Position.Bottom} style={{ background: '#dc2626', border: 'none', width: 8, height: 8 }} />
+      <Handle type="source" position={outPos} style={{ background: '#dc2626', border: 'none', width: 8, height: 8 }} />
     </div>
   )
 }
@@ -199,32 +230,72 @@ const nodeTypes = { forgeStep: StepNodeView }
 
 function ToolPalette({ tools, onAdd }: { tools: ForgeTool[]; onAdd: (tool: ForgeTool) => void }) {
   const [q, setQ] = useState('')
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  // Filtre + groupage par catégorie. Si l'user tape une recherche, on
+  // déplie tout pour ne pas masquer des résultats potentiels.
   const filtered = useMemo(() => {
     const s = q.toLowerCase().trim()
-    if (!s) return tools.slice(0, 100)
-    return tools.filter(t => t.name.toLowerCase().includes(s) || t.description.toLowerCase().includes(s)).slice(0, 100)
+    if (!s) return tools
+    return tools.filter(t => {
+      const lbl = humanizeTool(t)
+      return t.name.toLowerCase().includes(s)
+          || t.description.toLowerCase().includes(s)
+          || lbl.title.toLowerCase().includes(s)
+          || lbl.category.toLowerCase().includes(s)
+    })
   }, [tools, q])
+  const groups = useMemo(() => groupByCategory(filtered), [filtered])
+  const isSearching = !!q.trim()
   return (
-    <div style={{ width: 240, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border)', background: 'var(--bg-secondary)', overflow: 'hidden' }}>
+    <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border)', background: 'var(--bg-secondary)', overflow: 'hidden' }}>
       <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6 }}>
         <Search size={12} style={{ color: 'var(--text-muted)' }} />
         <input
           value={q} onChange={e => setQ(e.target.value)}
-          placeholder={`Outils (${tools.length})…`}
+          placeholder={`Chercher dans ${tools.length} outils…`}
           style={{ flex: 1, padding: '4px 6px', fontSize: 11, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
         />
       </div>
       <div style={{ flex: 1, overflow: 'auto' }}>
-        {filtered.map(t => (
-          <div key={t.name} onClick={() => onAdd(t)}
-            title={t.description}
-            style={{ padding: '7px 10px', cursor: 'pointer', borderBottom: '1px solid var(--border)', transition: 'background 0.08s' }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(220,38,38,0.10)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--scarlet)', fontFamily: 'ui-monospace, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</div>
-            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.3 }}>{t.description}</div>
-          </div>
-        ))}
+        {groups.length === 0 && (
+          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Aucun outil ne correspond.</div>
+        )}
+        {groups.map(group => {
+          const isCollapsed = !isSearching && collapsed[group.category]
+          const Icon = group.icon
+          return (
+            <div key={group.category}>
+              {/* Header catégorie cliquable pour collapse */}
+              <div
+                onClick={() => setCollapsed(prev => ({ ...prev, [group.category]: !prev[group.category] }))}
+                style={{
+                  padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 5,
+                  cursor: 'pointer', userSelect: 'none',
+                  background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border)',
+                  position: 'sticky', top: 0, zIndex: 1,
+                }}>
+                {isCollapsed ? <ChevronRight size={11} style={{ color: 'var(--text-muted)' }} />
+                             : <ChevronDown size={11} style={{ color: 'var(--text-muted)' }} />}
+                <Icon size={12} style={{ color: group.color }} />
+                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: 0.5, textTransform: 'uppercase', flex: 1 }}>{group.category}</span>
+                <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 600 }}>{group.tools.length}</span>
+              </div>
+              {!isCollapsed && group.tools.map(t => {
+                const lbl = humanizeTool(t)
+                return (
+                  <div key={t.name} onClick={() => onAdd(t)}
+                    title={t.description}
+                    style={{ padding: '7px 10px 7px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)', transition: 'background 0.08s' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = `${lbl.color}1A`)}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{lbl.title}</div>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{t.name}</div>
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -348,8 +419,18 @@ export interface ForgeCanvasProps {
 export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
   const toolMap = useMemo(() => new Map(tools.map(t => [t.name, t])), [tools])
 
+  // Orientation du canvas — préférence persistée, propagée à chaque node
+  // pour que ses handles se positionnent correctement.
+  const [direction, setDirection] = useState<LayoutDirection>(() => {
+    try { return localStorage.getItem('forge_canvas_direction') === 'horizontal' ? 'horizontal' : 'vertical' }
+    catch { return 'vertical' }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('forge_canvas_direction', direction) } catch { /* ignore */ }
+  }, [direction])
+
   // Parse initial.
-  const initial = useMemo(() => yamlToNodes(yamlValue, tools), [/* once */])  // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => yamlToNodes(yamlValue, tools, direction), [/* once */])  // eslint-disable-line react-hooks/exhaustive-deps
   const [nodes, setNodes, onNodesChange] = useNodesState<StepNode>(initial.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges)
   const [meta, setMeta] = useState<ParseResult['meta']>(initial.meta)
@@ -359,7 +440,7 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
   // On compare via une stringification stable du couple (steps,) pour
   // éviter de regénérer pendant qu'on édite.
   useEffect(() => {
-    const r = yamlToNodes(yamlValue, tools)
+    const r = yamlToNodes(yamlValue, tools, direction)
     setNodes(r.nodes)
     setEdges(r.edges)
     setMeta(r.meta)
@@ -370,6 +451,42 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
     // car parent met à jour son draft.yaml_def via la sérialisation).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [yamlValue])
+
+  // Switch de direction : on relayoute proprement les nodes existants
+  // dans le nouveau sens et on propage la nouvelle direction à chaque
+  // node (pour que ses handles changent de position).
+  useEffect(() => {
+    setNodes(prev => {
+      // On garde l'ordre topologique courant pour reproduire le même
+      // enchaînement dans la nouvelle direction.
+      const incoming = new Map<string, number>()
+      for (const e of edges) incoming.set(e.target, (incoming.get(e.target) || 0) + 1)
+      const outMap = new Map<string, string[]>()
+      for (const e of edges) {
+        const arr = outMap.get(e.source) || []
+        arr.push(e.target); outMap.set(e.source, arr)
+      }
+      const ordered: string[] = []
+      const visited = new Set<string>()
+      const roots = prev.filter(n => !incoming.get(n.id)).map(n => n.id)
+      const walk = (id: string) => {
+        if (visited.has(id)) return
+        visited.add(id); ordered.push(id)
+        for (const nxt of outMap.get(id) || []) walk(nxt)
+      }
+      roots.forEach(walk)
+      prev.forEach(n => walk(n.id))
+      return prev.map(n => {
+        const idx = ordered.indexOf(n.id)
+        return {
+          ...n,
+          position: nodePositionFor(direction, idx),
+          data: { ...n.data, direction },
+        }
+      })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [direction])
 
   // Push YAML au parent à chaque modif locale.
   const pushYaml = useCallback((nextNodes: StepNode[], nextEdges: Edge[]) => {
@@ -391,7 +508,7 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
   }, [setEdges, nodes, pushYaml])
 
   // Ajout d'un step depuis la palette : nouveau node connecté au dernier
-  // (ordre vertical) si possible, sinon en orphelin.
+  // (selon la direction courante) si possible, sinon en orphelin.
   const handleAdd = useCallback((tool: ForgeTool) => {
     setNodes(prev => {
       // Trouve l'ID le plus haut pour générer un nom unique.
@@ -399,26 +516,30 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
       let baseId = tool.name.replace(/^[^_]*_/, '').slice(0, 20) || 'step'
       let id = baseId, i = 1
       while (used.has(id)) { i += 1; id = `${baseId}_${i}` }
-      const lastByY = prev.length > 0
-        ? [...prev].sort((a, b) => b.position.y - a.position.y)[0]
+      // "Dernier" = le plus loin dans la direction du flow.
+      const last = prev.length > 0
+        ? [...prev].sort((a, b) => direction === 'horizontal'
+            ? b.position.x - a.position.x
+            : b.position.y - a.position.y)[0]
         : null
+      const offset = direction === 'horizontal'
+        ? { x: NODE_GAP_HORIZONTAL, y: 0 }
+        : { x: 0, y: NODE_GAP_VERTICAL }
       const newNode: StepNode = {
         id, type: 'forgeStep',
-        position: {
-          x: lastByY ? lastByY.position.x : NODE_X,
-          y: lastByY ? lastByY.position.y + NODE_Y_GAP : NODE_Y_START,
-        },
+        position: last
+          ? { x: last.position.x + offset.x, y: last.position.y + offset.y }
+          : nodePositionFor(direction, 0),
         data: {
           step: { id, tool: tool.name, args: {} },
-          tool, unsupported: false,
+          tool, unsupported: false, direction,
         },
       }
       const next = [...prev, newNode]
-      // Edge auto vers le dernier (si existant).
-      if (lastByY) {
+      if (last) {
         setEdges(prevEdges => {
           const nextEdges = [...prevEdges, {
-            id: `e-${lastByY.id}-${id}`, source: lastByY.id, target: id,
+            id: `e-${last.id}-${id}`, source: last.id, target: id,
             markerEnd: { type: MarkerType.ArrowClosed, color: '#dc2626' },
             style: { stroke: '#dc2626', strokeWidth: 2 },
           } as Edge]
@@ -430,7 +551,7 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
       }
       return next
     })
-  }, [setNodes, setEdges, edges, pushYaml])
+  }, [setNodes, setEdges, edges, pushYaml, direction])
 
   // Édition d'un node.
   const handleNodeChange = useCallback((nodeId: string, patch: Partial<StepData['step']> & { id?: string }) => {
@@ -487,11 +608,10 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
 
   const selectedNode = nodes.find(n => n.id === selectedId) || null
 
-  // Auto-layout vertical : reorganise les nodes en colonne selon l'ordre
-  // topologique des edges.
+  // Auto-layout : reorganise les nodes selon la direction courante,
+  // par ordre topologique des edges.
   const handleAutoLayout = useCallback(() => {
     if (nodes.length === 0) return
-    // Topo sort.
     const incoming = new Map<string, number>()
     for (const e of edges) incoming.set(e.target, (incoming.get(e.target) || 0) + 1)
     const outMap = new Map<string, string[]>()
@@ -512,9 +632,9 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
     nodes.forEach(n => walk(n.id))  // catch isolés
     setNodes(prev => prev.map(n => {
       const idx = ordered.indexOf(n.id)
-      return { ...n, position: { x: NODE_X, y: NODE_Y_START + idx * NODE_Y_GAP } }
+      return { ...n, position: nodePositionFor(direction, idx) }
     }))
-  }, [nodes, edges, setNodes])
+  }, [nodes, edges, setNodes, direction])
 
   return (
     <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
@@ -523,6 +643,31 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
         <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-muted)' }}>
           <span>{nodes.length} step{nodes.length > 1 ? 's' : ''} · {edges.length} connexion{edges.length > 1 ? 's' : ''}</span>
           <div style={{ flex: 1 }} />
+          {/* Toggle direction du flow — déclenche aussi un relayout via l'effet sur direction */}
+          <div style={{ display: 'flex', gap: 1, padding: 2, background: 'var(--bg-tertiary)', borderRadius: 4 }}>
+            <button onClick={() => setDirection('vertical')}
+              title="Flow vertical (de haut en bas)"
+              style={{
+                padding: '2px 6px', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                border: 'none', borderRadius: 3,
+                background: direction === 'vertical' ? 'var(--scarlet)' : 'transparent',
+                color: direction === 'vertical' ? '#fff' : 'var(--text-secondary)',
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+              }}>
+              <MoveDown size={10} /> Vertical
+            </button>
+            <button onClick={() => setDirection('horizontal')}
+              title="Flow horizontal (de gauche à droite)"
+              style={{
+                padding: '2px 6px', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                border: 'none', borderRadius: 3,
+                background: direction === 'horizontal' ? 'var(--scarlet)' : 'transparent',
+                color: direction === 'horizontal' ? '#fff' : 'var(--text-secondary)',
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+              }}>
+              <MoveRight size={10} /> Horizontal
+            </button>
+          </div>
           <button onClick={handleAutoLayout}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', fontSize: 10, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer' }}>
             <Wand2 size={11} /> Auto-layout

@@ -21,8 +21,9 @@ import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/compon
 import InfoButton from '@core/components/InfoButton'
 import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
+import { humanizeTool, groupByCategory } from './toolLabels'
 
-const PLUGIN_VERSION = '0.2.0'
+const PLUGIN_VERSION = '0.3.0'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -533,8 +534,16 @@ function ToolsTab() {
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
     if (!q) return tools
-    return tools.filter(t => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q))
+    return tools.filter(t => {
+      const lbl = humanizeTool(t)
+      return t.name.toLowerCase().includes(q)
+          || t.description.toLowerCase().includes(q)
+          || lbl.title.toLowerCase().includes(q)
+          || lbl.category.toLowerCase().includes(q)
+    })
   }, [tools, search])
+
+  const groups = useMemo(() => groupByCategory(filtered), [filtered])
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '0 24px 16px' }}>
@@ -543,23 +552,44 @@ function ToolsTab() {
         placeholder={`Rechercher dans ${tools.length} outils…`}
         style={{ padding: '7px 12px', fontSize: 12, borderRadius: 6, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', marginBottom: 10 }}
       />
-      <div style={{ flex: 1, overflow: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8, alignContent: 'start' }}>
-        {loading ? <div style={{ gridColumn: '1 / -1', padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Chargement…</div>
-        : filtered.map(t => (
-          <div key={t.name} style={{ padding: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--scarlet)', fontFamily: 'ui-monospace, monospace', marginBottom: 4 }}>{t.name}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.45, marginBottom: 6 }}>{t.description}</div>
-            {t.params.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                {t.params.map(p => (
-                  <span key={p.name} title={p.description} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: p.required ? 'rgba(220,38,38,0.18)' : 'var(--bg-tertiary)', color: p.required ? 'var(--scarlet)' : 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>
-                    {p.name}{p.required && '*'}
-                  </span>
-                ))}
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        {loading && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Chargement…</div>}
+        {!loading && groups.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Aucun outil trouvé.</div>}
+        {!loading && groups.map(group => {
+          const Icon = group.icon
+          return (
+            <div key={group.category} style={{ marginBottom: 18 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, paddingBottom: 5, borderBottom: `1px solid ${group.color}40` }}>
+                <Icon size={14} style={{ color: group.color }} />
+                <span style={{ fontSize: 11, fontWeight: 700, color: group.color, letterSpacing: 0.5, textTransform: 'uppercase' }}>{group.category}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>· {group.tools.length}</span>
               </div>
-            )}
-          </div>
-        ))}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+                {group.tools.map(t => {
+                  const lbl = humanizeTool(t)
+                  return (
+                    <div key={t.name} style={{ padding: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>{lbl.title}</div>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', marginBottom: 6 }}>{t.name}</div>
+                      {lbl.summary && (
+                        <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.45, marginBottom: 6 }}>{lbl.summary}</div>
+                      )}
+                      {t.params.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                          {t.params.map(p => (
+                            <span key={p.name} title={p.description} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: p.required ? 'rgba(220,38,38,0.18)' : 'var(--bg-tertiary)', color: p.required ? 'var(--scarlet)' : 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>
+                              {p.name}{p.required && '*'}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
