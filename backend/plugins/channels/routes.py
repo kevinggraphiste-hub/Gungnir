@@ -817,8 +817,21 @@ async def channels_health():
 # ── Catalog ─────────────────────────────────────────────────────────
 @router.get("/catalog")
 async def get_catalog():
+    # Trie par complexité (facile → moyen → avance) puis par display_name
+    # — facilite la prise en main : les channels les plus simples remontent
+    # en haut de la liste UI, les setups complexes (Teams, Matrix, Signal)
+    # restent en bas.
+    _ORDER = {"facile": 0, "moyen": 1, "avance": 2}
+    sorted_keys = sorted(
+        CHANNEL_CATALOG.keys(),
+        key=lambda k: (
+            _ORDER.get(CHANNEL_CATALOG[k].get("complexity", "moyen"), 1),
+            CHANNEL_CATALOG[k].get("display_name", k).lower(),
+        ),
+    )
+    sorted_catalog = {k: CHANNEL_CATALOG[k] for k in sorted_keys}
     return {
-        "channels": CHANNEL_CATALOG,
+        "channels": sorted_catalog,
         "categories": CHANNEL_CATEGORIES,
     }
 
