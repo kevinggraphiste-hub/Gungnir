@@ -16,12 +16,13 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { yaml as yamlLang } from '@codemirror/lang-yaml'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText } from 'lucide-react'
+import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch } from 'lucide-react'
 import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/components/ui'
 import InfoButton from '@core/components/InfoButton'
 import { apiFetch } from '@core/services/api'
+import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 
-const PLUGIN_VERSION = '0.1.2'
+const PLUGIN_VERSION = '0.2.0'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -160,6 +161,26 @@ function WorkflowsTab() {
   const [running, setRunning] = useState(false)
   const [lastRun, setLastRun] = useState<ForgeRun | null>(null)
   const [loading, setLoading] = useState(true)
+  // Vue active : YAML brut ou Canvas visuel. Préférence persistée pour
+  // que l'user retrouve sa vue habituelle entre sessions.
+  const [view, setView] = useState<'visual' | 'yaml'>(() => {
+    try {
+      const v = localStorage.getItem('forge_view_mode')
+      return v === 'yaml' ? 'yaml' : 'visual'
+    } catch { return 'visual' }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('forge_view_mode', view) } catch { /* ignore */ }
+  }, [view])
+  // Catalogue d'outils chargé une fois — partagé entre Canvas (palette +
+  // metadata des nodes) et l'éventuel autocomplete YAML futur.
+  const [tools, setTools] = useState<CanvasForgeTool[]>([])
+  useEffect(() => {
+    (async () => {
+      const r = await api<{ ok: boolean; tools: CanvasForgeTool[] }>('/tools', undefined, true)
+      setTools(r?.tools || [])
+    })()
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -283,6 +304,32 @@ function WorkflowsTab() {
               placeholder="Nom du workflow"
               style={{ flex: 1, minWidth: 200, padding: '5px 10px', fontSize: 13, fontWeight: 600, borderRadius: 5, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
             />
+            {/* Toggle Vue Visuel ↔ YAML — les deux vues éditent le même
+                yaml_def, donc switch instantané sans perte. */}
+            <div style={{ display: 'flex', gap: 1, padding: 2, background: 'var(--bg-tertiary)', borderRadius: 5 }}>
+              <button onClick={() => setView('visual')}
+                title="Éditeur visuel (drag & drop)"
+                style={{
+                  padding: '4px 8px', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                  border: 'none', borderRadius: 3,
+                  background: view === 'visual' ? 'var(--scarlet)' : 'transparent',
+                  color: view === 'visual' ? '#fff' : 'var(--text-secondary)',
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}>
+                <GitBranch size={11} /> Visuel
+              </button>
+              <button onClick={() => setView('yaml')}
+                title="Édition YAML"
+                style={{
+                  padding: '4px 8px', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                  border: 'none', borderRadius: 3,
+                  background: view === 'yaml' ? 'var(--scarlet)' : 'transparent',
+                  color: view === 'yaml' ? '#fff' : 'var(--text-secondary)',
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}>
+                <CodeIcon size={11} /> YAML
+              </button>
+            </div>
             <PrimaryButton size="sm" icon={<Play size={13} />} onClick={handleRun} disabled={running}>
               {running ? 'Exécution…' : 'Exécuter'}
             </PrimaryButton>
@@ -296,29 +343,34 @@ function WorkflowsTab() {
             style={{ padding: '6px 16px', fontSize: 11, borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)', border: 'none', borderTop: 'none', borderLeft: 'none', borderRight: 'none', color: 'var(--text-muted)', outline: 'none' }}
           />
 
-          {/* Split éditeur YAML / panel logs */}
+          {/* Vue éditeur (Canvas ou YAML) + panel logs côte à côte */}
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-              <div style={{ padding: '4px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)' }}>
-                YAML
-              </div>
-              <CodeMirror
-                value={draft.yaml_def}
-                theme={oneDark}
-                extensions={[yamlLang()]}
-                onChange={v => setDraft({ ...draft, yaml_def: v })}
-                height="100%"
-                style={{ flex: 1, overflow: 'auto', height: '100%' }}
-                basicSetup={{
-                  lineNumbers: true, foldGutter: true, highlightActiveLine: true,
-                  bracketMatching: true, autocompletion: true, history: true,
-                  indentOnInput: true, syntaxHighlighting: true, tabSize: 2,
-                }}
-              />
+              {view === 'visual' ? (
+                <ForgeCanvas
+                  yamlValue={draft.yaml_def}
+                  tools={tools}
+                  onChange={(yaml) => setDraft({ ...draft, yaml_def: yaml })}
+                />
+              ) : (
+                <CodeMirror
+                  value={draft.yaml_def}
+                  theme={oneDark}
+                  extensions={[yamlLang()]}
+                  onChange={v => setDraft({ ...draft, yaml_def: v })}
+                  height="100%"
+                  style={{ flex: 1, overflow: 'auto', height: '100%' }}
+                  basicSetup={{
+                    lineNumbers: true, foldGutter: true, highlightActiveLine: true,
+                    bracketMatching: true, autocompletion: true, history: true,
+                    indentOnInput: true, syntaxHighlighting: true, tabSize: 2,
+                  }}
+                />
+              )}
             </div>
 
             {/* Panel résultat run */}
-            <div style={{ width: 380, flexShrink: 0, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-secondary)' }}>
+            <div style={{ width: 340, flexShrink: 0, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-secondary)' }}>
               <div style={{ padding: '4px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, borderBottom: '1px solid var(--border)' }}>
                 DERNIÈRE EXÉCUTION
               </div>
