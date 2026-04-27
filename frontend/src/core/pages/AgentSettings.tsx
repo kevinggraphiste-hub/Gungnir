@@ -31,10 +31,18 @@ function SkillIconPicker({ icon, onChange }: { icon: string; onChange: (emoji: s
     const updatePos = () => {
       const r = btnRef.current?.getBoundingClientRect()
       if (!r) return
-      // emoji-mart picker fait ~360x420px ; on cale à droite si pas la place
-      const top = r.bottom + 4
-      const left = Math.min(r.left, window.innerWidth - 380)
-      setPos({ top, left: Math.max(8, left) })
+      // emoji-mart picker fait ~360×440px. On préfère sous le bouton, mais
+      // on flip au-dessus si pas la place (skill en bas de page) — sinon
+      // les catégories du bas du picker sortent de l'écran.
+      const PICKER_H = 440
+      const PICKER_W = 360
+      const spaceBelow = window.innerHeight - r.bottom
+      const spaceAbove = r.top
+      const top = (spaceBelow < PICKER_H && spaceAbove > spaceBelow)
+        ? Math.max(8, r.top - PICKER_H - 4)
+        : Math.min(r.bottom + 4, window.innerHeight - PICKER_H - 8)
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - PICKER_W - 8))
+      setPos({ top, left })
     }
     updatePos()
     const handler = (e: MouseEvent) => {
