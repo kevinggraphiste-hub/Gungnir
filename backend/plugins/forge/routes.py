@@ -60,6 +60,7 @@ class WorkflowIn(BaseModel):
     enabled: Optional[bool] = None
     tags: Optional[list] = None
     canvas_state: Optional[dict] = None
+    folder: Optional[str] = None
 
 
 class RunIn(BaseModel):
@@ -91,6 +92,7 @@ def _serialize_wf(w: ForgeWorkflow) -> dict:
         "enabled": bool(w.enabled),
         "tags": list(w.tags_json or []),
         "canvas_state": w.canvas_state,
+        "folder": getattr(w, "folder", "") or "",
         "created_at": w.created_at.isoformat() if w.created_at else None,
         "updated_at": w.updated_at.isoformat() if w.updated_at else None,
     }
@@ -239,6 +241,7 @@ async def create_workflow(body: WorkflowIn, request: Request,
         enabled=True if body.enabled is None else bool(body.enabled),
         tags_json=list(body.tags or []),
         canvas_state=body.canvas_state,
+        folder=(body.folder or "").strip()[:200],
     )
     session.add(w)
     await session.commit()
@@ -275,6 +278,8 @@ async def update_workflow(wf_id: int, body: WorkflowIn, request: Request,
         w.tags_json = list(body.tags)
     if body.canvas_state is not None:
         w.canvas_state = body.canvas_state
+    if body.folder is not None:
+        w.folder = body.folder.strip()[:200]
     w.updated_at = datetime.utcnow()
     await session.commit()
     await session.refresh(w)
@@ -330,7 +335,8 @@ async def run(wf_id: int, body: RunIn, request: Request,
     prev_uid = get_user_context()
     set_user_context(uid)
     try:
-        res = await run_workflow(w.yaml_def, body.inputs or {})
+        res = await run_workflow(w.yaml_def, body.inputs or {},
+                                 user_id=uid, workflow_id=w.id)
     finally:
         set_user_context(prev_uid)
 
@@ -347,7 +353,8 @@ async def run(wf_id: int, body: RunIn, request: Request,
 # Worker background pour run async — fait tourner le workflow et met à
 # jour la DB hors de la requête HTTP.  La queue de stream est créée par
 # le endpoint /run-async avant de spawn la task pour éviter les races.
-async def _run_async_worker(run_id: int, user_id: int, yaml_text: str, inputs: dict):
+async def _run_async_worker(run_id: int, user_id: int, workflow_id: int,
+                            yaml_text: str, inputs: dict):
     from backend.core.db.engine import async_session
     async def _on_event(evt: dict):
         await forge_streams.push_event(run_id, evt)
@@ -359,7 +366,8 @@ async def _run_async_worker(run_id: int, user_id: int, yaml_text: str, inputs: d
             "ts": datetime.utcnow().isoformat(), "type": "run_start", "run_id": run_id,
         })
         try:
-            res = await run_workflow(yaml_text, inputs, on_event=_on_event)
+            res = await run_workflow(yaml_text, inputs, on_event=_on_event,
+                                     user_id=user_id, workflow_id=workflow_id)
         except Exception as e:
             logger.exception("[forge.async] crash run_id=%s", run_id)
             res = type("R", (), {"status": "error", "logs": [], "output": {}, "error": str(e)})
@@ -416,7 +424,7 @@ async def run_async(wf_id: int, body: RunIn, request: Request,
     # Crée la queue AVANT de spawn pour qu'aucun event ne soit perdu si
     # le client SSE se connecte très vite après le retour de cet endpoint.
     forge_streams.register_run(run_row.id)
-    asyncio.create_task(_run_async_worker(run_row.id, uid, w.yaml_def, body.inputs or {}))
+    asyncio.create_task(_run_async_worker(run_row.id, uid, w.id, w.yaml_def, body.inputs or {}))
     return {"ok": True, "run_id": run_row.id, "status": "running"}
 
 
@@ -689,7 +697,8 @@ async def webhook_trigger(token: str, request: Request,
     prev_uid = get_user_context()
     set_user_context(t.user_id)
     try:
-        res = await run_workflow(w.yaml_def, inputs)
+        res = await run_workflow(w.yaml_def, inputs,
+                                 user_id=t.user_id, workflow_id=w.id)
     finally:
         set_user_context(prev_uid)
 

@@ -43,8 +43,52 @@ class ForgeWorkflow(Base):
     # Position canvas (Phase 3) : { nodes: [{id, x, y}], viewport: {x, y, zoom} }
     # Optionnel — si NULL, le canvas génère un layout auto.
     canvas_state = Column(JSON, nullable=True)
+    # Dossier d'organisation : path-like ("Veille/News" ou "Personnel"). Vide
+    # = racine. Les workflows peuvent vivre dans des dossiers imbriqués sans
+    # avoir besoin d'une vraie hiérarchie en DB.
+    folder = Column(String(200), default="", index=True)
     created_at = Column(DateTime, default=datetime.utcnow,
                         server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow,
+                        server_default=func.now(), onupdate=datetime.utcnow)
+
+
+class ForgeGlobal(Base):
+    """Variable globale user-scoped, accessible depuis tous les workflows
+    de l'user via `{{ globals.<key> }}`.
+
+    Use cases : URLs d'API persistantes, IDs de canaux, secrets non sensibles.
+    Pour les vraies credentials → OAuth core.
+    """
+    __tablename__ = "forge_globals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    key = Column(String(100), nullable=False, index=True)
+    value_json = Column(JSON, default=None)
+    created_at = Column(DateTime, default=datetime.utcnow,
+                        server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow,
+                        server_default=func.now(), onupdate=datetime.utcnow)
+
+
+class ForgeStatic(Base):
+    """Donnée persistante scopée à un workflow, accessible via
+    `{{ static.<key> }}` et modifiable via le tool `forge_set_static`.
+
+    Use cases : compteurs, last_id pour polling, fingerprints pour dedup.
+    Reset automatique = jamais (l'user doit appeler delete explicitement).
+    """
+    __tablename__ = "forge_static"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workflow_id = Column(Integer, ForeignKey("forge_workflows.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    key = Column(String(100), nullable=False, index=True)
+    value_json = Column(JSON, default=None)
     updated_at = Column(DateTime, default=datetime.utcnow,
                         server_default=func.now(), onupdate=datetime.utcnow)
 

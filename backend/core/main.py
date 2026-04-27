@@ -127,6 +127,18 @@ async def lifespan(app: FastAPI):
             except Exception as _drop_err:
                 logger.debug(f"Drop provider_budgets_provider_key constraint: {_drop_err}")
 
+            # forge_workflows.folder (Phase P2 — folders d'organisation).
+            # Si le plugin Forge a déjà créé sa table avant ce migration check,
+            # on ajoute la colonne sans toucher aux données.
+            try:
+                if not await _has_col("forge_workflows", "folder"):
+                    await conn.execute(text(
+                        "ALTER TABLE forge_workflows ADD COLUMN folder VARCHAR(200) DEFAULT ''"
+                    ))
+                    logger.info("Migration: added folder column to forge_workflows")
+            except Exception as _forge_err:
+                logger.debug(f"forge_workflows folder migration skipped: {_forge_err}")
+
     except Exception as e:
         logger.warning(f"Migration check skipped: {e}")
 

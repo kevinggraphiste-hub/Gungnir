@@ -88,7 +88,8 @@ async def _scan_and_fire():
             prev_uid = get_user_context()
             set_user_context(t.user_id)
             try:
-                res = await run_workflow(w.yaml_def, run_row.inputs_json or {})
+                res = await run_workflow(w.yaml_def, run_row.inputs_json or {},
+                                         user_id=t.user_id, workflow_id=w.id)
             except Exception as e:
                 logger.exception("[forge.cron] run %s a crash", run_row.id)
                 res = type("R", (), {"status": "error", "logs": [], "output": {}, "error": str(e)})

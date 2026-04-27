@@ -23,7 +23,7 @@ import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 import { humanizeTool, groupByCategory } from './toolLabels'
 
-const PLUGIN_VERSION = '0.8.0'
+const PLUGIN_VERSION = '0.9.0'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -35,6 +35,7 @@ interface ForgeWorkflow {
   yaml_def: string
   enabled: boolean
   tags: string[]
+  folder: string
   created_at: string | null
   updated_at: string | null
 }
@@ -172,7 +173,7 @@ export default function ForgePlugin() {
 function WorkflowsTab() {
   const [list, setList] = useState<ForgeWorkflow[]>([])
   const [active, setActive] = useState<ForgeWorkflow | null>(null)
-  const [draft, setDraft] = useState<{ name: string; description: string; yaml_def: string } | null>(null)
+  const [draft, setDraft] = useState<{ name: string; description: string; yaml_def: string; folder: string } | null>(null)
   const [running, setRunning] = useState(false)
   const [lastRun, setLastRun] = useState<ForgeRun | null>(null)
   const [loading, setLoading] = useState(true)
@@ -215,7 +216,7 @@ function WorkflowsTab() {
   // Quand on sélectionne un workflow, on initialise le draft.
   useEffect(() => {
     if (active) {
-      setDraft({ name: active.name, description: active.description, yaml_def: active.yaml_def })
+      setDraft({ name: active.name, description: active.description, yaml_def: active.yaml_def, folder: active.folder || '' })
       setLastRun(null)
     } else {
       setDraft(null)
@@ -393,26 +394,49 @@ function WorkflowsTab() {
           : list.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.6 }}>
               Aucun workflow.<br />Cliquez sur <strong>Nouveau</strong> pour créer le premier.
             </div>
-          : list.map(w => (
-            <div key={w.id} onClick={() => setActive(w)}
-              style={{
-                padding: '10px 14px', cursor: 'pointer',
-                borderBottom: '1px solid var(--border)',
-                background: active?.id === w.id ? 'rgba(220,38,38,0.12)' : 'transparent',
-                borderLeft: active?.id === w.id ? '3px solid var(--scarlet)' : '3px solid transparent',
-                transition: 'background 0.1s',
-              }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                <Workflow size={12} style={{ color: w.enabled ? 'var(--scarlet)' : 'var(--text-muted)', flexShrink: 0 }} />
-                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
-              </div>
-              {w.description && <div style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.description}</div>}
-              <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
-                {!w.enabled && <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>désactivé</span>}
-                {w.tags.slice(0, 3).map(t => <span key={t} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'rgba(220,38,38,0.18)', color: 'var(--scarlet)' }}>{t}</span>)}
-              </div>
-            </div>
-          ))}
+          : (() => {
+              // Groupage par folder. Workflows sans folder → "(racine)".
+              const byFolder = new Map<string, ForgeWorkflow[]>()
+              for (const w of list) {
+                const f = (w.folder || '').trim() || '(racine)'
+                const arr = byFolder.get(f) || []
+                arr.push(w); byFolder.set(f, arr)
+              }
+              const folders = Array.from(byFolder.entries()).sort(([a], [b]) => {
+                if (a === '(racine)') return -1
+                if (b === '(racine)') return 1
+                return a.localeCompare(b)
+              })
+              return folders.map(([folder, items]) => (
+                <div key={folder}>
+                  {folders.length > 1 && (
+                    <div style={{ padding: '6px 12px', fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border)' }}>
+                      {folder} <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>· {items.length}</span>
+                    </div>
+                  )}
+                  {items.map(w => (
+                    <div key={w.id} onClick={() => setActive(w)}
+                      style={{
+                        padding: '10px 14px', cursor: 'pointer',
+                        borderBottom: '1px solid var(--border)',
+                        background: active?.id === w.id ? 'rgba(220,38,38,0.12)' : 'transparent',
+                        borderLeft: active?.id === w.id ? '3px solid var(--scarlet)' : '3px solid transparent',
+                        transition: 'background 0.1s',
+                      }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                        <Workflow size={12} style={{ color: w.enabled ? 'var(--scarlet)' : 'var(--text-muted)', flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
+                      </div>
+                      {w.description && <div style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.description}</div>}
+                      <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+                        {!w.enabled && <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>désactivé</span>}
+                        {w.tags.slice(0, 3).map(t => <span key={t} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'rgba(220,38,38,0.18)', color: 'var(--scarlet)' }}>{t}</span>)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))
+            })()}
         </div>
       </div>
 
@@ -460,12 +484,21 @@ function WorkflowsTab() {
             <SecondaryButton size="sm" icon={<Download size={13} />} onClick={handleExport}>Exporter</SecondaryButton>
             <SecondaryButton size="sm" danger icon={<Trash2 size={13} />} onClick={handleDelete}>Supprimer</SecondaryButton>
           </div>
-          <input
-            value={draft.description}
-            onChange={e => setDraft({ ...draft, description: e.target.value })}
-            placeholder="Description (optionnelle)"
-            style={{ padding: '6px 16px', fontSize: 11, borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)', border: 'none', borderTop: 'none', borderLeft: 'none', borderRight: 'none', color: 'var(--text-muted)', outline: 'none' }}
-          />
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+            <input
+              value={draft.description}
+              onChange={e => setDraft({ ...draft, description: e.target.value })}
+              placeholder="Description (optionnelle)"
+              style={{ flex: 1, padding: '6px 16px', fontSize: 11, background: 'transparent', border: 'none', color: 'var(--text-muted)', outline: 'none' }}
+            />
+            <input
+              value={draft.folder}
+              onChange={e => setDraft({ ...draft, folder: e.target.value })}
+              placeholder="Dossier (ex: Veille/News)"
+              title="Organise ce workflow dans un dossier (path-like, ex: Personnel/Daily)"
+              style={{ width: 200, padding: '6px 16px', fontSize: 11, background: 'transparent', border: 'none', borderLeft: '1px solid var(--border)', color: 'var(--text-secondary)', outline: 'none', fontFamily: 'ui-monospace, monospace' }}
+            />
+          </div>
 
           {/* Vue éditeur (Canvas ou YAML) + panel logs côte à côte */}
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>

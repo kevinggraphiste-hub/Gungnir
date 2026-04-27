@@ -369,7 +369,9 @@ def parse_workflow_yaml(yaml_text: str) -> dict:
 
 async def run_workflow(yaml_text: str, inputs: Optional[dict] = None,
                        max_seconds: int = 300,
-                       on_event: EventCallback = None) -> ForgeRunResult:
+                       on_event: EventCallback = None,
+                       user_id: Optional[int] = None,
+                       workflow_id: Optional[int] = None) -> ForgeRunResult:
     """Exécute un workflow YAML. Retourne ForgeRunResult.
 
     `max_seconds` : timeout global (défaut 5 min). Au-delà, on annule et
@@ -377,6 +379,10 @@ async def run_workflow(yaml_text: str, inputs: Optional[dict] = None,
 
     `on_event` (optionnel) : callback async appelé à chaque entrée de log
     pour le streaming temps réel (SSE).  Si None, run en mode batch.
+
+    `user_id` + `workflow_id` (optionnels) : si fournis, expose
+    `ctx.globals` (user-scoped) et `ctx.static` (workflow-scoped) au YAML
+    via interpolation `{{ globals.X }}` / `{{ static.X }}`.
     """
     inputs = inputs or {}
     logs: list = []
@@ -386,7 +392,26 @@ async def run_workflow(yaml_text: str, inputs: Optional[dict] = None,
     except ValueError as e:
         return ForgeRunResult("error", [], {}, str(e))
 
-    ctx: dict = {"inputs": inputs, "steps": {}}
+    # Charge les globals/static au démarrage (snapshot — les writes
+    # pendant le workflow ne sont pas relus, sauf si l'user fait un
+    # forge_get_static explicite).
+    globals_snapshot: dict = {}
+    static_snapshot: dict = {}
+    if user_id:
+        try:
+            from .state_tools import _all_globals_for_user, _all_static_for_workflow
+            globals_snapshot = await _all_globals_for_user(user_id)
+            if workflow_id:
+                static_snapshot = await _all_static_for_workflow(user_id, workflow_id)
+        except Exception as e:
+            logger.warning("[forge] could not load globals/static : %s", e)
+
+    ctx: dict = {
+        "inputs": inputs,
+        "steps": {},
+        "globals": globals_snapshot,
+        "static": static_snapshot,
+    }
 
     async def _run_all():
         nonlocal output

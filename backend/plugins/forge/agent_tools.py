@@ -18,6 +18,7 @@ from typing import Any, Optional
 from backend.core.agents.wolf_tools import get_user_context
 from .llm_tools import LLM_TOOL_SCHEMAS, LLM_EXECUTORS
 from .flow_tools import FLOW_TOOL_SCHEMAS, FLOW_EXECUTORS
+from .state_tools import STATE_TOOL_SCHEMAS, STATE_EXECUTORS
 
 
 TOOL_SCHEMAS: list[dict] = [
@@ -323,7 +324,8 @@ async def _forge_run_workflow(workflow_id: int, inputs: Optional[dict] = None) -
         await session.commit()
         await session.refresh(run_row)
 
-        res = await run_workflow(w.yaml_def, inputs or {})
+        res = await run_workflow(w.yaml_def, inputs or {},
+                                  user_id=uid, workflow_id=w.id)
 
         run_row.status = res.status
         run_row.logs_json = res.logs
@@ -406,7 +408,9 @@ EXECUTORS: dict[str, Any] = {
     **LLM_EXECUTORS,
     # Tools utilitaires de flow : wait_seconds, http_request (POST/PUT/etc.)
     **FLOW_EXECUTORS,
+    # Tools state : globals user-scoped + static workflow-scoped
+    **STATE_EXECUTORS,
 }
 
-# Concatène les schemas LLM + flow pour qu'ils soient découverts au boot.
-TOOL_SCHEMAS = TOOL_SCHEMAS + LLM_TOOL_SCHEMAS + FLOW_TOOL_SCHEMAS
+# Concatène les schemas LLM + flow + state pour qu'ils soient découverts au boot.
+TOOL_SCHEMAS = TOOL_SCHEMAS + LLM_TOOL_SCHEMAS + FLOW_TOOL_SCHEMAS + STATE_TOOL_SCHEMAS
