@@ -170,3 +170,31 @@ EXECUTORS: dict[str, Any] = {
     "webhook_trigger": _webhook_trigger,
     "webhook_logs": _webhook_logs,
 }
+
+# ── Connectors OAuth — agrégation auto ──────────────────────────────────
+# Chaque module dans connectors/ expose ses propres TOOL_SCHEMAS + EXECUTORS.
+# On les merge ici pour qu'ils soient découverts par wolf_tools._discover_plugin_tools().
+def _aggregate_connectors() -> None:
+    import importlib
+    import pkgutil
+    try:
+        from backend.plugins.webhooks import connectors as _conn_pkg
+    except Exception:
+        return
+    for _modinfo in pkgutil.iter_modules(_conn_pkg.__path__):
+        try:
+            _mod = importlib.import_module(f"backend.plugins.webhooks.connectors.{_modinfo.name}")
+            schemas = getattr(_mod, "TOOL_SCHEMAS", []) or []
+            execs = getattr(_mod, "EXECUTORS", {}) or {}
+            if schemas:
+                TOOL_SCHEMAS.extend(schemas)
+            if execs:
+                EXECUTORS.update(execs)
+        except Exception as _e:
+            import logging
+            logging.getLogger("gungnir.webhooks").warning(
+                f"Connector {_modinfo.name} failed to load: {_e}"
+            )
+
+
+_aggregate_connectors()

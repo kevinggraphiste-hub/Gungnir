@@ -19,8 +19,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from backend.core.db.engine import get_session
 from pydantic import BaseModel
 
 logger = logging.getLogger("gungnir.webhooks")
@@ -848,6 +850,100 @@ async def trigger_outgoing_webhook(webhook_id: str, request: Request):
     _save_json(logs_file, logs)
 
     return {"ok": log_entry["status"] == "sent", "log": log_entry}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# OAuth — connecteurs prefab (GitHub, Google, Notion, etc.)
+# ════════════════════════════════════════════════════════════════════════════
+
+@router.get("/oauth/providers")
+async def oauth_list_providers():
+    """Liste les providers OAuth supportés + leur statut « configuré côté serveur »."""
+    from backend.plugins.webhooks.oauth_registry import list_providers
+    return {"providers": list_providers()}
+
+
+@router.get("/oauth/connections")
+async def oauth_list_connections(request: Request, session: AsyncSession = Depends(get_session)):
+    """Liste les connexions OAuth de l'user courant (par provider, statut + label)."""
+    from backend.core.api.auth_helpers import get_user_settings
+    from backend.plugins.webhooks.oauth_core import list_user_connections
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return {"connections": []}
+    us = await get_user_settings(uid, session)
+    return {"connections": list_user_connections(us)}
+
+
+@router.get("/oauth/{provider}/authorize")
+async def oauth_authorize(provider: str, request: Request):
+    """Démarre le flow OAuth — retourne l'URL de consentement à laquelle
+    le frontend redirige l'user."""
+    from backend.plugins.webhooks.oauth_core import build_authorize_url
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+    base_url = str(request.base_url).rstrip("/")
+    url = build_authorize_url(provider, uid, base_url)
+    if not url:
+        return JSONResponse(
+            {"error": f"Provider '{provider}' inconnu ou credentials non configurés côté serveur."},
+            status_code=400,
+        )
+    return {"authorize_url": url}
+
+
+@router.get("/oauth/callback")
+async def oauth_callback(
+    request: Request, code: str = "", state: str = "", error: str = "",
+    session: AsyncSession = Depends(get_session),
+):
+    """Callback OAuth — l'user vient d'autoriser chez le provider. On échange
+    le code contre tokens et on persiste. Retourne une page HTML qui ferme
+    la fenêtre popup et notifie le parent."""
+    from backend.plugins.webhooks.oauth_core import decode_state, handle_callback
+    if error or not code or not state:
+        msg = error or "Paramètres manquants"
+        return Response(content=_oauth_close_page(False, msg), media_type="text/html")
+    decoded = decode_state(state)
+    if not decoded:
+        return Response(content=_oauth_close_page(False, "État OAuth invalide"), media_type="text/html")
+    base_url = str(request.base_url).rstrip("/")
+    res = await handle_callback(decoded["p"], code, state, base_url, session)
+    if not res.get("ok"):
+        return Response(content=_oauth_close_page(False, res.get("error", "Échec")), media_type="text/html")
+    label = res.get("account_label", decoded["p"])
+    return Response(
+        content=_oauth_close_page(True, f"Connecté à {decoded['p']} ({label})"),
+        media_type="text/html",
+    )
+
+
+@router.post("/oauth/{provider}/disconnect")
+async def oauth_disconnect(provider: str, request: Request, session: AsyncSession = Depends(get_session)):
+    from backend.plugins.webhooks.oauth_core import disconnect
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+    return await disconnect(provider, uid, session)
+
+
+def _oauth_close_page(success: bool, message: str) -> str:
+    color = "#22c55e" if success else "#dc2626"
+    icon = "✅" if success else "❌"
+    return (
+        f"<html><head><style>body{{font-family:system-ui;background:#1a1a2e;"
+        f"color:#eee;display:flex;align-items:center;justify-content:center;"
+        f"height:100vh;margin:0}}.card{{background:#16213e;padding:2rem;"
+        f"border-radius:1rem;text-align:center;max-width:400px}}h2{{color:{color}}}"
+        f"p{{color:#aaa}}</style></head><body><div class='card'>"
+        f"<h2>{icon} {message}</h2>"
+        f"<p>Vous pouvez fermer cette fenêtre.</p></div>"
+        f"<script>setTimeout(()=>{{try{{window.opener&&window.opener.postMessage("
+        f"{{type:'gungnir-oauth',success:{('true' if success else 'false')},"
+        f"message:{json.dumps(message)}}},'*');}}catch(e){{}}window.close();}},800);"
+        f"</script></body></html>"
+    )
 
 
 # ── Webhook Logs ────────────────────────────────────────────────────────────

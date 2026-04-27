@@ -12,7 +12,7 @@ import {
   Plug, Plus, Settings, Trash2, Play, Square,
   CheckCircle, Loader2, ChevronDown, ChevronRight,
   Webhook, ArrowUpRight, ArrowDownLeft, ExternalLink,
-  Wrench, X, Search, Eye, EyeOff, Copy,
+  Wrench, X, Search, Eye, EyeOff, Copy, Link2,
 } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function WebhooksPlugin() {
-  const [activeTab, setActiveTab] = useState<'integrations' | 'webhooks' | 'logs'>('integrations')
+  const [activeTab, setActiveTab] = useState<'integrations' | 'connectors' | 'webhooks' | 'logs'>('integrations')
   const [catalog, setCatalog] = useState<Record<string, CatalogEntry>>({})
   const [integrations, setIntegrations] = useState<Integration[]>([])
   const [webhooks, setWebhooks] = useState<WebhookEntry[]>([])
@@ -355,6 +355,7 @@ export default function WebhooksPlugin() {
 
   const tabs = [
     { key: 'integrations' as const, label: 'Apps & MCP', icon: <Plug size={14} /> },
+    { key: 'connectors' as const, label: 'Connecteurs', icon: <Link2 size={14} /> },
     { key: 'webhooks' as const, label: 'Webhooks', icon: <Webhook size={14} /> },
     { key: 'logs' as const, label: 'Logs', icon: <Eye size={14} /> },
   ]
@@ -724,6 +725,9 @@ export default function WebhooksPlugin() {
               </div>
             )}
 
+            {/* ═══════ Connecteurs OAuth Tab ═══════ */}
+            {activeTab === 'connectors' && <ConnectorsTab />}
+
             {/* ═══════ Webhooks Tab ═══════ */}
             {activeTab === 'webhooks' && (
               <div className="space-y-3">
@@ -981,6 +985,136 @@ export default function WebhooksPlugin() {
               </SecondaryButton>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ── ConnectorsTab : connecteurs OAuth (GitHub, Google, Notion) ─────────────
+function ConnectorsTab() {
+  const [providers, setProviders] = useState<any[]>([])
+  const [connections, setConnections] = useState<Record<string, any>>({})
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [p, c] = await Promise.all([
+        fetch(`${API}/oauth/providers`).then(r => r.json()).catch(() => ({ providers: [] })),
+        fetch(`${API}/oauth/connections`).then(r => r.json()).catch(() => ({ connections: [] })),
+      ])
+      setProviders(p.providers || [])
+      const map: Record<string, any> = {}
+      ;(c.connections || []).forEach((conn: any) => { map[conn.provider] = conn })
+      setConnections(map)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  // Ré-écoute les postMessage du callback OAuth → refresh
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type === 'gungnir-oauth') {
+        if (e.data.success) load()
+      }
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [load])
+
+  const connect = async (provider: string) => {
+    setBusy(provider)
+    try {
+      const r = await fetch(`${API}/oauth/${provider}/authorize`).then(r => r.json())
+      if (r.error || !r.authorize_url) {
+        alert(r.error || 'Erreur lors de la génération du lien OAuth')
+        return
+      }
+      window.open(r.authorize_url, 'gungnir-oauth', 'width=520,height=720')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const disconnect = async (provider: string) => {
+    if (!confirm(`Déconnecter ${provider} ?`)) return
+    setBusy(provider)
+    try {
+      await fetch(`${API}/oauth/${provider}/disconnect`, { method: 'POST' })
+      await load()
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (loading) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Chargement…</div>
+
+  return (
+    <div className="space-y-3">
+      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+        Connecte des services tiers (GitHub, Google, Notion…) une fois — Gungnir pourra ensuite
+        appeler leurs API depuis le chat (lecture/écriture, sans copier-coller des tokens).
+      </div>
+      {providers.map(p => {
+        const conn = connections[p.provider] || {}
+        const isConnected = conn.connected
+        return (
+          <div key={p.provider}
+            className="flex items-center gap-3 rounded-lg p-4"
+            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <Plug size={14} />
+                <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{p.display_name}</span>
+                {!p.configured && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded"
+                    style={{ background: 'color-mix(in srgb, var(--accent-warning, #f59e0b) 12%, transparent)',
+                             color: 'var(--accent-warning, #f59e0b)' }}>
+                    config serveur manquante
+                  </span>
+                )}
+                {isConnected && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1"
+                    style={{ background: 'color-mix(in srgb, var(--accent-success) 12%, transparent)',
+                             color: 'var(--accent-success)' }}>
+                    <CheckCircle size={10} /> Connecté
+                  </span>
+                )}
+              </div>
+              <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{p.description}</div>
+              {isConnected && conn.account_label && (
+                <div className="text-[11px] mt-1" style={{ color: 'var(--text-secondary)' }}>
+                  Compte : <code>{conn.account_label}</code>
+                </div>
+              )}
+            </div>
+            <div>
+              {isConnected ? (
+                <SecondaryButton size="sm" onClick={() => disconnect(p.provider)} disabled={busy === p.provider}>
+                  Déconnecter
+                </SecondaryButton>
+              ) : (
+                <PrimaryButton size="sm"
+                  onClick={() => connect(p.provider)}
+                  disabled={!p.configured || busy === p.provider}>
+                  Connecter
+                </PrimaryButton>
+              )}
+            </div>
+          </div>
+        )
+      })}
+      {providers.some(p => !p.configured) && (
+        <div className="text-[11px] italic mt-2" style={{ color: 'var(--text-muted)' }}>
+          ℹ️ Pour les providers en « config serveur manquante », l'admin Gungnir doit créer une
+          app OAuth chez le provider et renseigner les variables d'env <code>GUNGNIR_OAUTH_*</code>
+          (voir documentation).
         </div>
       )}
     </div>
