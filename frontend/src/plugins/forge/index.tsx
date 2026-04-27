@@ -17,14 +17,14 @@ import CodeMirror from '@uiw/react-codemirror'
 import { yaml as yamlLang } from '@codemirror/lang-yaml'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
-import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch, Upload, Download, Link as LinkIcon, Copy, X, Sparkles, History, RotateCcw, BookmarkPlus, Store, Star, Send, FlaskConical } from 'lucide-react'
+import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch, Upload, Download, Link as LinkIcon, Copy, X, Sparkles, History, RotateCcw, BookmarkPlus, Store, Star, Send, FlaskConical, Users, UserPlus } from 'lucide-react'
 import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/components/ui'
 import InfoButton from '@core/components/InfoButton'
 import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 import { humanizeTool, groupByCategory } from './toolLabels'
 
-const PLUGIN_VERSION = '0.13.0'
+const PLUGIN_VERSION = '0.14.0'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -212,6 +212,37 @@ function fmtDuration(ms: number | null | undefined): string {
 
 export default function ForgePlugin() {
   const [tab, setTab] = useState<'workflows' | 'runs' | 'tools' | 'templates' | 'marketplace' | 'variables'>('workflows')
+
+  // Auto-acceptance d'invitation : si l'URL contient ?invite=<token>,
+  // on appelle l'endpoint accept et on redirige vers le workflow partagé.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('invite')
+    if (!token) return
+    (async () => {
+      const preview = await api<{ ok: boolean; workflow_name?: string; role?: string; detail?: string }>(
+        `/invites/${encodeURIComponent(token)}`, undefined, true,
+      )
+      if (!preview?.ok) {
+        alert(`Invitation invalide : ${preview?.detail || 'token expiré ou consumé'}`)
+        return
+      }
+      const ok = confirm(`Tu es invité à collaborer sur "${preview.workflow_name}" en tant que ${preview.role}. Accepter ?`)
+      if (!ok) return
+      const r = await api<{ ok: boolean; workflow_id: number; role: string; detail?: string }>(
+        `/invites/${encodeURIComponent(token)}/accept`, { method: 'POST' },
+      )
+      if (r?.ok) {
+        alert(`Accès accordé (${r.role}). Le workflow apparaîtra dans ta liste.`)
+        // Clean l'URL pour ne pas re-déclencher au refresh.
+        const url = new URL(window.location.href)
+        url.searchParams.delete('invite')
+        window.history.replaceState({}, '', url.toString())
+      } else {
+        alert(`Acceptation échouée : ${r?.detail || 'erreur'}`)
+      }
+    })()
+  }, [])
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -558,6 +589,27 @@ function WorkflowsTab() {
             </PrimaryButton>
             <SecondaryButton size="sm" onClick={handleSave}>Sauvegarder</SecondaryButton>
             <SecondaryButton size="sm" icon={<Download size={13} />} onClick={handleExport}>Exporter</SecondaryButton>
+            <SecondaryButton size="sm" icon={<UserPlus size={13} />} onClick={async () => {
+              if (!active) return
+              const role = window.prompt('Rôle de l\'invité (viewer / editor / admin)', 'editor') || 'editor'
+              if (!['viewer', 'editor', 'admin'].includes(role)) {
+                alert('Rôle invalide')
+                return
+              }
+              const r = await api<{ ok: boolean; invite_url: string; expires_at: string }>(
+                `/workflows/${active.id}/invite`,
+                { method: 'POST', body: JSON.stringify({ role, expires_in_days: 7 }) },
+              )
+              if (r?.invite_url) {
+                // L'URL pointe vers /forge/invite/{token} — on la convertit
+                // pour pointer vers la SPA avec query param ?invite=token.
+                const m = r.invite_url.match(/\/forge\/invite\/(.+)$/)
+                const token = m ? m[1] : ''
+                const spaUrl = `${window.location.origin}/plugins/forge?invite=${token}`
+                navigator.clipboard.writeText(spaUrl).catch(() => {})
+                alert(`Lien d'invitation (${role}) copié :\n\n${spaUrl}\n\nExpire le ${new Date(r.expires_at).toLocaleDateString('fr-FR')}`)
+              }
+            }}>Inviter</SecondaryButton>
             <SecondaryButton size="sm" icon={<Send size={13} />} onClick={async () => {
               if (!active) return
               const cat = window.prompt('Catégorie (Veille / Dev / Productivité / IA / Notifications / Autre)', 'Autre') || 'Autre'

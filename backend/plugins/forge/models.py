@@ -53,6 +53,62 @@ class ForgeWorkflow(Base):
                         server_default=func.now(), onupdate=datetime.utcnow)
 
 
+class ForgeWorkflowCollaborator(Base):
+    """Collaborateur d'un workflow Forge (édition partagée).
+
+    Le owner du workflow (= ForgeWorkflow.user_id original) reste implicite,
+    pas dupliqué ici. Les rows ici ne couvrent que les invités.
+
+    Permissions :
+    - viewer    : peut voir le workflow + ses runs, ne peut rien modifier
+    - editor    : peut modifier le YAML/canvas + lancer des runs, mais
+                  ne peut pas inviter d'autres collaborateurs ni delete
+    - admin     : peut inviter et retirer d'autres collaborateurs
+    """
+    __tablename__ = "forge_workflow_collaborators"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workflow_id = Column(Integer, ForeignKey("forge_workflows.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    role = Column(String(20), nullable=False, default="editor")  # viewer | editor | admin
+    invited_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"),
+                        nullable=True)
+    joined_at = Column(DateTime, default=datetime.utcnow,
+                        server_default=func.now())
+
+
+class ForgeCollaboratorInvite(Base):
+    """Lien d'invitation à collaborer sur un workflow.
+
+    Un owner génère un lien (`POST /workflows/{id}/invite`), partage
+    l'URL `/forge/invite/{token}` à un autre user. Quand celui-ci
+    visite et est connecté, il est automatiquement ajouté comme
+    collaborateur avec le rôle prédéfini, et l'invite est consumée.
+
+    Tokens expire après 7 jours par défaut. Réutilisation interdite
+    (`accepted_at` rempli au consume → invite invalidée).
+    """
+    __tablename__ = "forge_collaborator_invites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token = Column(String(64), nullable=False, unique=True, index=True)
+    workflow_id = Column(Integer, ForeignKey("forge_workflows.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    invited_by = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                        nullable=False)
+    role = Column(String(20), nullable=False, default="editor")
+    # Email/identifiant de l'invité — informatif pour audit, pas requis.
+    invitee_hint = Column(String(200), default="")
+    created_at = Column(DateTime, default=datetime.utcnow,
+                        server_default=func.now())
+    expires_at = Column(DateTime, nullable=False)
+    accepted_at = Column(DateTime, nullable=True)
+    accepted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"),
+                         nullable=True)
+
+
 class ForgeMarketplaceTemplate(Base):
     """Workflow publié sur la marketplace communautaire.
 

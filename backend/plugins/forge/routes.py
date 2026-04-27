@@ -7,7 +7,7 @@ sur chaque requête. Un user ne peut JAMAIS voir/lancer le workflow d'un autre.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import asyncio
@@ -23,6 +23,7 @@ from backend.core.api.auth_helpers import open_mode_fallback_user_id
 from .models import (
     ForgeWorkflow, ForgeWorkflowRun, ForgeTrigger, ForgeWorkflowVersion,
     ForgeMarketplaceTemplate, ForgeGlobal, ForgeStatic,
+    ForgeWorkflowCollaborator, ForgeCollaboratorInvite,
 )
 from .runner import run_workflow, parse_workflow_yaml
 from .n8n_import import n8n_to_forge
@@ -140,6 +141,216 @@ async def templates_get(tid: str):
     if not t:
         raise HTTPException(status_code=404, detail="Template introuvable")
     return {"ok": True, "template": t}
+
+
+# ── Collaborateurs (édition partagée) ────────────────────────────────────
+#
+# Helper de permission : un user peut éditer un workflow si :
+# - il est le owner (workflow.user_id == uid), OU
+# - il est dans la table forge_workflow_collaborators avec role 'editor' ou 'admin'
+# Pour la lecture : owner OU n'importe quel role (viewer/editor/admin).
+#
+# On ne touche PAS aux endpoints existants (CRUD, run, etc.) pour ne rien
+# casser — ils restent strict per-user (workflow.user_id == uid). À la
+# place, on expose des endpoints alternatifs `/shared/*` pour les
+# collaborateurs ; itération ultérieure pour migrer le CRUD principal
+# vers la nouvelle logique de permission.
+
+_COLLAB_ROLE_RANK = {"viewer": 1, "editor": 2, "admin": 3, "owner": 4}
+
+
+async def _check_collab_role(session: AsyncSession, workflow_id: int,
+                              user_id: int) -> Optional[str]:
+    """Retourne le rôle effectif de l'user sur le workflow ('owner', 'admin',
+    'editor', 'viewer') ou None si aucun accès."""
+    rs = await session.execute(
+        select(ForgeWorkflow).where(ForgeWorkflow.id == workflow_id)
+    )
+    w = rs.scalar_one_or_none()
+    if not w:
+        return None
+    if w.user_id == user_id:
+        return "owner"
+    rs = await session.execute(
+        select(ForgeWorkflowCollaborator).where(
+            ForgeWorkflowCollaborator.workflow_id == workflow_id,
+            ForgeWorkflowCollaborator.user_id == user_id,
+        )
+    )
+    c = rs.scalar_one_or_none()
+    return c.role if c else None
+
+
+@router.get("/workflows/{wf_id}/collaborators")
+async def list_collaborators(wf_id: int, request: Request,
+                             session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    role = await _check_collab_role(session, wf_id, uid)
+    if not role:
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    rs = await session.execute(
+        select(ForgeWorkflowCollaborator).where(
+            ForgeWorkflowCollaborator.workflow_id == wf_id,
+        ).order_by(ForgeWorkflowCollaborator.joined_at)
+    )
+    return {
+        "ok": True,
+        "your_role": role,
+        "collaborators": [
+            {"id": c.id, "user_id": c.user_id, "role": c.role,
+             "invited_by": c.invited_by,
+             "joined_at": c.joined_at.isoformat() if c.joined_at else None}
+            for c in rs.scalars().all()
+        ],
+    }
+
+
+class InviteIn(BaseModel):
+    role: Optional[str] = "editor"   # viewer | editor | admin
+    invitee_hint: Optional[str] = "" # email/nom indicatif
+    expires_in_days: Optional[int] = 7
+
+
+@router.post("/workflows/{wf_id}/invite")
+async def create_invite(wf_id: int, body: InviteIn, request: Request,
+                        session: AsyncSession = Depends(get_session)):
+    """Génère un lien d'invitation. Seul owner et admin peuvent inviter."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    role = await _check_collab_role(session, wf_id, uid)
+    if role not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Seul un owner ou admin peut inviter")
+    target_role = (body.role or "editor").lower()
+    if target_role not in ("viewer", "editor", "admin"):
+        raise HTTPException(status_code=400, detail="Rôle invalide")
+    days = max(1, min(int(body.expires_in_days or 7), 30))
+    inv = ForgeCollaboratorInvite(
+        token=secrets.token_urlsafe(32),
+        workflow_id=wf_id, invited_by=uid,
+        role=target_role,
+        invitee_hint=(body.invitee_hint or "").strip()[:200],
+        expires_at=datetime.utcnow() + timedelta(days=days),
+    )
+    session.add(inv)
+    await session.commit()
+    await session.refresh(inv)
+    base = str(request.base_url).rstrip("/")
+    return {
+        "ok": True,
+        "token": inv.token,
+        "role": inv.role,
+        "expires_at": inv.expires_at.isoformat(),
+        "invite_url": f"{base}/forge/invite/{inv.token}",
+    }
+
+
+@router.get("/invites/{token}")
+async def preview_invite(token: str, session: AsyncSession = Depends(get_session)):
+    """Preview d'une invitation (workflow name, owner, role) — pas d'auth
+    requise pour permettre à l'invité de voir avant de s'authentifier."""
+    rs = await session.execute(
+        select(ForgeCollaboratorInvite).where(ForgeCollaboratorInvite.token == token)
+    )
+    inv = rs.scalar_one_or_none()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invitation invalide")
+    if inv.accepted_at:
+        raise HTTPException(status_code=410, detail="Invitation déjà consumée")
+    if inv.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="Invitation expirée")
+    rs = await session.execute(
+        select(ForgeWorkflow).where(ForgeWorkflow.id == inv.workflow_id)
+    )
+    w = rs.scalar_one_or_none()
+    if not w:
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    return {
+        "ok": True,
+        "workflow_name": w.name,
+        "workflow_description": w.description,
+        "role": inv.role,
+        "invited_by_user_id": inv.invited_by,
+        "expires_at": inv.expires_at.isoformat(),
+    }
+
+
+@router.post("/invites/{token}/accept")
+async def accept_invite(token: str, request: Request,
+                        session: AsyncSession = Depends(get_session)):
+    """Consomme une invitation : ajoute l'user actuel comme collaborateur."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeCollaboratorInvite).where(ForgeCollaboratorInvite.token == token)
+    )
+    inv = rs.scalar_one_or_none()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invitation invalide")
+    if inv.accepted_at:
+        raise HTTPException(status_code=410, detail="Invitation déjà consumée")
+    if inv.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="Invitation expirée")
+    # Vérifie que l'user n'est pas déjà owner ou collaborateur.
+    rs = await session.execute(
+        select(ForgeWorkflow).where(ForgeWorkflow.id == inv.workflow_id)
+    )
+    w = rs.scalar_one_or_none()
+    if not w:
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    if w.user_id == uid:
+        raise HTTPException(status_code=400, detail="Tu es déjà le owner")
+    rs = await session.execute(
+        select(ForgeWorkflowCollaborator).where(
+            ForgeWorkflowCollaborator.workflow_id == inv.workflow_id,
+            ForgeWorkflowCollaborator.user_id == uid,
+        )
+    )
+    existing = rs.scalar_one_or_none()
+    if existing:
+        # Idempotent : si déjà collaborateur, on remonte juste son rôle si l'invite donne plus haut.
+        if _COLLAB_ROLE_RANK.get(inv.role, 0) > _COLLAB_ROLE_RANK.get(existing.role, 0):
+            existing.role = inv.role
+        inv.accepted_at = datetime.utcnow()
+        inv.accepted_by = uid
+        await session.commit()
+        return {"ok": True, "workflow_id": inv.workflow_id, "role": existing.role,
+                "already_member": True}
+    collab = ForgeWorkflowCollaborator(
+        workflow_id=inv.workflow_id, user_id=uid,
+        role=inv.role, invited_by=inv.invited_by,
+    )
+    session.add(collab)
+    inv.accepted_at = datetime.utcnow()
+    inv.accepted_by = uid
+    await session.commit()
+    return {"ok": True, "workflow_id": inv.workflow_id, "role": collab.role,
+            "already_member": False}
+
+
+@router.delete("/workflows/{wf_id}/collaborators/{cid}")
+async def remove_collaborator(wf_id: int, cid: int, request: Request,
+                              session: AsyncSession = Depends(get_session)):
+    """Retire un collaborateur. Owner ou admin peut. Un user peut aussi
+    se retirer lui-même (quitter)."""
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    role = await _check_collab_role(session, wf_id, uid)
+    rs = await session.execute(
+        select(ForgeWorkflowCollaborator).where(
+            ForgeWorkflowCollaborator.id == cid,
+            ForgeWorkflowCollaborator.workflow_id == wf_id,
+        )
+    )
+    c = rs.scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=404, detail="Collaborateur introuvable")
+    is_self = c.user_id == uid
+    if role not in ("owner", "admin") and not is_self:
+        raise HTTPException(status_code=403, detail="Pas autorisé à retirer ce collaborateur")
+    await session.delete(c)
+    await session.commit()
+    return {"ok": True}
 
 
 # ── Globals (variables user-scoped) — endpoints REST pour UI ────────────
