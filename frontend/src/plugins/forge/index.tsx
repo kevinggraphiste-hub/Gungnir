@@ -16,6 +16,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { yaml as yamlLang } from '@codemirror/lang-yaml'
 import { oneDark } from '@codemirror/theme-one-dark'
+import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
 import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch, Upload, Download, Link as LinkIcon, Copy, X, Sparkles, History, RotateCcw, BookmarkPlus } from 'lucide-react'
 import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/components/ui'
 import InfoButton from '@core/components/InfoButton'
@@ -23,7 +24,7 @@ import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 import { humanizeTool, groupByCategory } from './toolLabels'
 
-const PLUGIN_VERSION = '0.10.0'
+const PLUGIN_VERSION = '0.10.1'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -100,6 +101,66 @@ const TABS = [
   { key: 'runs' as const, label: 'Historique', icon: <Clock size={14} /> },
   { key: 'tools' as const, label: 'Outils dispo', icon: <Zap size={14} /> },
 ]
+
+// ── Autocomplete YAML ────────────────────────────────────────────────────
+//
+// Suggère les noms de wolf_tools après `tool: ` et un set de snippets
+// pour les blocs courants (if, parallel, for_each, retry…). Allège
+// drastiquement l'écriture YAML à la main sans avoir à mémoriser les
+// 140+ noms d'outils.
+
+const FORGE_YAML_SNIPPETS: Array<{ label: string; detail: string; insertText: string }> = [
+  { label: 'if-', detail: 'Condition (saute si fausse)',
+    insertText: 'if: "{{ steps.previous.ok }}"' },
+  { label: 'parallel-', detail: 'Bloc parallèle (asyncio.gather)',
+    insertText: 'parallel:\n  - tool: web_fetch\n    args: { url: "..." }\n  - tool: web_fetch\n    args: { url: "..." }' },
+  { label: 'for_each-', detail: 'Boucle sur une liste',
+    insertText: 'for_each: "{{ inputs.items }}"\nas: item\ndo:\n  - tool: web_fetch\n    args: { url: "{{ item }}" }' },
+  { label: 'retry-', detail: 'Retry policy (count + delay)',
+    insertText: 'retry: { count: 3, delay_ms: 1000, backoff: 2.0 }' },
+  { label: 'continue_on_error-', detail: 'Continue si ce step échoue',
+    insertText: 'continue_on_error: true' },
+  { label: 'inputs-', detail: 'Section inputs au top-level',
+    insertText: 'inputs:\n  url:\n    type: string\n    default: https://example.com' },
+  { label: 'step-', detail: 'Step atomique avec id et tool',
+    insertText: '- id: my_step\n  tool: web_fetch\n  args:\n    url: "{{ inputs.url }}"' },
+]
+
+function makeYamlCompletions(tools: CanvasForgeTool[]) {
+  return (ctx: CompletionContext): CompletionResult | null => {
+    const lineFrom = ctx.state.doc.lineAt(ctx.pos)
+    const lineText = lineFrom.text.slice(0, ctx.pos - lineFrom.from)
+    // Match "tool: <partial>" → suggérer les noms de wolf_tools
+    const toolMatch = lineText.match(/(^|[\s\-])tool:\s*([\w-]*)$/)
+    if (toolMatch) {
+      const startCol = ctx.pos - toolMatch[2].length
+      return {
+        from: startCol,
+        options: tools.map(t => ({
+          label: t.name,
+          detail: t.description.slice(0, 60),
+          type: 'function',
+          info: t.description,
+        })),
+        validFor: /^[\w-]*$/,
+      }
+    }
+    // Sinon, snippets en début de ligne ou après un tiret de liste
+    const word = ctx.matchBefore(/[\w_-]+/)
+    if (!word || (word.from === word.to && !ctx.explicit)) return null
+    return {
+      from: word.from,
+      options: FORGE_YAML_SNIPPETS.map(s => ({
+        label: s.label,
+        detail: s.detail,
+        type: 'snippet',
+        apply: s.insertText,
+      })),
+      validFor: /^[\w-]*$/,
+    }
+  }
+}
+
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -524,7 +585,10 @@ function WorkflowsTab() {
                 <CodeMirror
                   value={draft.yaml_def}
                   theme={oneDark}
-                  extensions={[yamlLang()]}
+                  extensions={[
+                    yamlLang(),
+                    autocompletion({ override: [makeYamlCompletions(tools)] }),
+                  ]}
                   onChange={v => setDraft({ ...draft, yaml_def: v })}
                   height="100%"
                   style={{ flex: 1, overflow: 'auto', height: '100%' }}

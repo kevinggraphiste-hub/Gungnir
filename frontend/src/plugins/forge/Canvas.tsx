@@ -14,7 +14,7 @@
  * sont préservés (round-trip safe) mais pas encore éditables visuellement
  * — un avertissement s'affiche dans le node correspondant.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow, Background, Controls, MiniMap,
   useNodesState, useEdgesState, addEdge,
@@ -535,19 +535,24 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
   const [meta, setMeta] = useState<ParseResult['meta']>(initial.meta)
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  // Quand le YAML externe change (ex: switch de workflow), on re-parse.
-  // On compare via une stringification stable du couple (steps,) pour
-  // éviter de regénérer pendant qu'on édite.
+  // Garde le dernier YAML qu'on vient de pousser au parent. À la prochaine
+  // re-render via la boucle parent→yamlValue, on compare : si c'est le
+  // YAML qu'on vient d'envoyer, on skip le re-parse (sinon on perdrait
+  // la sélection à chaque keystroke d'inspector).
+  const lastPushedYamlRef = useRef<string | null>(null)
+
+  // Quand le YAML externe change (ex: switch de workflow ou vue YAML),
+  // on re-parse. On skip si on vient de l'écrire nous-mêmes.
   useEffect(() => {
+    if (lastPushedYamlRef.current === yamlValue) {
+      // Boucle interne — ignore.
+      return
+    }
     const r = yamlToNodes(yamlValue, tools, direction)
     setNodes(r.nodes)
     setEdges(r.edges)
     setMeta(r.meta)
     setSelectedId(null)
-    // On veut re-syncer quand le yaml CHANGE de l'extérieur (workflow
-    // switché par l'user) ; pas pendant nos propres édits puisque
-    // celles-ci passent par onChange→parent→yamlValue (boucle évitée
-    // car parent met à jour son draft.yaml_def via la sérialisation).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [yamlValue])
 
@@ -587,9 +592,13 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [direction])
 
-  // Push YAML au parent à chaque modif locale.
+  // Push YAML au parent à chaque modif locale. On mémorise le YAML
+  // poussé pour que le useEffect ci-dessus ne re-parse pas le YAML
+  // quand il nous revient via yamlValue (boucle qui faisait perdre la
+  // sélection à chaque keystroke).
   const pushYaml = useCallback((nextNodes: StepNode[], nextEdges: Edge[]) => {
     const out = nodesToYaml(nextNodes, nextEdges, meta)
+    lastPushedYamlRef.current = out
     onChange(out)
   }, [meta, onChange])
 
