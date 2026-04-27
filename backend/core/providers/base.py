@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class ChatMessage(BaseModel):
@@ -33,9 +33,17 @@ class ChatMessage(BaseModel):
 class ChatResponse(BaseModel):
     content: str = ""
     model: str
+    # Certains providers/modèles ne retournent pas l'usage tokens (None ou
+    # absent). Pydantic 2 strict refusait None sur `int` → erreur de validation
+    # bloquante côté chat. On accepte None et on normalise à 0 via validator.
     tokens_input: int = 0
     tokens_output: int = 0
     tool_calls: Optional[list[dict]] = None
+
+    @field_validator("tokens_input", "tokens_output", mode="before")
+    @classmethod
+    def _none_to_zero(cls, v):
+        return 0 if v is None else v
 
 
 class GeneratedImage(BaseModel):
