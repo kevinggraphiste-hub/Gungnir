@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react'
+import emojiData from '@emoji-mart/data'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../i18n'
@@ -113,6 +114,82 @@ function TokenBadge({ tokens }: { tokens: number }) {
       <Zap className="w-2.5 h-2.5" />
       <span>{tokens > 999 ? `${(tokens / 1000).toFixed(1)}K` : tokens}</span>
     </span>
+  )
+}
+
+// Picker emoji pour la zone d'input chat. Lazy-load de @emoji-mart pour ne
+// pas alourdir le bundle. position:fixed calé sur le bouton (au-dessus, vu
+// que le toolbar est en bas de l'écran).
+const ChatEmojiPickerLazy = lazy(() => import('@emoji-mart/react'))
+
+function ChatEmojiButton({ onPick }: { onPick: (emoji: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const popRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const update = () => {
+      const r = btnRef.current?.getBoundingClientRect()
+      if (!r) return
+      // emoji-mart fait ~360x440 — on place AU-DESSUS du bouton
+      const top = Math.max(8, r.top - 440 - 6)
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - 380))
+      setPos({ top, left })
+    }
+    update()
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [open])
+
+  return (
+    <>
+      <button ref={btnRef} onClick={() => setOpen(o => !o)}
+        className="flex items-center justify-center rounded-lg transition-colors"
+        style={{
+          width: '26px', height: '26px',
+          background: open ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'transparent',
+          border: `1px solid ${open ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border)'}`,
+          color: open ? 'var(--accent-primary)' : 'var(--text-muted)',
+          fontSize: 14,
+        }}
+        title="Insérer un emoji">
+        😀
+      </button>
+      {open && pos && (
+        <div ref={popRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000 }}>
+          <Suspense fallback={
+            <div className="rounded-lg p-4 text-xs"
+              style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+              Chargement…
+            </div>
+          }>
+            <ChatEmojiPickerLazy
+              data={emojiData}
+              onEmojiSelect={(e: { native: string }) => { onPick(e.native); setOpen(false) }}
+              theme="dark"
+              locale="fr"
+              previewPosition="none"
+              skinTonePosition="search"
+              maxFrequentRows={1}
+              perLine={9}
+            />
+          </Suspense>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -2402,6 +2479,7 @@ export default function Chat() {
               <div className="px-3 pt-3 pb-2">
                 <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
                   placeholder={t('chat.placeholder')} rows={1}
+                  data-chat-input="true"
                   className="w-full bg-transparent text-sm placeholder-[#555] outline-none resize-none"
                   style={{ color: 'var(--text-primary)', minHeight: '36px', maxHeight: '200px' }}
                   onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px' }} />
@@ -2511,6 +2589,24 @@ export default function Chat() {
                   title={t('chat.attachFile')}>
                   <Paperclip className="w-3 h-3" />
                 </button>
+
+                {/* 3.5) Picker emoji — insère à la position du curseur */}
+                <ChatEmojiButton
+                  onPick={(em: string) => {
+                    const ta = document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input]')
+                    const start = ta?.selectionStart ?? input.length
+                    const end = ta?.selectionEnd ?? input.length
+                    const next = input.slice(0, start) + em + input.slice(end)
+                    setInput(next)
+                    requestAnimationFrame(() => {
+                      if (ta) {
+                        ta.focus()
+                        const pos = start + em.length
+                        ta.setSelectionRange(pos, pos)
+                      }
+                    })
+                  }}
+                />
 
                 {/* 4) Génération d'image — ouvre la modal de sélection */}
                 <button

@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
+import emojiData from '@emoji-mart/data'
 import {
   Shield, Plus, Trash2, Check, X, AlertTriangle, Star,
   Bot, Sparkles, Lock, Unlock, Settings as SettingsIcon,
@@ -10,12 +11,11 @@ import { api, apiFetch } from '../services/api'
 import InfoButton from '../components/InfoButton'
 import { PageHeader, TabBar } from '../components/ui'
 
-// ── Emoji picker inline pour les skills ──────────────────────────────────────
-const SKILL_EMOJIS = [
-  '🔍', '📝', '🚀', '💡', '🎯', '⚡', '🛡️', '🔧', '📊', '🌐',
-  '🤖', '💬', '📁', '🎨', '🧪', '📦', '🔗', '🧠', '📋', '✨',
-  '🔥', '💾', '🗂️', '📌', '🏷️', '⚙️', '🎲', '📡', '🧩', '🔑',
-]
+// Picker emoji complet via emoji-mart (≈1500 emojis, recherche FR/EN, catégories,
+// récents, skin tones). Remplace l'ancienne grille hardcodée de 25 emojis.
+// Lazy-load de la lib pour ne pas alourdir le bundle quand le picker n'est pas
+// ouvert — ~150 KB économisés au cold-load de la page.
+const EmojiPickerLazy = lazy(() => import('@emoji-mart/react'))
 
 function SkillIconPicker({ icon, onChange }: { icon: string; onChange: (emoji: string) => void }) {
   const [open, setOpen] = useState(false)
@@ -24,15 +24,17 @@ function SkillIconPicker({ icon, onChange }: { icon: string; onChange: (emoji: s
   const popoverRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
 
-  // Positionnement en `position: fixed` calé sur le bouton — nécessaire parce
-  // que la carte parent a `overflow: hidden`, ce qui clipperait un popover en
-  // position: absolute. Recalcule à chaque ouverture + sur scroll/resize.
+  // position:fixed (vs absolute) parce que la carte parent a overflow:hidden ;
+  // sans ça le popover serait clippé. Recalcule à l'ouverture + scroll/resize.
   useEffect(() => {
     if (!open) return
     const updatePos = () => {
       const r = btnRef.current?.getBoundingClientRect()
       if (!r) return
-      setPos({ top: r.bottom + 4, left: r.left })
+      // emoji-mart picker fait ~360x420px ; on cale à droite si pas la place
+      const top = r.bottom + 4
+      const left = Math.min(r.left, window.innerWidth - 380)
+      setPos({ top, left: Math.max(8, left) })
     }
     updatePos()
     const handler = (e: MouseEvent) => {
@@ -62,30 +64,41 @@ function SkillIconPicker({ icon, onChange }: { icon: string; onChange: (emoji: s
         {icon || <Code className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />}
       </button>
       {open && pos && (
-        <div ref={popoverRef} className="p-2 rounded-lg shadow-lg grid grid-cols-6 gap-1"
-          style={{
-            position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000,
-            background: 'var(--bg-elevated)', border: '1px solid var(--border)', minWidth: 180,
-          }}>
+        <div ref={popoverRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000 }}>
+          {/* Mini barre d'outils au-dessus du picker — bouton « retirer icône » */}
           {icon && (
-            <button
-              onClick={() => { onChange(''); setOpen(false) }}
-              className="w-7 h-7 flex items-center justify-center rounded text-xs transition-colors hover:bg-[var(--bg-secondary)]"
-              title="Retirer l'icône"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              <X className="w-3 h-3" />
-            </button>
+            <div className="flex justify-end mb-1">
+              <button
+                onClick={() => { onChange(''); setOpen(false) }}
+                className="flex items-center gap-1 px-2 py-1 rounded text-[10px] transition-colors"
+                style={{
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-muted)',
+                }}
+                title="Retirer l'icône">
+                <X className="w-3 h-3" /> Retirer
+              </button>
+            </div>
           )}
-          {SKILL_EMOJIS.map(e => (
-            <button
-              key={e}
-              onClick={() => { onChange(e); setOpen(false) }}
-              className="w-7 h-7 flex items-center justify-center rounded text-base transition-colors hover:bg-[var(--bg-secondary)] hover:scale-125"
-            >
-              {e}
-            </button>
-          ))}
+          <Suspense fallback={
+            <div className="rounded-lg p-4 text-xs"
+              style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+              Chargement…
+            </div>
+          }>
+            <EmojiPickerLazy
+              data={emojiData}
+              onEmojiSelect={(e: { native: string }) => { onChange(e.native); setOpen(false) }}
+              theme="dark"
+              locale="fr"
+              previewPosition="none"
+              skinTonePosition="search"
+              maxFrequentRows={1}
+              perLine={9}
+            />
+          </Suspense>
         </div>
       )}
     </div>
