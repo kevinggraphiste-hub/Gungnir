@@ -55,28 +55,116 @@ class AgentLoopResult:
 
 def _parse_text_tool_calls(text: str) -> list[dict] | None:
     """Extrait des tool_calls depuis le texte LLM quand le provider ne supporte
-    pas le function calling natif. Format prioritaire : <tool_call>JSON</tool_call>.
+    pas le function calling natif.
+
+    Trois formats reconnus (les modèles ne sont pas standardisés) :
+    1. JSON :   <tool_call>{"name": "X", "arguments": {...}}</tool_call>
+    2. XML-style :
+        <tool_call>
+          <function=NAME>
+            <parameter=KEY>value</parameter>
+          </function>
+        </tool_call>
+    3. Anthropic Claude style :
+        <function_calls>
+          <invoke name="X">
+            <parameter name="K">v</parameter>
+          </invoke>
+        </function_calls>
     """
     if not text:
         return None
-    tool_names = set(WOLF_EXECUTORS.keys())
+    # MCP/plugin tools ont aussi leurs executors discoverés — on importe le
+    # registre complet (lazy pour éviter les cycles).
+    try:
+        from backend.core.agents.wolf_tools import _plugin_executors_discovered as _disc
+    except Exception:
+        _disc = {}
+    tool_names = set(WOLF_EXECUTORS.keys()) | set(_disc.keys())
     parsed: list[dict] = []
+
+    def _accept(name: str, args: dict):
+        if name and name in tool_names:
+            parsed.append({
+                "id": f"textparse-{_uuid.uuid4().hex[:8]}",
+                "type": "function",
+                "function": {"name": name, "arguments": _json.dumps(args)},
+            })
+
+    # 1. Format JSON
     for match in _re.finditer(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', text, _re.DOTALL):
         try:
             obj = _json.loads(match.group(1))
             name = obj.get("name", "")
-            if name in tool_names:
-                args = obj.get("arguments", obj.get("args", {}))
-                if isinstance(args, str):
-                    args = _json.loads(args)
-                parsed.append({
-                    "id": f"textparse-{_uuid.uuid4().hex[:8]}",
-                    "type": "function",
-                    "function": {"name": name, "arguments": _json.dumps(args)},
-                })
+            args = obj.get("arguments", obj.get("args", {}))
+            if isinstance(args, str):
+                args = _json.loads(args)
+            _accept(name, args or {})
         except Exception:
             continue
+
+    # 2. Format XML-style (Mimo, certains Llama fine-tunes)
+    #    <tool_call> <function=NAME> <parameter=KEY>VALUE</parameter>... </function> </tool_call>
+    for tc_match in _re.finditer(r'<tool_call>(.*?)</tool_call>', text, _re.DOTALL):
+        body = tc_match.group(1)
+        fn_match = _re.search(r'<function\s*=\s*([\w_-]+)\s*>', body)
+        if not fn_match:
+            continue
+        name = fn_match.group(1).strip()
+        args: dict = {}
+        for p in _re.finditer(r'<parameter\s*=\s*([\w_-]+)\s*>(.*?)</parameter>',
+                              body, _re.DOTALL):
+            key = p.group(1).strip()
+            raw = p.group(2)
+            # Heuristique : si la valeur ressemble à du JSON (dict/list) ou
+            # à un nombre / bool, on tente le cast.
+            stripped = raw.strip()
+            if stripped.startswith("{") or stripped.startswith("["):
+                try: args[key] = _json.loads(stripped)
+                except Exception: args[key] = raw
+            elif stripped in ("true", "false"):
+                args[key] = stripped == "true"
+            elif stripped.lstrip("-").isdigit():
+                try: args[key] = int(stripped)
+                except Exception: args[key] = raw
+            else:
+                args[key] = raw  # garde la valeur brute (whitespace inclus)
+        _accept(name, args)
+
+    # 3. Format Anthropic Claude (function_calls > invoke name="X")
+    for inv in _re.finditer(
+        r'<function_calls>\s*<invoke\s+name\s*=\s*"([^"]+)"\s*>(.*?)</invoke>\s*</function_calls>',
+        text, _re.DOTALL,
+    ):
+        name = inv.group(1).strip()
+        body = inv.group(2)
+        args = {}
+        for p in _re.finditer(r'<parameter\s+name\s*=\s*"([^"]+)"\s*>(.*?)</parameter>',
+                              body, _re.DOTALL):
+            args[p.group(1)] = p.group(2)
+        _accept(name, args)
+
     return parsed or None
+
+
+# Strip les balises tool_call orphelines (non parsables ou résiduelles)
+# pour ne pas polluer la réponse finale affichée à l'utilisateur. Conserve
+# tout le reste du texte tel quel.
+_ORPHAN_TOOL_TAGS = [
+    _re.compile(r'<tool_call>.*?</tool_call>', _re.DOTALL),
+    _re.compile(r'<function_calls>.*?</function_calls>', _re.DOTALL),
+    _re.compile(r'<tool_call>.*$', _re.DOTALL),  # tool_call non fermé
+]
+
+
+def _strip_orphan_tool_tags(text: str) -> str:
+    if not text:
+        return text
+    for r in _ORPHAN_TOOL_TAGS:
+        text = r.sub('', text)
+    # Nettoie les espaces multiples laissés derrière.
+    text = _re.sub(r'\n{3,}', '\n\n', text).strip()
+    return text
 
 
 # ── System prompt (contexte temporel) ────────────────────────────────────────
@@ -322,11 +410,15 @@ async def run_agent_loop(
                 "call_id": call_id,
             })
 
-        # Réinjection — deux formats selon le chemin natif ou parsé
+        # Réinjection — deux formats selon le chemin natif ou parsé.
+        # On strip les balises tool_call de l'assistant message remis dans
+        # l'historique : on ne veut pas que le LLM voie son propre format
+        # interne et le répète au tour suivant.
         if is_text_parsed or not native_tool_mode:
+            cleaned_assistant = _strip_orphan_tool_tags(response.content or "")
             messages.append(ChatMessage(
                 role="assistant",
-                content=response.content or "J'exécute les outils demandés...",
+                content=cleaned_assistant or "J'exécute les outils demandés...",
             ))
             summary_lines = []
             for r in all_results:
@@ -362,6 +454,22 @@ async def run_agent_loop(
             pass
 
     final_content = (response.content if response else "") or ""
+    # Nettoyage cosmétique : si le LLM a laissé des balises <tool_call>
+    # orphelines (parser non-natif, modèles Mimo/Llama qui crachent leur
+    # format interne dans la réponse finale), on les retire avant de
+    # renvoyer à l'UI. Sinon l'user voit du XML brut au lieu d'une
+    # réponse humaine.
+    if final_content:
+        cleaned = _strip_orphan_tool_tags(final_content)
+        # Si après nettoyage la réponse est vide ou réduite à rien,
+        # on force un fallback humain plutôt que de laisser un blanc.
+        if not cleaned.strip() and tool_events:
+            cleaned = (
+                "J'ai exécuté les outils mais le modèle a retourné un format "
+                "interne au lieu d'un texte humain. Reformule ta demande, "
+                "ou demande-moi de te résumer ce que j'ai trouvé."
+            )
+        final_content = cleaned
 
     return AgentLoopResult(
         content=final_content,
