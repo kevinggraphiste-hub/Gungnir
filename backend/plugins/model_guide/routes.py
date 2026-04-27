@@ -421,18 +421,50 @@ async def get_quickpicks():
     """
     or_models = await _fetch_openrouter_models()
 
-    # All candidates ordered by preference (first available wins)
+    # All candidates ordered by preference (first available wins).
+    # Mise à jour 2026-04 : on priorise les modèles state-of-the-art
+    # (Claude 4.7/4.6, GPT-5, Mistral Large Latest, Gemini 2.5) avec
+    # fallback vers les anciennes versions si non dispo chez l'user.
     candidates = [
-        {"label": "Usage quotidien", "options": ["google/gemini-2.5-flash", "google/gemini-2.0-flash"], "provider_hint": "gemini"},
-        {"label": "Code & agents", "options": ["anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4.6", "anthropic/claude-3.7-sonnet"], "provider_hint": "anthropic"},
-        {"label": "Raisonnement", "options": ["deepseek/deepseek-r1", "openai/o1", "anthropic/claude-3.7-sonnet:thinking"], "provider_hint": "deepseek"},
-        {"label": "Polyvalent eco", "options": ["deepseek/deepseek-chat", "deepseek/deepseek-v3-0324", "meta-llama/llama-4-maverick"], "provider_hint": "deepseek"},
-        {"label": "Ultra-rapide", "options": ["google/gemini-2.0-flash-lite-001", "google/gemini-2.0-flash", "openai/gpt-4o-mini"], "provider_hint": "gemini"},
-        {"label": "Flagship", "options": ["anthropic/claude-opus-4", "anthropic/claude-opus-4.6", "openai/o1"], "provider_hint": "anthropic"},
-        {"label": "Contexte long", "options": ["google/gemini-2.5-pro", "google/gemini-1.5-pro", "anthropic/claude-opus-4.6"], "provider_hint": "gemini"},
-        {"label": "Multimodal", "options": ["openai/gpt-4o", "google/gemini-2.5-flash", "anthropic/claude-sonnet-4"], "provider_hint": "openai"},
-        {"label": "Recherche web", "options": ["perplexity/sonar", "perplexity/sonar-pro", "perplexity/sonar-reasoning"], "provider_hint": "perplexity"},
-        {"label": "Open-source", "options": ["meta-llama/llama-4-maverick", "meta-llama/llama-3.3-70b-instruct", "qwen/qwen-2.5-72b-instruct"], "provider_hint": "meta"},
+        {"label": "Usage quotidien", "options": [
+            "google/gemini-2.5-flash", "google/gemini-2.0-flash",
+        ], "provider_hint": "gemini"},
+        {"label": "Code & agents", "options": [
+            "anthropic/claude-sonnet-4.6", "anthropic/claude-sonnet-4",
+            "anthropic/claude-3.7-sonnet",
+        ], "provider_hint": "anthropic"},
+        {"label": "Raisonnement", "options": [
+            "anthropic/claude-opus-4.7", "deepseek/deepseek-r1",
+            "openai/o1", "anthropic/claude-3.7-sonnet:thinking",
+        ], "provider_hint": "anthropic"},
+        {"label": "Polyvalent eco", "options": [
+            "deepseek/deepseek-chat", "deepseek/deepseek-v3-0324",
+            "mistralai/mistral-large-latest",
+        ], "provider_hint": "deepseek"},
+        {"label": "Ultra-rapide", "options": [
+            "google/gemini-2.0-flash-lite-001", "google/gemini-2.0-flash",
+            "openai/gpt-4o-mini",
+        ], "provider_hint": "gemini"},
+        {"label": "Flagship", "options": [
+            "anthropic/claude-opus-4.7", "openai/gpt-5",
+            "anthropic/claude-opus-4.6", "anthropic/claude-opus-4",
+        ], "provider_hint": "anthropic"},
+        {"label": "Contexte long", "options": [
+            "anthropic/claude-opus-4.7", "google/gemini-2.5-pro",
+            "google/gemini-1.5-pro",
+        ], "provider_hint": "anthropic"},
+        {"label": "Multimodal", "options": [
+            "openai/gpt-5", "openai/gpt-4o",
+            "google/gemini-2.5-flash", "anthropic/claude-sonnet-4.6",
+        ], "provider_hint": "openai"},
+        {"label": "Recherche web", "options": [
+            "perplexity/sonar-pro", "perplexity/sonar",
+            "perplexity/sonar-reasoning",
+        ], "provider_hint": "perplexity"},
+        {"label": "Open-source", "options": [
+            "meta-llama/llama-4-maverick", "meta-llama/llama-3.3-70b-instruct",
+            "qwen/qwen-2.5-72b-instruct",
+        ], "provider_hint": "meta"},
     ]
 
     result = []

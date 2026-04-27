@@ -1,7 +1,7 @@
 {
   "name": "model_guide",
   "display_name": "Modeles",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "icon": "BookOpen",
   "route": "/models",
   "sidebar_position": 8,

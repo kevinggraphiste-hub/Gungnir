@@ -369,7 +369,11 @@ export default function ModelGuidePlugin() {
             <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
               Choix rapide
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 6 }}>
+            {/* Grid responsive : 2 cols mobile, 3 sm, 4 md, 5 lg+
+                → en plein écran (10 quickpicks) ça donne 5×2 lignes
+                équilibrées. Le min de chaque card reste lisible sur
+                petit écran grâce au breakdown progressif. */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
               {quickPicks.map(qp => {
                 const qpStyle = QP_COLORS[qp.provider_hint] || { bg: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }
                 return (
