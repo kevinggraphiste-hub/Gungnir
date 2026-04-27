@@ -24,7 +24,7 @@ import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 import { humanizeTool, groupByCategory } from './toolLabels'
 
-const PLUGIN_VERSION = '0.12.0'
+const PLUGIN_VERSION = '0.13.0'
 const API = '/api/plugins/forge'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -99,6 +99,7 @@ const TABS = [
   { key: 'workflows' as const, label: 'Workflows', icon: <Workflow size={14} /> },
   { key: 'templates' as const, label: 'Templates', icon: <Sparkles size={14} /> },
   { key: 'marketplace' as const, label: 'Marketplace', icon: <Store size={14} /> },
+  { key: 'variables' as const, label: 'Variables', icon: <BookmarkPlus size={14} /> },
   { key: 'runs' as const, label: 'Historique', icon: <Clock size={14} /> },
   { key: 'tools' as const, label: 'Outils dispo', icon: <Zap size={14} /> },
 ]
@@ -210,7 +211,7 @@ function fmtDuration(ms: number | null | undefined): string {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export default function ForgePlugin() {
-  const [tab, setTab] = useState<'workflows' | 'runs' | 'tools' | 'templates' | 'marketplace'>('workflows')
+  const [tab, setTab] = useState<'workflows' | 'runs' | 'tools' | 'templates' | 'marketplace' | 'variables'>('workflows')
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -234,6 +235,7 @@ export default function ForgePlugin() {
       {tab === 'workflows' && <WorkflowsTab />}
       {tab === 'templates' && <TemplatesTab />}
       {tab === 'marketplace' && <MarketplaceTab />}
+      {tab === 'variables' && <VariablesTab />}
       {tab === 'runs' && <RunsTab />}
       {tab === 'tools' && <ToolsTab />}
     </div>
@@ -556,6 +558,20 @@ function WorkflowsTab() {
             </PrimaryButton>
             <SecondaryButton size="sm" onClick={handleSave}>Sauvegarder</SecondaryButton>
             <SecondaryButton size="sm" icon={<Download size={13} />} onClick={handleExport}>Exporter</SecondaryButton>
+            <SecondaryButton size="sm" icon={<Send size={13} />} onClick={async () => {
+              if (!active) return
+              const cat = window.prompt('Catégorie (Veille / Dev / Productivité / IA / Notifications / Autre)', 'Autre') || 'Autre'
+              if (!confirm(`Publier "${active.name}" sur la Marketplace publique ?`)) return
+              const r = await api<{ ok: boolean; marketplace_id: number }>('/marketplace/publish', {
+                method: 'POST',
+                body: JSON.stringify({
+                  workflow_id: active.id, name: active.name,
+                  description: active.description, category: cat,
+                  tags: active.tags,
+                }),
+              })
+              if (r?.marketplace_id) alert(`Workflow publié sur la Marketplace (#${r.marketplace_id}).`)
+            }}>Publier</SecondaryButton>
             <SecondaryButton size="sm" danger icon={<Trash2 size={13} />} onClick={handleDelete}>Supprimer</SecondaryButton>
           </div>
           <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
@@ -831,13 +847,27 @@ function TriggersPanel({ workflowId }: { workflowId: number }) {
   )
 }
 
+interface WebhookHistEntry { ts: string; mode: string; method: string; body: any; inputs: any }
+
 function TriggerCard({ t, onToggle, onDelete }: { t: ForgeTrigger; onToggle: () => void; onDelete: () => void }) {
   const [copied, setCopied] = useState(false)
-  const copyUrl = () => {
-    if (!t.webhook_url) return
-    navigator.clipboard.writeText(t.webhook_url)
+  const [history, setHistory] = useState<WebhookHistEntry[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const copyUrl = (url: string) => {
+    if (!url) return
+    navigator.clipboard.writeText(url)
     setCopied(true); setTimeout(() => setCopied(false), 1200)
   }
+  const loadHistory = async () => {
+    const r = await api<{ ok: boolean; history: WebhookHistEntry[] }>(`/triggers/${t.id}/history`, undefined, true)
+    setHistory(r?.history || [])
+    setShowHistory(true)
+  }
+  const replay = async (idx: number) => {
+    const r = await api<{ ok: boolean; run_id: number; status: string }>(`/triggers/${t.id}/replay/${idx}`, { method: 'POST' })
+    if (r?.run_id) alert(`Run #${r.run_id} lancé (${r.status}). Voir l'onglet Historique.`)
+  }
+  const testUrl = t.webhook_url ? t.webhook_url.replace(/\/webhook\//, '/webhook/').replace(/\/?$/, '') + '/test' : ''
   return (
     <div style={{ padding: 10, marginBottom: 8, background: 'var(--bg-tertiary)', border: `1px solid ${t.enabled ? 'rgba(220,38,38,0.3)' : 'var(--border)'}`, borderRadius: 6, opacity: t.enabled ? 1 : 0.55 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -855,16 +885,52 @@ function TriggerCard({ t, onToggle, onDelete }: { t: ForgeTrigger; onToggle: () 
           <X size={11} />
         </button>
       </div>
-      {t.type === 'webhook' && t.webhook_url && (
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center', padding: 4, background: 'var(--bg-primary)', borderRadius: 4 }}>
+      {t.type === 'webhook' && t.webhook_url && (<>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', padding: 4, background: 'var(--bg-primary)', borderRadius: 4, marginBottom: 4 }}>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>PROD</span>
           <span style={{ flex: 1, fontSize: 9, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.webhook_url}</span>
-          <button onClick={copyUrl}
-            title="Copier l'URL"
+          <button onClick={() => copyUrl(t.webhook_url || '')}
+            title="Copier l'URL prod"
             style={{ padding: 3, background: 'transparent', border: 'none', cursor: 'pointer', color: copied ? '#22c55e' : 'var(--text-muted)' }}>
             <Copy size={11} />
           </button>
         </div>
-      )}
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', padding: 4, background: 'var(--bg-primary)', borderRadius: 4 }}>
+          <span style={{ fontSize: 9, color: '#f59e0b', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}><FlaskConical size={9} /> TEST</span>
+          <span style={{ flex: 1, fontSize: 9, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{testUrl}</span>
+          <button onClick={() => copyUrl(testUrl)}
+            title="Copier l'URL test (ne lance pas le workflow)"
+            style={{ padding: 3, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <Copy size={11} />
+          </button>
+        </div>
+        <button onClick={() => showHistory ? setShowHistory(false) : loadHistory()}
+          style={{ marginTop: 6, width: '100%', padding: '4px 8px', fontSize: 10, cursor: 'pointer', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-secondary)' }}>
+          {showHistory ? 'Masquer historique' : 'Voir derniers POSTs reçus'}
+        </button>
+        {showHistory && (
+          <div style={{ marginTop: 6, maxHeight: 200, overflow: 'auto' }}>
+            {history.length === 0 && <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: 4, fontStyle: 'italic' }}>Aucun POST reçu encore.</div>}
+            {history.map((h, idx) => (
+              <div key={idx} style={{ padding: 4, marginBottom: 3, background: 'var(--bg-primary)', borderRadius: 3, border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 8, color: h.mode === 'test' ? '#f59e0b' : 'var(--scarlet)', fontWeight: 700, textTransform: 'uppercase' }}>{h.mode}</span>
+                  <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{h.method}</span>
+                  <span style={{ fontSize: 8, color: 'var(--text-muted)', flex: 1 }}>{fmtDate(h.ts)}</span>
+                  <button onClick={() => replay(idx)}
+                    title="Rejouer"
+                    style={{ padding: '1px 4px', fontSize: 8, fontWeight: 600, background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 2, cursor: 'pointer' }}>
+                    Rejouer
+                  </button>
+                </div>
+                <pre style={{ margin: 0, marginTop: 3, fontSize: 8, fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 60, overflow: 'auto' }}>
+                  {JSON.stringify(h.body, null, 2).slice(0, 500)}
+                </pre>
+              </div>
+            ))}
+          </div>
+        )}
+      </>)}
       {t.type === 'cron' && (
         <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', padding: '3px 6px', background: 'var(--bg-primary)', borderRadius: 4, display: 'inline-block' }}>
           {t.config.expression || '?'}
@@ -1074,6 +1140,118 @@ function TemplatesTab() {
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAB — Variables (globals user-scoped, CRUD direct)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface ForgeGlobalVar {
+  id: number
+  key: string
+  value: any
+  updated_at: string | null
+}
+
+function VariablesTab() {
+  const [vars, setVars] = useState<ForgeGlobalVar[]>([])
+  const [loading, setLoading] = useState(true)
+  const [newKey, setNewKey] = useState('')
+  const [newValue, setNewValue] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const r = await api<{ ok: boolean; globals: ForgeGlobalVar[] }>('/globals', undefined, true)
+    setVars(r?.globals || [])
+    setLoading(false)
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const upsert = async (key: string, valueRaw: string) => {
+    if (!key.trim()) return
+    let value: any = valueRaw
+    // Auto-cast : essai JSON pour {}, [], booléens, nombres, sinon string brut.
+    const t = valueRaw.trim()
+    if (t.startsWith('{') || t.startsWith('[')) {
+      try { value = JSON.parse(t) } catch { value = valueRaw }
+    } else if (t === 'true' || t === 'false') value = t === 'true'
+    else if (t !== '' && !isNaN(Number(t))) value = Number(t)
+    const r = await api(`/globals`, {
+      method: 'POST',
+      body: JSON.stringify({ key: key.trim(), value }),
+    })
+    if (r) load()
+  }
+
+  const remove = async (id: number) => {
+    if (!confirm('Supprimer cette variable ?')) return
+    await api(`/globals/${id}`, { method: 'DELETE' })
+    load()
+  }
+
+  return (
+    <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 16px' }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
+        Variables <strong>globales</strong> accessibles dans tous tes workflows via <code>{`{{ globals.X }}`}</code>.
+        Pratique pour stocker des URLs d'API, IDs de canaux, secrets non-critiques.
+        Pour les vraies credentials → Intégrations OAuth.
+      </div>
+
+      {/* Création rapide */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, padding: 10, background: 'var(--bg-secondary)', borderRadius: 6, border: '1px solid var(--border)' }}>
+        <input value={newKey} onChange={e => setNewKey(e.target.value)}
+          placeholder="clé (ex: api_url)"
+          style={{ width: 180, padding: '5px 8px', fontSize: 11, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }} />
+        <input value={newValue} onChange={e => setNewValue(e.target.value)}
+          placeholder='valeur (string, nombre, JSON...)'
+          style={{ flex: 1, padding: '5px 8px', fontSize: 11, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }} />
+        <button onClick={() => { upsert(newKey, newValue); setNewKey(''); setNewValue('') }}
+          style={{ padding: '5px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4 }}>
+          Ajouter
+        </button>
+      </div>
+
+      {loading && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Chargement…</div>}
+      {!loading && vars.length === 0 && (
+        <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>Aucune variable globale.</div>
+      )}
+      {!loading && vars.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+              <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>CLÉ</th>
+              <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>VALEUR</th>
+              <th style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>MÀJ</th>
+              <th style={{ width: 30 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {vars.map(v => (
+              <tr key={v.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ padding: '7px 10px', fontFamily: 'ui-monospace, monospace', color: 'var(--scarlet)', fontWeight: 600 }}>
+                  {`{{ globals.${v.key} }}`}
+                </td>
+                <td style={{ padding: '7px 10px', fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)' }}>
+                  <input
+                    value={typeof v.value === 'object' ? JSON.stringify(v.value) : String(v.value ?? '')}
+                    onBlur={e => upsert(v.key, e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                    style={{ width: '100%', padding: '3px 6px', fontSize: 11, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
+                </td>
+                <td style={{ padding: '7px 10px', textAlign: 'right', fontSize: 9, color: 'var(--text-muted)' }}>{fmtDate(v.updated_at)}</td>
+                <td style={{ padding: '7px 10px' }}>
+                  <button onClick={() => remove(v.id)}
+                    style={{ padding: 0, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                    <X size={12} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }

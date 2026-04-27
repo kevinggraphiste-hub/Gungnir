@@ -23,7 +23,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import yaml from 'js-yaml'
-import { Plus, Search, Trash2, Wand2, AlertTriangle, ChevronDown, ChevronRight, MoveDown, MoveRight } from 'lucide-react'
+import { Plus, Search, Trash2, Wand2, AlertTriangle, ChevronDown, ChevronRight, MoveDown, MoveRight, X } from 'lucide-react'
 import { humanizeTool, groupByCategory } from './toolLabels'
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -357,14 +357,166 @@ function ToolPalette({ tools, onAdd, onAddControl }: {
 
 // ── Step inspector (panel droit, édition d'un node) ──────────────────────
 
-function StepInspector({ node, tool, onChange, onDelete }: {
+// ── Sub-editor pour bloc parallel ────────────────────────────────────────
+//
+// Affiche les branches (sub-steps) du parallel sous forme de mini-cards
+// éditables. Chaque branche = un step minimal (tool + args). On peut
+// ajouter, supprimer, et éditer les args en JSON simple.
+
+function ParallelSubEditor({ branches, tools, onChange }: {
+  branches: any[]
+  tools: ForgeTool[]
+  onChange: (branches: any[]) => void
+}) {
+  const update = (idx: number, patch: any) => {
+    const next = branches.slice()
+    next[idx] = { ...next[idx], ...patch }
+    onChange(next)
+  }
+  const remove = (idx: number) => onChange(branches.filter((_, i) => i !== idx))
+  const add = () => onChange([...branches, { tool: 'web_fetch', args: { url: '' } }])
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--scarlet)' }}>BRANCHES PARALLÈLES</span>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>· {branches.length}</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={add}
+          style={{ padding: '2px 6px', fontSize: 10, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 3, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          <Plus size={9} /> Ajouter
+        </button>
+      </div>
+      {branches.length === 0 && (
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic', padding: 6 }}>Aucune branche. Clique Ajouter pour créer la première.</div>
+      )}
+      {branches.map((br, idx) => (
+        <div key={idx} style={{ padding: 8, marginBottom: 6, background: 'var(--bg-tertiary)', borderRadius: 4, border: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)' }}>#{idx + 1}</span>
+            <input
+              value={br.tool || ''}
+              onChange={e => update(idx, { tool: e.target.value })}
+              list="forge-tools-list"
+              placeholder="tool name"
+              style={{ flex: 1, padding: '2px 4px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--scarlet)', outline: 'none' }}
+            />
+            <button onClick={() => remove(idx)}
+              style={{ padding: 2, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              <X size={10} />
+            </button>
+          </div>
+          <textarea
+            value={JSON.stringify(br.args || {}, null, 2)}
+            onChange={e => {
+              try { update(idx, { args: JSON.parse(e.target.value) }) }
+              catch { /* ignore parse errors pendant la frappe */ }
+            }}
+            placeholder="args JSON"
+            style={{ width: '100%', minHeight: 50, padding: 4, fontSize: 9, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none', resize: 'vertical' }}
+          />
+        </div>
+      ))}
+      <datalist id="forge-tools-list">
+        {tools.map(t => <option key={t.name} value={t.name}>{t.description.slice(0, 60)}</option>)}
+      </datalist>
+    </div>
+  )
+}
+
+
+// ── Sub-editor pour bloc for_each ────────────────────────────────────────
+
+function ForEachSubEditor({ forEachExpr, asName, doSteps, filter, breakOn, tools, onChange }: {
+  forEachExpr: string
+  asName: string
+  doSteps: any[]
+  filter: string
+  breakOn: string
+  tools: ForgeTool[]
+  onChange: (patch: any) => void
+}) {
+  const updateSub = (idx: number, patch: any) => {
+    const next = doSteps.slice()
+    next[idx] = { ...next[idx], ...patch }
+    onChange({ do: next })
+  }
+  const removeSub = (idx: number) => onChange({ do: doSteps.filter((_, i) => i !== idx) })
+  const addSub = () => onChange({ do: [...doSteps, { tool: 'web_fetch', args: {} }] })
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--scarlet)', marginBottom: 4 }}>BOUCLE (for_each)</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 4, marginBottom: 6 }}>
+        <input value={forEachExpr} onChange={e => onChange({ for_each: e.target.value })}
+          placeholder="{{ inputs.items }}"
+          style={{ padding: '3px 6px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
+        <input value={asName} onChange={e => onChange({ as: e.target.value })}
+          placeholder="as: item"
+          style={{ padding: '3px 6px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
+      </div>
+      <div style={{ marginBottom: 6 }}>
+        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 2 }}>filter (skip si false)</div>
+        <input value={filter} onChange={e => onChange({ filter: e.target.value || undefined })}
+          placeholder='ex: {{ item.score > 0.5 }}'
+          style={{ width: '100%', padding: '3px 6px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 2 }}>break_on (sortir si vrai)</div>
+        <input value={breakOn} onChange={e => onChange({ break_on: e.target.value || undefined })}
+          placeholder='ex: {{ steps.X.found }}'
+          style={{ width: '100%', padding: '3px 6px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--scarlet)' }}>SUB-STEPS (do)</span>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>· {doSteps.length}</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={addSub}
+          style={{ padding: '2px 6px', fontSize: 10, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 3, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          <Plus size={9} /> Ajouter
+        </button>
+      </div>
+      {doSteps.map((s, idx) => (
+        <div key={idx} style={{ padding: 8, marginBottom: 6, background: 'var(--bg-tertiary)', borderRadius: 4, border: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)' }}>#{idx + 1}</span>
+            <input
+              value={s.tool || ''}
+              onChange={e => updateSub(idx, { tool: e.target.value })}
+              list="forge-tools-list"
+              placeholder="tool name"
+              style={{ flex: 1, padding: '2px 4px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--scarlet)', outline: 'none' }}
+            />
+            <button onClick={() => removeSub(idx)}
+              style={{ padding: 2, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              <X size={10} />
+            </button>
+          </div>
+          <textarea
+            value={JSON.stringify(s.args || {}, null, 2)}
+            onChange={e => {
+              try { updateSub(idx, { args: JSON.parse(e.target.value) }) }
+              catch { /* ignore */ }
+            }}
+            placeholder="args JSON"
+            style={{ width: '100%', minHeight: 50, padding: 4, fontSize: 9, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none', resize: 'vertical' }}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+
+function StepInspector({ node, tool, tools, onChange, onDelete }: {
   node: StepNode
   tool: ForgeTool | null
+  tools: ForgeTool[]
   onChange: (next: Partial<StepData['step']> & { id?: string }) => void
   onDelete: () => void
 }) {
   const step = node.data.step
   const args: Record<string, any> = (step.args || {}) as Record<string, any>
+  const isParallel = !!step.parallel
+  const isForEach = !!step.for_each
   return (
     <div style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)', overflow: 'hidden' }}>
       <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
@@ -376,6 +528,27 @@ function StepInspector({ node, tool, onChange, onDelete }: {
         />
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 14 }}>
+        {/* Sub-canvas parallel : édition inline des branches */}
+        {isParallel && (
+          <ParallelSubEditor
+            branches={Array.isArray(step.parallel) ? step.parallel : []}
+            tools={tools}
+            onChange={(next) => onChange({ parallel: next })}
+          />
+        )}
+        {/* Sub-canvas for_each : édition inline des sub-steps */}
+        {isForEach && (
+          <ForEachSubEditor
+            forEachExpr={String(step.for_each || '')}
+            asName={String(step.as || 'item')}
+            doSteps={Array.isArray(step.do) ? step.do : []}
+            filter={step.filter ? String(step.filter) : ''}
+            breakOn={step.break_on ? String(step.break_on) : ''}
+            tools={tools}
+            onChange={(next) => onChange(next)}
+          />
+        )}
+        {!isParallel && !isForEach && (<>
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>OUTIL</div>
         <div style={{ fontSize: 12, fontFamily: 'ui-monospace, monospace', color: 'var(--scarlet)', marginBottom: 6 }}>
           {step.tool || <span style={{ color: 'var(--text-muted)' }}>—</span>}
@@ -443,14 +616,23 @@ function StepInspector({ node, tool, onChange, onDelete }: {
         ) : (
           <div style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic' }}>Pas d'arguments documentés.</div>
         )}
+        </>)}
 
         <div style={{ marginTop: 16, fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>CONDITION (if)</div>
         <input
           value={String(step.if || '')}
           placeholder="ex: {{ steps.fetch.ok }}"
+          list="forge-if-suggestions"
           onChange={e => onChange({ if: e.target.value || undefined })}
           style={{ width: '100%', padding: '4px 6px', fontSize: 11, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
         />
+        <datalist id="forge-if-suggestions">
+          <option value="{{ steps.previous.ok }}" />
+          <option value="{{ inputs.X }}" />
+          <option value="{{ steps.classify.category == 'bug' }}" />
+          <option value="{{ globals.feature_flag }}" />
+          <option value="{{ static.last_id != steps.fetch.id }}" />
+        </datalist>
 
         {/* Retry policy : count + délai. 0 = pas de retry. */}
         <div style={{ marginTop: 12, fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>RETRY POLICY</div>
@@ -888,6 +1070,7 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
         <StepInspector
           node={selectedNode}
           tool={selectedNode.data.tool}
+          tools={tools}
           onChange={(patch) => handleNodeChange(selectedNode.id, patch)}
           onDelete={() => handleDelete(selectedNode.id)}
         />

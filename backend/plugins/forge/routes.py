@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -22,7 +22,7 @@ from backend.core.api.auth_helpers import open_mode_fallback_user_id
 
 from .models import (
     ForgeWorkflow, ForgeWorkflowRun, ForgeTrigger, ForgeWorkflowVersion,
-    ForgeMarketplaceTemplate,
+    ForgeMarketplaceTemplate, ForgeGlobal, ForgeStatic,
 )
 from .runner import run_workflow, parse_workflow_yaml
 from .n8n_import import n8n_to_forge
@@ -140,6 +140,139 @@ async def templates_get(tid: str):
     if not t:
         raise HTTPException(status_code=404, detail="Template introuvable")
     return {"ok": True, "template": t}
+
+
+# ── Globals (variables user-scoped) — endpoints REST pour UI ────────────
+
+
+class GlobalIn(BaseModel):
+    key: str
+    value: Any = None
+
+
+@router.get("/globals")
+async def list_globals(request: Request,
+                       session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeGlobal).where(ForgeGlobal.user_id == uid)
+        .order_by(ForgeGlobal.key)
+    )
+    return {"ok": True, "globals": [
+        {"id": g.id, "key": g.key, "value": g.value_json,
+         "updated_at": g.updated_at.isoformat() if g.updated_at else None}
+        for g in rs.scalars().all()
+    ]}
+
+
+@router.post("/globals")
+async def upsert_global(body: GlobalIn, request: Request,
+                        session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    if not body.key.strip():
+        raise HTTPException(status_code=400, detail="Clé vide")
+    rs = await session.execute(
+        select(ForgeGlobal).where(
+            ForgeGlobal.user_id == uid, ForgeGlobal.key == body.key.strip(),
+        )
+    )
+    g = rs.scalar_one_or_none()
+    if g:
+        g.value_json = body.value
+    else:
+        g = ForgeGlobal(user_id=uid, key=body.key.strip(), value_json=body.value)
+        session.add(g)
+    await session.commit()
+    await session.refresh(g)
+    return {"ok": True, "global": {"id": g.id, "key": g.key, "value": g.value_json}}
+
+
+@router.delete("/globals/{gid}")
+async def delete_global(gid: int, request: Request,
+                        session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    await session.execute(
+        _sqldelete(ForgeGlobal).where(
+            ForgeGlobal.id == gid, ForgeGlobal.user_id == uid,
+        )
+    )
+    await session.commit()
+    return {"ok": True}
+
+
+# ── Static data (workflow-scoped) — endpoints REST pour UI ──────────────
+
+
+@router.get("/workflows/{wf_id}/static")
+async def list_static(wf_id: int, request: Request,
+                      session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == wf_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    if not rs.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    rs = await session.execute(
+        select(ForgeStatic).where(
+            ForgeStatic.user_id == uid, ForgeStatic.workflow_id == wf_id,
+        ).order_by(ForgeStatic.key)
+    )
+    return {"ok": True, "static": [
+        {"id": s.id, "key": s.key, "value": s.value_json,
+         "updated_at": s.updated_at.isoformat() if s.updated_at else None}
+        for s in rs.scalars().all()
+    ]}
+
+
+@router.post("/workflows/{wf_id}/static")
+async def upsert_static(wf_id: int, body: GlobalIn, request: Request,
+                        session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    rs = await session.execute(
+        select(ForgeWorkflow).where(
+            ForgeWorkflow.id == wf_id, ForgeWorkflow.user_id == uid,
+        )
+    )
+    if not rs.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Workflow introuvable")
+    rs = await session.execute(
+        select(ForgeStatic).where(
+            ForgeStatic.user_id == uid, ForgeStatic.workflow_id == wf_id,
+            ForgeStatic.key == body.key.strip(),
+        )
+    )
+    s = rs.scalar_one_or_none()
+    if s:
+        s.value_json = body.value
+    else:
+        s = ForgeStatic(user_id=uid, workflow_id=wf_id,
+                        key=body.key.strip(), value_json=body.value)
+        session.add(s)
+    await session.commit()
+    await session.refresh(s)
+    return {"ok": True, "static": {"id": s.id, "key": s.key, "value": s.value_json}}
+
+
+@router.delete("/workflows/{wf_id}/static/{sid}")
+async def delete_static(wf_id: int, sid: int, request: Request,
+                        session: AsyncSession = Depends(get_session)):
+    uid = await _uid(request, session)
+    _require_uid(uid)
+    await session.execute(
+        _sqldelete(ForgeStatic).where(
+            ForgeStatic.id == sid, ForgeStatic.user_id == uid,
+            ForgeStatic.workflow_id == wf_id,
+        )
+    )
+    await session.commit()
+    return {"ok": True}
 
 
 # ── Marketplace communautaire ────────────────────────────────────────────
