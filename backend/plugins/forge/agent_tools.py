@@ -19,6 +19,7 @@ from backend.core.agents.wolf_tools import get_user_context
 from .llm_tools import LLM_TOOL_SCHEMAS, LLM_EXECUTORS
 from .flow_tools import FLOW_TOOL_SCHEMAS, FLOW_EXECUTORS
 from .state_tools import STATE_TOOL_SCHEMAS, STATE_EXECUTORS
+from .channel_tools import CHANNEL_TOOL_SCHEMAS, CHANNEL_EXECUTORS
 
 
 TOOL_SCHEMAS: list[dict] = [
@@ -143,6 +144,27 @@ TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "forge_list_tools",
+            "description": (
+                "Liste TOUS les tools disponibles dans un workflow Forge (~140 tools auto-"
+                "découverts depuis les plugins Gungnir). Indispensable AVANT de créer un workflow "
+                "via forge_create_workflow pour vérifier les noms exacts et leurs paramètres "
+                "requis. Filtre optionnel par catégorie ou substring dans le nom/description."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search": {"type": "string", "description": "Substring (case-insensitive) à matcher dans nom ou description."},
+                    "category": {"type": "string", "description": "Préfixe filtre (ex: 'channel', 'web', 'llm', 'valkyrie')."},
+                    "limit": {"type": "integer", "description": "Max résultats (défaut 50)."},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -215,12 +237,27 @@ async def _forge_get_workflow(workflow_id: int) -> dict:
         }
 
 
-async def _forge_create_workflow(name: str, yaml_def: str,
+def _coerce_to_yaml_string(yaml_def: Any) -> str:
+    """L'agent passe parfois un dict Python au lieu d'une vraie string YAML
+    (quand il génère le workflow inline). On serialise proprement."""
+    if isinstance(yaml_def, str):
+        return yaml_def
+    if isinstance(yaml_def, dict):
+        try:
+            import yaml as _y
+            return _y.dump(yaml_def, allow_unicode=True, sort_keys=False, default_flow_style=False)
+        except Exception:
+            return ""
+    return str(yaml_def or "")
+
+
+async def _forge_create_workflow(name: str, yaml_def: Any,
                                  description: str = "",
                                  tags: Optional[list] = None) -> dict:
     uid = get_user_context()
     if not uid:
         return {"ok": False, "error": "Utilisateur non authentifié."}
+    yaml_def = _coerce_to_yaml_string(yaml_def)
     from .runner import parse_workflow_yaml
     try:
         parse_workflow_yaml(yaml_def)
@@ -242,7 +279,7 @@ async def _forge_create_workflow(name: str, yaml_def: str,
 async def _forge_update_workflow(workflow_id: int,
                                  name: Optional[str] = None,
                                  description: Optional[str] = None,
-                                 yaml_def: Optional[str] = None,
+                                 yaml_def: Any = None,
                                  enabled: Optional[bool] = None,
                                  tags: Optional[list] = None) -> dict:
     uid = get_user_context()
@@ -253,6 +290,7 @@ async def _forge_update_workflow(workflow_id: int,
     from .runner import parse_workflow_yaml
     from sqlalchemy import select
     if yaml_def is not None:
+        yaml_def = _coerce_to_yaml_string(yaml_def)
         try:
             parse_workflow_yaml(yaml_def)
         except ValueError as e:
@@ -374,6 +412,46 @@ async def _forge_list_runs(workflow_id: Optional[int] = None,
         }
 
 
+async def _forge_list_tools(search: Optional[str] = None,
+                             category: Optional[str] = None,
+                             limit: int = 50) -> dict:
+    """Inventaire des tools disponibles dans Forge — destiné à l'agent.
+
+    Lit le registre WOLF (auto-découverte depuis tous les plugins) et
+    retourne nom + description + paramètres requis. Indispensable pour
+    que l'agent vérifie l'existence d'un tool avant de l'utiliser dans
+    un YAML qu'il génère.
+    """
+    from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS
+    s = (search or "").strip().lower()
+    c = (category or "").strip().lower()
+    out = []
+    for sch in WOLF_TOOL_SCHEMAS:
+        fn = sch.get("function") or {}
+        name = fn.get("name", "")
+        desc = fn.get("description", "")
+        if c and not name.lower().startswith(c + "_") and not name.lower().startswith(c):
+            continue
+        if s and s not in name.lower() and s not in desc.lower():
+            continue
+        params = (fn.get("parameters") or {}).get("properties") or {}
+        required = (fn.get("parameters") or {}).get("required") or []
+        out.append({
+            "name": name,
+            "description": desc,
+            "params": [
+                {"name": k, "type": (v or {}).get("type", "any"),
+                 "required": k in required,
+                 "description": (v or {}).get("description", "")[:120]}
+                for k, v in params.items()
+            ],
+        })
+        if len(out) >= max(1, min(int(limit), 200)):
+            break
+    out.sort(key=lambda t: t["name"])
+    return {"ok": True, "count": len(out), "tools": out}
+
+
 async def _forge_get_run(run_id: int) -> dict:
     uid = get_user_context()
     if not uid:
@@ -402,6 +480,7 @@ EXECUTORS: dict[str, Any] = {
     "forge_run_workflow":    _forge_run_workflow,
     "forge_list_runs":       _forge_list_runs,
     "forge_get_run":         _forge_get_run,
+    "forge_list_tools":      _forge_list_tools,
     # Tools LLM exposés aussi via le forge plugin pour profiter de
     # l'auto-discovery — utiles dans les workflows mais aussi accessibles
     # aux sous-agents et au super-agent en chat normal.
@@ -410,7 +489,10 @@ EXECUTORS: dict[str, Any] = {
     **FLOW_EXECUTORS,
     # Tools state : globals user-scoped + static workflow-scoped
     **STATE_EXECUTORS,
+    # Tools channels : envoi générique vers Telegram/Discord/Slack/Email
+    **CHANNEL_EXECUTORS,
 }
 
-# Concatène les schemas LLM + flow + state pour qu'ils soient découverts au boot.
-TOOL_SCHEMAS = TOOL_SCHEMAS + LLM_TOOL_SCHEMAS + FLOW_TOOL_SCHEMAS + STATE_TOOL_SCHEMAS
+# Concatène les schemas LLM + flow + state + channel pour le boot.
+TOOL_SCHEMAS = (TOOL_SCHEMAS + LLM_TOOL_SCHEMAS + FLOW_TOOL_SCHEMAS
+                + STATE_TOOL_SCHEMAS + CHANNEL_TOOL_SCHEMAS)

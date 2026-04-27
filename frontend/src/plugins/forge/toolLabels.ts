@@ -68,6 +68,7 @@ const PREFIX_CATEGORIES: Record<string, CategoryDef> = {
   huntr:         { label: 'HuntR (recherche)',   icon: Search,        color: '#22c55e' },
   browser:       { label: 'Navigateur',          icon: Globe,         color: '#22c55e' },
   channels:      { label: 'Canaux externes',     icon: RadioTower,    color: '#f97316' },
+  channel:       { label: 'Canaux externes',     icon: RadioTower,    color: '#f97316' },
   telegram:      { label: 'Canaux externes',     icon: RadioTower,    color: '#f97316' },
   discord:       { label: 'Canaux externes',     icon: RadioTower,    color: '#f97316' },
   slack:         { label: 'Canaux externes',     icon: RadioTower,    color: '#f97316' },
