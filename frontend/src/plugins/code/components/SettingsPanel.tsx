@@ -40,7 +40,7 @@ function Section({ title, description, children }: {
   return (
     <div className="rounded-xl border p-6"
       style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
-      <h3 className="font-semibold mb-1" style={{ color: 'var(--text-primary)', fontSize: 16 }}>{title}</h3>
+      <h3 className="font-semibold mb-1" style={{ color: 'var(--text-primary)', fontSize: 'var(--font-lg)' }}>{title}</h3>
       {description && (
         <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>{description}</p>
       )}
@@ -150,7 +150,7 @@ function ProjectRulesSection() {
             className="w-full rounded-lg border px-4 py-3 focus:outline-none"
             style={{
               background: 'var(--bg-primary)', borderColor: 'var(--border)',
-              color: 'var(--text-primary)', fontFamily: MONO, fontSize: 12,
+              color: 'var(--text-primary)', fontFamily: MONO, fontSize: 'var(--font-sm)',
               resize: 'vertical',
             }}
           />
@@ -294,7 +294,7 @@ export function SettingsPanel({ uiFontSize, setUiFontSize }: {
           className="w-full rounded-lg border px-4 py-3 focus:outline-none"
           style={{
             background: 'var(--bg-primary)', borderColor: 'var(--border)',
-            color: 'var(--text-primary)', fontFamily: MONO, fontSize: 13,
+            color: 'var(--text-primary)', fontFamily: MONO, fontSize: 'var(--font-md)',
           }}
         />
         <button onClick={save} disabled={saving}

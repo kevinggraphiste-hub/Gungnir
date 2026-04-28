@@ -167,7 +167,7 @@ function ChartTooltip({ active, payload, label }: any) {
   return (
     <div style={{
       background: 'var(--bg-elevated, var(--bg-secondary))', border: '1px solid var(--border)',
-      borderRadius: 8, padding: '8px 12px', fontSize: 12,
+      borderRadius: 8, padding: '8px 12px', fontSize: 'var(--font-sm)',
     }}>
       <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>{label}</div>
       {payload.map((p: any, i: number) => (
@@ -366,8 +366,8 @@ export default function AnalyticsPlugin() {
                         }}
                           onMouseEnter={e => (e.currentTarget.style.background = 'color-mix(in srgb, var(--scarlet) 10%, transparent)')}
                           onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{label}</span>
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{desc}</span>
+                          <span style={{ fontSize: 'var(--font-md)', fontWeight: 600, color: 'var(--text-primary)' }}>{label}</span>
+                          <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>{desc}</span>
                         </button>
                       ))}
                     </div>
@@ -386,7 +386,7 @@ export default function AnalyticsPlugin() {
       <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 24px' }}>
         {loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200 }}>
-            <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Chargement...</div>
+            <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-base)' }}>Chargement...</div>
           </div>
         ) : (
           <>
@@ -428,7 +428,7 @@ function OverviewTab({ summary, byProvider, daily, heatmap, budgetCheck }: any) 
             {budgetCheck.should_block ? 'Budget dépassé !' : 'Alertes budget'}
           </div>
           {budgetCheck.alerts.map((a: any, i: number) => (
-            <div key={i} style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>
+            <div key={i} style={{ fontSize: 'var(--font-md)', color: 'var(--text-secondary)', marginBottom: 4 }}>
               {a.scope}: {fmtCost(a.cost)} / {fmtCost(a.limit)} ({a.percent}%)
             </div>
           ))}
@@ -448,8 +448,8 @@ function OverviewTab({ summary, byProvider, daily, heatmap, budgetCheck }: any) 
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={daily.map((d: TimeEntry) => ({ ...d, label: fmtDate(d.date || '') }))}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="label" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
-              <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickFormatter={(v: number) => fmtCost(v)} />
+              <XAxis dataKey="label" tick={{ fill: 'var(--text-muted)', fontSize: 'var(--font-xs)' }} />
+              <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 'var(--font-xs)' }} tickFormatter={(v: number) => fmtCost(v)} />
               <Tooltip content={<ChartTooltip />} />
               <Area type="monotone" dataKey="cost" name="Cost" stroke="var(--scarlet)" fill="var(--scarlet)" fillOpacity={0.15} strokeWidth={2} />
             </AreaChart>
@@ -534,8 +534,8 @@ function TrendsTab({ trendData, trendPeriod, setTrendPeriod }: any) {
         <ResponsiveContainer width="100%" height={300}>
           <AreaChart data={trendData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="label" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
-            <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickFormatter={(v: number) => fmtCost(v)} />
+            <XAxis dataKey="label" tick={{ fill: 'var(--text-muted)', fontSize: 'var(--font-xs)' }} />
+            <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 'var(--font-xs)' }} tickFormatter={(v: number) => fmtCost(v)} />
             <Tooltip content={<ChartTooltip />} />
             <Area type="monotone" dataKey="cost" name="Cost" stroke="var(--scarlet)" fill="var(--scarlet)" fillOpacity={0.15} strokeWidth={2} />
           </AreaChart>
@@ -547,8 +547,8 @@ function TrendsTab({ trendData, trendPeriod, setTrendPeriod }: any) {
         <ResponsiveContainer width="100%" height={300}>
           <AreaChart data={trendData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="label" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
-            <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickFormatter={(v: number) => fmtTokens(v)} />
+            <XAxis dataKey="label" tick={{ fill: 'var(--text-muted)', fontSize: 'var(--font-xs)' }} />
+            <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 'var(--font-xs)' }} tickFormatter={(v: number) => fmtTokens(v)} />
             <Tooltip content={<ChartTooltip />} />
             <Area type="monotone" dataKey="tokens" name="Tokens" stroke="#f97316" fill="#f97316" fillOpacity={0.15} strokeWidth={2} />
           </AreaChart>
@@ -560,8 +560,8 @@ function TrendsTab({ trendData, trendPeriod, setTrendPeriod }: any) {
         <ResponsiveContainer width="100%" height={250}>
           <BarChart data={trendData}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="label" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
-            <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
+            <XAxis dataKey="label" tick={{ fill: 'var(--text-muted)', fontSize: 'var(--font-xs)' }} />
+            <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 'var(--font-xs)' }} />
             <Tooltip content={<ChartTooltip />} />
             <Bar dataKey="messages" name="Messages" fill="var(--scarlet)" radius={[4, 4, 0, 0]} />
           </BarChart>
@@ -613,11 +613,11 @@ function ModelsTab({ byModel, byProvider }: any) {
       <SectionCard>
         <SectionTitle icon={<Layers size={12} />}>Détails par modèle</SectionTitle>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-md)' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 {['Modèle', 'Coût', 'Tokens', 'Messages', '% Total'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-muted)', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>{h}</th>
+                  <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-muted)', fontWeight: 600, fontSize: 'var(--font-xs)', textTransform: 'uppercase', letterSpacing: 1 }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -641,7 +641,7 @@ function ModelsTab({ byModel, byProvider }: any) {
                         <div style={{ flex: 1, height: 4, background: 'var(--bg-tertiary)', borderRadius: 2, overflow: 'hidden' }}>
                           <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, background: COLORS[i % COLORS.length], borderRadius: 2 }} />
                         </div>
-                        <span style={{ color: 'var(--text-muted)', fontSize: 11, minWidth: 40 }}>{pct.toFixed(1)}%</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-xs)', minWidth: 40 }}>{pct.toFixed(1)}%</span>
                       </div>
                     </td>
                   </tr>
@@ -680,7 +680,7 @@ function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget
             <div key={i} style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               padding: '6px 0', color: a.level >= 100 ? '#ef4444' : '#f59e0b',
-              fontSize: 13,
+              fontSize: 'var(--font-md)',
             }}>
               <span>{a.scope}</span>
               <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>
@@ -728,7 +728,7 @@ function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget
                 { key: 'alert_100', label: 'Alerte 100%' },
                 { key: 'block_on_limit', label: 'Bloquer au dépassement' },
               ].map(opt => (
-                <label key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                <label key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--font-sm)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                   <input type="checkbox" checked={budget[opt.key]}
                     onChange={e => setBudget({ ...budget, [opt.key]: e.target.checked })}
                     style={{ accentColor: 'var(--scarlet)' }} />
@@ -744,19 +744,19 @@ function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
             <div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Mensuel</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", marginTop: 4 }}>
+              <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Mensuel</div>
+              <div style={{ fontSize: 'var(--font-xl)', fontWeight: 700, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", marginTop: 4 }}>
                 {budget.monthly_limit ? fmtCost(budget.monthly_limit) : 'Illimité'}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Hebdo</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", marginTop: 4 }}>
+              <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Hebdo</div>
+              <div style={{ fontSize: 'var(--font-xl)', fontWeight: 700, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace", marginTop: 4 }}>
                 {budget.weekly_limit ? fmtCost(budget.weekly_limit) : 'Illimité'}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Blocage</div>
+              <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Blocage</div>
               <div style={{ marginTop: 4 }}>
                 <Badge color={budget.block_on_limit ? '#ef4444' : '#22c55e'}>
                   {budget.block_on_limit ? 'Actif' : 'Inactif'}
@@ -778,10 +778,10 @@ function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget
                 border: '1px solid var(--border-subtle)',
               }}>
                 <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{pb.provider}</span>
-                <div style={{ display: 'flex', gap: 16, fontSize: 13, color: 'var(--text-secondary)', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 16, fontSize: 'var(--font-md)', color: 'var(--text-secondary)', alignItems: 'center' }}>
                   <span>Mensuel: {pb.monthly_limit ? fmtCost(pb.monthly_limit) : '—'}</span>
                   <span>Hebdo: {pb.weekly_limit ? fmtCost(pb.weekly_limit) : '—'}</span>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', color: pb.block_on_limit ? '#ef4444' : 'var(--text-muted)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--font-sm)', cursor: 'pointer', color: pb.block_on_limit ? '#ef4444' : 'var(--text-muted)' }}>
                     <input
                       type="checkbox"
                       checked={!!pb.block_on_limit}
@@ -811,7 +811,7 @@ function BudgetTab({ budget, setBudget, budgetCheck, providerBudgets, editBudget
             ))}
           </div>
         ) : (
-          <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Aucun budget fournisseur configuré</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-md)' }}>Aucun budget fournisseur configuré</div>
         )}
       </SectionCard>
     </div>
@@ -826,11 +826,11 @@ function ConversationsTab({ conversations }: any) {
       <SectionTitle icon={<MessagesSquare size={12} />}>Coût par conversation</SectionTitle>
       {conversations.length > 0 ? (
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-md)' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 {['Conversation', 'Coût', 'Tokens', 'Messages', 'Dernier msg'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-muted)', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>{h}</th>
+                  <th key={h} style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-muted)', fontWeight: 600, fontSize: 'var(--font-xs)', textTransform: 'uppercase', letterSpacing: 1 }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -843,7 +843,7 @@ function ConversationsTab({ conversations }: any) {
                   <td style={{ padding: '8px 12px', color: 'var(--scarlet)', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{fmtCost(c.total_cost)}</td>
                   <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtTokens(c.total_tokens)}</td>
                   <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{c.message_count}</td>
-                  <td style={{ padding: '8px 12px', color: 'var(--text-muted)', fontSize: 11 }}>
+                  <td style={{ padding: '8px 12px', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>
                     {c.last_message ? new Date(c.last_message).toLocaleDateString('fr-FR') : '—'}
                   </td>
                 </tr>
@@ -859,5 +859,5 @@ function ConversationsTab({ conversations }: any) {
 // ── Shared ────────────────────────────────────────────────────────────────────
 
 function NoData() {
-  return <div style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: 40 }}>Pas de données</div>
+  return <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-md)', textAlign: 'center', padding: 40 }}>Pas de données</div>
 }

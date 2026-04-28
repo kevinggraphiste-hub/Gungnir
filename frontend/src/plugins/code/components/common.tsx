@@ -17,12 +17,12 @@ export function IconBtn({ onClick, children, title, disabled }: { onClick: () =>
 export function TabBtn({ tab, active, onClick, onClose }: { tab: OpenTab; active: boolean; onClick: () => void; onClose: () => void }) {
   const lc = LC[tab.language] || '#6b7280'
   return (
-    <div onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', cursor: 'pointer', flexShrink: 0, fontSize: 11, background: active ? 'var(--bg-primary)' : 'transparent', borderBottom: active ? '2px solid var(--scarlet)' : '2px solid transparent', color: active ? 'var(--text-primary)' : 'var(--text-muted)', transition: 'all 0.1s' }}>
+    <div onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', cursor: 'pointer', flexShrink: 0, fontSize: 'var(--font-xs)', background: active ? 'var(--bg-primary)' : 'transparent', borderBottom: active ? '2px solid var(--scarlet)' : '2px solid transparent', color: active ? 'var(--text-primary)' : 'var(--text-muted)', transition: 'all 0.1s' }}>
       <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: tab.modified ? '#f59e0b' : lc }} />
       <span style={{ fontWeight: active ? 600 : 400, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {tab.language === '__image__' ? `\u{1F5BC}️ ${tab.name}` : tab.name}{tab.modified ? ' *' : ''}
       </span>
-      <button onClick={e => { e.stopPropagation(); onClose() }} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 2px', opacity: 0.4, lineHeight: 1, fontSize: 10 }}>&times;</button>
+      <button onClick={e => { e.stopPropagation(); onClose() }} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 2px', opacity: 0.4, lineHeight: 1, fontSize: 'var(--font-xs)' }}>&times;</button>
     </div>
   )
 }
@@ -30,7 +30,7 @@ export function TabBtn({ tab, active, onClick, onClose }: { tab: OpenTab; active
 export function Breadcrumbs({ path }: { path: string }) {
   const parts = path.split('/')
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '3px 14px', flexShrink: 0, background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', fontSize: 10, overflow: 'auto' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '3px 14px', flexShrink: 0, background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', fontSize: 'var(--font-xs)', overflow: 'auto' }}>
       {parts.map((p, i) => (
         <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           {i > 0 && <span style={{ color: 'var(--text-muted)', opacity: 0.3 }}>/</span>}
@@ -51,7 +51,7 @@ export function StatusBar({ file, gitBranch, tabCount, modifiedCount }: { file: 
   const langColor = LC[file?.language || ''] || '#6b7280'
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '3px 16px', flexShrink: 0, background: '#1a1d24', borderTop: '1px solid var(--border)', fontSize: 10, color: '#8b949e', fontFamily: MONO }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '3px 16px', flexShrink: 0, background: '#1a1d24', borderTop: '1px solid var(--border)', fontSize: 'var(--font-xs)', color: '#8b949e', fontFamily: MONO }}>
       {gitBranch && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
         {gitBranch}
@@ -88,16 +88,16 @@ export function WelcomeScreen({ onOpenPalette }: { onOpenPalette: () => void }) 
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--scarlet)" strokeWidth="2" style={{ flexShrink: 0 }}><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
           <span style={{ fontSize: 32, fontWeight: 900, color: 'var(--text-primary)', letterSpacing: -0.5, whiteSpace: 'nowrap' }}>SpearCode</span>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 24 }}>IDE nouvelle generation avec IA, Git, diff viewer et command palette</div>
+        <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 24 }}>IDE nouvelle generation avec IA, Git, diff viewer et command palette</div>
 
         <button onClick={onOpenPalette} style={{
           display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 20px', borderRadius: 8,
           background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)',
-          cursor: 'pointer', fontSize: 12, marginBottom: 24,
+          cursor: 'pointer', fontSize: 'var(--font-sm)', marginBottom: 24,
         }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           Ouvrir un fichier...
-          <kbd style={{ padding: '1px 6px', background: 'var(--bg-tertiary)', borderRadius: 3, fontSize: 10, border: '1px solid var(--border)' }}>Ctrl+K</kbd>
+          <kbd style={{ padding: '1px 6px', background: 'var(--bg-tertiary)', borderRadius: 3, fontSize: 'var(--font-xs)', border: '1px solid var(--border)' }}>Ctrl+K</kbd>
         </button>
 
         {stats && (
@@ -110,15 +110,15 @@ export function WelcomeScreen({ onOpenPalette }: { onOpenPalette: () => void }) 
 
         {analysis?.language && analysis.language !== 'unknown' && (
           <div style={{ display: 'inline-flex', gap: 8, padding: '6px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 16 }}>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Langage:</span>
-            <span style={{ fontSize: 10, fontWeight: 700, color: LC[analysis.language] || 'var(--text-primary)' }}>{analysis.language}</span>
-            {analysis.framework && <><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Framework:</span><span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-primary)' }}>{analysis.framework}</span></>}
+            <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>Langage:</span>
+            <span style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: LC[analysis.language] || 'var(--text-primary)' }}>{analysis.language}</span>
+            {analysis.framework && <><span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>Framework:</span><span style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-primary)' }}>{analysis.framework}</span></>}
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', fontSize: 9, color: 'var(--text-muted)', marginTop: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginTop: 8, flexWrap: 'wrap' }}>
           {[['Ctrl+K', 'Palette'], ['Ctrl+S', 'Sauver'], ['Ctrl+H', 'Chercher'], ['Ctrl+D', 'Diff'], ['Ctrl+L', 'IA Chat'], ['Ctrl+Shift+A', 'Agent'], ['Ctrl+Shift+T', 'Terminal'], ['Ctrl+Shift+S', 'Snippets'], ['Ctrl+Shift+P', 'Preview']].map(([k, d]) => (
-            <span key={k}><kbd style={{ padding: '0 4px', background: 'var(--bg-tertiary)', borderRadius: 2, fontSize: 8, border: '1px solid var(--border)' }}>{k}</kbd> {d}</span>
+            <span key={k}><kbd style={{ padding: '0 4px', background: 'var(--bg-tertiary)', borderRadius: 2, fontSize: 'var(--font-2xs)', border: '1px solid var(--border)' }}>{k}</kbd> {d}</span>
           ))}
         </div>
       </div>
@@ -127,5 +127,5 @@ export function WelcomeScreen({ onOpenPalette }: { onOpenPalette: () => void }) 
 }
 
 function WStat({ label, value }: { label: string; value: string | number }) {
-  return <div style={{ flex: 1, padding: '10px 8px', textAlign: 'center' }}><div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>{value}</div><div style={{ fontSize: 8, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginTop: 2 }}>{label}</div></div>
+  return <div style={{ flex: 1, padding: '10px 8px', textAlign: 'center' }}><div style={{ fontSize: 'var(--font-xl)', fontWeight: 800, color: 'var(--text-primary)' }}>{value}</div><div style={{ fontSize: 'var(--font-2xs)', textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginTop: 2 }}>{label}</div></div>
 }

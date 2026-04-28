@@ -32,7 +32,7 @@ export function FindReplace({ content, onChange }: { content: string; onChange: 
     } catch { /* invalid regex */ }
   }
 
-  const inp = { padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }
+  const inp = { padding: '4px 8px', fontSize: 'var(--font-xs)', borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }
 
   return (
     <div style={{ padding: '6px 14px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
@@ -40,7 +40,7 @@ export function FindReplace({ content, onChange }: { content: string; onChange: 
       <input value={replace} onChange={e => setReplace(e.target.value)} placeholder="Remplacer..." style={{ ...inp, width: 140 }} />
       <button onClick={() => setCaseSensitive(c => !c)} style={{ ...S.badge(caseSensitive ? 'var(--scarlet)' : '#6b7280', caseSensitive), border: 'none' }}>Aa</button>
       <button onClick={() => setUseRegex(r => !r)} style={{ ...S.badge(useRegex ? 'var(--scarlet)' : '#6b7280', useRegex), border: 'none' }}>.*</button>
-      <span style={{ fontSize: 10, color: matchCount > 0 ? '#22c55e' : 'var(--text-muted)', fontWeight: 600 }}>{matchCount} resultat{matchCount !== 1 ? 's' : ''}</span>
+      <span style={{ fontSize: 'var(--font-xs)', color: matchCount > 0 ? '#22c55e' : 'var(--text-muted)', fontWeight: 600 }}>{matchCount} resultat{matchCount !== 1 ? 's' : ''}</span>
       <div style={{ flex: 1 }} />
       <button onClick={() => doReplace(false)} disabled={!find || matchCount === 0} style={{ ...S.badge('#3b82f6', true), border: 'none', opacity: find ? 1 : 0.4 }}>Remplacer</button>
       <button onClick={() => doReplace(true)} disabled={!find || matchCount === 0} style={{ ...S.badge('#f97316', true), border: 'none', opacity: find ? 1 : 0.4 }}>Tout</button>
@@ -92,12 +92,12 @@ export function CodeEditor({ file, onChange, onSave, onRun, onCursorChange }: {
     // flex parent comme split/preview), le root prend la largeur intrinsèque
     // du contenu (= ligne la plus longue ~200px) au lieu de remplir l'espace.
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0, fontSize: 10 }}>
-        <span style={{ ...S.badge(langColor, true), fontSize: 8 }}>{file.language}</span>
-        <span style={{ color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 10 }}>{file.path}</span>
-        <span style={{ color: 'var(--text-muted)', fontSize: 9 }}>{lines.length} lignes</span>
-        {file.modified && <span style={{ fontSize: 8, fontWeight: 700, color: '#f59e0b' }}>MODIFIE</span>}
-        {onRun && <button onClick={onRun} style={{ ...S.badge('#22c55e', true), border: 'none', cursor: 'pointer', fontSize: 8 }}>&#9654; Run</button>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0, fontSize: 'var(--font-xs)' }}>
+        <span style={{ ...S.badge(langColor, true), fontSize: 'var(--font-2xs)' }}>{file.language}</span>
+        <span style={{ color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--font-xs)' }}>{file.path}</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-2xs)' }}>{lines.length} lignes</span>
+        {file.modified && <span style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color: '#f59e0b' }}>MODIFIE</span>}
+        {onRun && <button onClick={onRun} style={{ ...S.badge('#22c55e', true), border: 'none', cursor: 'pointer', fontSize: 'var(--font-2xs)' }}>&#9654; Run</button>}
       </div>
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <CodeMirrorEditor

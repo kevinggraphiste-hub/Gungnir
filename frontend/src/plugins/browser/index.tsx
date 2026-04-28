@@ -684,7 +684,7 @@ function ExportMenu({ query, result }: { query: string; result: SearchResult }) 
         title="Exporter la réponse"
         style={{
           padding: '3px 10px',
-          fontSize: 10,
+          fontSize: 'var(--font-xs)',
           color: 'var(--scarlet)',
           border: '1px solid var(--scarlet)',
         }}
@@ -726,8 +726,8 @@ function ExportMenu({ query, result }: { query: string; result: SearchResult }) 
               onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
-              <div style={{ fontSize: 12, fontWeight: 600 }}>{f.label}</div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{f.desc}</div>
+              <div style={{ fontSize: 'var(--font-sm)', fontWeight: 600 }}>{f.label}</div>
+              <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>{f.desc}</div>
             </button>
           ))}
         </div>
@@ -1208,17 +1208,17 @@ export default function HuntRPlugin() {
           </svg>
         </div>
         <div>
-          <h1 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: '-0.02em', display: 'flex', alignItems: 'baseline', gap: 6 }}>
+          <h1 style={{ margin: 0, fontSize: 'var(--font-lg)', fontWeight: 700, letterSpacing: '-0.02em', display: 'flex', alignItems: 'baseline', gap: 6 }}>
             <span>Hunt<span style={{ color: 'var(--scarlet)' }}>R</span></span>
             <span style={{
-              fontSize: 10, fontFamily: 'monospace', fontWeight: 600,
+              fontSize: 'var(--font-xs)', fontFamily: 'monospace', fontWeight: 600,
               padding: '2px 6px', borderRadius: 4,
               background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
               color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
               border: '1px solid color-mix(in srgb, var(--scarlet) 20%, transparent)',
             }}>v3.6.0</span>
           </h1>
-          <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)' }}>
+          <p style={{ margin: 0, fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
             Recherche web avec citations
           </p>
         </div>
@@ -1264,10 +1264,10 @@ export default function HuntRPlugin() {
                       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                     </svg>
                   </div>
-                  <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 6px', letterSpacing: '-0.02em' }}>
+                  <h2 style={{ fontSize: 'var(--font-2xl)', fontWeight: 700, margin: '0 0 6px', letterSpacing: '-0.02em' }}>
                     Hunt<span style={{ color: 'var(--scarlet)' }}>R</span>
                   </h2>
-                  <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>
+                  <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-md)', margin: 0 }}>
                     Posez une question. Obtenez une réponse sourcée.
                   </p>
 
@@ -1277,7 +1277,7 @@ export default function HuntRPlugin() {
                       marginTop: 16, padding: '12px 16px', borderRadius: 12,
                       background: 'color-mix(in srgb, var(--accent-primary) 8%, transparent)',
                       border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent)',
-                      fontSize: 12, color: 'var(--text-secondary)', textAlign: 'left',
+                      fontSize: 'var(--font-sm)', color: 'var(--text-secondary)', textAlign: 'left',
                       maxWidth: 480, margin: '16px auto 0',
                     }}>
                       <strong style={{ color: 'var(--accent-primary)' }}>Renforcez la qualité des recherches</strong>
@@ -1325,7 +1325,7 @@ export default function HuntRPlugin() {
                     style={{
                       width: '100%', padding: '11px 14px 11px 40px', borderRadius: 8,
                       border: '1px solid var(--border)', background: 'var(--bg-secondary)',
-                      color: 'var(--text-primary)', fontSize: 14, outline: 'none',
+                      color: 'var(--text-primary)', fontSize: 'var(--font-base)', outline: 'none',
                     }}
                     onFocus={e => e.target.style.borderColor = 'var(--scarlet)'}
                     onBlur={e => e.target.style.borderColor = 'var(--border)'}
@@ -1340,7 +1340,7 @@ export default function HuntRPlugin() {
                     : 'Configurez un provider LLM (Paramètres → Providers) pour activer le mode Pro'}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 5,
-                    padding: '11px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                    padding: '11px 14px', borderRadius: 8, fontSize: 'var(--font-sm)', fontWeight: 600,
                     background: proSearch
                       ? 'linear-gradient(135deg, var(--amber-light, rgba(245,158,11,0.15)), var(--ember-light, rgba(234,88,12,0.1)))'
                       : 'var(--bg-secondary)',
@@ -1389,7 +1389,7 @@ export default function HuntRPlugin() {
                       title={t.desc}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '7px 12px', borderRadius: 8, fontSize: 12,
+                        padding: '7px 12px', borderRadius: 8, fontSize: 'var(--font-sm)',
                         fontWeight: active ? 600 : 500,
                         background: active
                           ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
@@ -1413,7 +1413,7 @@ export default function HuntRPlugin() {
                     style={{
                       marginLeft: 'auto',
                       display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '7px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                      padding: '7px 10px', borderRadius: 8, fontSize: 'var(--font-sm)', fontWeight: 600,
                       background: customFormat
                         ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
                         : 'var(--bg-secondary)',
@@ -1428,7 +1428,7 @@ export default function HuntRPlugin() {
                     Format
                     {customFormat && (
                       <span style={{
-                        fontSize: 9, padding: '1px 6px', borderRadius: 4,
+                        fontSize: 'var(--font-2xs)', padding: '1px 6px', borderRadius: 4,
                         background: 'var(--scarlet)', color: '#fff', fontWeight: 700,
                       }}>ON</span>
                     )}
@@ -1448,7 +1448,7 @@ export default function HuntRPlugin() {
                       style={{
                         marginLeft: customFormat ? 0 : 'auto',
                         display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '7px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                        padding: '7px 10px', borderRadius: 8, fontSize: 'var(--font-sm)', fontWeight: 600,
                         background: showON
                           ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
                           : 'var(--bg-secondary)',
@@ -1465,7 +1465,7 @@ export default function HuntRPlugin() {
                       </svg>
                       Sources
                       <span style={{
-                        fontSize: 9, padding: '1px 6px', borderRadius: 4,
+                        fontSize: 'var(--font-2xs)', padding: '1px 6px', borderRadius: 4,
                         background: showON ? 'var(--scarlet)' : 'var(--bg-tertiary)',
                         color: showON ? '#fff' : 'var(--text-muted)',
                         fontWeight: 700,
@@ -1487,7 +1487,7 @@ export default function HuntRPlugin() {
                       title="Filtres de fiabilité des sources"
                       style={{
                         display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '7px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                        padding: '7px 10px', borderRadius: 8, fontSize: 'var(--font-sm)', fontWeight: 600,
                         background: hasFilters
                           ? 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(234,88,12,0.1))'
                           : 'var(--bg-secondary)',
@@ -1502,7 +1502,7 @@ export default function HuntRPlugin() {
                       Filtres
                       {counts > 0 && (
                         <span style={{
-                          fontSize: 9, padding: '1px 6px', borderRadius: 4,
+                          fontSize: 'var(--font-2xs)', padding: '1px 6px', borderRadius: 4,
                           background: 'var(--scarlet)', color: '#fff', fontWeight: 700,
                         }}>{counts}</span>
                       )}
@@ -1543,10 +1543,10 @@ export default function HuntRPlugin() {
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     marginBottom: 10,
                   }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    <div style={{ fontSize: 'var(--font-sm)', fontWeight: 600, color: 'var(--text-primary)' }}>
                       Moteurs de recherche
                     </div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
                       {proSearch
                         ? 'Mode Pro : tous les providers disponibles'
                         : 'Mode Classique : gratuits uniquement'}
@@ -1601,14 +1601,14 @@ export default function HuntRPlugin() {
                           />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{
-                              fontSize: 12, fontWeight: 600,
+                              fontSize: 'var(--font-sm)', fontWeight: 600,
                               color: missingReqs ? 'var(--text-muted)' : 'var(--text-primary)',
                               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                             }}>
                               {p.label}
                             </div>
                             <div style={{
-                              fontSize: 10,
+                              fontSize: 'var(--font-xs)',
                               color: inactiveInClassic ? 'color-mix(in srgb, var(--scarlet) 70%, var(--text-muted))' : 'var(--text-muted)',
                             }}>
                               {subtitle}
@@ -1620,7 +1620,7 @@ export default function HuntRPlugin() {
                               onClick={e => { e.preventDefault(); e.stopPropagation(); setProSearch(true) }}
                               title="Passer en mode Pro pour utiliser ce provider"
                               style={{
-                                padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                                padding: '3px 8px', borderRadius: 4, fontSize: 'var(--font-xs)', fontWeight: 600,
                                 background: 'color-mix(in srgb, var(--amber, #f59e0b) 15%, transparent)',
                                 color: 'var(--amber, #f59e0b)',
                                 border: '1px solid color-mix(in srgb, var(--amber, #f59e0b) 40%, transparent)',
@@ -1660,10 +1660,10 @@ export default function HuntRPlugin() {
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     marginBottom: 10,
                   }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    <div style={{ fontSize: 'var(--font-sm)', fontWeight: 600, color: 'var(--text-primary)' }}>
                       Filtres de fiabilité
                     </div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
                       {savingFilters ? 'Enregistrement…' : 'Modifié — sauvegarde auto'}
                     </div>
                   </div>
@@ -1682,7 +1682,7 @@ export default function HuntRPlugin() {
                         style={{ accentColor: 'var(--scarlet)', marginTop: 2 }}
                       />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        <div style={{ fontSize: 'var(--font-sm)', fontWeight: 600, color: 'var(--text-primary)' }}>
                           Blocklist de base ({starterBlocklist.length} sources)
                         </div>
                         <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.45 }}>
@@ -1701,7 +1701,7 @@ export default function HuntRPlugin() {
                           {starterBlocklist.map(e => (
                             <div key={e.domain} style={{
                               display: 'flex', gap: 8, padding: '4px 0',
-                              borderBottom: '1px solid var(--border)', fontSize: 11,
+                              borderBottom: '1px solid var(--border)', fontSize: 'var(--font-xs)',
                             }}>
                               <span style={{ fontFamily: 'monospace', color: 'var(--scarlet)', minWidth: 160 }}>
                                 {e.domain}
@@ -1716,7 +1716,7 @@ export default function HuntRPlugin() {
 
                   {/* User blocklist */}
                   <div style={{ marginTop: 12 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    <div style={{ fontSize: 'var(--font-xs)', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
                       Mes domaines bloqués
                     </div>
                     <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
@@ -1728,7 +1728,7 @@ export default function HuntRPlugin() {
                         style={{
                           flex: 1, padding: '6px 10px', borderRadius: 8,
                           background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                          color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+                          color: 'var(--text-primary)', fontSize: 'var(--font-sm)', outline: 'none',
                           fontFamily: 'monospace',
                         }}
                       />
@@ -1736,7 +1736,7 @@ export default function HuntRPlugin() {
                         onClick={addBlockDomain}
                         disabled={!blockInput.trim()}
                         style={{
-                          padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                          padding: '6px 12px', borderRadius: 8, fontSize: 'var(--font-xs)', fontWeight: 600,
                           background: 'var(--scarlet)', color: '#fff', border: 'none',
                           cursor: blockInput.trim() ? 'pointer' : 'not-allowed',
                           opacity: blockInput.trim() ? 1 : 0.5,
@@ -1757,7 +1757,7 @@ export default function HuntRPlugin() {
                           padding: '3px 8px', borderRadius: 4,
                           background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
                           border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
-                          fontSize: 11, fontFamily: 'monospace',
+                          fontSize: 'var(--font-xs)', fontFamily: 'monospace',
                           color: 'var(--scarlet)',
                         }}>
                           {d}
@@ -1776,7 +1776,7 @@ export default function HuntRPlugin() {
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       marginBottom: 6,
                     }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                      <div style={{ fontSize: 'var(--font-xs)', fontWeight: 600, color: 'var(--text-secondary)' }}>
                         Sources privilégiées
                       </div>
                       <div style={{ display: 'flex', gap: 2 }}>
@@ -1785,7 +1785,7 @@ export default function HuntRPlugin() {
                             key={m}
                             onClick={() => setAllowMode(m)}
                             style={{
-                              padding: '3px 8px', fontSize: 10, fontWeight: 600,
+                              padding: '3px 8px', fontSize: 'var(--font-xs)', fontWeight: 600,
                               background: sourceFilters.allowlist_mode === m ? 'var(--scarlet)' : 'var(--bg-tertiary)',
                               color: sourceFilters.allowlist_mode === m ? '#fff' : 'var(--text-muted)',
                               border: '1px solid var(--border)',
@@ -1807,7 +1807,7 @@ export default function HuntRPlugin() {
                         style={{
                           flex: 1, padding: '6px 10px', borderRadius: 8,
                           background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                          color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+                          color: 'var(--text-primary)', fontSize: 'var(--font-sm)', outline: 'none',
                           fontFamily: 'monospace',
                         }}
                       />
@@ -1815,7 +1815,7 @@ export default function HuntRPlugin() {
                         onClick={addAllowDomain}
                         disabled={!allowInput.trim()}
                         style={{
-                          padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                          padding: '6px 12px', borderRadius: 8, fontSize: 'var(--font-xs)', fontWeight: 600,
                           background: 'var(--accent-success, #10b981)', color: '#fff', border: 'none',
                           cursor: allowInput.trim() ? 'pointer' : 'not-allowed',
                           opacity: allowInput.trim() ? 1 : 0.5,
@@ -1836,7 +1836,7 @@ export default function HuntRPlugin() {
                           padding: '3px 8px', borderRadius: 4,
                           background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
                           border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
-                          fontSize: 11, fontFamily: 'monospace',
+                          fontSize: 'var(--font-xs)', fontFamily: 'monospace',
                           color: 'var(--accent-success, #10b981)',
                         }}>
                           {d}
@@ -1870,7 +1870,7 @@ export default function HuntRPlugin() {
                       onClick={() => { setQuery(s); doSearch(s) }}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '9px 12px', borderRadius: 8, fontSize: 12,
+                        padding: '9px 12px', borderRadius: 8, fontSize: 'var(--font-sm)',
                         background: 'var(--bg-secondary)', color: 'var(--text-muted)',
                         border: '1px solid var(--border)', cursor: 'pointer',
                         textAlign: 'left', transition: 'border-color 0.15s',
@@ -1900,9 +1900,9 @@ export default function HuntRPlugin() {
                     border: '2px solid var(--scarlet)', borderTopColor: 'transparent',
                     animation: 'huntr-spin 0.8s linear infinite', flexShrink: 0,
                   }} />
-                  <span style={{ color: 'var(--text-muted)', fontSize: 12, flex: 1 }}>{status}</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-sm)', flex: 1 }}>{status}</span>
                   {totalSteps > 1 && (
-                    <span style={{ color: 'var(--text-muted)', fontSize: 10, flexShrink: 0 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-xs)', flexShrink: 0 }}>
                       {currentStep}/{totalSteps}
                     </span>
                   )}
@@ -1935,7 +1935,7 @@ export default function HuntRPlugin() {
                 background: 'var(--bg-secondary)', border: '1px solid var(--border)',
               }}>
                 <div style={{
-                  fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
+                  fontSize: 'var(--font-xs)', fontWeight: 600, color: 'var(--text-muted)',
                   marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6,
                 }}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--scarlet)" strokeWidth="2">
@@ -1950,7 +1950,7 @@ export default function HuntRPlugin() {
                     try { host = new URL(s.url).hostname.replace('www.', '') } catch {}
                     return (
                       <div key={i} style={{
-                        padding: '4px 8px', borderRadius: 8, fontSize: 11,
+                        padding: '4px 8px', borderRadius: 8, fontSize: 'var(--font-xs)',
                         background: 'var(--bg-primary)', border: '1px solid var(--border)',
                         display: 'flex', alignItems: 'center', gap: 4,
                         animation: 'huntr-fadeIn 0.3s ease-out',
@@ -1983,8 +1983,8 @@ export default function HuntRPlugin() {
                 padding: '10px 14px', borderRadius: 12, margin: '6px 0',
                 background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.25)',
               }}>
-                <p style={{ fontWeight: 600, fontSize: 12, color: '#ef4444', margin: '0 0 2px' }}>Erreur</p>
-                <p style={{ fontSize: 12, color: '#f87171', margin: 0 }}>{error}</p>
+                <p style={{ fontWeight: 600, fontSize: 'var(--font-sm)', color: '#ef4444', margin: '0 0 2px' }}>Erreur</p>
+                <p style={{ fontSize: 'var(--font-sm)', color: '#f87171', margin: 0 }}>{error}</p>
               </div>
             )}
 
@@ -1998,7 +1998,7 @@ export default function HuntRPlugin() {
                     {result.pro_search && (
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: 3,
-                        padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                        padding: '2px 8px', borderRadius: 4, fontSize: 'var(--font-xs)', fontWeight: 600,
                         background: 'var(--amber-light, rgba(245,158,11,0.15))',
                         color: 'var(--amber, #f59e0b)',
                         border: '1px solid var(--amber, #f59e0b)',
@@ -2010,7 +2010,7 @@ export default function HuntRPlugin() {
                     {result.topic && (
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: 4,
-                        padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                        padding: '2px 8px', borderRadius: 4, fontSize: 'var(--font-xs)', fontWeight: 600,
                         background: 'rgba(220,38,38,0.1)', color: 'var(--scarlet)',
                         border: '1px solid var(--scarlet)',
                       }}>
@@ -2020,7 +2020,7 @@ export default function HuntRPlugin() {
                     )}
                     {result.engines.map(e => (
                       <span key={e} style={{
-                        padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 500,
+                        padding: '2px 8px', borderRadius: 4, fontSize: 'var(--font-xs)', fontWeight: 500,
                         background: 'var(--bg-tertiary)', color: ENGINE_COLORS[e] || 'var(--text-muted)',
                         border: '1px solid var(--border)',
                       }}>
@@ -2031,7 +2031,7 @@ export default function HuntRPlugin() {
                       <span
                         title={`Sources bloquées :\n${lastFilterReport.blocked_domains.map(b => `• ${b.domain} — ${b.reason}`).join('\n')}`}
                         style={{
-                          padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                          padding: '2px 8px', borderRadius: 4, fontSize: 'var(--font-xs)', fontWeight: 600,
                           background: 'color-mix(in srgb, var(--scarlet) 15%, transparent)',
                           color: 'var(--scarlet)',
                           border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
@@ -2048,7 +2048,7 @@ export default function HuntRPlugin() {
                       <span
                         title={`Mode strict : ${lastFilterReport.strict_dropped} résultat(s) hors de l'allowlist écarté(s)`}
                         style={{
-                          padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                          padding: '2px 8px', borderRadius: 4, fontSize: 'var(--font-xs)', fontWeight: 600,
                           background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
                           color: 'var(--accent-success, #10b981)',
                           border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
@@ -2060,7 +2060,7 @@ export default function HuntRPlugin() {
                     {lastFilterReport && lastFilterReport.mode === 'boost' && typeof lastFilterReport.boosted_count === 'number' && lastFilterReport.boosted_count > 0 && (
                       <span
                         style={{
-                          padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                          padding: '2px 8px', borderRadius: 4, fontSize: 'var(--font-xs)', fontWeight: 600,
                           background: 'color-mix(in srgb, var(--accent-success, #10b981) 15%, transparent)',
                           color: 'var(--accent-success, #10b981)',
                           border: '1px solid color-mix(in srgb, var(--accent-success, #10b981) 30%, transparent)',
@@ -2070,14 +2070,14 @@ export default function HuntRPlugin() {
                     )}
                     {result.model && (
                       <span style={{
-                        padding: '2px 8px', borderRadius: 4, fontSize: 10,
+                        padding: '2px 8px', borderRadius: 4, fontSize: 'var(--font-xs)',
                         background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
                         border: '1px solid var(--border)',
                       }}>
                         {result.model}
                       </span>
                     )}
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
                       {result.search_count} sources &middot; {result.time_ms}ms
                     </span>
                     {result.answer && !searching && (
@@ -2091,7 +2091,7 @@ export default function HuntRPlugin() {
                   <div style={{
                     padding: 18, borderRadius: 12,
                     background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-                    lineHeight: 1.7, fontSize: 14,
+                    lineHeight: 1.7, fontSize: 'var(--font-base)',
                   }}>
                     <MarkdownRenderer text={result.answer} citations={result.citations} onCiteClick={scrollToSource} />
                   </div>
@@ -2122,7 +2122,7 @@ export default function HuntRPlugin() {
                     background: 'var(--bg-secondary)', border: '1px solid var(--border)',
                   }}>
                     <h3 style={{
-                      fontSize: 12, fontWeight: 600, margin: '0 0 10px',
+                      fontSize: 'var(--font-sm)', fontWeight: 600, margin: '0 0 10px',
                       display: 'flex', alignItems: 'center', gap: 6,
                       color: 'var(--text-primary)',
                     }}>
@@ -2165,19 +2165,19 @@ export default function HuntRPlugin() {
                             <div style={{
                               width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
                               display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              fontSize: 10, fontWeight: 700, background: 'var(--scarlet)', color: '#fff',
+                              fontSize: 'var(--font-xs)', fontWeight: 700, background: 'var(--scarlet)', color: '#fff',
                             }}>
                               {c.index}
                             </div>
                             <div style={{ minWidth: 0, flex: 1 }}>
                               <div style={{
-                                fontSize: 12, fontWeight: 600, color: 'var(--text-primary)',
+                                fontSize: 'var(--font-sm)', fontWeight: 600, color: 'var(--text-primary)',
                                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                               }}>
                                 {c.title || host}
                               </div>
                               <div style={{
-                                fontSize: 10, color: 'var(--text-muted)', marginTop: 1,
+                                fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 1,
                                 display: 'flex', alignItems: 'center', gap: 3,
                               }}>
                                 <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -2201,7 +2201,7 @@ export default function HuntRPlugin() {
                     background: 'var(--bg-secondary)', border: '1px solid var(--border)',
                   }}>
                     <h3 style={{
-                      fontSize: 12, fontWeight: 600, margin: '0 0 8px',
+                      fontSize: 'var(--font-sm)', fontWeight: 600, margin: '0 0 8px',
                       display: 'flex', alignItems: 'center', gap: 6,
                       color: 'var(--text-primary)',
                     }}>
@@ -2216,7 +2216,7 @@ export default function HuntRPlugin() {
                           onClick={() => { setQuery(q); doSearch(q) }}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 8,
-                            padding: '8px 12px', borderRadius: 8, fontSize: 12,
+                            padding: '8px 12px', borderRadius: 8, fontSize: 'var(--font-sm)',
                             background: 'var(--bg-primary)', color: 'var(--text-muted)',
                             border: '1px solid var(--border)', cursor: 'pointer',
                             textAlign: 'left', transition: 'border-color 0.15s',
@@ -2258,7 +2258,7 @@ export default function HuntRPlugin() {
             padding: 10, flexShrink: 0,
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <h3 style={{ margin: 0, fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>Historique</h3>
+              <h3 style={{ margin: 0, fontSize: 'var(--font-sm)', fontWeight: 600, color: 'var(--text-muted)' }}>Historique</h3>
               {history.length > 0 && !favoritesOnly && (
                 <button
                   onClick={async () => {
@@ -2267,7 +2267,7 @@ export default function HuntRPlugin() {
                     refreshHistory()
                   }}
                   title="Effacer (conserve les favoris)"
-                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10 }}>
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 'var(--font-xs)' }}>
                   Effacer
                 </button>
               )}
@@ -2278,7 +2278,7 @@ export default function HuntRPlugin() {
               <button
                 onClick={() => setFavoritesOnly(false)}
                 style={{
-                  flex: 1, padding: '4px 6px', borderRadius: 8, fontSize: 10, fontWeight: 600,
+                  flex: 1, padding: '4px 6px', borderRadius: 8, fontSize: 'var(--font-xs)', fontWeight: 600,
                   background: !favoritesOnly ? 'var(--scarlet-light)' : 'var(--bg-tertiary)',
                   color: !favoritesOnly ? 'var(--scarlet)' : 'var(--text-muted)',
                   border: '1px solid var(--border)', cursor: 'pointer',
@@ -2287,7 +2287,7 @@ export default function HuntRPlugin() {
               <button
                 onClick={() => setFavoritesOnly(true)}
                 style={{
-                  flex: 1, padding: '4px 6px', borderRadius: 8, fontSize: 10, fontWeight: 600,
+                  flex: 1, padding: '4px 6px', borderRadius: 8, fontSize: 'var(--font-xs)', fontWeight: 600,
                   background: favoritesOnly ? 'var(--scarlet-light)' : 'var(--bg-tertiary)',
                   color: favoritesOnly ? 'var(--scarlet)' : 'var(--text-muted)',
                   border: '1px solid var(--border)', cursor: 'pointer',
@@ -2300,7 +2300,7 @@ export default function HuntRPlugin() {
             </div>
 
             {history.length === 0 ? (
-              <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              <p style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
                 {favoritesOnly ? 'Aucun favori' : 'Aucune recherche récente'}
               </p>
             ) : (
@@ -2322,7 +2322,7 @@ export default function HuntRPlugin() {
                       <button
                         onClick={() => loadFromHistory(h)}
                         style={{
-                          flex: 1, padding: '7px 8px', fontSize: 11,
+                          flex: 1, padding: '7px 8px', fontSize: 'var(--font-xs)',
                           background: 'transparent', color: 'var(--text-primary)',
                           border: 'none', cursor: 'pointer',
                           textAlign: 'left', lineHeight: 1.3, minWidth: 0,
@@ -2332,7 +2332,7 @@ export default function HuntRPlugin() {
                         <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {h.query}
                         </div>
-                        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginTop: 2, display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
                           <span>{h.sources_count} sources</span>
                           {h.mode === 'pro' && <span style={{ color: 'var(--amber, #f59e0b)' }}>Pro</span>}
                           {h.topic && h.topic !== 'web' && (
@@ -2420,7 +2420,7 @@ function CitationBadge({ idx, citation, onClick }: {
       <button onClick={() => onClick?.(idx)}
         style={{
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          width: 16, height: 16, borderRadius: '50%', fontSize: 9, fontWeight: 700,
+          width: 16, height: 16, borderRadius: '50%', fontSize: 'var(--font-2xs)', fontWeight: 700,
           background: 'var(--scarlet)', color: '#fff',
           border: 'none', cursor: 'pointer', verticalAlign: 'super', margin: '0 1px',
           transition: 'transform 0.15s',
@@ -2442,16 +2442,16 @@ function CitationBadge({ idx, citation, onClick }: {
             <div style={{
               width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 9, fontWeight: 700, background: 'var(--scarlet)', color: '#fff',
+              fontSize: 'var(--font-2xs)', fontWeight: 700, background: 'var(--scarlet)', color: '#fff',
             }}>{idx}</div>
             <span style={{
-              fontSize: 12, fontWeight: 600, color: 'var(--text-primary)',
+              fontSize: 'var(--font-sm)', fontWeight: 600, color: 'var(--text-primary)',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
             }}>
               {citation.title || host}
             </span>
           </div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 3 }}>
+          <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 3 }}>
             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
               <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
@@ -2460,7 +2460,7 @@ function CitationBadge({ idx, citation, onClick }: {
           </div>
           {citation.snippet && (
             <p style={{
-              fontSize: 11, color: 'var(--text-secondary)', margin: 0,
+              fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', margin: 0,
               lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 3,
               WebkitBoxOrient: 'vertical', overflow: 'hidden',
             }}>
@@ -2494,11 +2494,11 @@ function MarkdownRenderer({ text, citations, onCiteClick }: {
     const line = lines[i]
 
     if (line.startsWith('### ')) {
-      elements.push(<h4 key={key++} style={{ fontSize: 14, fontWeight: 700, margin: '14px 0 6px', color: 'var(--text-primary)' }}>{parse(line.slice(4))}</h4>)
+      elements.push(<h4 key={key++} style={{ fontSize: 'var(--font-base)', fontWeight: 700, margin: '14px 0 6px', color: 'var(--text-primary)' }}>{parse(line.slice(4))}</h4>)
     } else if (line.startsWith('## ')) {
-      elements.push(<h3 key={key++} style={{ fontSize: 17, fontWeight: 700, margin: '22px 0 8px', color: 'var(--text-primary)', borderBottom: '1px solid color-mix(in srgb, var(--scarlet) 15%, transparent)', paddingBottom: 4 }}>{parse(line.slice(3))}</h3>)
+      elements.push(<h3 key={key++} style={{ fontSize: 'var(--font-xl)', fontWeight: 700, margin: '22px 0 8px', color: 'var(--text-primary)', borderBottom: '1px solid color-mix(in srgb, var(--scarlet) 15%, transparent)', paddingBottom: 4 }}>{parse(line.slice(3))}</h3>)
     } else if (line.startsWith('# ')) {
-      elements.push(<h2 key={key++} style={{ fontSize: 22, fontWeight: 800, margin: '4px 0 18px', color: 'var(--text-primary)', lineHeight: 1.3 }}>{parse(line.slice(2))}</h2>)
+      elements.push(<h2 key={key++} style={{ fontSize: 'var(--font-2xl)', fontWeight: 800, margin: '4px 0 18px', color: 'var(--text-primary)', lineHeight: 1.3 }}>{parse(line.slice(2))}</h2>)
     } else if (/^[-*]\s/.test(line)) {
       elements.push(
         <div key={key++} style={{ display: 'flex', gap: 8, margin: '2px 0', paddingLeft: 8 }}>
@@ -2511,7 +2511,7 @@ function MarkdownRenderer({ text, citations, onCiteClick }: {
       if (match) {
         elements.push(
           <div key={key++} style={{ display: 'flex', gap: 8, margin: '2px 0', paddingLeft: 8 }}>
-            <span style={{ color: 'var(--scarlet)', flexShrink: 0, fontWeight: 600, fontSize: 12 }}>{match[1]}.</span>
+            <span style={{ color: 'var(--scarlet)', flexShrink: 0, fontWeight: 600, fontSize: 'var(--font-sm)' }}>{match[1]}.</span>
             <span style={{ color: 'var(--text-secondary)' }}>{parse(match[2])}</span>
           </div>
         )
@@ -2527,7 +2527,7 @@ function MarkdownRenderer({ text, citations, onCiteClick }: {
         <pre key={key++} style={{
           padding: 12, borderRadius: 8, margin: '8px 0', overflow: 'auto',
           background: 'var(--bg-primary)', border: '1px solid var(--border)',
-          fontSize: 12, fontFamily: 'JetBrains Mono, monospace',
+          fontSize: 'var(--font-sm)', fontFamily: 'JetBrains Mono, monospace',
           color: 'var(--ember, #ea580c)',
         }}>
           {codeLines.join('\n')}
@@ -2547,7 +2547,7 @@ function MarkdownRenderer({ text, citations, onCiteClick }: {
       elements.push(
         <div key={key++} style={{ overflowX: 'auto', margin: '10px 0' }}>
           <table style={{
-            width: '100%', borderCollapse: 'collapse', fontSize: 12,
+            width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-sm)',
             border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden',
           }}>
             <thead style={{ background: 'var(--bg-tertiary)' }}>
@@ -2606,7 +2606,7 @@ function inlineParse(
       parts.push(<em key={key} style={{ color: 'var(--text-primary)' }}>{match[3]}</em>)
     } else if (match[4]) {
       parts.push(<code key={key} style={{
-        padding: '1px 5px', borderRadius: 4, fontSize: 12,
+        padding: '1px 5px', borderRadius: 4, fontSize: 'var(--font-sm)',
         background: 'var(--bg-tertiary)', color: 'var(--scarlet)',
         fontFamily: 'JetBrains Mono, monospace',
       }}>{match[4]}</code>)
@@ -2992,12 +2992,12 @@ function WysiwygEditor({
         padding: '10px 14px', borderBottom: '1px solid var(--border)',
         background: 'var(--bg-secondary)',
       }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ fontSize: 'var(--font-sm)', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
           <Sliders size={13} style={{ color: 'var(--scarlet)' }} />
           Modèle de réponse — WYSIWYG
           {isDirty && (
             <span style={{
-              fontSize: 9, padding: '1px 6px', borderRadius: 4,
+              fontSize: 'var(--font-2xs)', padding: '1px 6px', borderRadius: 4,
               background: 'color-mix(in srgb, var(--scarlet) 18%, transparent)',
               color: 'var(--scarlet)', fontWeight: 700, letterSpacing: 0.3,
             }}>MODIFIÉ</span>
@@ -3043,12 +3043,12 @@ function WysiwygEditor({
                   minWidth: 180, padding: 4, zIndex: 20,
                 }}>
                   {([
-                    ['p', 'Paragraphe', { fontSize: 12 }],
-                    ['h1', 'Titre 1', { fontSize: 16, fontWeight: 700 }],
-                    ['h2', 'Titre 2', { fontSize: 14, fontWeight: 700, color: 'var(--scarlet)' }],
-                    ['h3', 'Titre 3', { fontSize: 13, fontWeight: 600 }],
-                    ['blockquote', 'Citation', { fontSize: 12, fontStyle: 'italic' as const, paddingLeft: 6, borderLeft: '2px solid var(--scarlet)' }],
-                    ['pre', 'Bloc de code', { fontSize: 12, fontFamily: 'JetBrains Mono, monospace', color: 'var(--scarlet)' }],
+                    ['p', 'Paragraphe', { fontSize: 'var(--font-sm)' }],
+                    ['h1', 'Titre 1', { fontSize: 'var(--font-lg)', fontWeight: 700 }],
+                    ['h2', 'Titre 2', { fontSize: 'var(--font-base)', fontWeight: 700, color: 'var(--scarlet)' }],
+                    ['h3', 'Titre 3', { fontSize: 'var(--font-md)', fontWeight: 600 }],
+                    ['blockquote', 'Citation', { fontSize: 'var(--font-sm)', fontStyle: 'italic' as const, paddingLeft: 6, borderLeft: '2px solid var(--scarlet)' }],
+                    ['pre', 'Bloc de code', { fontSize: 'var(--font-sm)', fontFamily: 'JetBrains Mono, monospace', color: 'var(--scarlet)' }],
                   ] as [FormatTag, string, React.CSSProperties][]).map(([tag, label, st]) => (
                     <button key={tag}
                       onMouseDown={e => e.preventDefault()}
@@ -3147,7 +3147,7 @@ function WysiwygEditor({
                 }}
                 style={{
                   padding: '3px 10px', fontFamily: 'JetBrains Mono, monospace',
-                  fontSize: 10, fontWeight: 600, letterSpacing: 0.5,
+                  fontSize: 'var(--font-xs)', fontWeight: 600, letterSpacing: 0.5,
                   color: active ? 'var(--scarlet)' : 'var(--text-muted)',
                   background: active ? 'var(--bg-tertiary)' : 'transparent',
                   border: 'none', borderRadius: 4, cursor: 'pointer',
@@ -3215,10 +3215,10 @@ function WysiwygEditor({
         )}
         <SecondaryButton onClick={onClose}>Réduire</SecondaryButton>
         {flash === 'err' && (
-          <span style={{ fontSize: 11, color: 'var(--accent-danger, #dc2626)' }}>Échec sauvegarde</span>
+          <span style={{ fontSize: 'var(--font-xs)', color: 'var(--accent-danger, #dc2626)' }}>Échec sauvegarde</span>
         )}
         <span style={{
-          marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)',
+          marginLeft: 'auto', fontSize: 'var(--font-xs)', color: 'var(--text-muted)',
           fontFamily: 'JetBrains Mono, monospace', letterSpacing: 0.3,
         }}>
           {value.trim() ? `${value.trim().split(/\s+/).length} mots · Markdown` : 'vide'}
@@ -3238,7 +3238,7 @@ function WysiwygEditor({
             borderRadius: 12, padding: 18, width: 420,
             boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
           }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 15, color: 'var(--scarlet)', fontWeight: 700 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 'var(--font-lg)', color: 'var(--scarlet)', fontWeight: 700 }}>
               Ajouter un lien
             </h3>
             <input type="text" value={linkUrl} onChange={e => setLinkUrl(e.target.value)}
@@ -3247,14 +3247,14 @@ function WysiwygEditor({
               style={{
                 width: '100%', padding: '8px 12px', marginBottom: 8,
                 background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                borderRadius: 8, color: 'var(--text-primary)', fontSize: 'var(--font-md)', outline: 'none',
               }} />
             <input type="text" value={linkText} onChange={e => setLinkText(e.target.value)}
               placeholder="Texte du lien (optionnel)"
               style={{
                 width: '100%', padding: '8px 12px',
                 background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                borderRadius: 8, color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                borderRadius: 8, color: 'var(--text-primary)', fontSize: 'var(--font-md)', outline: 'none',
               }} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <SecondaryButton onClick={() => setLinkOpen(false)}>Annuler</SecondaryButton>

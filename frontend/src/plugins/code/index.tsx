@@ -334,9 +334,9 @@ export function SpearCodeContent() {
         display: 'flex', alignItems: 'center', gap: 10,
       }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--scarlet)" strokeWidth="2.5" style={{ flexShrink: 0 }}><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: -0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>SpearCode</span>
+        <span style={{ fontSize: 'var(--font-base)', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: -0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>SpearCode</span>
         <span style={{
-          fontSize: 10, fontFamily: 'monospace', fontWeight: 600,
+          fontSize: 'var(--font-xs)', fontFamily: 'monospace', fontWeight: 600,
           padding: '2px 6px', borderRadius: 4, flexShrink: 0,
           background: 'color-mix(in srgb, var(--scarlet) 10%, transparent)',
           color: 'color-mix(in srgb, var(--scarlet) 80%, var(--text-muted))',
@@ -349,11 +349,11 @@ export function SpearCodeContent() {
         <button onClick={() => setShowPalette(true)} style={{
           display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 6,
           background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-muted)',
-          cursor: 'pointer', fontSize: 11,
+          cursor: 'pointer', fontSize: 'var(--font-xs)',
         }}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           Recherche rapide
-          <kbd style={{ fontSize: 9, padding: '0 4px', background: 'var(--bg-secondary)', borderRadius: 3, border: '1px solid var(--border)' }}>Ctrl+K</kbd>
+          <kbd style={{ fontSize: 'var(--font-2xs)', padding: '0 4px', background: 'var(--bg-secondary)', borderRadius: 3, border: '1px solid var(--border)' }}>Ctrl+K</kbd>
         </button>
 
         <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
@@ -415,7 +415,7 @@ export function SpearCodeContent() {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v18M3 12h18"/></svg>
           </HBtn>
           <button onClick={() => saveFile(activeTab!)} style={{
-            padding: '3px 10px', borderRadius: 5, border: 'none', fontSize: 10, fontWeight: 600,
+            padding: '3px 10px', borderRadius: 5, border: 'none', fontSize: 'var(--font-xs)', fontWeight: 600,
             background: 'var(--scarlet)', color: '#fff', cursor: 'pointer',
           }}>Sauvegarder</button>
         </>}
@@ -506,7 +506,7 @@ export function SpearCodeContent() {
               display: 'flex', alignItems: 'center', gap: 3, padding: '3px 10px', flexShrink: 0,
               background: '#1e293b', borderBottom: '1px solid #334155',
             }}>
-              <span style={{ fontSize: 8, color: '#8b5cf6', fontWeight: 700, marginRight: 4 }}>ACTIONS IA</span>
+              <span style={{ fontSize: 'var(--font-2xs)', color: '#8b5cf6', fontWeight: 700, marginRight: 4 }}>ACTIONS IA</span>
               {[
                 { id: 'explain', icon: '\u{1F4A1}', label: 'Expliquer' },
                 { id: 'refactor', icon: '♻️', label: 'Refactoriser' },
@@ -518,7 +518,7 @@ export function SpearCodeContent() {
                 <button key={a.id} onClick={() => runCodeAction(a.id)} disabled={codeActionLoading}
                   style={{
                     border: 'none', cursor: 'pointer', borderRadius: 4, padding: '2px 6px',
-                    fontSize: 8, fontWeight: 600, background: '#8b5cf615', color: '#a78bfa',
+                    fontSize: 'var(--font-2xs)', fontWeight: 600, background: '#8b5cf615', color: '#a78bfa',
                     display: 'flex', alignItems: 'center', gap: 2, transition: 'all 0.12s',
                   }}>{a.icon} {a.label}</button>
               ))}
@@ -526,10 +526,10 @@ export function SpearCodeContent() {
                 // Save selection as snippet
                 const name = prompt('Nom du snippet:')
                 if (name) apiFetch('/snippets', { method: 'POST', body: JSON.stringify({ name, code: selectedCode, language: activeFile.language }) })
-              }} style={{ border: 'none', cursor: 'pointer', borderRadius: 4, padding: '2px 6px', fontSize: 8, fontWeight: 600, background: '#22c55e15', color: '#22c55e', marginLeft: 'auto' }}>
+              }} style={{ border: 'none', cursor: 'pointer', borderRadius: 4, padding: '2px 6px', fontSize: 'var(--font-2xs)', fontWeight: 600, background: '#22c55e15', color: '#22c55e', marginLeft: 'auto' }}>
                 {'\u{1F4BE}'} Snippet
               </button>
-              <button onClick={() => setShowCodeActions(false)} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10, padding: '0 2px' }}>&times;</button>
+              <button onClick={() => setShowCodeActions(false)} style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 'var(--font-xs)', padding: '0 2px' }}>&times;</button>
             </div>
           )}
 
@@ -560,23 +560,23 @@ export function SpearCodeContent() {
                     </div>
                     <div style={{ width: 1, background: 'var(--border)' }} />
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0, fontSize: 10 }}>
-                        <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1 }}>SPLIT</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0, fontSize: 'var(--font-xs)' }}>
+                        <span style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1 }}>SPLIT</span>
                         <select
                           value={splitPath}
                           onChange={e => setSplitPath(e.target.value)}
-                          style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', flex: 1 }}
+                          style={{ fontSize: 'var(--font-xs)', padding: '2px 6px', borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', flex: 1 }}
                         >
                           {tabs.filter(t => t.language !== '__image__').map(t => (
                             <option key={t.path} value={t.path}>{t.name} — {t.path}</option>
                           ))}
                         </select>
-                        <button onClick={() => setSplitPath(null)} title="Fermer le split" style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, padding: '0 4px', lineHeight: 1 }}>×</button>
+                        <button onClick={() => setSplitPath(null)} title="Fermer le split" style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 'var(--font-base)', padding: '0 4px', lineHeight: 1 }}>×</button>
                       </div>
                       {splitFile ? (
                         <CodeEditor file={splitFile} onChange={c => updateContent(splitFile.path, c)} onSave={() => saveFile(splitFile.path)} onCursorChange={(l, c) => updateCursor(splitFile.path, l, c)} />
                       ) : (
-                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Aucun fichier disponible dans le split</div>
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>Aucun fichier disponible dans le split</div>
                       )}
                     </div>
                   </div>
@@ -613,13 +613,13 @@ export function SpearCodeContent() {
               <circle cx="12" cy="12" r="3"/>
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
             </svg>
-            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Paramètres SpearCode</span>
+            <span style={{ fontSize: 'var(--font-base)', fontWeight: 700, color: 'var(--text-primary)' }}>Paramètres SpearCode</span>
             <div style={{ flex: 1 }} />
             <button onClick={() => setShowSettings(false)} title="Fermer"
               style={{
                 background: 'transparent', border: '1px solid var(--border)',
                 color: 'var(--text-secondary)', cursor: 'pointer',
-                padding: '4px 10px', borderRadius: 5, fontSize: 12,
+                padding: '4px 10px', borderRadius: 5, fontSize: 'var(--font-sm)',
               }}>
               ×
             </button>

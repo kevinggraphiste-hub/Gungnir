@@ -40,9 +40,9 @@ export const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.s
 export const MONO = '"Cascadia Code", "Fira Code", "JetBrains Mono", monospace'
 
 export const S = {
-  sl: { fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: 1, padding: '8px 14px 4px' },
+  sl: { fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: 1, padding: '8px 14px 4px' },
   badge: (c: string, a = false) => ({
-    fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+    fontSize: 'var(--font-2xs)', fontWeight: 700, padding: '2px 8px', borderRadius: 4,
     background: a ? `${c}20` : 'var(--bg-tertiary)', color: a ? c : 'var(--text-muted)',
     border: a ? `1px solid ${c}40` : '1px solid transparent', cursor: 'pointer', transition: 'all 0.15s',
   }),

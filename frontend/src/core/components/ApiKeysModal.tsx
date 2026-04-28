@@ -353,7 +353,7 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
                       ))}
                   </select>
                   {newProvider.name && (
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
                       {KNOWN_PROVIDER_PRESETS.find(p => p.id === newProvider.name)?.hint}
                     </div>
                   )}
@@ -397,7 +397,7 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
                       className="w-full rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
                       style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                   </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                     Le provider doit être OpenAI-compatible (endpoint <code>/v1/chat/completions</code> et <code>/v1/models</code>).
                     Si tu ne mets pas de modèle par défaut, Gungnir tentera <code>/v1/models</code> pour le détecter.
                   </div>

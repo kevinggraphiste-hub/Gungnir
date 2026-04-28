@@ -991,7 +991,7 @@ export default function ValkyriePlugin() {
                       padding: '6px 10px', borderRadius: 6,
                       background: p.id === activeProjectId ? 'color-mix(in srgb, var(--scarlet) 12%, transparent)' : 'transparent',
                       color: p.id === activeProjectId ? 'var(--scarlet)' : 'var(--text-primary)',
-                      border: 'none', cursor: 'pointer', fontSize: 13,
+                      border: 'none', cursor: 'pointer', fontSize: 'var(--font-md)',
                     }}>
                     {p.title}
                   </button>
@@ -1004,7 +1004,7 @@ export default function ValkyriePlugin() {
                     width: '100%', textAlign: 'left',
                     padding: '6px 10px', borderRadius: 6,
                     background: 'transparent', color: 'var(--scarlet)',
-                    border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                    border: 'none', cursor: 'pointer', fontSize: 'var(--font-md)', fontWeight: 600,
                   }}>
                   <Plus className="w-3.5 h-3.5" /> Nouveau tableau…
                 </button>
@@ -1071,7 +1071,7 @@ export default function ValkyriePlugin() {
                   <Bell className="w-3.5 h-3.5" /> Rappels
                   {reminders && reminders.total > 0 && (
                     <span style={{
-                      fontSize: 9, fontWeight: 700,
+                      fontSize: 'var(--font-2xs)', fontWeight: 700,
                       padding: '1px 5px', borderRadius: 4,
                       background: reminders.overdue.length > 0 ? '#ef4444' : 'var(--scarlet)',
                       color: '#fff',
@@ -1356,7 +1356,7 @@ export default function ValkyriePlugin() {
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: c }} />
                   {displayTag(t.label)}
                   <span style={{
-                    fontFamily: 'JetBrains Mono, monospace', fontSize: 9,
+                    fontFamily: 'JetBrains Mono, monospace', fontSize: 'var(--font-2xs)',
                     color: 'var(--text-muted)', padding: '0 4px',
                     background: 'var(--bg-primary)', borderRadius: 4,
                   }}>{t.count}</span>
@@ -1611,7 +1611,7 @@ function StatusChip({
       }} />
       <span>{label}</span>
       <span style={{
-        fontFamily: 'JetBrains Mono, monospace', fontSize: 10,
+        fontFamily: 'JetBrains Mono, monospace', fontSize: 'var(--font-xs)',
         color: 'var(--text-muted)', padding: '0 5px',
         background: 'var(--bg-primary)', borderRadius: 4,
       }}>{count}</span>
@@ -1902,7 +1902,7 @@ function CardTile({
               padding: '3px 8px', borderRadius: 4,
               background: `color-mix(in srgb, ${status.color} 15%, transparent)`,
               border: `1px solid color-mix(in srgb, ${status.color} 35%, transparent)`,
-              color: status.color, fontSize: 10, fontWeight: 600, cursor: 'pointer',
+              color: status.color, fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer',
             }}
             title="Changer de statut">
             <span style={{
@@ -1925,7 +1925,7 @@ function CardTile({
                     width: '100%', textAlign: 'left',
                     padding: '5px 8px', borderRadius: 6,
                     background: s.key === card.status_key ? 'var(--bg-tertiary)' : 'transparent',
-                    color: 'var(--text-primary)', border: 'none', cursor: 'pointer', fontSize: 11,
+                    color: 'var(--text-primary)', border: 'none', cursor: 'pointer', fontSize: 'var(--font-xs)',
                   }}>
                   <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.color }} />
                   <span>{s.label}</span>
@@ -1952,7 +1952,7 @@ function CardTile({
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <label style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
-                fontSize: 10, color: 'var(--text-muted)',
+                fontSize: 'var(--font-xs)', color: 'var(--text-muted)',
                 fontFamily: 'JetBrains Mono, monospace',
                 textTransform: 'uppercase', letterSpacing: 1.5,
               }}>
@@ -1982,7 +1982,7 @@ function CardTile({
               {card.due_date && (
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '2px 6px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                  padding: '2px 6px', borderRadius: 4, fontSize: 'var(--font-xs)', fontWeight: 600,
                   background: dueInfo.overdue ? 'rgba(239,68,68,0.15)' :
                     dueInfo.soon ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.12)',
                   color: dueInfo.overdue ? '#ef4444' :
@@ -1995,7 +1995,7 @@ function CardTile({
               {isConscienceCard && (
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '2px 6px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                  padding: '2px 6px', borderRadius: 4, fontSize: 'var(--font-xs)', fontWeight: 600,
                   background: 'color-mix(in srgb, var(--scarlet) 12%, transparent)',
                   color: 'var(--scarlet)',
                 }}>
@@ -2005,7 +2005,7 @@ function CardTile({
               {/* Récurrence : menu déroulant minimal */}
               <label style={{
                 display: 'inline-flex', alignItems: 'center', gap: 4,
-                fontSize: 10, color: 'var(--text-muted)',
+                fontSize: 'var(--font-xs)', color: 'var(--text-muted)',
                 fontFamily: 'JetBrains Mono, monospace',
                 textTransform: 'uppercase', letterSpacing: 1.5,
               }}>
@@ -2073,7 +2073,7 @@ function CardTile({
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 8,
                 paddingTop: 6,
-                fontSize: 10, color: 'var(--text-muted)',
+                fontSize: 'var(--font-xs)', color: 'var(--text-muted)',
                 fontFamily: 'JetBrains Mono, monospace',
               }}>
                 <span>{doneCount}/{totalSubtasks}</span>
@@ -2101,7 +2101,7 @@ function CardTile({
                     padding: '3px 8px', borderRadius: 6,
                     background: 'transparent',
                     border: '1px solid color-mix(in srgb, var(--scarlet) 40%, transparent)',
-                    color: 'var(--scarlet)', fontSize: 10, cursor: 'pointer', fontWeight: 600,
+                    color: 'var(--scarlet)', fontSize: 'var(--font-xs)', cursor: 'pointer', fontWeight: 600,
                   }}>
                   <RotateCcw className="w-3 h-3" /> Restaurer
                 </button>
@@ -2112,7 +2112,7 @@ function CardTile({
                       display: 'flex', alignItems: 'center', gap: 4,
                       padding: '3px 8px', borderRadius: 6,
                       background: 'transparent', border: '1px solid var(--border)',
-                      color: 'var(--text-muted)', fontSize: 10, cursor: 'pointer',
+                      color: 'var(--text-muted)', fontSize: 'var(--font-xs)', cursor: 'pointer',
                     }}
                     onMouseOver={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--text-muted)' }}
                     onMouseOut={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)' }}>
@@ -2123,7 +2123,7 @@ function CardTile({
                       display: 'flex', alignItems: 'center', gap: 4,
                       padding: '3px 8px', borderRadius: 6,
                       background: 'transparent', border: '1px solid var(--border)',
-                      color: 'var(--text-muted)', fontSize: 10, cursor: 'pointer',
+                      color: 'var(--text-muted)', fontSize: 'var(--font-xs)', cursor: 'pointer',
                     }}
                     onMouseOver={e => { e.currentTarget.style.color = '#f59e0b'; e.currentTarget.style.borderColor = '#f59e0b' }}
                     onMouseOut={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)' }}>
@@ -2136,7 +2136,7 @@ function CardTile({
                   display: 'flex', alignItems: 'center', gap: 4,
                   padding: '3px 8px', borderRadius: 6,
                   background: 'transparent', border: '1px solid var(--border)',
-                  color: 'var(--text-muted)', fontSize: 10, cursor: 'pointer',
+                  color: 'var(--text-muted)', fontSize: 'var(--font-xs)', cursor: 'pointer',
                 }}
                 onMouseOver={e => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.borderColor = '#ef4444' }}
                 onMouseOut={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)' }}>
@@ -2212,7 +2212,7 @@ function CardTile({
               marginTop: (card.tags || []).length > 0 ? undefined : 'auto',
             }}>
               <GripVertical className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
-              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+              <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>
                 glisser pour déplacer
               </span>
             </div>
@@ -2220,7 +2220,7 @@ function CardTile({
             {totalSubtasks > 0 && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 6,
-                fontSize: 10, color: 'var(--text-muted)',
+                fontSize: 'var(--font-xs)', color: 'var(--text-muted)',
                 fontFamily: 'JetBrains Mono, monospace',
                 paddingTop: 6, borderTop: '1px solid var(--border)',
               }}>
@@ -2278,7 +2278,7 @@ function SubtaskList({
       {items.map(st => (
         <div key={st.id} style={{
           display: 'flex', alignItems: 'center', gap: 8,
-          padding: '4px 0', fontSize: 12,
+          padding: '4px 0', fontSize: 'var(--font-sm)',
         }}>
           <button onClick={() => onToggle(st.id)}
             style={{
@@ -2458,7 +2458,7 @@ function TagBar({
             padding: '2px 6px 2px 8px', borderRadius: 4,
             background: `color-mix(in srgb, ${c} 15%, transparent)`,
             border: `1px solid color-mix(in srgb, ${c} 30%, transparent)`,
-            color: c, fontSize: 10, fontWeight: 600,
+            color: c, fontSize: 'var(--font-xs)', fontWeight: 600,
           }}>
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: c }} />
             {displayTag(t)}
@@ -2485,7 +2485,7 @@ function TagBar({
           placeholder="+ tag"
           style={{
             background: 'transparent', border: '1px dashed var(--border)',
-            borderRadius: 4, padding: '1px 6px', fontSize: 10,
+            borderRadius: 4, padding: '1px 6px', fontSize: 'var(--font-xs)',
             color: 'var(--text-muted)', outline: 'none', width: 70,
           }}
         />
@@ -2506,14 +2506,14 @@ function TagBar({
                     display: 'flex', alignItems: 'center', gap: 6,
                     width: '100%', padding: '4px 6px',
                     borderRadius: 4, background: 'transparent', border: 'none',
-                    color: 'var(--text-primary)', fontSize: 11, cursor: 'pointer',
+                    color: 'var(--text-primary)', fontSize: 'var(--font-xs)', cursor: 'pointer',
                     textAlign: 'left',
                   }}
                   onMouseOver={e => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
                   onMouseOut={e => (e.currentTarget.style.background = 'transparent')}>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: c }} />
                   <span style={{ flex: 1 }}>{displayTag(s.label)}</span>
-                  <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>×{s.count}</span>
+                  <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>×{s.count}</span>
                 </button>
               )
             })}
@@ -2558,7 +2558,7 @@ function EmptySlot({ onCreate }: { onCreate: () => void }) {
         <Plus className="w-4 h-4" />
       </div>
       <span style={{
-        fontSize: 10, color: hover ? 'var(--scarlet)' : 'var(--text-muted)',
+        fontSize: 'var(--font-xs)', color: hover ? 'var(--scarlet)' : 'var(--text-muted)',
         fontWeight: 500,
       }}>
         {hover ? 'Créer ici' : 'Emplacement libre'}
@@ -2635,8 +2635,8 @@ function ExportMenu({
               }}
               onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-              <div style={{ fontSize: 12, fontWeight: 600 }}>{lbl}</div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{desc}</div>
+              <div style={{ fontSize: 'var(--font-sm)', fontWeight: 600 }}>{lbl}</div>
+              <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>{desc}</div>
             </button>
           ))}
         </div>
@@ -3048,7 +3048,7 @@ function StatsPanel({ stats, statuses }: { stats: StatsT; statuses: StatusT[] })
               <span style={{
                 width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0,
               }} />
-              <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 100 }}>
+              <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', minWidth: 100 }}>
                 {s.label}
               </span>
               <div style={{
@@ -3060,7 +3060,7 @@ function StatsPanel({ stats, statuses }: { stats: StatsT; statuses: StatusT[] })
                 }} />
               </div>
               <span style={{
-                fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+                fontSize: 'var(--font-xs)', fontFamily: 'JetBrains Mono, monospace',
                 color: 'var(--text-muted)', minWidth: 60, textAlign: 'right',
               }}>{count} · {statusPct(s.key)}%</span>
             </div>
@@ -3069,7 +3069,7 @@ function StatsPanel({ stats, statuses }: { stats: StatsT; statuses: StatusT[] })
         {stats.subtasks_total > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
             <Check className="w-2.5 h-2.5" style={{ color: 'var(--text-muted)' }} />
-            <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 100 }}>
+            <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', minWidth: 100 }}>
               Sous-tâches
             </span>
             <div style={{
@@ -3081,7 +3081,7 @@ function StatsPanel({ stats, statuses }: { stats: StatsT; statuses: StatusT[] })
               }} />
             </div>
             <span style={{
-              fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+              fontSize: 'var(--font-xs)', fontFamily: 'JetBrains Mono, monospace',
               color: 'var(--text-muted)', minWidth: 60, textAlign: 'right',
             }}>{stats.subtasks_done}/{stats.subtasks_total}</span>
           </div>
@@ -3113,12 +3113,12 @@ function Kpi({
       <span style={{ color }}>{icon}</span>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{
-          fontSize: 9, color: 'var(--text-muted)',
+          fontSize: 'var(--font-2xs)', color: 'var(--text-muted)',
           fontFamily: 'JetBrains Mono, monospace',
           textTransform: 'uppercase', letterSpacing: 1,
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         }}>{label}</div>
-        <div style={{ fontSize: 16, fontWeight: 700, color, lineHeight: 1.2 }}>{value}</div>
+        <div style={{ fontSize: 'var(--font-lg)', fontWeight: 700, color, lineHeight: 1.2 }}>{value}</div>
       </div>
     </div>
   )
@@ -3151,7 +3151,7 @@ function NewProjectModal({
         boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+          <h2 style={{ fontSize: 'var(--font-lg)', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
             Nouveau tableau
           </h2>
           <button onClick={onCancel} style={{
@@ -3165,7 +3165,7 @@ function NewProjectModal({
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
           {templates.length === 0 && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: 'var(--font-sm)', color: 'var(--text-muted)' }}>
               Aucun modèle disponible.
             </div>
           )}
@@ -3182,7 +3182,7 @@ function NewProjectModal({
                   : 'var(--border)'}`,
                 color: 'var(--text-primary)', cursor: 'pointer',
               }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>
+              <div style={{ fontSize: 'var(--font-md)', fontWeight: 600, marginBottom: 2 }}>
                 {t.title}
                 <span style={{
                   marginLeft: 8, padding: '1px 6px', borderRadius: 4,
@@ -3193,7 +3193,7 @@ function NewProjectModal({
                   {t.card_count} cartes
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+              <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', lineHeight: 1.4 }}>
                 {t.description || '—'}
               </div>
             </button>
@@ -3210,7 +3210,7 @@ function NewProjectModal({
           className="w-full mb-4 outline-none"
           style={{
             background: 'var(--bg-primary)', border: '1px solid var(--border)',
-            color: 'var(--text-primary)', borderRadius: 8, padding: '8px 10px', fontSize: 13,
+            color: 'var(--text-primary)', borderRadius: 8, padding: '8px 10px', fontSize: 'var(--font-md)',
           }}
         />
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -3280,7 +3280,7 @@ function ConscienceGoalsModal({
         boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', margin: 0,
+          <h2 style={{ fontSize: 'var(--font-lg)', fontWeight: 700, color: 'var(--text-primary)', margin: 0,
             display: 'flex', alignItems: 'center', gap: 6 }}>
             <Sparkles className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
             Importer des objectifs Conscience
@@ -3290,7 +3290,7 @@ function ConscienceGoalsModal({
             color: 'var(--text-muted)', padding: 4,
           }}><X className="w-4 h-4" /></button>
         </div>
-        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
+        <p style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
           Chaque objectif sélectionné devient une carte dans le projet actif, avec le
           tag <code style={{ color: 'var(--scarlet)' }}>conscience</code>. Les imports
           sont dédupliqués — un même objectif ne crée pas de doublon.
@@ -3300,12 +3300,12 @@ function ConscienceGoalsModal({
           paddingRight: 4, marginBottom: 12,
         }}>
           {loading && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
+            <div style={{ fontSize: 'var(--font-sm)', color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
               <Loader2 className="w-4 h-4 inline-block animate-spin" /> Chargement…
             </div>
           )}
           {!loading && goals.length === 0 && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
+            <div style={{ fontSize: 'var(--font-sm)', color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
               Aucun objectif dans la Conscience — génère-en depuis le panneau Conscience.
             </div>
           )}
@@ -3338,13 +3338,13 @@ function ConscienceGoalsModal({
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      fontSize: 13, fontWeight: 600, marginBottom: 2,
+                      fontSize: 'var(--font-md)', fontWeight: 600, marginBottom: 2,
                       color: 'var(--text-primary)',
                     }}>
                       {g.title}
                       <span style={{
                         marginLeft: 8, padding: '1px 6px', borderRadius: 4,
-                        fontSize: 9, fontWeight: 600, textTransform: 'uppercase',
+                        fontSize: 'var(--font-2xs)', fontWeight: 600, textTransform: 'uppercase',
                         background: 'var(--bg-primary)', color: 'var(--text-muted)',
                         fontFamily: 'JetBrains Mono, monospace',
                       }}>
@@ -3353,7 +3353,7 @@ function ConscienceGoalsModal({
                       {g.imported && (
                         <span style={{
                           marginLeft: 4, padding: '1px 6px', borderRadius: 4,
-                          fontSize: 9, fontWeight: 600,
+                          fontSize: 'var(--font-2xs)', fontWeight: 600,
                           background: 'color-mix(in srgb, var(--scarlet) 12%, transparent)',
                           color: 'var(--scarlet)',
                         }}>
@@ -3362,7 +3362,7 @@ function ConscienceGoalsModal({
                       )}
                     </div>
                     {g.description && (
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                      <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', lineHeight: 1.4 }}>
                         {g.description}
                       </div>
                     )}
@@ -3373,7 +3373,7 @@ function ConscienceGoalsModal({
           })}
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 'auto' }}>
+          <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginRight: 'auto' }}>
             {selectedCount} / {selectable.length} sélectionné{selectedCount > 1 ? 's' : ''}
           </span>
           <button onClick={onCancel}
@@ -3419,7 +3419,7 @@ function RemindersPanel({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         <div style={{
-          fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+          fontSize: 'var(--font-xs)', fontFamily: 'JetBrains Mono, monospace',
           textTransform: 'uppercase', letterSpacing: 2,
           color, display: 'flex', alignItems: 'center', gap: 4,
         }}>
@@ -3432,7 +3432,7 @@ function RemindersPanel({
               textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8,
               padding: '6px 10px', borderRadius: 6,
               background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-              color: 'var(--text-primary)', cursor: 'pointer', fontSize: 12,
+              color: 'var(--text-primary)', cursor: 'pointer', fontSize: 'var(--font-sm)',
             }}
             onMouseOver={e => { e.currentTarget.style.borderColor = color }}
             onMouseOut={e => { e.currentTarget.style.borderColor = 'var(--border)' }}>
@@ -3468,11 +3468,11 @@ function RemindersPanel({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Bell className="w-4 h-4" style={{ color: reminders.overdue.length > 0 ? '#ef4444' : 'var(--scarlet)' }} />
-          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+          <span style={{ fontSize: 'var(--font-base)', fontWeight: 700, color: 'var(--text-primary)' }}>
             Rappels deadlines
           </span>
           <span style={{
-            fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+            fontSize: 'var(--font-xs)', fontFamily: 'JetBrains Mono, monospace',
             color: 'var(--text-muted)',
           }}>
             {reminders.total} carte{reminders.total > 1 ? 's' : ''}
@@ -3533,7 +3533,7 @@ function BulkActionsBar({
       boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
     }}>
       <span style={{
-        fontSize: 12, fontWeight: 700, color: 'var(--scarlet)',
+        fontSize: 'var(--font-sm)', fontWeight: 700, color: 'var(--scarlet)',
         padding: '2px 8px', borderRadius: 4,
         background: 'color-mix(in srgb, var(--scarlet) 14%, transparent)',
       }}>
@@ -3545,7 +3545,7 @@ function BulkActionsBar({
             <button onClick={() => setStatusOpen(v => !v)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 4,
-                fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                fontSize: 'var(--font-xs)', padding: '4px 10px', borderRadius: 6,
                 background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
                 color: 'var(--text-primary)', cursor: 'pointer',
               }}>
@@ -3567,7 +3567,7 @@ function BulkActionsBar({
                       width: '100%', textAlign: 'left',
                       padding: '5px 8px', borderRadius: 6,
                       background: 'transparent', color: 'var(--text-primary)',
-                      border: 'none', cursor: 'pointer', fontSize: 11,
+                      border: 'none', cursor: 'pointer', fontSize: 'var(--font-xs)',
                     }}>
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.color }} />
                     {s.label}
@@ -3587,7 +3587,7 @@ function BulkActionsBar({
               }}
               placeholder="Ajouter tag…"
               style={{
-                fontSize: 11, padding: '4px 8px', borderRadius: 6,
+                fontSize: 'var(--font-xs)', padding: '4px 8px', borderRadius: 6,
                 background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
                 color: 'var(--text-primary)', outline: 'none', width: 120,
               }}
@@ -3596,7 +3596,7 @@ function BulkActionsBar({
               onClick={() => { if (tagInput.trim()) { onAddTag(tagInput.trim()); setTagInput('') } }}
               disabled={!tagInput.trim()}
               style={{
-                fontSize: 11, padding: '4px 8px', borderRadius: 6,
+                fontSize: 'var(--font-xs)', padding: '4px 8px', borderRadius: 6,
                 background: tagInput.trim() ? 'var(--scarlet)' : 'var(--bg-tertiary)',
                 border: '1px solid var(--border)',
                 color: tagInput.trim() ? '#fff' : 'var(--text-muted)',
@@ -3608,7 +3608,7 @@ function BulkActionsBar({
           <button onClick={onArchive}
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
-              fontSize: 11, padding: '4px 10px', borderRadius: 6,
+              fontSize: 'var(--font-xs)', padding: '4px 10px', borderRadius: 6,
               background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
               color: '#f59e0b', cursor: 'pointer',
             }}>
@@ -3620,7 +3620,7 @@ function BulkActionsBar({
         <button onClick={onRestore}
           style={{
             display: 'flex', alignItems: 'center', gap: 4,
-            fontSize: 11, padding: '4px 10px', borderRadius: 6,
+            fontSize: 'var(--font-xs)', padding: '4px 10px', borderRadius: 6,
             background: 'var(--bg-tertiary)',
             border: '1px solid color-mix(in srgb, var(--scarlet) 35%, var(--border))',
             color: 'var(--scarlet)', cursor: 'pointer', fontWeight: 600,
@@ -3631,7 +3631,7 @@ function BulkActionsBar({
       <button onClick={onDelete}
         style={{
           display: 'flex', alignItems: 'center', gap: 4,
-          fontSize: 11, padding: '4px 10px', borderRadius: 6,
+          fontSize: 'var(--font-xs)', padding: '4px 10px', borderRadius: 6,
           background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
           color: '#ef4444', cursor: 'pointer',
         }}>
@@ -3640,7 +3640,7 @@ function BulkActionsBar({
       <button onClick={onClear}
         style={{
           marginLeft: 'auto',
-          fontSize: 11, padding: '4px 10px', borderRadius: 6,
+          fontSize: 'var(--font-xs)', padding: '4px 10px', borderRadius: 6,
           background: 'transparent', border: '1px solid var(--border)',
           color: 'var(--text-muted)', cursor: 'pointer',
         }}>
@@ -3678,7 +3678,7 @@ function ShortcutsModal({ onClose }: { onClose: () => void }) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <h2 style={{
-            fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0,
+            fontSize: 'var(--font-lg)', fontWeight: 700, color: 'var(--text-primary)', margin: 0,
             display: 'flex', alignItems: 'center', gap: 6,
           }}>
             <Keyboard className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
@@ -3698,11 +3698,11 @@ function ShortcutsModal({ onClose }: { onClose: () => void }) {
             }}>
               <kbd style={{
                 fontFamily: 'JetBrains Mono, monospace',
-                fontSize: 11, padding: '2px 8px', borderRadius: 4,
+                fontSize: 'var(--font-xs)', padding: '2px 8px', borderRadius: 4,
                 background: 'var(--bg-primary)', border: '1px solid var(--border)',
                 color: 'var(--scarlet)', fontWeight: 700, minWidth: 64, textAlign: 'center',
               }}>{k}</kbd>
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{desc}</span>
+              <span style={{ fontSize: 'var(--font-sm)', color: 'var(--text-secondary)' }}>{desc}</span>
             </div>
           ))}
         </div>
@@ -3772,7 +3772,7 @@ function SortMenu({
                 padding: '6px 10px', borderRadius: 6,
                 background: k === sortBy ? 'color-mix(in srgb, var(--scarlet) 12%, transparent)' : 'transparent',
                 color: k === sortBy ? 'var(--scarlet)' : 'var(--text-primary)',
-                border: 'none', cursor: 'pointer', fontSize: 12,
+                border: 'none', cursor: 'pointer', fontSize: 'var(--font-sm)',
               }}>
               {label}
             </button>
@@ -3873,7 +3873,7 @@ function CalendarView({
   const ModeBtn = ({ id, label }: { id: CalendarMode; label: string }) => (
     <button onClick={() => setMode(id)}
       style={{
-        padding: '4px 10px', borderRadius: 6, fontSize: 12,
+        padding: '4px 10px', borderRadius: 6, fontSize: 'var(--font-sm)',
         background: mode === id ? 'color-mix(in srgb, var(--scarlet) 18%, var(--bg-tertiary))' : 'var(--bg-tertiary)',
         border: `1px solid ${mode === id ? 'color-mix(in srgb, var(--scarlet) 35%, transparent)' : 'var(--border)'}`,
         color: mode === id ? 'var(--scarlet)' : 'var(--text-secondary)',
@@ -3889,7 +3889,7 @@ function CalendarView({
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <CalendarDays className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
-        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+        <span style={{ fontSize: 'var(--font-base)', fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
           {cursorLabel}
         </span>
       </div>
@@ -3901,19 +3901,19 @@ function CalendarView({
         </div>
         <button onClick={goPrev}
           style={{
-            padding: '4px 10px', borderRadius: 6, fontSize: 12,
+            padding: '4px 10px', borderRadius: 6, fontSize: 'var(--font-sm)',
             background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
             color: 'var(--text-secondary)', cursor: 'pointer',
           }}>←</button>
         <button onClick={goToday}
           style={{
-            padding: '4px 10px', borderRadius: 6, fontSize: 12,
+            padding: '4px 10px', borderRadius: 6, fontSize: 'var(--font-sm)',
             background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
             color: 'var(--text-secondary)', cursor: 'pointer',
           }}>Aujourd'hui</button>
         <button onClick={goNext}
           style={{
-            padding: '4px 10px', borderRadius: 6, fontSize: 12,
+            padding: '4px 10px', borderRadius: 6, fontSize: 'var(--font-sm)',
             background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
             color: 'var(--text-secondary)', cursor: 'pointer',
           }}>→</button>
@@ -3947,7 +3947,7 @@ function CalendarView({
         {opts.size === 'lg' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span style={{ fontWeight: 600 }}>{c.title}</span>
-            {c.subtitle && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.subtitle}</span>}
+            {c.subtitle && <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>{c.subtitle}</span>}
           </div>
         ) : c.title}
       </div>
@@ -4011,14 +4011,14 @@ function CalendarView({
             <button onClick={() => onQuickCreate(iso)}
               style={{
                 background: 'transparent', border: '1px dashed var(--border)',
-                borderRadius: 6, padding: '4px 10px', fontSize: 11,
+                borderRadius: 6, padding: '4px 10px', fontSize: 'var(--font-xs)',
                 color: 'var(--text-muted)', cursor: 'pointer',
               }}>
               <Plus className="w-3 h-3 inline mr-1" /> Nouvelle carte ce jour
             </button>
           </div>
           {dayCards.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: 20 }}>
+            <div style={{ fontSize: 'var(--font-sm)', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: 20 }}>
               Aucune carte pour cette journée.
             </div>
           ) : (
@@ -4105,7 +4105,7 @@ function CalendarView({
       }}>
         {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => (
           <div key={d} style={{
-            fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+            fontSize: 'var(--font-xs)', fontFamily: 'JetBrains Mono, monospace',
             textTransform: 'uppercase', letterSpacing: 2,
             color: 'var(--text-muted)', textAlign: 'center', padding: '4px 0',
           }}>{d}</div>
@@ -4155,7 +4155,7 @@ function CalendarView({
                     {dayCards.slice(0, 3).map(c => renderCard(c, iso, { size: 'sm' }))}
                     {dayCards.length > 3 && (
                       <span style={{
-                        fontSize: 9, color: 'var(--text-muted)',
+                        fontSize: 'var(--font-2xs)', color: 'var(--text-muted)',
                         fontFamily: 'JetBrains Mono, monospace',
                       }}>+{dayCards.length - 3} autre{dayCards.length - 3 > 1 ? 's' : ''}</span>
                     )}
@@ -4216,7 +4216,7 @@ function ImportModal({
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
           <h2 style={{
-            fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0,
+            fontSize: 'var(--font-lg)', fontWeight: 700, color: 'var(--text-primary)', margin: 0,
             display: 'flex', alignItems: 'center', gap: 6,
           }}>
             <Upload className="w-4 h-4" style={{ color: 'var(--scarlet)' }} /> Importer des cartes
@@ -4225,7 +4225,7 @@ function ImportModal({
             style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 4 }}
             title="Fermer"><X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} /></button>
         </div>
-        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px', lineHeight: 1.5 }}>
+        <p style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', margin: '0 0 10px', lineHeight: 1.5 }}>
           Colle un contenu ou charge un fichier. Formats : <strong>JSON</strong> (array ou {`{cards: [...]}`}),
           <strong> CSV</strong> (header attendu : title, status, tags, due_date…),
           <strong> Markdown</strong> (<code># Statut</code> puis <code>- Carte</code>, <code>  - Sous-tâche</code>).
@@ -4246,14 +4246,14 @@ function ImportModal({
           ))}
           <button onClick={() => setData(samples[format])}
             style={{
-              marginLeft: 'auto', fontSize: 11, padding: '4px 10px', borderRadius: 6,
+              marginLeft: 'auto', fontSize: 'var(--font-xs)', padding: '4px 10px', borderRadius: 6,
               background: 'transparent', border: '1px dashed var(--border)',
               color: 'var(--text-muted)', cursor: 'pointer',
             }}>
             Coller un exemple
           </button>
           <label style={{
-            fontSize: 11, padding: '4px 10px', borderRadius: 6,
+            fontSize: 'var(--font-xs)', padding: '4px 10px', borderRadius: 6,
             background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
             color: 'var(--text-secondary)', cursor: 'pointer',
           }}>
@@ -4275,7 +4275,7 @@ function ImportModal({
             flex: 1, minHeight: 240, resize: 'vertical',
             background: 'var(--bg-primary)', border: '1px solid var(--border)',
             borderRadius: 8, padding: 10,
-            fontSize: 12, color: 'var(--text-primary)',
+            fontSize: 'var(--font-sm)', color: 'var(--text-primary)',
             fontFamily: 'JetBrains Mono, monospace',
             outline: 'none',
           }}
@@ -4331,14 +4331,14 @@ function Toast({
       display: 'flex', alignItems: 'center', gap: 12,
       animation: 'none',
     }}>
-      <span style={{ fontSize: 12, color: 'var(--text-primary)', flex: 1, lineHeight: 1.4 }}>
+      <span style={{ fontSize: 'var(--font-sm)', color: 'var(--text-primary)', flex: 1, lineHeight: 1.4 }}>
         {toast.message}
       </span>
       {toast.action && (
         <button
           onClick={() => { toast.action!.run(); onClose() }}
           style={{
-            fontSize: 11, padding: '4px 10px', borderRadius: 6,
+            fontSize: 'var(--font-xs)', padding: '4px 10px', borderRadius: 6,
             background: 'linear-gradient(135deg, var(--scarlet), var(--scarlet-dark, #b91c1c))',
             color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600,
             whiteSpace: 'nowrap',

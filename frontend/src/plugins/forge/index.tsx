@@ -497,8 +497,8 @@ function WorkflowsTab() {
           <SecondaryButton size="sm" icon={<RefreshCw size={13} />} onClick={load}>Actualiser</SecondaryButton>
         </div>
         <div style={{ flex: 1, overflow: 'auto' }}>
-          {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Chargement…</div>
-          : list.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.6 }}>
+          {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>Chargement…</div>
+          : list.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)', lineHeight: 1.6 }}>
               Aucun workflow.<br />Cliquez sur <strong>Nouveau</strong> pour créer le premier.
             </div>
           : (() => {
@@ -517,7 +517,7 @@ function WorkflowsTab() {
               return folders.map(([folder, items]) => (
                 <div key={folder}>
                   {folders.length > 1 && (
-                    <div style={{ padding: '6px 12px', fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ padding: '6px 12px', fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border)' }}>
                       {folder} <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>· {items.length}</span>
                     </div>
                   )}
@@ -532,12 +532,12 @@ function WorkflowsTab() {
                       }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                         <Workflow size={12} style={{ color: w.enabled ? 'var(--scarlet)' : 'var(--text-muted)', flexShrink: 0 }} />
-                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
+                        <span style={{ fontSize: 'var(--font-sm)', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
                       </div>
-                      {w.description && <div style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.description}</div>}
+                      {w.description && <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.description}</div>}
                       <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
-                        {!w.enabled && <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>désactivé</span>}
-                        {w.tags.slice(0, 3).map(t => <span key={t} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'rgba(220,38,38,0.18)', color: 'var(--scarlet)' }}>{t}</span>)}
+                        {!w.enabled && <span style={{ fontSize: 'var(--font-2xs)', padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>désactivé</span>}
+                        {w.tags.slice(0, 3).map(t => <span key={t} style={{ fontSize: 'var(--font-2xs)', padding: '1px 5px', borderRadius: 3, background: 'rgba(220,38,38,0.18)', color: 'var(--scarlet)' }}>{t}</span>)}
                       </div>
                     </div>
                   ))}
@@ -556,7 +556,7 @@ function WorkflowsTab() {
               value={draft.name}
               onChange={e => setDraft({ ...draft, name: e.target.value })}
               placeholder="Nom du workflow"
-              style={{ flex: 1, minWidth: 200, padding: '5px 10px', fontSize: 13, fontWeight: 600, borderRadius: 5, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
+              style={{ flex: 1, minWidth: 200, padding: '5px 10px', fontSize: 'var(--font-md)', fontWeight: 600, borderRadius: 5, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
             />
             {/* Toggle Vue Visuel ↔ YAML — les deux vues éditent le même
                 yaml_def, donc switch instantané sans perte. */}
@@ -564,7 +564,7 @@ function WorkflowsTab() {
               <button onClick={() => setView('visual')}
                 title="Éditeur visuel (drag & drop)"
                 style={{
-                  padding: '4px 8px', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                  padding: '4px 8px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer',
                   border: 'none', borderRadius: 3,
                   background: view === 'visual' ? 'var(--scarlet)' : 'transparent',
                   color: view === 'visual' ? '#fff' : 'var(--text-secondary)',
@@ -575,7 +575,7 @@ function WorkflowsTab() {
               <button onClick={() => setView('yaml')}
                 title="Édition YAML"
                 style={{
-                  padding: '4px 8px', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                  padding: '4px 8px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer',
                   border: 'none', borderRadius: 3,
                   background: view === 'yaml' ? 'var(--scarlet)' : 'transparent',
                   color: view === 'yaml' ? '#fff' : 'var(--text-secondary)',
@@ -631,14 +631,14 @@ function WorkflowsTab() {
               value={draft.description}
               onChange={e => setDraft({ ...draft, description: e.target.value })}
               placeholder="Description (optionnelle)"
-              style={{ flex: 1, padding: '6px 16px', fontSize: 11, background: 'transparent', border: 'none', color: 'var(--text-muted)', outline: 'none' }}
+              style={{ flex: 1, padding: '6px 16px', fontSize: 'var(--font-xs)', background: 'transparent', border: 'none', color: 'var(--text-muted)', outline: 'none' }}
             />
             <input
               value={draft.folder}
               onChange={e => setDraft({ ...draft, folder: e.target.value })}
               placeholder="Dossier (ex: Veille/News)"
               title="Organise ce workflow dans un dossier (path-like, ex: Personnel/Daily)"
-              style={{ width: 200, padding: '6px 16px', fontSize: 11, background: 'transparent', border: 'none', borderLeft: '1px solid var(--border)', color: 'var(--text-secondary)', outline: 'none', fontFamily: 'ui-monospace, monospace' }}
+              style={{ width: 200, padding: '6px 16px', fontSize: 'var(--font-xs)', background: 'transparent', border: 'none', borderLeft: '1px solid var(--border)', color: 'var(--text-secondary)', outline: 'none', fontFamily: 'ui-monospace, monospace' }}
             />
           </div>
 
@@ -677,7 +677,7 @@ function WorkflowsTab() {
                 {(['run', 'triggers', 'versions'] as const).map(k => (
                   <button key={k} onClick={() => setRightPanel(k)}
                     style={{
-                      flex: 1, padding: '8px 10px', fontSize: 10, fontWeight: 700, letterSpacing: 1,
+                      flex: 1, padding: '8px 10px', fontSize: 'var(--font-xs)', fontWeight: 700, letterSpacing: 1,
                       cursor: 'pointer', background: rightPanel === k ? 'var(--bg-primary)' : 'transparent',
                       color: rightPanel === k ? 'var(--scarlet)' : 'var(--text-muted)',
                       border: 'none', borderBottom: rightPanel === k ? '2px solid var(--scarlet)' : '2px solid transparent',
@@ -689,8 +689,8 @@ function WorkflowsTab() {
               </div>
               {rightPanel === 'run' ? (
                 <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
-                  {running && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Exécution en cours…</div>}
-                  {!running && !lastRun && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.6 }}>Cliquez <strong>Exécuter</strong> pour lancer ce workflow.</div>}
+                  {running && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>Exécution en cours…</div>}
+                  {!running && !lastRun && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)', lineHeight: 1.6 }}>Cliquez <strong>Exécuter</strong> pour lancer ce workflow.</div>}
                   {lastRun && <RunDisplay run={lastRun} />}
                 </div>
               ) : rightPanel === 'triggers' ? (
@@ -708,7 +708,7 @@ function WorkflowsTab() {
           </div>
         </div>
       ) : (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, color: 'var(--text-muted)', fontSize: 13 }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, color: 'var(--text-muted)', fontSize: 'var(--font-md)' }}>
           <FileText size={40} style={{ opacity: 0.3 }} />
           <div>Sélectionnez un workflow ou créez-en un nouveau</div>
         </div>
@@ -762,17 +762,17 @@ function VersionsPanel({ workflowId, onRestored }: {
   return (
     <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
       <button onClick={snapshotNow}
-        style={{ width: '100%', padding: '8px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 14 }}>
+        style={{ width: '100%', padding: '8px 10px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 14 }}>
         <BookmarkPlus size={13} /> Snapshot manuel
       </button>
-      <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 8 }}>
+      <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 8 }}>
         Snapshots auto-créés à chaque sauvegarde du YAML (rate limit 5 min).
         Cliquez "Restaurer" pour revenir à une version. L'état actuel sera
         snapshotté avant pour pouvoir annuler.
       </div>
-      {loading && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Chargement…</div>}
+      {loading && <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>Chargement…</div>}
       {!loading && versions.length === 0 && (
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 4px' }}>
+        <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 4px' }}>
           Aucune version pour l'instant. Modifie ton workflow et sauvegarde, ou clique <strong>Snapshot manuel</strong>.
         </div>
       )}
@@ -782,25 +782,25 @@ function VersionsPanel({ workflowId, onRestored }: {
         return (
           <div key={v.id} style={{ padding: 8, marginBottom: 6, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 5, borderLeft: `3px solid ${sourceColor}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--scarlet)', fontFamily: 'ui-monospace, monospace' }}>v{v.version_num}</span>
-              <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${sourceColor}25`, color: sourceColor, fontWeight: 600, textTransform: 'uppercase' }}>{sourceLabel}</span>
+              <span style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--scarlet)', fontFamily: 'ui-monospace, monospace' }}>v{v.version_num}</span>
+              <span style={{ fontSize: 'var(--font-2xs)', padding: '1px 5px', borderRadius: 3, background: `${sourceColor}25`, color: sourceColor, fontWeight: 600, textTransform: 'uppercase' }}>{sourceLabel}</span>
               <div style={{ flex: 1 }} />
               <button onClick={() => restore(v)} title="Restaurer"
-                style={{ padding: 3, fontSize: 11, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                style={{ padding: 3, fontSize: 'var(--font-xs)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                 <RotateCcw size={11} />
               </button>
               <button onClick={() => remove(v)} title="Supprimer"
-                style={{ padding: 3, fontSize: 11, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                style={{ padding: 3, fontSize: 'var(--font-xs)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
                 <X size={11} />
               </button>
             </div>
-            <div style={{ fontSize: 10, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {v.name || <span style={{ color: 'var(--text-muted)' }}>—</span>}
             </div>
             {v.message && (
-              <div style={{ fontSize: 9, color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 2 }}>"{v.message}"</div>
+              <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 2 }}>"{v.message}"</div>
             )}
-            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 3 }}>{fmtDate(v.created_at)}</div>
+            <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginTop: 3 }}>{fmtDate(v.created_at)}</div>
           </div>
         )
       })}
@@ -861,38 +861,38 @@ function TriggersPanel({ workflowId }: { workflowId: number }) {
     <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
       {/* Action : ajouter webhook */}
       <div style={{ padding: 10, marginBottom: 10, background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>WEBHOOK</div>
-        <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 6 }}>
+        <div style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>WEBHOOK</div>
+        <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 6 }}>
           Génère une URL publique. Un POST dessus lance le workflow ; le body devient les <code>inputs</code>.
         </div>
         <button onClick={addWebhook}
-          style={{ padding: '4px 10px', fontSize: 10, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          style={{ padding: '4px 10px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <Plus size={11} /> Ajouter
         </button>
       </div>
 
       {/* Action : ajouter cron */}
       <div style={{ padding: 10, marginBottom: 14, background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>CRON (PLANIFIÉ)</div>
-        <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 6 }}>
+        <div style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>CRON (PLANIFIÉ)</div>
+        <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 6 }}>
           Expression cron (5 champs : min h jour mois jour-sem). Granularité 30s.
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
           <input value={cronExpr} onChange={e => setCronExpr(e.target.value)}
             placeholder="0 9 * * *"
-            style={{ flex: 1, padding: '4px 6px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }} />
+            style={{ flex: 1, padding: '4px 6px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }} />
           <button onClick={addCron}
-            style={{ padding: '4px 10px', fontSize: 10, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            style={{ padding: '4px 10px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <Plus size={11} /> Ajouter
           </button>
         </div>
       </div>
 
       {/* Liste des triggers existants */}
-      <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>ACTIFS ({triggers.length})</div>
-      {loading && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Chargement…</div>}
+      <div style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>ACTIFS ({triggers.length})</div>
+      {loading && <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>Chargement…</div>}
       {!loading && triggers.length === 0 && (
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 4px' }}>Aucun déclencheur. Ajoute un webhook pour exposer ce workflow à l'extérieur.</div>
+        <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 4px' }}>Aucun déclencheur. Ajoute un webhook pour exposer ce workflow à l'extérieur.</div>
       )}
       {triggers.map(t => <TriggerCard key={t.id} t={t} onToggle={() => toggleTrigger(t)} onDelete={() => deleteTrigger(t)} />)}
     </div>
@@ -926,21 +926,21 @@ function TriggerCard({ t, onToggle, onDelete }: { t: ForgeTrigger; onToggle: () 
         {t.type === 'webhook' ? <LinkIcon size={11} style={{ color: 'var(--scarlet)' }} />
                               : t.type === 'cron' ? <Clock size={11} style={{ color: 'var(--scarlet)' }} />
                               : <Zap size={11} style={{ color: 'var(--text-muted)' }} />}
-        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--scarlet)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{t.type}</span>
+        <span style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--scarlet)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{t.type}</span>
         <div style={{ flex: 1 }} />
         <button onClick={onToggle}
-          style={{ fontSize: 9, padding: '1px 5px', background: t.enabled ? 'rgba(34,197,94,0.18)' : 'var(--bg-secondary)', color: t.enabled ? '#22c55e' : 'var(--text-muted)', border: 'none', borderRadius: 3, cursor: 'pointer', fontWeight: 600 }}>
+          style={{ fontSize: 'var(--font-2xs)', padding: '1px 5px', background: t.enabled ? 'rgba(34,197,94,0.18)' : 'var(--bg-secondary)', color: t.enabled ? '#22c55e' : 'var(--text-muted)', border: 'none', borderRadius: 3, cursor: 'pointer', fontWeight: 600 }}>
           {t.enabled ? 'Activé' : 'Désactivé'}
         </button>
         <button onClick={onDelete}
-          style={{ fontSize: 11, padding: '0 4px', background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}>
+          style={{ fontSize: 'var(--font-xs)', padding: '0 4px', background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}>
           <X size={11} />
         </button>
       </div>
       {t.type === 'webhook' && t.webhook_url && (<>
         <div style={{ display: 'flex', gap: 4, alignItems: 'center', padding: 4, background: 'var(--bg-primary)', borderRadius: 4, marginBottom: 4 }}>
-          <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>PROD</span>
-          <span style={{ flex: 1, fontSize: 9, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.webhook_url}</span>
+          <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', flexShrink: 0 }}>PROD</span>
+          <span style={{ flex: 1, fontSize: 'var(--font-2xs)', fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.webhook_url}</span>
           <button onClick={() => copyUrl(t.webhook_url || '')}
             title="Copier l'URL prod"
             style={{ padding: 3, background: 'transparent', border: 'none', cursor: 'pointer', color: copied ? '#22c55e' : 'var(--text-muted)' }}>
@@ -948,8 +948,8 @@ function TriggerCard({ t, onToggle, onDelete }: { t: ForgeTrigger; onToggle: () 
           </button>
         </div>
         <div style={{ display: 'flex', gap: 4, alignItems: 'center', padding: 4, background: 'var(--bg-primary)', borderRadius: 4 }}>
-          <span style={{ fontSize: 9, color: '#f59e0b', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}><FlaskConical size={9} /> TEST</span>
-          <span style={{ flex: 1, fontSize: 9, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{testUrl}</span>
+          <span style={{ fontSize: 'var(--font-2xs)', color: '#f59e0b', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}><FlaskConical size={9} /> TEST</span>
+          <span style={{ flex: 1, fontSize: 'var(--font-2xs)', fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{testUrl}</span>
           <button onClick={() => copyUrl(testUrl)}
             title="Copier l'URL test (ne lance pas le workflow)"
             style={{ padding: 3, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
@@ -957,25 +957,25 @@ function TriggerCard({ t, onToggle, onDelete }: { t: ForgeTrigger; onToggle: () 
           </button>
         </div>
         <button onClick={() => showHistory ? setShowHistory(false) : loadHistory()}
-          style={{ marginTop: 6, width: '100%', padding: '4px 8px', fontSize: 10, cursor: 'pointer', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-secondary)' }}>
+          style={{ marginTop: 6, width: '100%', padding: '4px 8px', fontSize: 'var(--font-xs)', cursor: 'pointer', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-secondary)' }}>
           {showHistory ? 'Masquer historique' : 'Voir derniers POSTs reçus'}
         </button>
         {showHistory && (
           <div style={{ marginTop: 6, maxHeight: 200, overflow: 'auto' }}>
-            {history.length === 0 && <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: 4, fontStyle: 'italic' }}>Aucun POST reçu encore.</div>}
+            {history.length === 0 && <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', padding: 4, fontStyle: 'italic' }}>Aucun POST reçu encore.</div>}
             {history.map((h, idx) => (
               <div key={idx} style={{ padding: 4, marginBottom: 3, background: 'var(--bg-primary)', borderRadius: 3, border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 8, color: h.mode === 'test' ? '#f59e0b' : 'var(--scarlet)', fontWeight: 700, textTransform: 'uppercase' }}>{h.mode}</span>
-                  <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{h.method}</span>
-                  <span style={{ fontSize: 8, color: 'var(--text-muted)', flex: 1 }}>{fmtDate(h.ts)}</span>
+                  <span style={{ fontSize: 'var(--font-2xs)', color: h.mode === 'test' ? '#f59e0b' : 'var(--scarlet)', fontWeight: 700, textTransform: 'uppercase' }}>{h.mode}</span>
+                  <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>{h.method}</span>
+                  <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', flex: 1 }}>{fmtDate(h.ts)}</span>
                   <button onClick={() => replay(idx)}
                     title="Rejouer"
-                    style={{ padding: '1px 4px', fontSize: 8, fontWeight: 600, background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 2, cursor: 'pointer' }}>
+                    style={{ padding: '1px 4px', fontSize: 'var(--font-2xs)', fontWeight: 600, background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 2, cursor: 'pointer' }}>
                     Rejouer
                   </button>
                 </div>
-                <pre style={{ margin: 0, marginTop: 3, fontSize: 8, fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 60, overflow: 'auto' }}>
+                <pre style={{ margin: 0, marginTop: 3, fontSize: 'var(--font-2xs)', fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 60, overflow: 'auto' }}>
                   {JSON.stringify(h.body, null, 2).slice(0, 500)}
                 </pre>
               </div>
@@ -984,12 +984,12 @@ function TriggerCard({ t, onToggle, onDelete }: { t: ForgeTrigger; onToggle: () 
         )}
       </>)}
       {t.type === 'cron' && (
-        <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', padding: '3px 6px', background: 'var(--bg-primary)', borderRadius: 4, display: 'inline-block' }}>
+        <div style={{ fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', padding: '3px 6px', background: 'var(--bg-primary)', borderRadius: 4, display: 'inline-block' }}>
           {t.config.expression || '?'}
         </div>
       )}
       {t.last_fire_at && (
-        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4 }}>
+        <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginTop: 4 }}>
           Dernier fire : {fmtDate(t.last_fire_at)}
         </div>
       )}
@@ -1019,16 +1019,16 @@ function RunDisplay({ run }: { run: ForgeRun }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <StatusIcon size={16} style={{ color: statusColor }} />
-        <span style={{ fontSize: 12, fontWeight: 700, color: statusColor, textTransform: 'uppercase' }}>{run.status}</span>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>· {fmtDuration(run.duration_ms)}</span>
+        <span style={{ fontSize: 'var(--font-sm)', fontWeight: 700, color: statusColor, textTransform: 'uppercase' }}>{run.status}</span>
+        <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>· {fmtDuration(run.duration_ms)}</span>
       </div>
       {run.error && (
-        <div style={{ padding: 8, fontSize: 11, color: '#fca5a5', background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 4, fontFamily: 'ui-monospace, monospace', whiteSpace: 'pre-wrap' }}>
+        <div style={{ padding: 8, fontSize: 'var(--font-xs)', color: '#fca5a5', background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 4, fontFamily: 'ui-monospace, monospace', whiteSpace: 'pre-wrap' }}>
           {run.error}
         </div>
       )}
       <div>
-        <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>STEPS</div>
+        <div style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>STEPS</div>
         {grouped.map(([sid, evts]) => {
           const start = evts.find(e => e.type === 'start')
           const end = evts.find(e => e.type === 'end')
@@ -1038,21 +1038,21 @@ function RunDisplay({ run }: { run: ForgeRun }) {
           return (
             <div key={sid} style={{ padding: '6px 8px', marginBottom: 4, background: 'var(--bg-tertiary)', borderRadius: 4, borderLeft: `3px solid ${color}` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>{sid}</span>
-                <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{start?.tool || (skip ? 'skip' : '')}</span>
+                <span style={{ fontSize: 'var(--font-xs)', fontWeight: 600, color: 'var(--text-primary)' }}>{sid}</span>
+                <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>{start?.tool || (skip ? 'skip' : '')}</span>
                 <div style={{ flex: 1 }} />
-                <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{fmtDuration(end?.duration_ms)}</span>
+                <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>{fmtDuration(end?.duration_ms)}</span>
               </div>
-              {skip && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3, fontStyle: 'italic' }}>{skip.reason}</div>}
-              {end?.error && <div style={{ fontSize: 10, color: '#fca5a5', marginTop: 3, fontFamily: 'ui-monospace, monospace' }}>{end.error}</div>}
+              {skip && <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 3, fontStyle: 'italic' }}>{skip.reason}</div>}
+              {end?.error && <div style={{ fontSize: 'var(--font-xs)', color: '#fca5a5', marginTop: 3, fontFamily: 'ui-monospace, monospace' }}>{end.error}</div>}
             </div>
           )
         })}
       </div>
       {Object.keys(run.output || {}).length > 0 && (
         <div>
-          <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>OUTPUT FINAL</div>
-          <pre style={{ margin: 0, padding: 8, fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', borderRadius: 4, color: 'var(--text-secondary)', overflow: 'auto', maxHeight: 200 }}>
+          <div style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, marginBottom: 6 }}>OUTPUT FINAL</div>
+          <pre style={{ margin: 0, padding: 8, fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', borderRadius: 4, color: 'var(--text-secondary)', overflow: 'auto', maxHeight: 200 }}>
             {JSON.stringify(run.output, null, 2)}
           </pre>
         </div>
@@ -1086,8 +1086,8 @@ function RunsTab() {
           <SecondaryButton size="sm" icon={<RefreshCw size={13} />} onClick={load}>Actualiser</SecondaryButton>
         </div>
         <div style={{ flex: 1, overflow: 'auto' }}>
-          {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Chargement…</div>
-          : runs.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Aucun run pour l'instant.</div>
+          {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>Chargement…</div>
+          : runs.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>Aucun run pour l'instant.</div>
           : runs.map(r => {
             const color = r.status === 'success' ? '#10b981' : r.status === 'error' ? '#dc2626' : '#f59e0b'
             return (
@@ -1099,11 +1099,11 @@ function RunsTab() {
                   borderLeft: `3px solid ${color}`,
                 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, color, textTransform: 'uppercase' }}>{r.status}</span>
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>· wf #{r.workflow_id}</span>
+                  <span style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color, textTransform: 'uppercase' }}>{r.status}</span>
+                  <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>· wf #{r.workflow_id}</span>
                   <ChevronRight size={11} style={{ marginLeft: 'auto', color: 'var(--text-muted)' }} />
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>{fmtDate(r.started_at)} · {r.trigger_source}</div>
+                <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 3 }}>{fmtDate(r.started_at)} · {r.trigger_source}</div>
               </div>
             )
           })}
@@ -1111,7 +1111,7 @@ function RunsTab() {
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 16, minWidth: 0 }}>
         {active ? <RunDisplay run={active} />
-          : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 12 }}>Sélectionnez un run pour voir le détail.</div>}
+          : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 'var(--font-sm)' }}>Sélectionnez un run pour voir le détail.</div>}
       </div>
     </div>
   )
@@ -1158,7 +1158,7 @@ function TemplatesTab() {
   }, [tpls])
   return (
     <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 16px' }}>
-      <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 14 }}>
+      <div style={{ fontSize: 'var(--font-sm)', color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 14 }}>
         Démarre vite avec un template prêt à l'emploi. Crée une copie modifiable dans tes workflows.
       </div>
       {loading && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Chargement…</div>}
@@ -1166,25 +1166,25 @@ function TemplatesTab() {
         <div key={cat} style={{ marginBottom: 18 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, paddingBottom: 5, borderBottom: '1px solid var(--border)' }}>
             <Sparkles size={13} style={{ color: 'var(--scarlet)' }} />
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--scarlet)', letterSpacing: 0.5, textTransform: 'uppercase' }}>{cat}</span>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>· {items.length}</span>
+            <span style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--scarlet)', letterSpacing: 0.5, textTransform: 'uppercase' }}>{cat}</span>
+            <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontWeight: 600 }}>· {items.length}</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 10 }}>
             {items.map(t => (
               <div key={t.id} style={{ padding: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{t.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{t.description}</div>
+                <div style={{ fontSize: 'var(--font-md)', fontWeight: 700, color: 'var(--text-primary)' }}>{t.name}</div>
+                <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{t.description}</div>
                 {t.trigger_hint && (
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic' }}>💡 {t.trigger_hint}</div>
+                  <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontStyle: 'italic' }}>💡 {t.trigger_hint}</div>
                 )}
                 <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
                   {t.tags.map(tag => (
-                    <span key={tag} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>{tag}</span>
+                    <span key={tag} style={{ fontSize: 'var(--font-2xs)', padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>{tag}</span>
                   ))}
                 </div>
                 <div style={{ flex: 1 }} />
                 <button onClick={() => useTpl(t.id)}
-                  style={{ marginTop: 6, padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
+                  style={{ marginTop: 6, padding: '5px 10px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
                   <Plus size={12} /> Utiliser
                 </button>
               </div>
@@ -1245,7 +1245,7 @@ function VariablesTab() {
 
   return (
     <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 16px' }}>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
         Variables <strong>globales</strong> accessibles dans tous tes workflows via <code>{`{{ globals.X }}`}</code>.
         Pratique pour stocker des URLs d'API, IDs de canaux, secrets non-critiques.
         Pour les vraies credentials → Intégrations OAuth.
@@ -1255,27 +1255,27 @@ function VariablesTab() {
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, padding: 10, background: 'var(--bg-secondary)', borderRadius: 6, border: '1px solid var(--border)' }}>
         <input value={newKey} onChange={e => setNewKey(e.target.value)}
           placeholder="clé (ex: api_url)"
-          style={{ width: 180, padding: '5px 8px', fontSize: 11, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }} />
+          style={{ width: 180, padding: '5px 8px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }} />
         <input value={newValue} onChange={e => setNewValue(e.target.value)}
           placeholder='valeur (string, nombre, JSON...)'
-          style={{ flex: 1, padding: '5px 8px', fontSize: 11, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }} />
+          style={{ flex: 1, padding: '5px 8px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }} />
         <button onClick={() => { upsert(newKey, newValue); setNewKey(''); setNewValue('') }}
-          style={{ padding: '5px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4 }}>
+          style={{ padding: '5px 12px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4 }}>
           Ajouter
         </button>
       </div>
 
       {loading && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Chargement…</div>}
       {!loading && vars.length === 0 && (
-        <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>Aucune variable globale.</div>
+        <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-sm)' }}>Aucune variable globale.</div>
       )}
       {!loading && vars.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-xs)' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
-              <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>CLÉ</th>
-              <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>VALEUR</th>
-              <th style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>MÀJ</th>
+              <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--text-muted)', fontSize: 'var(--font-xs)', fontWeight: 700, letterSpacing: 1 }}>CLÉ</th>
+              <th style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--text-muted)', fontSize: 'var(--font-xs)', fontWeight: 700, letterSpacing: 1 }}>VALEUR</th>
+              <th style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--text-muted)', fontSize: 'var(--font-xs)', fontWeight: 700, letterSpacing: 1 }}>MÀJ</th>
               <th style={{ width: 30 }} />
             </tr>
           </thead>
@@ -1290,9 +1290,9 @@ function VariablesTab() {
                     value={typeof v.value === 'object' ? JSON.stringify(v.value) : String(v.value ?? '')}
                     onBlur={e => upsert(v.key, e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                    style={{ width: '100%', padding: '3px 6px', fontSize: 11, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
+                    style={{ width: '100%', padding: '3px 6px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
                 </td>
-                <td style={{ padding: '7px 10px', textAlign: 'right', fontSize: 9, color: 'var(--text-muted)' }}>{fmtDate(v.updated_at)}</td>
+                <td style={{ padding: '7px 10px', textAlign: 'right', fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>{fmtDate(v.updated_at)}</td>
                 <td style={{ padding: '7px 10px' }}>
                   <button onClick={() => remove(v.id)}
                     style={{ padding: 0, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
@@ -1365,20 +1365,20 @@ function MarketplaceTab() {
         <input
           value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Rechercher un workflow communautaire…"
-          style={{ flex: 1, padding: '7px 12px', fontSize: 12, borderRadius: 6, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
+          style={{ flex: 1, padding: '7px 12px', fontSize: 'var(--font-sm)', borderRadius: 6, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}
         />
         <button onClick={load}
-          style={{ padding: '6px 10px', fontSize: 11, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          style={{ padding: '6px 10px', fontSize: 'var(--font-xs)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-secondary)', cursor: 'pointer' }}>
           <RefreshCw size={12} />
         </button>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
         Workflows partagés par la communauté. Clique <strong>Installer</strong> pour cloner chez toi.
         Pour publier un de tes workflows : onglet Workflows → bouton "Publier" (à venir Phase 5).
       </div>
       {loading && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Chargement…</div>}
       {!loading && items.length === 0 && (
-        <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+        <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-sm)' }}>
           Aucun template communautaire disponible. Sois le premier à publier !
         </div>
       )}
@@ -1386,15 +1386,15 @@ function MarketplaceTab() {
         <div key={cat} style={{ marginBottom: 18 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, paddingBottom: 5, borderBottom: '1px solid var(--border)' }}>
             <Store size={13} style={{ color: 'var(--scarlet)' }} />
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--scarlet)', letterSpacing: 0.5, textTransform: 'uppercase' }}>{cat}</span>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>· {arr.length}</span>
+            <span style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--scarlet)', letterSpacing: 0.5, textTransform: 'uppercase' }}>{cat}</span>
+            <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontWeight: 600 }}>· {arr.length}</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 10 }}>
             {arr.map(it => (
               <div key={it.id} style={{ padding: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{it.name}</div>
-                {it.description && <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{it.description}</div>}
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 10, color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 'var(--font-md)', fontWeight: 700, color: 'var(--text-primary)' }}>{it.name}</div>
+                {it.description && <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{it.description}</div>}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><Download size={10} /> {it.downloads}</span>
                   {it.rating !== null && (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#f59e0b' }}>
@@ -1404,13 +1404,13 @@ function MarketplaceTab() {
                 </div>
                 <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
                   {it.tags.map(t => (
-                    <span key={t} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>{t}</span>
+                    <span key={t} style={{ fontSize: 'var(--font-2xs)', padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>{t}</span>
                   ))}
                 </div>
                 <div style={{ flex: 1 }} />
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
                   <button onClick={() => install(it)}
-                    style={{ flex: 1, padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                    style={{ flex: 1, padding: '5px 10px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 4, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                     <Download size={12} /> Installer
                   </button>
                   <div style={{ display: 'flex', gap: 1 }}>
@@ -1473,7 +1473,7 @@ function ToolsTab() {
       <input
         value={search} onChange={e => setSearch(e.target.value)}
         placeholder={`Rechercher dans ${tools.length} outils…`}
-        style={{ padding: '7px 12px', fontSize: 12, borderRadius: 6, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', marginBottom: 10 }}
+        style={{ padding: '7px 12px', fontSize: 'var(--font-sm)', borderRadius: 6, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', marginBottom: 10 }}
       />
       <div style={{ flex: 1, overflow: 'auto' }}>
         {loading && <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Chargement…</div>}
@@ -1484,23 +1484,23 @@ function ToolsTab() {
             <div key={group.category} style={{ marginBottom: 18 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, paddingBottom: 5, borderBottom: `1px solid ${group.color}40` }}>
                 <Icon size={14} style={{ color: group.color }} />
-                <span style={{ fontSize: 11, fontWeight: 700, color: group.color, letterSpacing: 0.5, textTransform: 'uppercase' }}>{group.category}</span>
-                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>· {group.tools.length}</span>
+                <span style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: group.color, letterSpacing: 0.5, textTransform: 'uppercase' }}>{group.category}</span>
+                <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontWeight: 600 }}>· {group.tools.length}</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
                 {group.tools.map(t => {
                   const lbl = humanizeTool(t)
                   return (
                     <div key={t.name} style={{ padding: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6 }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>{lbl.title}</div>
-                      <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', marginBottom: 6 }}>{t.name}</div>
+                      <div style={{ fontSize: 'var(--font-sm)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>{lbl.title}</div>
+                      <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', marginBottom: 6 }}>{t.name}</div>
                       {lbl.summary && (
-                        <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.45, marginBottom: 6 }}>{lbl.summary}</div>
+                        <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', lineHeight: 1.45, marginBottom: 6 }}>{lbl.summary}</div>
                       )}
                       {t.params.length > 0 && (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
                           {t.params.map(p => (
-                            <span key={p.name} title={p.description} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: p.required ? 'rgba(220,38,38,0.18)' : 'var(--bg-tertiary)', color: p.required ? 'var(--scarlet)' : 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>
+                            <span key={p.name} title={p.description} style={{ fontSize: 'var(--font-2xs)', padding: '1px 5px', borderRadius: 3, background: p.required ? 'rgba(220,38,38,0.18)' : 'var(--bg-tertiary)', color: p.required ? 'var(--scarlet)' : 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>
                               {p.name}{p.required && '*'}
                             </span>
                           ))}

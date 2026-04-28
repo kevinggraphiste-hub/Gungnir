@@ -225,11 +225,11 @@ function TasksTab() {
         {filtered.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '80px 40px', color: 'var(--text-muted)' }}>
             <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.3 }}>⚙️</div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)' }}>
+            <div style={{ fontSize: 'var(--font-base)', fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)' }}>
               {filter !== 'all' ? 'Aucune tache ne correspond au filtre' : 'Aucune automatisation'}
             </div>
             {filter === 'all' && (
-              <div style={{ fontSize: 12, lineHeight: 1.6, maxWidth: 400, margin: '0 auto' }}>
+              <div style={{ fontSize: 'var(--font-sm)', lineHeight: 1.6, maxWidth: 400, margin: '0 auto' }}>
                 Demandez au chat de creer des taches planifiees.<br />
                 <i style={{ color: 'var(--text-muted)' }}>Ex: "Verifie mes backups tous les jours a 9h"</i>
               </div>
@@ -392,11 +392,11 @@ function N8nTab() {
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '8px 12px', borderRadius: 8,
     background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-    color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+    color: 'var(--text-primary)', fontSize: 'var(--font-sm)', outline: 'none',
   }
 
   const labelStyle: React.CSSProperties = {
-    fontSize: 10, fontWeight: 700, color: 'var(--text-muted)',
+    fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-muted)',
     textTransform: 'uppercase', marginBottom: 4, display: 'block',
   }
 
@@ -408,10 +408,10 @@ function N8nTab() {
           maxWidth: 500, margin: '40px auto', background: 'var(--bg-card)',
           border: '1px solid var(--border)', borderRadius: 12, padding: '24px',
         }}>
-          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 4 }}>
+          <div style={{ fontSize: 'var(--font-lg)', fontWeight: 800, color: 'var(--text-primary)', marginBottom: 4 }}>
             Connexion n8n
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20 }}>
+          <div style={{ fontSize: 'var(--font-sm)', color: 'var(--text-muted)', marginBottom: 20 }}>
             Connectez votre instance n8n pour gerer vos workflows depuis Gungnir.
           </div>
 
@@ -430,7 +430,7 @@ function N8nTab() {
 
             {testResult && (
               <div style={{
-                padding: '8px 12px', borderRadius: 8, fontSize: 12,
+                padding: '8px 12px', borderRadius: 8, fontSize: 'var(--font-sm)',
                 background: testResult.ok ? 'rgba(34,197,94,.1)' : 'rgba(220,38,38,.1)',
                 color: testResult.ok ? '#22c55e' : '#dc2626',
                 border: `1px solid ${testResult.ok ? '#22c55e33' : '#dc262633'}`,
@@ -456,7 +456,7 @@ function N8nTab() {
           border: '1px solid var(--border)', borderRadius: 12, padding: '24px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>
+            <div style={{ fontSize: 'var(--font-lg)', fontWeight: 800, color: 'var(--text-primary)' }}>
               Serveur MCP n8n
             </div>
             <InfoButton>
@@ -468,12 +468,12 @@ function N8nTab() {
             </InfoButton>
             {mcpConnected && (
               <span style={{
-                fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+                fontSize: 'var(--font-2xs)', fontWeight: 700, padding: '2px 8px', borderRadius: 4,
                 background: 'rgba(34,197,94,.1)', color: '#22c55e',
               }}>{mcpToolCount} outils</span>
             )}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+          <div style={{ fontSize: 'var(--font-sm)', color: 'var(--text-muted)', marginBottom: 16 }}>
             Connectez le MCP n8n pour permettre a l'IA de modifier vos workflows directement.
           </div>
 
@@ -490,7 +490,7 @@ function N8nTab() {
             </div>
 
             <div style={{
-              padding: '8px 12px', borderRadius: 8, fontSize: 11,
+              padding: '8px 12px', borderRadius: 8, fontSize: 'var(--font-xs)',
               background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
               lineHeight: 1.5,
             }}>
@@ -500,7 +500,7 @@ function N8nTab() {
 
             {mcpResult && (
               <div style={{
-                padding: '8px 12px', borderRadius: 8, fontSize: 12,
+                padding: '8px 12px', borderRadius: 8, fontSize: 'var(--font-sm)',
                 background: mcpResult.ok ? 'rgba(34,197,94,.1)' : 'rgba(220,38,38,.1)',
                 color: mcpResult.ok ? '#22c55e' : '#dc2626',
                 border: `1px solid ${mcpResult.ok ? '#22c55e33' : '#dc262633'}`,
@@ -557,10 +557,10 @@ function N8nTab() {
         {workflows.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '80px 40px', color: 'var(--text-muted)' }}>
             <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.3 }}>🔗</div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)' }}>
+            <div style={{ fontSize: 'var(--font-base)', fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)' }}>
               Aucun workflow n8n
             </div>
-            <div style={{ fontSize: 12 }}>
+            <div style={{ fontSize: 'var(--font-sm)' }}>
               Creez des workflows dans votre instance n8n, ils apparaitront ici.
             </div>
           </div>
@@ -579,7 +579,7 @@ function N8nTab() {
             {executions.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <div style={{
-                  fontSize: 10, fontWeight: 700, color: 'var(--text-muted)',
+                  fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-muted)',
                   textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8,
                 }}>
                   Executions recentes
@@ -595,7 +595,7 @@ function N8nTab() {
                         display: 'flex', alignItems: 'center', gap: 12,
                         padding: '10px 16px',
                         borderBottom: i < executions.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-                        fontSize: 12,
+                        fontSize: 'var(--font-sm)',
                       }}>
                         <span style={{
                           width: 8, height: 8, borderRadius: '50%',
@@ -605,14 +605,14 @@ function N8nTab() {
                           {ex.workflow_name || ex.workflow_id}
                         </span>
                         <span style={{
-                          fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+                          fontSize: 'var(--font-2xs)', fontWeight: 700, padding: '2px 8px', borderRadius: 4,
                           background: `${st.color}20`, color: st.color,
                         }}>{st.label}</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
                           {fmtDate(ex.started_at)}
                         </span>
                         <span style={{
-                          fontSize: 9, padding: '2px 6px', borderRadius: 4,
+                          fontSize: 'var(--font-2xs)', padding: '2px 6px', borderRadius: 4,
                           background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
                         }}>{ex.mode}</span>
                       </div>
@@ -678,11 +678,11 @@ function WorkflowCard({ workflow: w, onToggle, onExecute, onRefresh }: {
             }} />
           </button>
 
-          <span style={{ fontSize: 16 }}>🔗</span>
+          <span style={{ fontSize: 'var(--font-lg)' }}>🔗</span>
 
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{w.name}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
+            <div style={{ fontSize: 'var(--font-md)', fontWeight: 700, color: 'var(--text-primary)' }}>{w.name}</div>
+            <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 1 }}>
               {w.node_count} noeud{w.node_count > 1 ? 's' : ''} — Modifie {fmtDate(w.updated_at)}
             </div>
           </div>
@@ -691,7 +691,7 @@ function WorkflowCard({ workflow: w, onToggle, onExecute, onRefresh }: {
             <div style={{ display: 'flex', gap: 3 }}>
               {w.tags.map(tag => (
                 <span key={tag} style={{
-                  fontSize: 9, padding: '2px 6px', borderRadius: 4,
+                  fontSize: 'var(--font-2xs)', padding: '2px 6px', borderRadius: 4,
                   background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
                 }}>{tag}</span>
               ))}
@@ -710,7 +710,7 @@ function WorkflowCard({ workflow: w, onToggle, onExecute, onRefresh }: {
         <div style={{
           padding: '0 18px 14px', borderTop: '1px solid var(--border-subtle)',
         }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', margin: '10px 0 6px', textTransform: 'uppercase' }}>
+          <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-muted)', margin: '10px 0 6px', textTransform: 'uppercase' }}>
             Modifier via IA + MCP
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -723,7 +723,7 @@ function WorkflowCard({ workflow: w, onToggle, onExecute, onRefresh }: {
               style={{
                 flex: 1, padding: '8px 12px', borderRadius: 8,
                 background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-                color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+                color: 'var(--text-primary)', fontSize: 'var(--font-sm)', outline: 'none',
               }}
             />
             <PrimaryButton size="sm" onClick={handleModify} disabled={modifying || !modifyPrompt.trim()} style={{ whiteSpace: 'nowrap' }}>
@@ -733,7 +733,7 @@ function WorkflowCard({ workflow: w, onToggle, onExecute, onRefresh }: {
 
           {modifyResult && (
             <div style={{
-              marginTop: 8, padding: '8px 12px', borderRadius: 8, fontSize: 12,
+              marginTop: 8, padding: '8px 12px', borderRadius: 8, fontSize: 'var(--font-sm)',
               background: modifyResult.ok ? 'rgba(34,197,94,.08)' : 'rgba(220,38,38,.08)',
               border: `1px solid ${modifyResult.ok ? '#22c55e33' : '#dc262633'}`,
               color: modifyResult.ok ? 'var(--text-primary)' : '#dc2626',
@@ -781,13 +781,13 @@ function TaskCard({ task, expanded, editing, onToggle, onDelete, onRunNow, onExp
               position: 'absolute', top: 2, left: task.enabled ? 16 : 2, transition: 'left 0.2s',
             }} />
           </button>
-          <span style={{ fontSize: 16 }}>{tc.icon}</span>
+          <span style={{ fontSize: 'var(--font-lg)' }}>{tc.icon}</span>
           <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={onExpand}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{task.name}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{task.description}</div>
+            <div style={{ fontSize: 'var(--font-md)', fontWeight: 700, color: 'var(--text-primary)' }}>{task.name}</div>
+            <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 1 }}>{task.description}</div>
           </div>
           <span style={{
-            fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+            fontSize: 'var(--font-2xs)', fontWeight: 700, padding: '2px 8px', borderRadius: 4,
             background: `${tc.color}20`, color: tc.color, flexShrink: 0,
           }}>{tc.label}</span>
           <div style={{ display: 'flex', gap: 4, opacity: hover ? 1 : 0, transition: 'opacity 0.15s' }}>
@@ -798,7 +798,7 @@ function TaskCard({ task, expanded, editing, onToggle, onDelete, onRunNow, onExp
         </div>
         <div style={{
           display: 'flex', gap: 20, alignItems: 'center', paddingLeft: 58,
-          fontSize: 11, color: 'var(--text-muted)', flexWrap: 'wrap',
+          fontSize: 'var(--font-xs)', color: 'var(--text-muted)', flexWrap: 'wrap',
         }}>
           <span>🕐 {fmtSchedule(task)}</span>
           <span>↻ {task.run_count} execution{task.run_count !== 1 ? 's' : ''}</span>
@@ -813,18 +813,18 @@ function TaskCard({ task, expanded, editing, onToggle, onDelete, onRunNow, onExp
 
       {expanded && !editing && (
         <div style={{ padding: '12px 18px 14px', borderTop: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 6 }}>
+          <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 6 }}>
             Prompt execute par le LLM
           </div>
           <div style={{
-            fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6,
+            fontSize: 'var(--font-sm)', color: 'var(--text-secondary)', lineHeight: 1.6,
             background: 'var(--bg-tertiary)', padding: '10px 14px', borderRadius: 8,
             fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'pre-wrap',
             maxHeight: 200, overflow: 'auto',
           }}>
             {task.prompt || '(aucun prompt)'}
           </div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8 }}>
+          <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 8 }}>
             Cree le {fmtDate(task.created_at)} — Modifie le {fmtDate(task.updated_at)}
           </div>
         </div>
@@ -854,10 +854,10 @@ function EditPanel({ task, onSave, onCancel }: { task: Task; onSave: (u: any) =>
   const iStyle: React.CSSProperties = {
     width: '100%', padding: '8px 12px', borderRadius: 8,
     background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-    color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+    color: 'var(--text-primary)', fontSize: 'var(--font-sm)', outline: 'none',
   }
   const lStyle: React.CSSProperties = {
-    fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4, display: 'block',
+    fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4, display: 'block',
   }
 
   return (
@@ -919,10 +919,10 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
   const iStyle: React.CSSProperties = {
     width: '100%', padding: '8px 12px', borderRadius: 8,
     background: 'var(--bg-tertiary)', border: '1px solid var(--border)',
-    color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+    color: 'var(--text-primary)', fontSize: 'var(--font-sm)', outline: 'none',
   }
   const lStyle: React.CSSProperties = {
-    fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4, display: 'block',
+    fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4, display: 'block',
   }
 
   return (
@@ -935,7 +935,7 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
         background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 14,
         padding: 24, display: 'flex', flexDirection: 'column', gap: 12,
       }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>Nouvelle tâche planifiée</div>
+        <div style={{ fontSize: 'var(--font-base)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>Nouvelle tâche planifiée</div>
 
         <div style={{ display: 'flex', gap: 10 }}>
           <div style={{ flex: 1 }}><label style={lStyle}>Nom</label>
@@ -949,7 +949,7 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
           <div style={{ display: 'flex', gap: 6 }}>
             {(['interval', 'cron', 'run_at'] as const).map(t => (
               <button key={t} onClick={() => setTaskType(t)} style={{
-                flex: 1, padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                flex: 1, padding: '6px 10px', borderRadius: 6, fontSize: 'var(--font-xs)', fontWeight: 600,
                 border: '1px solid var(--border)', cursor: 'pointer',
                 background: taskType === t ? 'var(--scarlet)' : 'var(--bg-tertiary)',
                 color: taskType === t ? '#fff' : 'var(--text-muted)',
@@ -964,7 +964,7 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
           <div>
             <label style={lStyle}>Expression cron</label>
             <input value={cron} onChange={e => setCron(e.target.value)} placeholder="0 9 * * 1-5" style={{ ...iStyle, fontFamily: "'JetBrains Mono', monospace" }} />
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+            <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
               Format : minute heure jour mois jour-semaine. Ex: <code>0 9 * * 1-5</code> = 9h du lundi au vendredi
             </div>
           </div>
@@ -997,17 +997,17 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
               <option key={s.name} value={s.name}>{s.name}{s.description ? ` — ${s.description}` : ''}</option>
             ))}
           </select>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+          <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
             Le skill sera injecté dans le contexte LLM lors de l'exécution. Par défaut, le skill actif de l'utilisateur est utilisé.
           </div>
         </div>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--font-sm)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
           <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
           Activer immédiatement
         </label>
 
-        {error && <div style={{ fontSize: 11, color: '#dc2626' }}>{error}</div>}
+        {error && <div style={{ fontSize: 'var(--font-xs)', color: '#dc2626' }}>{error}</div>}
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
           <SecondaryButton size="sm" onClick={onCancel}>Annuler</SecondaryButton>
@@ -1023,8 +1023,8 @@ function CreateTaskModal({ onCreate, onCancel }: { onCreate: (body: any) => void
 function StatChip({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>{label}</span>
-      <span style={{ fontSize: 14, fontWeight: 800, color }}>{value}</span>
+      <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>{label}</span>
+      <span style={{ fontSize: 'var(--font-base)', fontWeight: 800, color }}>{value}</span>
     </div>
   )
 }
@@ -1032,7 +1032,7 @@ function StatChip({ label, value, color }: { label: string; value: number; color
 function FilterBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button onClick={onClick} style={{
-      padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+      padding: '4px 10px', borderRadius: 6, fontSize: 'var(--font-xs)', fontWeight: 600,
       border: 'none', cursor: 'pointer',
       background: active ? 'var(--scarlet)' : 'var(--bg-tertiary)',
       color: active ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s',
@@ -1046,7 +1046,7 @@ function SmallBtn({ children, title, onClick, danger }: {
   return (
     <button onClick={onClick} title={title} style={{
       background: 'var(--bg-tertiary)', border: 'none', borderRadius: 6,
-      width: 26, height: 26, cursor: 'pointer', fontSize: 11,
+      width: 26, height: 26, cursor: 'pointer', fontSize: 'var(--font-xs)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       color: danger ? '#dc2626' : 'var(--text-secondary)', transition: 'background 0.15s',
     }}>{children}</button>

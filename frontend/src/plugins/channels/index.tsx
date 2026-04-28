@@ -267,7 +267,7 @@ export default function ChannelsPlugin() {
 
       {webhookMsg && (
         <div style={{
-          margin: '0 24px 12px', padding: '10px 14px', borderRadius: 10, fontSize: 13,
+          margin: '0 24px 12px', padding: '10px 14px', borderRadius: 10, fontSize: 'var(--font-md)',
           display: 'flex', alignItems: 'center', gap: 8,
           background: `color-mix(in srgb, ${webhookMsg.ok ? '#22c55e' : '#ef4444'} 12%, transparent)`,
           color: webhookMsg.ok ? '#22c55e' : '#ef4444',
@@ -346,8 +346,8 @@ function ChannelsList({ channels, catalog, expandedChannel, setExpandedChannel, 
       <SectionCard>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 20px', gap: 12, textAlign: 'center' }}>
           <Radio className="w-10 h-10" style={{ opacity: 0.35, color: 'var(--text-muted)' }} />
-          <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Aucun canal configuré</p>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 460, lineHeight: 1.6 }}>
+          <p style={{ fontSize: 'var(--font-base)', fontWeight: 600, color: 'var(--text-primary)' }}>Aucun canal configuré</p>
+          <p style={{ fontSize: 'var(--font-sm)', color: 'var(--text-muted)', maxWidth: 460, lineHeight: 1.6 }}>
             Un canal connecte ton agent à une plateforme externe (Telegram, Discord, Slack, email, widget…) pour qu'il puisse recevoir et répondre à des messages sans passer par cette interface.
           </p>
           <PrimaryButton size="sm" icon={<Plus size={14} />} onClick={onOpenCatalog}>
@@ -381,12 +381,12 @@ function ChannelsList({ channels, catalog, expandedChannel, setExpandedChannel, 
 
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{ch.name}</span>
+                  <span style={{ fontWeight: 600, fontSize: 'var(--font-base)', color: 'var(--text-primary)' }}>{ch.name}</span>
                   <Badge color={ch.enabled ? color : 'var(--text-muted)'}>
                     {ch.enabled ? 'Actif' : 'Inactif'}
                   </Badge>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 3, fontSize: 11, color: 'var(--text-muted)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 3, fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
                   <span>{catEntry.display_name || ch.type}</span>
                   {stats.messages_in > 0 && (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -420,11 +420,11 @@ function ChannelsList({ channels, catalog, expandedChannel, setExpandedChannel, 
 
             {expanded && (
               <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12, color: 'var(--text-muted)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 'var(--font-sm)', color: 'var(--text-muted)' }}>
                   <div><span style={{ opacity: 0.6 }}>Type :</span> {catEntry.display_name}</div>
                   <div>
                     <span style={{ opacity: 0.6 }}>ID :</span>{' '}
-                    <code style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-tertiary)' }}>{ch.id}</code>
+                    <code style={{ fontSize: 'var(--font-xs)', padding: '2px 6px', borderRadius: 4, background: 'var(--bg-tertiary)' }}>{ch.id}</code>
                   </div>
                   <div><span style={{ opacity: 0.6 }}>Messages reçus :</span> {stats.messages_in || 0}</div>
                   <div><span style={{ opacity: 0.6 }}>Messages envoyés :</span> {stats.messages_out || 0}</div>
@@ -433,7 +433,7 @@ function ChannelsList({ channels, catalog, expandedChannel, setExpandedChannel, 
                 </div>
                 {catEntry.doc_url && (
                   <a href={catEntry.doc_url} target="_blank" rel="noreferrer"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 10, fontSize: 12, color, textDecoration: 'none' }}>
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 10, fontSize: 'var(--font-sm)', color, textDecoration: 'none' }}>
                     <ExternalLink className="w-3 h-3" />Documentation
                   </a>
                 )}
@@ -498,7 +498,7 @@ function CatalogModal({ catalog, categories, channels, search, setSearch, onAdd,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '14px 20px', borderBottom: '1px solid var(--border-subtle)',
         }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Ajouter un canal</h3>
+          <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 700, color: 'var(--text-primary)' }}>Ajouter un canal</h3>
           <IconButton onClick={onClose} title="Fermer"><X size={16} /></IconButton>
         </div>
 
@@ -517,7 +517,7 @@ function CatalogModal({ catalog, categories, channels, search, setSearch, onAdd,
             return (
               <div key={catKey}>
                 <div style={{
-                  fontSize: 10, fontWeight: 700, marginBottom: 8, textTransform: 'uppercase',
+                  fontSize: 'var(--font-xs)', fontWeight: 700, marginBottom: 8, textTransform: 'uppercase',
                   letterSpacing: 1.5, color: 'var(--text-muted)',
                 }}>
                   {catInfo.label}
@@ -546,10 +546,10 @@ function CatalogModal({ catalog, categories, channels, search, setSearch, onAdd,
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{val.display_name}</span>
+                            <span style={{ fontSize: 'var(--font-md)', fontWeight: 600, color: 'var(--text-primary)' }}>{val.display_name}</span>
                             {val.complexity && <Badge color={complexColor}>{val.complexity}</Badge>}
                           </div>
-                          <div style={{ fontSize: 11, marginTop: 2, color: 'var(--text-muted)',
+                          <div style={{ fontSize: 'var(--font-xs)', marginTop: 2, color: 'var(--text-muted)',
                             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {val.description}
                           </div>
@@ -626,11 +626,11 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
               value={channel.name}
               onChange={e => setChannel({ ...channel, name: e.target.value })}
               style={{
-                fontWeight: 700, fontSize: 14, background: 'transparent',
+                fontWeight: 700, fontSize: 'var(--font-base)', background: 'transparent',
                 border: 'none', outline: 'none', width: '100%', color: 'var(--text-primary)',
               }}
             />
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{catEntry.display_name} — {channel.id}</div>
+            <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>{catEntry.display_name} — {channel.id}</div>
           </div>
           <IconButton onClick={onClose} title="Fermer"><X size={16} /></IconButton>
         </div>
@@ -638,7 +638,7 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
         <div style={{ padding: '16px 20px', maxHeight: '55vh', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {catEntry.setup_guide && (
             <div style={{
-              padding: 12, borderRadius: 10, fontSize: 12, lineHeight: 1.6,
+              padding: 12, borderRadius: 10, fontSize: 'var(--font-sm)', lineHeight: 1.6,
               background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
               border: '1px solid var(--border-subtle)',
             }}>
@@ -678,7 +678,7 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
               {Object.entries(webhookUrls).map(([key, url]: [string, any]) => (
                 <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                   <code style={{
-                    flex: 1, fontSize: 11, padding: '6px 10px', borderRadius: 6,
+                    flex: 1, fontSize: 'var(--font-xs)', padding: '6px 10px', borderRadius: 6,
                     background: 'var(--bg-tertiary)', color: 'var(--text-muted)',
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>
@@ -705,7 +705,7 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
               </SecondaryButton>
               {registerResult && (
                 <div style={{
-                  marginTop: 8, padding: 10, borderRadius: 8, fontSize: 12,
+                  marginTop: 8, padding: 10, borderRadius: 8, fontSize: 'var(--font-sm)',
                   background: `color-mix(in srgb, ${registerResult.ok ? '#22c55e' : '#ef4444'} 10%, transparent)`,
                   color: registerResult.ok ? '#22c55e' : '#ef4444',
                   border: `1px solid color-mix(in srgb, ${registerResult.ok ? '#22c55e' : '#ef4444'} 25%, transparent)`,
@@ -720,7 +720,7 @@ function EditModal({ channel, setChannel, catalog, form, setForm, showPassword, 
 
           {testResult && (
             <div style={{
-              padding: 12, borderRadius: 10, fontSize: 12,
+              padding: 12, borderRadius: 10, fontSize: 'var(--font-sm)',
               background: `color-mix(in srgb, ${testResult.ok ? '#22c55e' : '#ef4444'} 10%, transparent)`,
               color: testResult.ok ? '#22c55e' : '#ef4444',
               border: `1px solid color-mix(in srgb, ${testResult.ok ? '#22c55e' : '#ef4444'} 25%, transparent)`,
@@ -780,14 +780,14 @@ function LogsList({ logs, onRefresh, onClear }: any) {
       {logs.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)' }}>
           <FileText className="w-8 h-8" style={{ margin: '0 auto 8px', opacity: 0.3 }} />
-          <p style={{ fontSize: 13 }}>Aucun log</p>
+          <p style={{ fontSize: 'var(--font-md)' }}>Aucun log</p>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {logs.map((log: any) => (
             <div key={log.id} style={{
               display: 'flex', alignItems: 'center', gap: 12,
-              padding: '8px 12px', borderRadius: 8, fontSize: 12,
+              padding: '8px 12px', borderRadius: 8, fontSize: 'var(--font-sm)',
               background: 'var(--bg-tertiary)',
               border: '1px solid var(--border-subtle)',
             }}>

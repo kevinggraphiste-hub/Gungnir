@@ -185,7 +185,7 @@ function StepNodeView({ data, selected }: NodeProps<StepNode>) {
       background: 'var(--bg-secondary)',
       border: `1.5px solid ${selected ? 'var(--scarlet)' : 'var(--border)'}`,
       borderRadius: 8, padding: 0, overflow: 'hidden',
-      fontFamily: 'system-ui, sans-serif', fontSize: 11,
+      fontFamily: 'system-ui, sans-serif', fontSize: 'var(--font-xs)',
       boxShadow: selected ? '0 0 0 3px rgba(220,38,38,0.18)' : 'none',
       transition: 'box-shadow 0.12s',
     }}>
@@ -193,12 +193,12 @@ function StepNodeView({ data, selected }: NodeProps<StepNode>) {
       {/* Bandeau catégorie + step id */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderBottom: '1px solid var(--border)', background: `${accent}15` }}>
         {CatIcon && <CatIcon size={10} style={{ color: accent, flexShrink: 0 }} />}
-        <span style={{ fontSize: 8, fontWeight: 700, color: accent, letterSpacing: 0.5, textTransform: 'uppercase' }}>{lbl?.category || 'Outil'}</span>
+        <span style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color: accent, letterSpacing: 0.5, textTransform: 'uppercase' }}>{lbl?.category || 'Outil'}</span>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 8, fontWeight: 600, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>#{step.id || '?'}</span>
+        <span style={{ fontSize: 'var(--font-2xs)', fontWeight: 600, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>#{step.id || '?'}</span>
         {unsupported && (
           <span title="Step contient un bloc parallel ou if — édition limitée au YAML pour l'instant"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 8, color: '#f59e0b', padding: '1px 5px', borderRadius: 3, background: 'rgba(245,158,11,0.18)' }}>
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 'var(--font-2xs)', color: '#f59e0b', padding: '1px 5px', borderRadius: 3, background: 'rgba(245,158,11,0.18)' }}>
             <AlertTriangle size={9} />
             {isParallel ? 'parallel' : 'if'}
           </span>
@@ -216,14 +216,14 @@ function StepNodeView({ data, selected }: NodeProps<StepNode>) {
           </div>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.3, marginBottom: 2 }}>
+        <div style={{ fontSize: 'var(--font-sm)', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.3, marginBottom: 2 }}>
           {lbl?.title || step.tool || (isParallel ? 'Parallèle' : 'Step')}
         </div>
-        <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {step.tool || (isParallel ? 'parallel' : '—')}
         </div>
         {step.args && Object.keys(step.args).length > 0 && (
-          <div style={{ marginTop: 6, padding: '4px 6px', background: 'var(--bg-tertiary)', borderRadius: 4, fontSize: 9, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', maxHeight: 60, overflow: 'hidden' }}>
+          <div style={{ marginTop: 6, padding: '4px 6px', background: 'var(--bg-tertiary)', borderRadius: 4, fontSize: 'var(--font-2xs)', fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', maxHeight: 60, overflow: 'hidden' }}>
             {Object.keys(step.args).slice(0, 3).map(k => (
               <div key={k} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 <span style={{ color: accent }}>{k}</span>: {String(step.args[k]).slice(0, 50)}
@@ -271,7 +271,7 @@ function ToolPalette({ tools, onAdd, onAddControl }: {
         <input
           value={q} onChange={e => setQ(e.target.value)}
           placeholder={`Chercher dans ${tools.length} outils…`}
-          style={{ flex: 1, padding: '4px 6px', fontSize: 11, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
+          style={{ flex: 1, padding: '4px 6px', fontSize: 'var(--font-xs)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
         />
       </div>
       <div style={{ flex: 1, overflow: 'auto' }}>
@@ -282,7 +282,7 @@ function ToolPalette({ tools, onAdd, onAddControl }: {
           <div>
             <div style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 5, background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border)' }}>
               <Wand2 size={12} style={{ color: '#dc2626' }} />
-              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: 0.5, textTransform: 'uppercase', flex: 1 }}>Contrôle de flow</span>
+              <span style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: 0.5, textTransform: 'uppercase', flex: 1 }}>Contrôle de flow</span>
             </div>
             {[
               { key: 'parallel' as const, title: 'Bloc parallèle', desc: 'Exécute plusieurs steps en simultané', tag: '⫿ parallel' },
@@ -295,15 +295,15 @@ function ToolPalette({ tools, onAdd, onAddControl }: {
                 style={{ padding: '7px 10px 7px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)', transition: 'background 0.08s' }}
                 onMouseEnter={e => (e.currentTarget.style.background = 'rgba(220,38,38,0.10)')}
                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{it.title}</div>
-                <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', marginTop: 2 }}>{it.tag}</div>
-                <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>{it.desc}</div>
+                <div style={{ fontSize: 'var(--font-xs)', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{it.title}</div>
+                <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', marginTop: 2 }}>{it.tag}</div>
+                <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginTop: 2 }}>{it.desc}</div>
               </div>
             ))}
           </div>
         )}
         {groups.length === 0 && (
-          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Aucun outil ne correspond.</div>
+          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>Aucun outil ne correspond.</div>
         )}
         {groups.map(group => {
           const isCollapsed = !isSearching && collapsed[group.category]
@@ -322,8 +322,8 @@ function ToolPalette({ tools, onAdd, onAddControl }: {
                 {isCollapsed ? <ChevronRight size={11} style={{ color: 'var(--text-muted)' }} />
                              : <ChevronDown size={11} style={{ color: 'var(--text-muted)' }} />}
                 <Icon size={12} style={{ color: group.color }} />
-                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: 0.5, textTransform: 'uppercase', flex: 1 }}>{group.category}</span>
-                <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 600 }}>{group.tools.length}</span>
+                <span style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: 0.5, textTransform: 'uppercase', flex: 1 }}>{group.category}</span>
+                <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', fontWeight: 600 }}>{group.tools.length}</span>
               </div>
               {!isCollapsed && group.tools.map(t => {
                 const lbl = humanizeTool(t)
@@ -341,8 +341,8 @@ function ToolPalette({ tools, onAdd, onAddControl }: {
                       </div>
                     )}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{lbl.title}</div>
-                      <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{t.name}</div>
+                      <div style={{ fontSize: 'var(--font-xs)', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{lbl.title}</div>
+                      <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{t.name}</div>
                     </div>
                   </div>
                 )
@@ -378,27 +378,27 @@ function ParallelSubEditor({ branches, tools, onChange }: {
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--scarlet)' }}>BRANCHES PARALLÈLES</span>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>· {branches.length}</span>
+        <span style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, letterSpacing: 1, color: 'var(--scarlet)' }}>BRANCHES PARALLÈLES</span>
+        <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>· {branches.length}</span>
         <div style={{ flex: 1 }} />
         <button onClick={add}
-          style={{ padding: '2px 6px', fontSize: 10, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 3, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          style={{ padding: '2px 6px', fontSize: 'var(--font-xs)', cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 3, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
           <Plus size={9} /> Ajouter
         </button>
       </div>
       {branches.length === 0 && (
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic', padding: 6 }}>Aucune branche. Clique Ajouter pour créer la première.</div>
+        <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontStyle: 'italic', padding: 6 }}>Aucune branche. Clique Ajouter pour créer la première.</div>
       )}
       {branches.map((br, idx) => (
         <div key={idx} style={{ padding: 8, marginBottom: 6, background: 'var(--bg-tertiary)', borderRadius: 4, border: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)' }}>#{idx + 1}</span>
+            <span style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)' }}>#{idx + 1}</span>
             <input
               value={br.tool || ''}
               onChange={e => update(idx, { tool: e.target.value })}
               list="forge-tools-list"
               placeholder="tool name"
-              style={{ flex: 1, padding: '2px 4px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--scarlet)', outline: 'none' }}
+              style={{ flex: 1, padding: '2px 4px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--scarlet)', outline: 'none' }}
             />
             <button onClick={() => remove(idx)}
               style={{ padding: 2, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
@@ -412,7 +412,7 @@ function ParallelSubEditor({ branches, tools, onChange }: {
               catch { /* ignore parse errors pendant la frappe */ }
             }}
             placeholder="args JSON"
-            style={{ width: '100%', minHeight: 50, padding: 4, fontSize: 9, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none', resize: 'vertical' }}
+            style={{ width: '100%', minHeight: 50, padding: 4, fontSize: 'var(--font-2xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none', resize: 'vertical' }}
           />
         </div>
       ))}
@@ -444,46 +444,46 @@ function ForEachSubEditor({ forEachExpr, asName, doSteps, filter, breakOn, tools
   const addSub = () => onChange({ do: [...doSteps, { tool: 'web_fetch', args: {} }] })
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--scarlet)', marginBottom: 4 }}>BOUCLE (for_each)</div>
+      <div style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, letterSpacing: 1, color: 'var(--scarlet)', marginBottom: 4 }}>BOUCLE (for_each)</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 4, marginBottom: 6 }}>
         <input value={forEachExpr} onChange={e => onChange({ for_each: e.target.value })}
           placeholder="{{ inputs.items }}"
-          style={{ padding: '3px 6px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
+          style={{ padding: '3px 6px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
         <input value={asName} onChange={e => onChange({ as: e.target.value })}
           placeholder="as: item"
-          style={{ padding: '3px 6px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
+          style={{ padding: '3px 6px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
       </div>
       <div style={{ marginBottom: 6 }}>
-        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 2 }}>filter (skip si false)</div>
+        <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginBottom: 2 }}>filter (skip si false)</div>
         <input value={filter} onChange={e => onChange({ filter: e.target.value || undefined })}
           placeholder='ex: {{ item.score > 0.5 }}'
-          style={{ width: '100%', padding: '3px 6px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
+          style={{ width: '100%', padding: '3px 6px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
       </div>
       <div style={{ marginBottom: 8 }}>
-        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 2 }}>break_on (sortir si vrai)</div>
+        <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginBottom: 2 }}>break_on (sortir si vrai)</div>
         <input value={breakOn} onChange={e => onChange({ break_on: e.target.value || undefined })}
           placeholder='ex: {{ steps.X.found }}'
-          style={{ width: '100%', padding: '3px 6px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
+          style={{ width: '100%', padding: '3px 6px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none' }} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--scarlet)' }}>SUB-STEPS (do)</span>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>· {doSteps.length}</span>
+        <span style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, letterSpacing: 1, color: 'var(--scarlet)' }}>SUB-STEPS (do)</span>
+        <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>· {doSteps.length}</span>
         <div style={{ flex: 1 }} />
         <button onClick={addSub}
-          style={{ padding: '2px 6px', fontSize: 10, cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 3, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          style={{ padding: '2px 6px', fontSize: 'var(--font-xs)', cursor: 'pointer', background: 'var(--scarlet)', color: '#fff', border: 'none', borderRadius: 3, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
           <Plus size={9} /> Ajouter
         </button>
       </div>
       {doSteps.map((s, idx) => (
         <div key={idx} style={{ padding: 8, marginBottom: 6, background: 'var(--bg-tertiary)', borderRadius: 4, border: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)' }}>#{idx + 1}</span>
+            <span style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)' }}>#{idx + 1}</span>
             <input
               value={s.tool || ''}
               onChange={e => updateSub(idx, { tool: e.target.value })}
               list="forge-tools-list"
               placeholder="tool name"
-              style={{ flex: 1, padding: '2px 4px', fontSize: 10, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--scarlet)', outline: 'none' }}
+              style={{ flex: 1, padding: '2px 4px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--scarlet)', outline: 'none' }}
             />
             <button onClick={() => removeSub(idx)}
               style={{ padding: 2, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
@@ -497,7 +497,7 @@ function ForEachSubEditor({ forEachExpr, asName, doSteps, filter, breakOn, tools
               catch { /* ignore */ }
             }}
             placeholder="args JSON"
-            style={{ width: '100%', minHeight: 50, padding: 4, fontSize: 9, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none', resize: 'vertical' }}
+            style={{ width: '100%', minHeight: 50, padding: 4, fontSize: 'var(--font-2xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 3, color: 'var(--text-primary)', outline: 'none', resize: 'vertical' }}
           />
         </div>
       ))}
@@ -520,11 +520,11 @@ function StepInspector({ node, tool, tools, onChange, onDelete }: {
   return (
     <div style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)', overflow: 'hidden' }}>
       <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>STEP ID</div>
+        <div style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>STEP ID</div>
         <input
           value={node.id}
           onChange={e => onChange({ id: e.target.value.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 60) })}
-          style={{ width: '100%', padding: '4px 8px', fontSize: 12, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
+          style={{ width: '100%', padding: '4px 8px', fontSize: 'var(--font-sm)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
         />
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 14 }}>
@@ -549,25 +549,25 @@ function StepInspector({ node, tool, tools, onChange, onDelete }: {
           />
         )}
         {!isParallel && !isForEach && (<>
-        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>OUTIL</div>
-        <div style={{ fontSize: 12, fontFamily: 'ui-monospace, monospace', color: 'var(--scarlet)', marginBottom: 6 }}>
+        <div style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>OUTIL</div>
+        <div style={{ fontSize: 'var(--font-sm)', fontFamily: 'ui-monospace, monospace', color: 'var(--scarlet)', marginBottom: 6 }}>
           {step.tool || <span style={{ color: 'var(--text-muted)' }}>—</span>}
         </div>
         {tool?.description && (
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 12 }}>{tool.description}</div>
+          <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 12 }}>{tool.description}</div>
         )}
 
-        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>ARGUMENTS</div>
+        <div style={{ fontSize: 'var(--font-2xs)', fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>ARGUMENTS</div>
         {tool && tool.params.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {tool.params.map(p => {
               const val = args[p.name]
               return (
                 <div key={p.name}>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <div style={{ fontSize: 'var(--font-xs)', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span>{p.name}</span>
-                    {p.required && <span style={{ color: 'var(--scarlet)', fontSize: 9 }}>*</span>}
-                    <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>({p.type})</span>
+                    {p.required && <span style={{ color: 'var(--scarlet)', fontSize: 'var(--font-2xs)' }}>*</span>}
+                    <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>({p.type})</span>
                   </div>
                   {p.type === 'boolean' ? (
                     <select
@@ -579,7 +579,7 @@ function StepInspector({ node, tool, tools, onChange, onDelete }: {
                         else next[p.name] = v === 'true'
                         onChange({ args: next })
                       }}
-                      style={{ width: '100%', padding: '4px 6px', fontSize: 11, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}>
+                      style={{ width: '100%', padding: '4px 6px', fontSize: 'var(--font-xs)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}>
                       <option value="">—</option>
                       <option value="true">true</option>
                       <option value="false">false</option>
@@ -605,26 +605,26 @@ function StepInspector({ node, tool, tools, onChange, onDelete }: {
                         }
                         onChange({ args: next })
                       }}
-                      style={{ width: '100%', padding: '4px 6px', fontSize: 11, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
+                      style={{ width: '100%', padding: '4px 6px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
                     />
                   )}
-                  {p.description && <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>}
+                  {p.description && <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.4 }}>{p.description}</div>}
                 </div>
               )
             })}
           </div>
         ) : (
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic' }}>Pas d'arguments documentés.</div>
+          <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontStyle: 'italic' }}>Pas d'arguments documentés.</div>
         )}
         </>)}
 
-        <div style={{ marginTop: 16, fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>CONDITION (if)</div>
+        <div style={{ marginTop: 16, fontSize: 'var(--font-2xs)', fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>CONDITION (if)</div>
         <input
           value={String(step.if || '')}
           placeholder="ex: {{ steps.fetch.ok }}"
           list="forge-if-suggestions"
           onChange={e => onChange({ if: e.target.value || undefined })}
-          style={{ width: '100%', padding: '4px 6px', fontSize: 11, fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
+          style={{ width: '100%', padding: '4px 6px', fontSize: 'var(--font-xs)', fontFamily: 'ui-monospace, monospace', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
         />
         <datalist id="forge-if-suggestions">
           <option value="{{ steps.previous.ok }}" />
@@ -635,10 +635,10 @@ function StepInspector({ node, tool, tools, onChange, onDelete }: {
         </datalist>
 
         {/* Retry policy : count + délai. 0 = pas de retry. */}
-        <div style={{ marginTop: 12, fontSize: 9, fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>RETRY POLICY</div>
+        <div style={{ marginTop: 12, fontSize: 'var(--font-2xs)', fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>RETRY POLICY</div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 2 }}>count</div>
+            <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginBottom: 2 }}>count</div>
             <input
               type="number" min={0} max={10}
               value={Number((step.retry || {}).count || 0)}
@@ -647,11 +647,11 @@ function StepInspector({ node, tool, tools, onChange, onDelete }: {
                 const r = { ...(step.retry || {}), count: c }
                 onChange({ retry: c > 0 ? r : undefined })
               }}
-              style={{ width: '100%', padding: '4px 6px', fontSize: 11, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
+              style={{ width: '100%', padding: '4px 6px', fontSize: 'var(--font-xs)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none' }}
             />
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 2 }}>delay (ms)</div>
+            <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginBottom: 2 }}>delay (ms)</div>
             <input
               type="number" min={0}
               value={Number((step.retry || {}).delay_ms || 1000)}
@@ -662,7 +662,7 @@ function StepInspector({ node, tool, tools, onChange, onDelete }: {
                 onChange({ retry: { ...cur, delay_ms: d } })
               }}
               disabled={!(step.retry || {}).count}
-              style={{ width: '100%', padding: '4px 6px', fontSize: 11, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none', opacity: (step.retry || {}).count ? 1 : 0.5 }}
+              style={{ width: '100%', padding: '4px 6px', fontSize: 'var(--font-xs)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', outline: 'none', opacity: (step.retry || {}).count ? 1 : 0.5 }}
             />
           </div>
         </div>
@@ -674,14 +674,14 @@ function StepInspector({ node, tool, tools, onChange, onDelete }: {
             checked={!!step.continue_on_error}
             onChange={e => onChange({ continue_on_error: e.target.checked || undefined })}
           />
-          <label htmlFor="coe" style={{ fontSize: 10, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          <label htmlFor="coe" style={{ fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
             Continuer si ce step échoue
           </label>
         </div>
       </div>
       <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
         <button onClick={onDelete}
-          style={{ width: '100%', padding: '6px 10px', fontSize: 11, fontWeight: 600, background: 'rgba(220,38,38,0.12)', color: 'var(--scarlet)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          style={{ width: '100%', padding: '6px 10px', fontSize: 'var(--font-xs)', fontWeight: 600, background: 'rgba(220,38,38,0.12)', color: 'var(--scarlet)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           <Trash2 size={12} /> Supprimer ce step
         </button>
       </div>
@@ -1006,7 +1006,7 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
     <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
       <ToolPalette tools={tools} onAdd={handleAdd} onAddControl={handleAddControl} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, position: 'relative' }}>
-        <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+        <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
           <span>{nodes.length} step{nodes.length > 1 ? 's' : ''} · {edges.length} connexion{edges.length > 1 ? 's' : ''}</span>
           <div style={{ flex: 1 }} />
           {/* Toggle direction du flow — déclenche aussi un relayout via l'effet sur direction */}
@@ -1014,7 +1014,7 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
             <button onClick={() => setDirection('vertical')}
               title="Flow vertical (de haut en bas)"
               style={{
-                padding: '2px 6px', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                padding: '2px 6px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer',
                 border: 'none', borderRadius: 3,
                 background: direction === 'vertical' ? 'var(--scarlet)' : 'transparent',
                 color: direction === 'vertical' ? '#fff' : 'var(--text-secondary)',
@@ -1025,7 +1025,7 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
             <button onClick={() => setDirection('horizontal')}
               title="Flow horizontal (de gauche à droite)"
               style={{
-                padding: '2px 6px', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                padding: '2px 6px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer',
                 border: 'none', borderRadius: 3,
                 background: direction === 'horizontal' ? 'var(--scarlet)' : 'transparent',
                 color: direction === 'horizontal' ? '#fff' : 'var(--text-secondary)',
@@ -1035,7 +1035,7 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
             </button>
           </div>
           <button onClick={handleAutoLayout}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', fontSize: 10, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', fontSize: 'var(--font-xs)', background: 'var(--bg-tertiary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer' }}>
             <Wand2 size={11} /> Auto-layout
           </button>
         </div>
@@ -1061,7 +1061,7 @@ export function ForgeCanvas({ yamlValue, tools, onChange }: ForgeCanvasProps) {
           {nodes.length === 0 && (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8, color: 'var(--text-muted)', pointerEvents: 'none' }}>
               <Plus size={36} style={{ opacity: 0.3 }} />
-              <div style={{ fontSize: 12 }}>Cliquez un outil dans la palette à gauche pour commencer</div>
+              <div style={{ fontSize: 'var(--font-sm)' }}>Cliquez un outil dans la palette à gauche pour commencer</div>
             </div>
           )}
         </div>

@@ -544,7 +544,7 @@ export default function VoicePlugin() {
   // ── Styles ───────────────────────────────────────────────────────────
   const S = {
     btn: (active = false) => ({
-      padding: '6px 12px', borderRadius: 8, border: 'none', fontSize: 11, fontWeight: 600,
+      padding: '6px 12px', borderRadius: 8, border: 'none', fontSize: 'var(--font-xs)', fontWeight: 600,
       cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
       background: active ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'var(--bg-tertiary)',
       color: active ? 'var(--accent-primary-light)' : 'var(--text-secondary)',
@@ -611,7 +611,7 @@ export default function VoicePlugin() {
                         background: p.name === activeProvider ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'transparent',
                         opacity: p.enabled ? 1 : 0.5,
                       }}>
-                      <span style={{ fontSize: 14 }}>{p.icon}</span>
+                      <span style={{ fontSize: 'var(--font-base)' }}>{p.icon}</span>
                       <div className="flex-1">
                         <div className="font-medium">{p.display_name}</div>
                         <div className="text-[9px]" style={{ color: 'var(--text-muted)' }}>{p.description}</div>
@@ -812,7 +812,7 @@ export default function VoicePlugin() {
                   borderColor: p.name === activeProvider ? 'color-mix(in srgb, var(--accent-primary) 25%, transparent)' : 'var(--border-subtle)',
                 }}>
                 <div className="flex items-center gap-2.5 mb-2">
-                  <span style={{ fontSize: 18 }}>{p.icon}</span>
+                  <span style={{ fontSize: 'var(--font-xl)' }}>{p.icon}</span>
                   <div className="flex-1">
                     <div className="text-xs font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
                       {p.display_name}

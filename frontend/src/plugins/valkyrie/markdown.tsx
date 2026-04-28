@@ -74,7 +74,7 @@ export function MarkdownBlock({ text }: { text: string }) {
       const level = h[1].length
       const inner = renderInline(h[2])
       if (level === 1) {
-        nodes.push(<h3 key={pushKey()} style={{ fontSize: 15, fontWeight: 700, margin: '10px 0 4px', color: 'var(--text-primary)' }}>{inner}</h3>)
+        nodes.push(<h3 key={pushKey()} style={{ fontSize: 'var(--font-lg)', fontWeight: 700, margin: '10px 0 4px', color: 'var(--text-primary)' }}>{inner}</h3>)
       } else if (level === 2) {
         nodes.push(<h4 key={pushKey()} style={{ fontSize: 13.5, fontWeight: 700, margin: '9px 0 3px', color: 'var(--text-primary)' }}>{inner}</h4>)
       } else {
@@ -146,7 +146,7 @@ export function MarkdownBlock({ text }: { text: string }) {
     }
     if (pLines.length > 0) {
       nodes.push(
-        <p key={pushKey()} style={{ margin: '4px 0', lineHeight: 1.55, fontSize: 12 }}>
+        <p key={pushKey()} style={{ margin: '4px 0', lineHeight: 1.55, fontSize: 'var(--font-sm)' }}>
           {renderInline(pLines.join('\n'))}
         </p>
       )

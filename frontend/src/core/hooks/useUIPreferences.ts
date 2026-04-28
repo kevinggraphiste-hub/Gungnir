@@ -75,10 +75,6 @@ export function detectBrowserTimezone(): string {
 
 const STORAGE_KEY = 'gungnir_ui_prefs'
 
-// Base de référence : à 14px on n'applique aucun zoom (1.0). Au-dessous,
-// l'app rétrécit proportionnellement ; au-dessus, elle grossit.
-const _FONT_SIZE_BASE = 14
-
 function applyToDOM(prefs: UIPrefs) {
   const root = document.documentElement
   root.setAttribute('data-font', prefs.font_family)
@@ -91,29 +87,30 @@ function applyToDOM(prefs: UIPrefs) {
   if (prefs.high_contrast) root.setAttribute('data-contrast', 'high')
   else root.removeAttribute('data-contrast')
 
-  // Zoom global au body — pattern SpearCode adapté à toute l'app.
-  // On NE l'applique PAS sur la route /code-frame (iframe SpearCode qui a
-  // son propre uiFontSize → sinon double zoom appliqué au navigateur).
-  // CSS var `--app-font-size` gardée pour les composants qui s'en servent
-  // (markdown body, etc).
+  // Vraie taille typo — on pilote `--app-font-base` (et son alias
+  // `--app-font-size`). Les autres CSS vars (--font-xs/sm/md/lg/xl)
+  // sont en calc() proportionnel dans index.css, donc l'ensemble de
+  // la cascade typo grandit/rétrécit avec le slider, sans zoom CSS.
+  // SpearCode (route /code-frame) gère son propre uiFontSize côté
+  // iframe, on lui laisse 14px (taille neutre) pour ne pas combiner.
   const isCodeFrame = (
     typeof window !== 'undefined'
     && (window.location.pathname === '/code-frame'
         || window.location.pathname.startsWith('/code-frame/'))
   )
   const size = _normalize_font_size(prefs.font_size)
-  root.style.setProperty('--app-font-size', `${size}px`)
+  const px = `${isCodeFrame ? 14 : size}px`
+  root.style.setProperty('--app-font-base', px)
+  root.style.setProperty('--app-font-size', px)
+  // On pose AUSSI font-size sur <html> pour que les classes Tailwind
+  // text-xs/sm/base/lg (qui sont en rem = relatif à <html>) scalent
+  // avec le slider. Sans ça, seuls les composants utilisant les CSS
+  // vars suivraient et les autres resteraient figés à 16px.
+  root.style.fontSize = px
   if (typeof document !== 'undefined' && document.body) {
-    if (isCodeFrame) {
-      document.body.style.zoom = '1'
-    } else {
-      // `zoom` (CSS) est préféré à `transform: scale` parce qu'il
-      // n'affecte pas le layout (pas de scrollbars fantômes).
-      // Supporté Chrome/Edge/Safari ; Firefox : fallback acceptable
-      // sur font-size hérité du body.
-      const ratio = size / _FONT_SIZE_BASE
-      document.body.style.zoom = ratio === 1 ? '' : String(ratio)
-    }
+    // Nettoyage du legacy zoom appliqué par les anciennes versions —
+    // sinon on combine zoom + nouvelle taille = double effet.
+    document.body.style.zoom = ''
   }
 }
 

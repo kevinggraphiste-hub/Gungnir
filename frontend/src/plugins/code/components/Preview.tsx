@@ -8,7 +8,7 @@ import { apiFetch, fmtSize, renderMarkdown, sanitizeSvg } from '../utils'
 
 export function MarkdownPreview({ content }: { content: string }) {
   return (
-    <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13, lineHeight: 1.7 }}>
+    <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--font-md)', lineHeight: 1.7 }}>
       <div style={{ maxWidth: 700 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
     </div>
   )
@@ -43,7 +43,7 @@ export function LivePreview({
         </button>
         <div style={{
           writingMode: 'vertical-rl', transform: 'rotate(180deg)',
-          fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase',
+          fontSize: 'var(--font-2xs)', fontFamily: 'monospace', textTransform: 'uppercase',
           letterSpacing: 2, color: 'var(--text-muted)', marginTop: 4,
         }}>
           Preview · {file.language}
@@ -61,7 +61,7 @@ export function LivePreview({
         background: 'var(--bg-secondary)', flexShrink: 0,
       }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--scarlet)" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-        <span style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1.5 }}>
+        <span style={{ fontSize: 'var(--font-xs)', fontFamily: 'monospace', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1.5 }}>
           Preview · {file.language}
         </span>
         <span style={{ flex: 1 }} />
@@ -72,7 +72,7 @@ export function LivePreview({
         </button>
         <button onClick={onClose}
           title="Fermer la preview"
-          style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px 4px', fontSize: 13 }}>
+          style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px 4px', fontSize: 'var(--font-md)' }}>
           ×
         </button>
       </div>
@@ -125,9 +125,9 @@ export function LivePreviewContent({ file }: { file: OpenTab }) {
       error = e?.message || 'JSON invalide'
     }
     return (
-      <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: 'monospace', fontSize: 'var(--font-sm)', lineHeight: 1.6 }}>
         {error && (
-          <div style={{ marginBottom: 12, padding: '6px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', fontFamily: 'inherit', fontSize: 11 }}>
+          <div style={{ marginBottom: 12, padding: '6px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', fontFamily: 'inherit', fontSize: 'var(--font-xs)' }}>
             ⚠ {error}
           </div>
         )}
@@ -156,7 +156,7 @@ export function LivePreviewContent({ file }: { file: OpenTab }) {
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-sm)' }}>
       Pas de preview disponible pour ce type.
     </div>
   )
@@ -185,7 +185,7 @@ export function ImagePreview({ path }: { path: string }) {
           ? <div dangerouslySetInnerHTML={{ __html: sanitizeSvg(data.content) }} style={{ maxWidth: '100%', maxHeight: '80vh' }} />
           : <img src={data.data} alt={path} style={{ maxWidth: '100%', maxHeight: '80vh', borderRadius: 8, border: '1px solid #1e2633' }} />
         }
-        <div style={{ marginTop: 12, fontSize: 11, color: '#8b949e' }}>{path} {data.size && `• ${fmtSize(data.size)}`}</div>
+        <div style={{ marginTop: 12, fontSize: 'var(--font-xs)', color: '#8b949e' }}>{path} {data.size && `• ${fmtSize(data.size)}`}</div>
       </div>
     </div>
   )

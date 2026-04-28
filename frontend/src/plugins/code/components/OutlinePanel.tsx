@@ -177,7 +177,7 @@ export function OutlinePanel({ activeFile, onGotoLine }: {
 
   if (!activeFile) {
     return (
-      <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>
+      <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>
         Aucun fichier ouvert.
       </div>
     )
@@ -194,15 +194,15 @@ export function OutlinePanel({ activeFile, onGotoLine }: {
           <line x1="3" y1="12" x2="3.01" y2="12"/>
           <line x1="3" y1="18" x2="3.01" y2="18"/>
         </svg>
-        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>Plan du fichier</span>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>({symbols.length})</span>
+        <span style={{ fontSize: 'var(--font-sm)', fontWeight: 700, color: 'var(--text-primary)' }}>Plan du fichier</span>
+        <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>({symbols.length})</span>
       </div>
       <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)' }}>
         <input
           value={filter} onChange={e => setFilter(e.target.value)}
           placeholder="Filtrer les symboles..."
           style={{
-            width: '100%', padding: '5px 10px', fontSize: 11,
+            width: '100%', padding: '5px 10px', fontSize: 'var(--font-xs)',
             borderRadius: 4, background: 'var(--bg-tertiary)',
             border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none',
           }}
@@ -210,7 +210,7 @@ export function OutlinePanel({ activeFile, onGotoLine }: {
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: '4px 0' }}>
         {filtered.length === 0 ? (
-          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.6 }}>
+          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)', lineHeight: 1.6 }}>
             {symbols.length === 0
               ? `Aucun symbole détecté pour ce langage (${activeFile.language || 'inconnu'}).`
               : 'Aucun résultat pour ce filtre.'}
@@ -229,11 +229,11 @@ export function OutlinePanel({ activeFile, onGotoLine }: {
             }}
             onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
-            <span style={{ fontSize: 8, width: 10, color: KIND_COLOR[s.kind] }}>●</span>
+            <span style={{ fontSize: 'var(--font-2xs)', width: 10, color: KIND_COLOR[s.kind] }}>●</span>
             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {s.name}
             </span>
-            <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{s.line}</span>
+            <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{s.line}</span>
           </button>
         ))}
       </div>

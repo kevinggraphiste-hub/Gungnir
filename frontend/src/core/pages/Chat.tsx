@@ -163,7 +163,7 @@ function ChatEmojiButton({ onPick }: { onPick: (emoji: string) => void }) {
           background: open ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'transparent',
           border: `1px solid ${open ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border)'}`,
           color: open ? 'var(--accent-primary)' : 'var(--text-muted)',
-          fontSize: 14,
+          fontSize: 'var(--font-base)',
         }}
         title="Insérer un emoji">
         😀
@@ -423,11 +423,11 @@ function renderMarkdownBlock(text: string, keyPrefix: string): React.ReactNode {
       const level = h[1].length
       const inner = renderInline(h[2])
       if (level === 1) {
-        nodes.push(<h1 key={pushKey()} style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.3, margin: '18px 0 10px', color: 'var(--text-primary)' }}>{inner}</h1>)
+        nodes.push(<h1 key={pushKey()} style={{ fontSize: 'var(--font-2xl)', fontWeight: 800, lineHeight: 1.3, margin: '18px 0 10px', color: 'var(--text-primary)' }}>{inner}</h1>)
       } else if (level === 2) {
-        nodes.push(<h2 key={pushKey()} style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.35, margin: '16px 0 8px', paddingBottom: 4, borderBottom: '1px solid color-mix(in srgb, var(--scarlet) 25%, transparent)', color: 'var(--text-primary)' }}>{inner}</h2>)
+        nodes.push(<h2 key={pushKey()} style={{ fontSize: 'var(--font-xl)', fontWeight: 700, lineHeight: 1.35, margin: '16px 0 8px', paddingBottom: 4, borderBottom: '1px solid color-mix(in srgb, var(--scarlet) 25%, transparent)', color: 'var(--text-primary)' }}>{inner}</h2>)
       } else {
-        nodes.push(<h3 key={pushKey()} style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 6px', color: 'var(--text-primary)' }}>{inner}</h3>)
+        nodes.push(<h3 key={pushKey()} style={{ fontSize: 'var(--font-lg)', fontWeight: 700, margin: '14px 0 6px', color: 'var(--text-primary)' }}>{inner}</h3>)
       }
       i++; continue
     }
@@ -2090,7 +2090,7 @@ export default function Chat() {
                   <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Tâches planifiées</span>
                   <button onClick={loadAutomataTasks} title="Rafraîchir"
                     className="p-0.5 rounded transition-colors" style={{ color: 'var(--text-muted)' }}>
-                    <span style={{ fontSize: 11 }}>↻</span>
+                    <span style={{ fontSize: 'var(--font-xs)' }}>↻</span>
                   </button>
                 </div>
                 {automataTasks.length === 0 ? (
@@ -2951,25 +2951,25 @@ export default function Chat() {
             }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <ImageIcon className="w-5 h-5" style={{ color: 'var(--scarlet)' }} />
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
+              <h3 style={{ margin: 0, fontSize: 'var(--font-lg)', fontWeight: 700, color: 'var(--text-primary)' }}>
                 Génération d'image
               </h3>
               <div style={{ flex: 1 }} />
               <button onClick={() => setShowImageGenModal(false)}
                 title="Fermer (Échap)"
-                style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 20 }}>
+                style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 'var(--font-2xl)' }}>
                 ×
               </button>
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Prompt</label>
+              <label style={{ display: 'block', fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>Prompt</label>
               <textarea
                 value={imgGenPrompt} onChange={(e) => setImgGenPrompt(e.target.value)}
                 placeholder="Décris l'image à générer…"
                 rows={3}
                 style={{
-                  width: '100%', padding: '8px 10px', fontSize: 13,
+                  width: '100%', padding: '8px 10px', fontSize: 'var(--font-md)',
                   borderRadius: 6, background: 'var(--bg-primary)',
                   border: '1px solid var(--border)', color: 'var(--text-primary)',
                   outline: 'none', resize: 'vertical', fontFamily: 'inherit',
@@ -2979,7 +2979,7 @@ export default function Chat() {
 
             <div style={{ display: 'flex', gap: 10 }}>
               <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Provider</label>
+                <label style={{ display: 'block', fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>Provider</label>
                 <select
                   value={imgGenProvider}
                   onChange={(e) => {
@@ -2992,7 +2992,7 @@ export default function Chat() {
                     }
                   }}
                   style={{
-                    width: '100%', padding: '7px 10px', fontSize: 12,
+                    width: '100%', padding: '7px 10px', fontSize: 'var(--font-sm)',
                     borderRadius: 6, background: 'var(--bg-primary)',
                     border: '1px solid var(--border)', color: 'var(--text-primary)',
                   }}>
@@ -3002,7 +3002,7 @@ export default function Chat() {
                 </select>
               </div>
               <div style={{ flex: 2 }}>
-                <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Modèle</label>
+                <label style={{ display: 'block', fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>Modèle</label>
                 <select
                   value={imgGenModel}
                   onChange={(e) => {
@@ -3014,7 +3014,7 @@ export default function Chat() {
                     if (modelDef) setImgGenSize(modelDef.default_size || modelDef.sizes[0] || '1024x1024')
                   }}
                   style={{
-                    width: '100%', padding: '7px 10px', fontSize: 12,
+                    width: '100%', padding: '7px 10px', fontSize: 'var(--font-sm)',
                     borderRadius: 6, background: 'var(--bg-primary)',
                     border: '1px solid var(--border)', color: 'var(--text-primary)',
                   }}>
@@ -3026,11 +3026,11 @@ export default function Chat() {
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Taille</label>
+              <label style={{ display: 'block', fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>Taille</label>
               <select
                 value={imgGenSize} onChange={(e) => setImgGenSize(e.target.value)}
                 style={{
-                  width: '100%', padding: '7px 10px', fontSize: 12,
+                  width: '100%', padding: '7px 10px', fontSize: 'var(--font-sm)',
                   borderRadius: 6, background: 'var(--bg-primary)',
                   border: '1px solid var(--border)', color: 'var(--text-primary)',
                 }}>
@@ -3043,7 +3043,7 @@ export default function Chat() {
 
             {imgGenError && (
               <div style={{
-                padding: '8px 12px', borderRadius: 6, fontSize: 12,
+                padding: '8px 12px', borderRadius: 6, fontSize: 'var(--font-sm)',
                 background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)',
                 border: '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)',
                 color: 'var(--accent-primary)',
@@ -3056,7 +3056,7 @@ export default function Chat() {
               <button
                 onClick={() => setShowImageGenModal(false)}
                 style={{
-                  padding: '8px 16px', borderRadius: 6, fontSize: 13,
+                  padding: '8px 16px', borderRadius: 6, fontSize: 'var(--font-md)',
                   background: 'transparent', border: '1px solid var(--border)',
                   color: 'var(--text-secondary)', cursor: 'pointer',
                 }}>
@@ -3130,7 +3130,7 @@ export default function Chat() {
                   }
                 }}
                 style={{
-                  padding: '8px 20px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                  padding: '8px 20px', borderRadius: 6, fontSize: 'var(--font-md)', fontWeight: 600,
                   background: 'var(--scarlet)', border: 'none', color: '#fff',
                   cursor: imgGenLoading ? 'wait' : 'pointer',
                   opacity: (imgGenLoading || !imgGenPrompt.trim()) ? 0.6 : 1,
@@ -3346,11 +3346,11 @@ function PermissionCard({
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <ShieldAlert className="w-4 h-4" style={{ color: 'var(--scarlet)' }} />
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+        <span style={{ fontSize: 'var(--font-md)', fontWeight: 700, color: 'var(--text-primary)' }}>
           Confirmation requise
         </span>
         <span style={{
-          fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+          fontSize: 'var(--font-xs)', fontFamily: 'JetBrains Mono, monospace',
           padding: '1px 6px', borderRadius: 4,
           background: 'var(--bg-primary)', color: 'var(--scarlet)',
         }}>
@@ -3371,7 +3371,7 @@ function PermissionCard({
           <pre style={{
             marginTop: 6, padding: 8, borderRadius: 6,
             background: 'var(--bg-primary)', border: '1px solid var(--border)',
-            fontSize: 11, color: 'var(--text-secondary)',
+            fontSize: 'var(--font-xs)', color: 'var(--text-secondary)',
             fontFamily: 'JetBrains Mono, monospace',
             whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             maxHeight: 180, overflowY: 'auto',
@@ -3402,7 +3402,7 @@ function PermissionCard({
       </div>
       {permissionId && (
         <div style={{
-          fontSize: 9, color: 'var(--text-muted)',
+          fontSize: 'var(--font-2xs)', color: 'var(--text-muted)',
           fontFamily: 'JetBrains Mono, monospace', opacity: 0.5,
         }}>
           id: {permissionId}

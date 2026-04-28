@@ -172,7 +172,19 @@
    Variables pilotées par data-* sur <html>, écrites par useUIPreferences. */
 :root {
   --app-font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --app-font-size: 15px;
+  /* Taille de référence pilotée par le slider Settings → "Taille du texte (UI globale)".
+     Toutes les autres tailles dérivent en proportion (calc()) — c'est ce qui permet au
+     slider de faire vraiment grandir/rétrécir la typo, sans recourir à un zoom CSS. */
+  --app-font-base: 14px;
+  --app-font-size: var(--app-font-base);  /* alias rétrocompat */
+  --font-2xs: calc(var(--app-font-base) * 0.65);  /* ~9px @ base 14 — micro labels */
+  --font-xs:  calc(var(--app-font-base) * 0.78);  /* ~11px — captions, badges */
+  --font-sm:  calc(var(--app-font-base) * 0.86);  /* ~12px — meta, hints */
+  --font-md:  calc(var(--app-font-base) * 0.93);  /* ~13px — secondary text */
+  --font-base: var(--app-font-base);              /* 14px — body */
+  --font-lg:  calc(var(--app-font-base) * 1.14);  /* ~16px — titles, primary CTA */
+  --font-xl:  calc(var(--app-font-base) * 1.29);  /* ~18px — section headers */
+  --font-2xl: calc(var(--app-font-base) * 1.57);  /* ~22px — page titles */
   --app-line-height: 1.55;
   --app-letter-spacing: 0;
   --app-word-spacing: 0;
@@ -192,10 +204,10 @@
   --app-font-family: 'OpenDyslexic', 'Atkinson Hyperlegible', Verdana, sans-serif;
 }
 
-/* Taille globale — `--app-font-size` posé dynamiquement par
-   useUIPreferences.applyToDOM (en px). Le zoom global est appliqué via
-   document.body.style.zoom dans le même hook. Plus besoin de mapper
-   small/normal/large ici (rétrocompat gérée côté JS). */
+/* Taille globale — `--app-font-base` posé dynamiquement par
+   useUIPreferences.applyToDOM (en px). Toute la cascade typo est en
+   calc() à partir de cette base, plus besoin de zoom CSS. SpearCode
+   garde son propre uiFontSize (iframe isolée). */
 
 /* Interligne */
 [data-linespacing="tight"]  { --app-line-height: 1.35; }

@@ -124,30 +124,30 @@ export function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => vo
     }
   }
 
-  if (loading) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Chargement...</div>
+  if (loading) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>Chargement...</div>
   if (!status?.is_repo) return (
     <div style={{ padding: 20, textAlign: 'center' }}>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>Pas de dépôt Git</div>
+      <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 12 }}>Pas de dépôt Git</div>
       <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
-        <button onClick={initRepo} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 600, background: 'var(--scarlet)', color: '#fff', cursor: 'pointer' }}>Initialiser Git</button>
-        <button onClick={() => setShowClone(v => !v)} style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid var(--border)', fontSize: 11, fontWeight: 600, background: 'var(--bg-tertiary)', color: 'var(--text-primary)', cursor: 'pointer' }}>Cloner un repo…</button>
+        <button onClick={initRepo} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', fontSize: 'var(--font-xs)', fontWeight: 600, background: 'var(--scarlet)', color: '#fff', cursor: 'pointer' }}>Initialiser Git</button>
+        <button onClick={() => setShowClone(v => !v)} style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid var(--border)', fontSize: 'var(--font-xs)', fontWeight: 600, background: 'var(--bg-tertiary)', color: 'var(--text-primary)', cursor: 'pointer' }}>Cloner un repo…</button>
       </div>
       {showClone && (
         <div style={{ marginTop: 14, textAlign: 'left', padding: 10, background: 'var(--bg-tertiary)', borderRadius: 6, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ fontSize: 9, color: 'var(--text-muted)' }}>URL du repo</label>
+          <label style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>URL du repo</label>
           <input value={cloneUrl} onChange={e => setCloneUrl(e.target.value)}
             placeholder="https://github.com/user/repo.git"
-            style={{ padding: '5px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
-          <label style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4 }}>Destination (optionnel — nom du dossier)</label>
+            style={{ padding: '5px 8px', fontSize: 'var(--font-xs)', borderRadius: 4, background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
+          <label style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginTop: 4 }}>Destination (optionnel — nom du dossier)</label>
           <input value={cloneDest} onChange={e => setCloneDest(e.target.value)}
             placeholder="Laisse vide pour utiliser le nom du repo"
-            style={{ padding: '5px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
+            style={{ padding: '5px 8px', fontSize: 'var(--font-xs)', borderRadius: 4, background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
           <button onClick={doClone} disabled={cloning || !cloneUrl.trim()}
-            style={{ marginTop: 4, padding: '6px 0', borderRadius: 4, border: 'none', fontSize: 11, fontWeight: 700, background: 'var(--scarlet)', color: '#fff', cursor: cloning ? 'wait' : 'pointer' }}>
+            style={{ marginTop: 4, padding: '6px 0', borderRadius: 4, border: 'none', fontSize: 'var(--font-xs)', fontWeight: 700, background: 'var(--scarlet)', color: '#fff', cursor: cloning ? 'wait' : 'pointer' }}>
             {cloning ? 'Clonage…' : 'Cloner'}
           </button>
           {remoteOutput && (
-            <pre style={{ marginTop: 4, padding: 6, fontSize: 9, color: 'var(--text-secondary)', background: 'var(--bg-primary)', borderRadius: 4, maxHeight: 120, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{remoteOutput}</pre>
+            <pre style={{ marginTop: 4, padding: 6, fontSize: 'var(--font-2xs)', color: 'var(--text-secondary)', background: 'var(--bg-primary)', borderRadius: 4, maxHeight: 120, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{remoteOutput}</pre>
           )}
         </div>
       )}
@@ -158,7 +158,7 @@ export function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => vo
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ padding: '7px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6 }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
-        <button onClick={() => setShowBranches(!showBranches)} style={{ border: 'none', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>
+        <button onClick={() => setShowBranches(!showBranches)} style={{ border: 'none', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 700, fontSize: 'var(--font-xs)' }}>
           {status.branch} {branches.length > 1 ? '▾' : ''}
         </button>
         <div style={{ flex: 1 }} />
@@ -182,30 +182,30 @@ export function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => vo
       </div>
       {showRemote && (
         <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-tertiary)', padding: '6px 12px 8px', display: 'flex', flexDirection: 'column', gap: 5 }}>
-          <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4 }}>Remotes</div>
-          {remotes.length === 0 && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Aucun remote. Ajoute l'URL https du repo ci-dessous.</div>}
+          <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4 }}>Remotes</div>
+          {remotes.length === 0 && <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>Aucun remote. Ajoute l'URL https du repo ci-dessous.</div>}
           {remotes.map(r => (
-            <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10 }}>
+            <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 'var(--font-xs)' }}>
               <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{r.name}</span>
-              <span style={{ flex: 1, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: MONO, fontSize: 9 }}>{r.url}</span>
-              {r.host && <span style={{ ...S.badge('#3b82f6', true), fontSize: 7 }}>{r.host}</span>}
-              <button onClick={() => removeRemote(r.name)} title="Supprimer" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', opacity: 0.6, fontSize: 11 }}>&times;</button>
+              <span style={{ flex: 1, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: MONO, fontSize: 'var(--font-2xs)' }}>{r.url}</span>
+              {r.host && <span style={{ ...S.badge('#3b82f6', true), fontSize: 'var(--font-2xs)' }}>{r.host}</span>}
+              <button onClick={() => removeRemote(r.name)} title="Supprimer" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', opacity: 0.6, fontSize: 'var(--font-xs)' }}>&times;</button>
             </div>
           ))}
           <div style={{ display: 'flex', gap: 4 }}>
             <input value={newRemoteUrl} onChange={e => setNewRemoteUrl(e.target.value)} placeholder="https://github.com/owner/repo.git"
-              style={{ flex: 1, padding: '3px 8px', fontSize: 10, borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
-            <button onClick={addRemote} disabled={!newRemoteUrl.trim()} style={{ padding: '3px 8px', fontSize: 9, fontWeight: 700, borderRadius: 4, border: 'none', background: 'var(--scarlet)', color: '#fff', cursor: newRemoteUrl.trim() ? 'pointer' : 'not-allowed' }}>Ajouter</button>
+              style={{ flex: 1, padding: '3px 8px', fontSize: 'var(--font-xs)', borderRadius: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
+            <button onClick={addRemote} disabled={!newRemoteUrl.trim()} style={{ padding: '3px 8px', fontSize: 'var(--font-2xs)', fontWeight: 700, borderRadius: 4, border: 'none', background: 'var(--scarlet)', color: '#fff', cursor: newRemoteUrl.trim() ? 'pointer' : 'not-allowed' }}>Ajouter</button>
           </div>
           {remoteOutput && (
-            <pre style={{ margin: '4px 0 0', padding: 6, borderRadius: 4, fontSize: 9, background: '#0c0f14', color: '#c9d1d9', overflow: 'auto', maxHeight: 100, fontFamily: MONO, lineHeight: 1.35, border: '1px solid #1e2633', whiteSpace: 'pre-wrap' }}>{remoteOutput}</pre>
+            <pre style={{ margin: '4px 0 0', padding: 6, borderRadius: 4, fontSize: 'var(--font-2xs)', background: '#0c0f14', color: '#c9d1d9', overflow: 'auto', maxHeight: 100, fontFamily: MONO, lineHeight: 1.35, border: '1px solid #1e2633', whiteSpace: 'pre-wrap' }}>{remoteOutput}</pre>
           )}
         </div>
       )}
       {showBranches && branches.length > 1 && (
         <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-tertiary)' }}>
           {branches.map(br => (
-            <div key={br} onClick={() => switchBranch(br)} style={{ padding: '4px 12px', fontSize: 11, cursor: 'pointer', color: br === status.branch ? 'var(--scarlet)' : 'var(--text-primary)', fontWeight: br === status.branch ? 700 : 400 }}>
+            <div key={br} onClick={() => switchBranch(br)} style={{ padding: '4px 12px', fontSize: 'var(--font-xs)', cursor: 'pointer', color: br === status.branch ? 'var(--scarlet)' : 'var(--text-primary)', fontWeight: br === status.branch ? 700 : 400 }}>
               {br === status.branch ? '• ' : '  '}{br}
             </div>
           ))}
@@ -213,17 +213,17 @@ export function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => vo
       )}
       <div style={{ flex: 1, overflow: 'auto' }}>
         <div style={S.sl}>Changements ({status.files?.length || 0})</div>
-        {!status.files?.length ? <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-muted)' }}>Aucun changement</div>
+        {!status.files?.length ? <div style={{ padding: '10px 12px', fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>Aucun changement</div>
         : status.files.map((f, i) => {
           const st = GSM[f.status] || { label: f.status, color: '#6b7280' }
           return (
             <div key={i}>
-              <div onClick={() => toggleDiff(f.path)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 11 }}>
-                <span style={{ ...S.badge(st.color, true), fontSize: 7, padding: '0 5px' }}>{st.label}</span>
+              <div onClick={() => toggleDiff(f.path)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 'var(--font-xs)' }}>
+                <span style={{ ...S.badge(st.color, true), fontSize: 'var(--font-2xs)', padding: '0 5px' }}>{st.label}</span>
                 <span style={{ flex: 1, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.path}</span>
               </div>
               {diffFile === f.path && diffContent && (
-                <pre style={{ margin: '0 12px 6px', padding: 6, borderRadius: 4, fontSize: 9, background: '#0c0f14', color: '#c9d1d9', overflow: 'auto', maxHeight: 180, fontFamily: MONO, lineHeight: 1.4, border: '1px solid #1e2633' }}>
+                <pre style={{ margin: '0 12px 6px', padding: 6, borderRadius: 4, fontSize: 'var(--font-2xs)', background: '#0c0f14', color: '#c9d1d9', overflow: 'auto', maxHeight: 180, fontFamily: MONO, lineHeight: 1.4, border: '1px solid #1e2633' }}>
                   {diffContent.split('\n').map((line, li) => <div key={li} style={{ color: line.startsWith('+') ? '#22c55e' : line.startsWith('-') ? '#f85149' : line.startsWith('@@') ? '#3b82f6' : '#c9d1d9' }}>{line}</div>)}
                 </pre>
               )}
@@ -232,13 +232,13 @@ export function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => vo
         })}
         {status.log && status.log.length > 0 && <>
           <div style={{ ...S.sl, marginTop: 8 }}>Historique</div>
-          {status.log.map((l, i) => <div key={i} style={{ padding: '2px 12px', fontSize: 9, color: '#8b949e', fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><span style={{ color: '#f59e0b' }}>{l.substring(0, 7)}</span> {l.substring(8)}</div>)}
+          {status.log.map((l, i) => <div key={i} style={{ padding: '2px 12px', fontSize: 'var(--font-2xs)', color: '#8b949e', fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><span style={{ color: '#f59e0b' }}>{l.substring(0, 7)}</span> {l.substring(8)}</div>)}
         </>}
       </div>
       {status.files && status.files.length > 0 && (
         <div style={{ padding: '6px 10px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-            <input value={commitMsg} onChange={e => setCommitMsg(e.target.value)} onKeyDown={e => e.key === 'Enter' && commit()} placeholder="Message de commit..." style={{ flex: 1, padding: '5px 8px', fontSize: 11, borderRadius: 5, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+            <input value={commitMsg} onChange={e => setCommitMsg(e.target.value)} onKeyDown={e => e.key === 'Enter' && commit()} placeholder="Message de commit..." style={{ flex: 1, padding: '5px 8px', fontSize: 'var(--font-xs)', borderRadius: 5, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
             <button onClick={async () => {
               setAiGenMsg(true)
               const diffData = await apiFetch<{ diff: string; staged: string }>('/git/diff')
@@ -250,11 +250,11 @@ export function GitPanel({ onBranchChange }: { onBranchChange: (b: string) => vo
               if (res?.ok && res.message) setCommitMsg(res.message)
               setAiGenMsg(false)
             }} disabled={aiGenMsg} title="Generer message IA depuis le diff"
-              style={{ padding: '4px 8px', borderRadius: 5, border: 'none', fontSize: 9, fontWeight: 700, cursor: 'pointer', background: '#8b5cf620', color: '#8b5cf6', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 3 }}>
+              style={{ padding: '4px 8px', borderRadius: 5, border: 'none', fontSize: 'var(--font-2xs)', fontWeight: 700, cursor: 'pointer', background: '#8b5cf620', color: '#8b5cf6', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 3 }}>
               {aiGenMsg ? <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#8b5cf6', animation: 'pulse 1s ease-in-out infinite' }} /> : '✨'} IA
             </button>
           </div>
-          <button onClick={commit} disabled={committing || !commitMsg.trim()} style={{ width: '100%', padding: '5px 0', borderRadius: 5, border: 'none', fontSize: 10, fontWeight: 600, cursor: commitMsg.trim() ? 'pointer' : 'not-allowed', background: commitMsg.trim() ? 'var(--scarlet)' : 'var(--bg-tertiary)', color: commitMsg.trim() ? '#fff' : 'var(--text-muted)' }}>
+          <button onClick={commit} disabled={committing || !commitMsg.trim()} style={{ width: '100%', padding: '5px 0', borderRadius: 5, border: 'none', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: commitMsg.trim() ? 'pointer' : 'not-allowed', background: commitMsg.trim() ? 'var(--scarlet)' : 'var(--bg-tertiary)', color: commitMsg.trim() ? '#fff' : 'var(--text-muted)' }}>
             {committing ? 'Commit...' : 'Commit'}
           </button>
         </div>
@@ -327,41 +327,41 @@ export function GitCredentialsPanel() {
     <div style={{ borderTop: '1px solid var(--border)' }}>
       <div style={{ ...S.sl, paddingTop: 10 }}>Git — Identite & PAT</div>
       <div style={{ padding: '4px 12px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <label style={{ fontSize: 9, color: 'var(--text-muted)' }}>Nom (git commit author)</label>
+        <label style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>Nom (git commit author)</label>
         <input value={nameInput} onChange={e => setNameInput(e.target.value)} placeholder="Kevin Graphiste"
-          style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
-        <label style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4 }}>Email</label>
+          style={{ padding: '4px 8px', fontSize: 'var(--font-xs)', borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+        <label style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', marginTop: 4 }}>Email</label>
         <input value={emailInput} onChange={e => setEmailInput(e.target.value)} placeholder="kevin@exemple.com"
-          style={{ padding: '4px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+          style={{ padding: '4px 8px', fontSize: 'var(--font-xs)', borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
         <button onClick={saveIdentity} disabled={busy || !nameInput.trim() || !emailInput.trim()}
-          style={{ marginTop: 4, padding: '5px 0', borderRadius: 4, border: 'none', fontSize: 10, fontWeight: 700, cursor: (busy || !nameInput.trim() || !emailInput.trim()) ? 'not-allowed' : 'pointer', background: 'var(--scarlet)', color: '#fff', opacity: (busy || !nameInput.trim() || !emailInput.trim()) ? 0.6 : 1 }}>
+          style={{ marginTop: 4, padding: '5px 0', borderRadius: 4, border: 'none', fontSize: 'var(--font-xs)', fontWeight: 700, cursor: (busy || !nameInput.trim() || !emailInput.trim()) ? 'not-allowed' : 'pointer', background: 'var(--scarlet)', color: '#fff', opacity: (busy || !nameInput.trim() || !emailInput.trim()) ? 0.6 : 1 }}>
           Enregistrer identite
         </button>
       </div>
 
       <div style={{ padding: '4px 12px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <label style={{ fontSize: 9, color: 'var(--text-muted)' }}>Tokens d'acces (chiffres)</label>
+        <label style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>Tokens d'acces (chiffres)</label>
         {state.hosts.map(h => (
-          <div key={h.host} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10 }}>
+          <div key={h.host} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--font-xs)' }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: h.configured ? '#22c55e' : '#6b7280' }} />
             <span style={{ fontWeight: 600, color: 'var(--text-primary)', minWidth: 70 }}>{GIT_HOST_LABELS[h.host] || h.host}</span>
-            <span style={{ flex: 1, color: 'var(--text-muted)', fontSize: 9 }}>{h.configured ? 'Configure' : 'Aucun token'}</span>
-            {h.configured && <button onClick={() => removeToken(h.host)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', opacity: 0.6, fontSize: 11 }}>&times;</button>}
+            <span style={{ flex: 1, color: 'var(--text-muted)', fontSize: 'var(--font-2xs)' }}>{h.configured ? 'Configure' : 'Aucun token'}</span>
+            {h.configured && <button onClick={() => removeToken(h.host)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#dc2626', opacity: 0.6, fontSize: 'var(--font-xs)' }}>&times;</button>}
           </div>
         ))}
         <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
           <select value={selectedHost} onChange={e => setSelectedHost(e.target.value)}
-            style={{ padding: '3px 6px', fontSize: 10, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}>
+            style={{ padding: '3px 6px', fontSize: 'var(--font-xs)', borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }}>
             {Object.entries(GIT_HOST_LABELS).map(([h, label]) => <option key={h} value={h}>{label}</option>)}
           </select>
           <input type="password" value={tokenInput} onChange={e => setTokenInput(e.target.value)} placeholder={`PAT ${selectedHost}`}
             autoComplete="new-password"
-            style={{ flex: 1, padding: '3px 6px', fontSize: 10, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
+            style={{ flex: 1, padding: '3px 6px', fontSize: 'var(--font-xs)', borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', fontFamily: MONO }} />
           <button onClick={saveToken} disabled={busy || !tokenInput.trim()}
-            style={{ padding: '3px 8px', fontSize: 9, fontWeight: 700, borderRadius: 4, border: 'none', background: 'var(--scarlet)', color: '#fff', cursor: (busy || !tokenInput.trim()) ? 'not-allowed' : 'pointer', opacity: (busy || !tokenInput.trim()) ? 0.6 : 1 }}>Ajouter</button>
+            style={{ padding: '3px 8px', fontSize: 'var(--font-2xs)', fontWeight: 700, borderRadius: 4, border: 'none', background: 'var(--scarlet)', color: '#fff', cursor: (busy || !tokenInput.trim()) ? 'not-allowed' : 'pointer', opacity: (busy || !tokenInput.trim()) ? 0.6 : 1 }}>Ajouter</button>
         </div>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.8 }}>Scopes GitHub minimum : repo. Le token est chiffre en base et injecte uniquement dans l'URL au moment du push/pull.</span>
-        {msg && <span style={{ fontSize: 10, color: msg.includes('Erreur') ? '#f87171' : '#22c55e' }}>{msg}</span>}
+        <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', opacity: 0.8 }}>Scopes GitHub minimum : repo. Le token est chiffre en base et injecte uniquement dans l'URL au moment du push/pull.</span>
+        {msg && <span style={{ fontSize: 'var(--font-xs)', color: msg.includes('Erreur') ? '#f87171' : '#22c55e' }}>{msg}</span>}
       </div>
     </div>
   )

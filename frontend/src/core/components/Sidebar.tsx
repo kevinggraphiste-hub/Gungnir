@@ -180,7 +180,7 @@ export default function Sidebar() {
         {/* Version badge */}
         <div
           className="flex items-center justify-center pt-1"
-          style={{ fontSize: 10, color: 'var(--text-muted)', opacity: 0.6 }}
+          style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', opacity: 0.6 }}
           title={`Gungnir v${__APP_VERSION__}`}
         >
           {collapsed ? `v${__APP_VERSION__.split('.')[0]}` : `Gungnir v${__APP_VERSION__}`}

@@ -100,16 +100,67 @@ def _user_logs_path(user_id: int) -> Path:
     return p
 
 
+def _password_keys_for(channel_type: str) -> set[str]:
+    """Read CHANNEL_CATALOG and return the field keys flagged ``type=password``
+    for the given channel type. Defines the perimeter for at-rest encryption."""
+    entry = CHANNEL_CATALOG.get(channel_type) if "CHANNEL_CATALOG" in globals() else None
+    if not entry:
+        return set()
+    return {f["key"] for f in entry.get("fields", []) if f.get("type") == "password"}
+
+
+def _encrypt_channel_secrets(ch: dict) -> dict:
+    """Encrypt every password-typed config field in-place (idempotent — values
+    already prefixed ``GCM:``/``FERNET:`` are left untouched). Returns ``ch``
+    for chaining convenience."""
+    from backend.core.config.settings import encrypt_value
+    cfg = ch.get("config") if isinstance(ch, dict) else None
+    if not isinstance(cfg, dict):
+        return ch
+    for key in _password_keys_for(ch.get("type", "")):
+        v = cfg.get(key)
+        if isinstance(v, str) and v and "•" not in v:
+            cfg[key] = encrypt_value(v)
+    return ch
+
+
+def _decrypt_channel_secrets(ch: dict) -> dict:
+    """Decrypt every password-typed field in-place. Tolerant: cleartext values
+    (legacy files) pass through untouched thanks to ``decrypt_value`` fallback."""
+    from backend.core.config.settings import decrypt_value
+    cfg = ch.get("config") if isinstance(ch, dict) else None
+    if not isinstance(cfg, dict):
+        return ch
+    for key in _password_keys_for(ch.get("type", "")):
+        v = cfg.get(key)
+        if isinstance(v, str) and v and v.startswith(("GCM:", "FERNET:")):
+            cfg[key] = decrypt_value(v)
+    return ch
+
+
 def _load_user_channels(user_id: int) -> dict:
     p = _user_channels_path(user_id)
-    if p.exists():
-        return json.loads(p.read_text(encoding="utf-8"))
-    return {}
+    if not p.exists():
+        return {}
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    if isinstance(raw, dict):
+        for ch in raw.values():
+            if isinstance(ch, dict):
+                _decrypt_channel_secrets(ch)
+    return raw
 
 
 def _save_user_channels(user_id: int, channels: dict) -> None:
+    """Encrypt password-typed fields before writing. Operates on a deep copy so
+    the caller's in-memory dict keeps cleartext for the rest of the request."""
+    import copy
+    to_write = copy.deepcopy(channels)
+    if isinstance(to_write, dict):
+        for ch in to_write.values():
+            if isinstance(ch, dict):
+                _encrypt_channel_secrets(ch)
     p = _user_channels_path(user_id)
-    p.write_text(json.dumps(channels, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    p.write_text(json.dumps(to_write, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
 
 def _load_user_logs(user_id: int) -> list:
@@ -270,6 +321,40 @@ def _auto_migrate_legacy() -> None:
 
 
 _auto_migrate_legacy()
+
+
+def _encrypt_existing_secrets() -> None:
+    """One-shot pass that re-writes every per-user channels.json so that
+    password-typed fields are encrypted at rest. Idempotent: rewriting an
+    already-encrypted file is a no-op (encrypt_value is idempotent for
+    GCM:/FERNET: prefixes). Tracked via a flag inside the index so we don't
+    re-walk the tree on every boot. Invoked at module bottom — needs
+    CHANNEL_CATALOG to be defined for _password_keys_for to resolve."""
+    if not CHANNELS_INDEX.exists():
+        return
+    try:
+        meta = json.loads(CHANNELS_INDEX.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(meta, dict):
+        return
+    if meta.get("_secrets_encrypted_at"):
+        return
+    import logging
+    log = logging.getLogger("gungnir.plugins.channels")
+    rewritten = 0
+    try:
+        for uid in _all_user_dirs():
+            chans = _load_user_channels(uid)  # cleartext after load
+            if chans:
+                _save_user_channels(uid, chans)  # encrypts on write
+                rewritten += len(chans)
+        meta["_secrets_encrypted_at"] = datetime.now(timezone.utc).isoformat()
+        CHANNELS_INDEX.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        if rewritten:
+            log.info("channels at-rest encryption pass OK: %d channels rewritten", rewritten)
+    except Exception as e:
+        log.error("channels at-rest encryption pass failed: %s", e)
 
 
 def _add_log(channel_id: str, channel_name: str, direction: str, summary: str, status: str = "ok"):
@@ -2009,3 +2094,7 @@ async def on_shutdown(*args, **kwargs):
         stop_all()
     except Exception:
         pass
+
+
+# Run after CHANNEL_CATALOG is defined so _password_keys_for resolves.
+_encrypt_existing_secrets()

@@ -233,7 +233,7 @@ export default function ModelGuidePlugin() {
   // ── Styles ─────────────────────────────────────────────────────────────
 
   const filterBtn = (active: boolean, color?: string): React.CSSProperties => ({
-    padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+    padding: '4px 10px', borderRadius: 6, fontSize: 'var(--font-xs)', fontWeight: 600,
     border: 'none', cursor: 'pointer',
     background: active ? (color || 'var(--scarlet)') : 'var(--bg-tertiary)',
     color: active ? '#fff' : 'var(--text-muted)',
@@ -274,12 +274,12 @@ export default function ModelGuidePlugin() {
                   placeholder="Rechercher..."
                   style={{
                     background: 'transparent', border: 'none', outline: 'none', flex: 1,
-                    color: 'var(--text-primary)', fontSize: 12,
+                    color: 'var(--text-primary)', fontSize: 'var(--font-sm)',
                   }}
                 />
                 {search && (
                   <button onClick={() => setSearch('')} style={{
-                    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: 0,
+                    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 'var(--font-base)', padding: 0,
                   }}>×</button>
                 )}
               </div>
@@ -304,7 +304,7 @@ export default function ModelGuidePlugin() {
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               padding: '6px 14px', borderRadius: '6px 6px 0 0', border: 'none',
-              fontSize: 11, fontWeight: 600, cursor: 'pointer',
+              fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer',
               background: activeTab === id ? 'var(--bg-primary)' : 'transparent',
               color: activeTab === id ? 'var(--scarlet)' : 'var(--text-muted)',
               borderBottom: activeTab === id ? '2px solid var(--scarlet)' : '2px solid transparent',
@@ -326,7 +326,7 @@ export default function ModelGuidePlugin() {
       }}>
         {/* Price tier filters */}
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>PRIX</span>
+          <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>PRIX</span>
           {Object.entries(TIER_CONFIG).filter(([k]) => k !== 'unknown').map(([key, t]) => (
             <button key={key} onClick={() => setFilterTier(filterTier === key ? null : key)}
               style={filterBtn(filterTier === key, t.color)}>
@@ -337,7 +337,7 @@ export default function ModelGuidePlugin() {
 
         {/* Feature filters */}
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>FILTRES</span>
+          <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>FILTRES</span>
           <button onClick={() => setFilterVision(!filterVision)}
             style={filterBtn(filterVision, '#14b8a6')}>
             Vision
@@ -346,7 +346,7 @@ export default function ModelGuidePlugin() {
 
         {/* Sort */}
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>TRI</span>
+          <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>TRI</span>
           <button onClick={() => setSortBy('name')} style={filterBtn(sortBy === 'name')}>A-Z</button>
           <button onClick={() => setSortBy('price')} style={filterBtn(sortBy === 'price')}>Prix ↑</button>
           <button onClick={() => setSortBy('context')} style={filterBtn(sortBy === 'context')}>Contexte ↓</button>
@@ -354,7 +354,7 @@ export default function ModelGuidePlugin() {
 
         {/* Active filter count */}
         {hasActiveFilter && (
-          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+          <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginLeft: 'auto' }}>
             {filteredTotal} resultat{filteredTotal > 1 ? 's' : ''}
           </span>
         )}
@@ -366,7 +366,7 @@ export default function ModelGuidePlugin() {
         {/* Quick picks (hidden when filtering) */}
         {!hasActiveFilter && quickPicks.length > 0 && (
           <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+            <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
               Choix rapide
             </div>
             {/* Grid responsive : 2 cols mobile, 3 sm, 4 md, 5 lg+
@@ -383,9 +383,9 @@ export default function ModelGuidePlugin() {
                       background: 'var(--bg-card)', border: '1px solid var(--border)',
                       cursor: 'pointer', transition: 'border-color 0.15s',
                     }}>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{qp.label}</div>
+                    <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginBottom: 3 }}>{qp.label}</div>
                     <div style={{
-                      fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 4,
+                      fontSize: 'var(--font-xs)', fontWeight: 600, padding: '1px 6px', borderRadius: 4,
                       display: 'inline-block', background: qpStyle.bg, color: qpStyle.color,
                     }}>
                       {qp.model.split('/').pop()}
@@ -402,7 +402,7 @@ export default function ModelGuidePlugin() {
           <div style={{ marginBottom: 20 }}>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
-              fontSize: 10, fontWeight: 700, color: 'var(--scarlet)', textTransform: 'uppercase', letterSpacing: 1,
+              fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--scarlet)', textTransform: 'uppercase', letterSpacing: 1,
             }}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--scarlet)" stroke="none">
                 <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
@@ -425,10 +425,10 @@ export default function ModelGuidePlugin() {
             padding: '6px 12px', background: 'var(--bg-card)', borderRadius: 8,
             border: '1px solid var(--border)',
           }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)' }}>Echelle prix :</span>
+            <span style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--text-muted)' }}>Echelle prix :</span>
             {Object.entries(TIER_CONFIG).filter(([k]) => k !== 'unknown').map(([key, t]) => (
               <span key={key} style={{
-                fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
+                fontSize: 'var(--font-2xs)', fontWeight: 700, padding: '1px 6px', borderRadius: 4,
                 background: t.bg, color: t.color,
               }}>
                 {t.symbol} {t.label}
@@ -452,13 +452,13 @@ export default function ModelGuidePlugin() {
                   display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, padding: '4px 0',
                 }}>
                   <div style={{ width: 8, height: 8, borderRadius: '50%', background: prov.dot, flexShrink: 0 }} />
-                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{prov.name}</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  <span style={{ fontSize: 'var(--font-md)', fontWeight: 700, color: 'var(--text-primary)' }}>{prov.name}</span>
+                  <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
                     {group.model_count} modele{group.model_count > 1 ? 's' : ''}
                   </span>
                   {!group.has_api_key && (
                     <span style={{
-                      fontSize: 9, padding: '1px 5px', borderRadius: 4,
+                      fontSize: 'var(--font-2xs)', padding: '1px 5px', borderRadius: 4,
                       background: 'rgba(234,179,8,.15)', color: '#ca8a04', fontWeight: 600,
                     }}>Pas de cle API</span>
                   )}
@@ -484,7 +484,7 @@ export default function ModelGuidePlugin() {
           })}
 
         {Object.keys(filteredCatalog).length === 0 && (
-          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)', fontSize: 14 }}>
+          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)', fontSize: 'var(--font-base)' }}>
             Aucun modele ne correspond aux filtres
           </div>
         )}
@@ -498,7 +498,7 @@ export default function ModelGuidePlugin() {
 
 function HeaderRow() {
   const hStyle: React.CSSProperties = {
-    fontSize: 9, fontWeight: 700, color: 'var(--text-muted)',
+    fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)',
     textTransform: 'uppercase', letterSpacing: 0.5,
     padding: '6px 0',
   }
@@ -555,7 +555,7 @@ function ModelRow({ model, isFav, onToggleFav }: {
       {/* Model name */}
       <div style={{
         flex: 0.8, minWidth: 0, overflow: 'hidden',
-        fontSize: 12, fontWeight: 600, color: 'var(--text-primary)',
+        fontSize: 'var(--font-sm)', fontWeight: 600, color: 'var(--text-primary)',
         whiteSpace: 'nowrap', textOverflow: 'ellipsis',
         paddingRight: 6,
       }}>
@@ -565,7 +565,7 @@ function ModelRow({ model, isFav, onToggleFav }: {
       {/* Description */}
       <div style={{
         flex: 1.5, minWidth: 0, overflow: 'hidden',
-        fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic',
+        fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontStyle: 'italic',
         whiteSpace: 'nowrap', textOverflow: 'ellipsis',
         paddingRight: 6,
       }}>
@@ -575,14 +575,14 @@ function ModelRow({ model, isFav, onToggleFav }: {
       {/* Context */}
       <div style={{
         width: COL.ctx, flexShrink: 0, textAlign: 'center',
-        fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 'var(--font-xs)', fontFamily: "'JetBrains Mono', monospace",
         color: 'var(--text-secondary)',
       }}>
         {fmtCtx(model.context_window)}
       </div>
 
       {/* Vision */}
-      <div style={{ width: COL.vision, flexShrink: 0, textAlign: 'center', fontSize: 11 }}>
+      <div style={{ width: COL.vision, flexShrink: 0, textAlign: 'center', fontSize: 'var(--font-xs)' }}>
         {model.vision
           ? <span style={{ color: '#14b8a6', fontWeight: 600 }}>✓</span>
           : <span style={{ color: 'var(--text-muted)', opacity: 0.4 }}>—</span>
@@ -592,7 +592,7 @@ function ModelRow({ model, isFav, onToggleFav }: {
       {/* Input price */}
       <div style={{
         width: COL.input, flexShrink: 0, textAlign: 'right',
-        fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 'var(--font-xs)', fontFamily: "'JetBrains Mono', monospace",
         color: model.pricing.input === 0 ? '#22c55e' : 'var(--text-secondary)',
       }}>
         {fmtPrice(model.pricing.input)}
@@ -601,7 +601,7 @@ function ModelRow({ model, isFav, onToggleFav }: {
       {/* Output price */}
       <div style={{
         width: COL.output, flexShrink: 0, textAlign: 'right',
-        fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 'var(--font-xs)', fontFamily: "'JetBrains Mono', monospace",
         color: model.pricing.output === 0 ? '#22c55e' : 'var(--text-secondary)',
       }}>
         {fmtPrice(model.pricing.output)}
@@ -610,7 +610,7 @@ function ModelRow({ model, isFav, onToggleFav }: {
       {/* Tier badge */}
       <div style={{ width: COL.tier, flexShrink: 0, textAlign: 'center' }}>
         <span style={{
-          fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+          fontSize: 'var(--font-2xs)', fontWeight: 700, padding: '2px 6px', borderRadius: 4,
           background: tier.bg, color: tier.color,
         }}>
           {tier.symbol}

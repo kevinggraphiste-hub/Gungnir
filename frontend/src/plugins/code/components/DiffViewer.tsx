@@ -20,13 +20,13 @@ export function DiffViewer({ original, modified, language, fileName }: { origina
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <span style={{ ...S.badge(LC[language] || '#6b7280', true), fontSize: 8 }}>{language}</span>
-        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>Diff: {fileName}</span>
+        <span style={{ ...S.badge(LC[language] || '#6b7280', true), fontSize: 'var(--font-2xs)' }}>{language}</span>
+        <span style={{ fontSize: 'var(--font-xs)', fontWeight: 600, color: 'var(--text-primary)' }}>Diff: {fileName}</span>
         <div style={{ flex: 1 }} />
-        <span style={{ ...S.badge('#22c55e', true), fontSize: 8 }}>+{added}</span>
-        <span style={{ ...S.badge('#dc2626', true), fontSize: 8 }}>-{removed}</span>
+        <span style={{ ...S.badge('#22c55e', true), fontSize: 'var(--font-2xs)' }}>+{added}</span>
+        <span style={{ ...S.badge('#dc2626', true), fontSize: 'var(--font-2xs)' }}>-{removed}</span>
       </div>
-      <div style={{ flex: 1, overflow: 'auto', fontFamily: MONO, fontSize: 11, lineHeight: '18px' }}>
+      <div style={{ flex: 1, overflow: 'auto', fontFamily: MONO, fontSize: 'var(--font-xs)', lineHeight: '18px' }}>
         {diffs.map((d, i) => {
           if (d.type === 'same') return <DL key={i} ln={d.ln} text={d.o!} />
           if (d.type === 'remove') return <DL key={i} ln={d.ln} text={d.o!} t="-" />

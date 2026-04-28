@@ -206,13 +206,13 @@ export function FileExplorer({ onOpenFile }: { onOpenFile: (path: string, name?:
           <input value={newName} onChange={e => setNewName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') { setCreating(null); setNewName('') } }}
             placeholder={creating === 'folder' ? 'Nom du dossier...' : 'Nom du fichier...'} autoFocus
-            style={{ flex: 1, padding: '3px 8px', fontSize: 11, borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
-          <button onClick={handleCreate} style={{ border: 'none', background: 'var(--scarlet)', color: '#fff', borderRadius: 4, padding: '3px 8px', fontSize: 10, fontWeight: 600, cursor: 'pointer' }}>OK</button>
+            style={{ flex: 1, padding: '3px 8px', fontSize: 'var(--font-xs)', borderRadius: 4, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+          <button onClick={handleCreate} style={{ border: 'none', background: 'var(--scarlet)', color: '#fff', borderRadius: 4, padding: '3px 8px', fontSize: 'var(--font-xs)', fontWeight: 600, cursor: 'pointer' }}>OK</button>
         </div>
       )}
       <div style={{ flex: 1, overflow: 'auto', padding: '2px 0' }}>
-        {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Chargement...</div>
-        : tree.length === 0 ? <div style={{ padding: '30px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.6 }}>Dossier vide. Placez un projet dans <code style={{ fontSize: 10, background: 'var(--bg-tertiary)', padding: '1px 4px', borderRadius: 3 }}>data/workspace/</code></div>
+        {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>Chargement...</div>
+        : tree.length === 0 ? <div style={{ padding: '30px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)', lineHeight: 1.6 }}>Dossier vide. Placez un projet dans <code style={{ fontSize: 'var(--font-xs)', background: 'var(--bg-tertiary)', padding: '1px 4px', borderRadius: 3 }}>data/workspace/</code></div>
         : tree.map(e => <FileRow key={e.path} entry={e}
             onClick={() => e.is_dir ? navIn(e.path) : onOpenFile(e.path, e.name)}
             onDelete={() => handleDelete(e.path, e.name)}
@@ -263,7 +263,7 @@ export function FileRow({ entry, onClick, onDelete, onRename, onMove }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '3px 12px', background: 'var(--bg-tertiary)' }}>
         {entry.is_dir
           ? <svg width="13" height="13" viewBox="0 0 24 24" fill="var(--text-muted)" stroke="none" opacity={0.4}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-          : <span style={{ width: 13, textAlign: 'center', fontSize: 10, flexShrink: 0 }}>{icon || '\u{1F4C4}'}</span>}
+          : <span style={{ width: 13, textAlign: 'center', fontSize: 'var(--font-xs)', flexShrink: 0 }}>{icon || '\u{1F4C4}'}</span>}
         <input
           autoFocus value={draft} onChange={e => setDraft(e.target.value)}
           onKeyDown={e => {
@@ -307,21 +307,21 @@ export function FileRow({ entry, onClick, onDelete, onRename, onMove }: {
       style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '3px 12px', cursor: 'pointer', fontSize: 11.5, background: dropOver ? 'rgba(220,38,38,0.18)' : (h ? 'var(--bg-tertiary)' : 'transparent'), boxShadow: dropOver ? 'inset 0 0 0 1px var(--scarlet)' : undefined, transition: 'background 0.06s' }}>
       {entry.is_dir
         ? <svg width="13" height="13" viewBox="0 0 24 24" fill="var(--text-muted)" stroke="none" opacity={0.4}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        : <span style={{ width: 13, textAlign: 'center', fontSize: 10, flexShrink: 0 }}>{icon || '\u{1F4C4}'}</span>}
+        : <span style={{ width: 13, textAlign: 'center', fontSize: 'var(--font-xs)', flexShrink: 0 }}>{icon || '\u{1F4C4}'}</span>}
       <span style={{ flex: 1, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
       {!entry.is_dir && entry.language && <span style={{ width: 4, height: 4, borderRadius: '50%', background: LC[entry.language] || '#6b7280', opacity: 0.5 }} />}
-      {entry.is_dir && entry.children_count !== undefined && <span style={{ ...S.badge('#6b7280'), fontSize: 7, padding: '0 4px' }}>{entry.children_count}</span>}
-      {!entry.is_dir && <span style={{ fontSize: 8, color: 'var(--text-muted)', opacity: 0.4 }}>{fmtSize(entry.size || 0)}</span>}
+      {entry.is_dir && entry.children_count !== undefined && <span style={{ ...S.badge('#6b7280'), fontSize: 'var(--font-2xs)', padding: '0 4px' }}>{entry.children_count}</span>}
+      {!entry.is_dir && <span style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', opacity: 0.4 }}>{fmtSize(entry.size || 0)}</span>}
       {h && onRename && (
         <button onClick={e => { e.stopPropagation(); setDraft(entry.name); setRenaming(true) }}
           title="Renommer"
-          style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, opacity: 0.7, fontSize: 10 }}>
+          style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, opacity: 0.7, fontSize: 'var(--font-xs)' }}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
         </button>
       )}
       {h && <button onClick={e => { e.stopPropagation(); onDelete() }}
         title="Supprimer"
-        style={{ border: 'none', background: 'transparent', color: '#dc2626', cursor: 'pointer', padding: 0, opacity: 0.5, fontSize: 9 }}>&times;</button>}
+        style={{ border: 'none', background: 'transparent', color: '#dc2626', cursor: 'pointer', padding: 0, opacity: 0.5, fontSize: 'var(--font-2xs)' }}>&times;</button>}
     </div>
   )
 }
@@ -347,16 +347,16 @@ export function SearchPanel({ onOpenFile }: { onOpenFile: (path: string, name?: 
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ padding: '7px 12px', borderBottom: '1px solid var(--border)' }}>
         <input value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && doSearch()}
-          placeholder="Rechercher..." style={{ width: '100%', padding: '5px 10px', fontSize: 11, borderRadius: 5, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
+          placeholder="Rechercher..." style={{ width: '100%', padding: '5px 10px', fontSize: 'var(--font-xs)', borderRadius: 5, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none' }} />
       </div>
       <div style={{ flex: 1, overflow: 'auto' }}>
-        {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>Recherche...</div>
-        : results.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>{query ? 'Aucun resultat' : 'Tapez pour chercher'}</div>
+        {loading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>Recherche...</div>
+        : results.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-xs)' }}>{query ? 'Aucun resultat' : 'Tapez pour chercher'}</div>
         : results.map((r, i) => (
           <div key={i} onClick={() => onOpenFile(r.path, r.name)} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ fontSize: 11, color: 'var(--text-primary)', fontWeight: 600 }}>{r.name}</div>
-            <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{r.path}</div>
-            {r.snippet && <div style={{ fontSize: 10, fontFamily: MONO, marginTop: 2, padding: '2px 6px', background: 'var(--bg-tertiary)', borderRadius: 3, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>L{r.line}: {r.snippet}</div>}
+            <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-primary)', fontWeight: 600 }}>{r.name}</div>
+            <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)' }}>{r.path}</div>
+            {r.snippet && <div style={{ fontSize: 'var(--font-xs)', fontFamily: MONO, marginTop: 2, padding: '2px 6px', background: 'var(--bg-tertiary)', borderRadius: 3, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>L{r.line}: {r.snippet}</div>}
           </div>
         ))}
       </div>

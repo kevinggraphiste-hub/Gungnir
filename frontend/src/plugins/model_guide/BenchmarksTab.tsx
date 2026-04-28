@@ -212,18 +212,18 @@ export function BenchmarksTab() {
         background: 'var(--bg-secondary)', display: 'flex', gap: 12, alignItems: 'center',
         flexWrap: 'wrap', flexShrink: 0,
       }}>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>SOURCES</span>
+        <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontWeight: 600 }}>SOURCES</span>
         {sources?.sources.map(s => (
           <a key={s.id} href={s.url} target="_blank" rel="noopener noreferrer" title={s.description}
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600,
+              display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 'var(--font-xs)', fontWeight: 600,
               padding: '3px 8px', borderRadius: 5, textDecoration: 'none',
               background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
               border: `1px solid ${s.live ? '#22c55e55' : 'var(--border-subtle)'}`,
             }}>
             {s.name}
             <span style={{
-              fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3,
+              fontSize: 'var(--font-2xs)', fontWeight: 700, padding: '1px 4px', borderRadius: 3,
               background: s.live ? '#22c55e22' : 'rgba(234,179,8,.15)',
               color: s.live ? '#22c55e' : '#ca8a04',
             }}>
@@ -233,7 +233,7 @@ export function BenchmarksTab() {
           </a>
         ))}
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+        <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>
           MAJ {data.last_updated || '?'}
         </span>
         <SecondaryButton size="sm" icon={<RefreshCw size={12} />} onClick={load} title="Rafraichir">
@@ -243,7 +243,7 @@ export function BenchmarksTab() {
 
       {/* Bandeau filtrage per-user */}
       <div style={{
-        padding: '5px 24px', fontSize: 10, color: 'var(--text-muted)',
+        padding: '5px 24px', fontSize: 'var(--font-xs)', color: 'var(--text-muted)',
         background: data.has_user_filter ? 'rgba(34,197,94,.06)' : 'rgba(234,179,8,.06)',
         borderBottom: '1px solid var(--border-subtle)',
         display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
@@ -268,7 +268,7 @@ export function BenchmarksTab() {
       </div>
       {data.notes && (
         <div style={{
-          padding: '5px 24px', fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic',
+          padding: '5px 24px', fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontStyle: 'italic',
           background: 'rgba(234,179,8,.06)', borderBottom: '1px solid var(--border-subtle)',
         }}>
           ⚠ {data.notes}
@@ -290,14 +290,14 @@ export function BenchmarksTab() {
           <input
             value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Rechercher..."
-            style={{ background: 'transparent', border: 'none', outline: 'none', flex: 1, color: 'var(--text-primary)', fontSize: 11 }}
+            style={{ background: 'transparent', border: 'none', outline: 'none', flex: 1, color: 'var(--text-primary)', fontSize: 'var(--font-xs)' }}
           />
-          {search && <button onClick={() => setSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13 }}>×</button>}
+          {search && <button onClick={() => setSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 'var(--font-md)' }}>×</button>}
         </div>
 
         {/* Provider filter */}
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>PROVIDER</span>
+          <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>PROVIDER</span>
           <button onClick={() => setProviderFilter(null)} style={chipStyle(providerFilter === null)}>Tous</button>
           {providers.map(p => (
             <button key={p} onClick={() => setProviderFilter(providerFilter === p ? null : p)}
@@ -309,7 +309,7 @@ export function BenchmarksTab() {
 
         {/* Sort by metric */}
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>TRI</span>
+          <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', fontWeight: 600, marginRight: 4 }}>TRI</span>
           {metrics.map(m => (
             <button key={m} onClick={() => setSortMetric(m)} style={chipStyle(sortMetric === m)}>
               {METRIC_LABEL[m] || m}
@@ -331,7 +331,7 @@ export function BenchmarksTab() {
 
       {/* Tableau */}
       <div style={{ flex: 1, overflow: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-xs)' }}>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-secondary)', zIndex: 1 }}>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
               <th style={thStyle('left', 28)}>#</th>
@@ -362,11 +362,11 @@ export function BenchmarksTab() {
                     {locked && <Lock size={10} style={{ color: 'var(--text-muted)' }} />}
                     {m.name}
                   </div>
-                  <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{m.id}</div>
+                  <div style={{ fontSize: 'var(--font-2xs)', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{m.id}</div>
                 </td>
                 <td style={tdStyle('center')}>
                   <span style={{
-                    fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                    fontSize: 'var(--font-2xs)', fontWeight: 700, padding: '2px 6px', borderRadius: 4,
                     background: `${PROVIDER_COLOR[m.provider] || '#6b7280'}22`,
                     color: PROVIDER_COLOR[m.provider] || 'var(--text-muted)',
                   }}>{m.provider}</span>
@@ -391,7 +391,7 @@ export function BenchmarksTab() {
           </tbody>
         </table>
         {rows.length === 0 && (
-          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-sm)' }}>
             Aucun modèle ne correspond aux filtres.
           </div>
         )}
@@ -404,7 +404,7 @@ export function BenchmarksTab() {
 
 function chipStyle(active: boolean, color?: string): React.CSSProperties {
   return {
-    padding: '3px 9px', borderRadius: 5, fontSize: 10, fontWeight: 600,
+    padding: '3px 9px', borderRadius: 5, fontSize: 'var(--font-xs)', fontWeight: 600,
     border: 'none', cursor: 'pointer',
     background: active ? (color || 'var(--scarlet)') : 'var(--bg-tertiary)',
     color: active ? '#fff' : 'var(--text-muted)',
@@ -414,7 +414,7 @@ function chipStyle(active: boolean, color?: string): React.CSSProperties {
 
 function thStyle(align: 'left' | 'right' | 'center', width?: number): React.CSSProperties {
   return {
-    padding: '8px 10px', fontSize: 9, fontWeight: 700, color: 'var(--text-muted)',
+    padding: '8px 10px', fontSize: 'var(--font-2xs)', fontWeight: 700, color: 'var(--text-muted)',
     textTransform: 'uppercase', letterSpacing: 0.5,
     textAlign: align, width,
   }

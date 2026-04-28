@@ -241,7 +241,7 @@ export function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string
   const renderAIBlock = (text: string, isStreaming?: boolean) => {
     const html = renderMarkdown(text || (isStreaming ? '...' : ''))
     return (
-      <div style={{ color: '#c9d1d9', margin: '2px 0 4px', padding: '6px 10px', background: '#131820', borderRadius: 6, borderLeft: '3px solid #8b5cf6', fontSize: 11, lineHeight: 1.6 }}>
+      <div style={{ color: '#c9d1d9', margin: '2px 0 4px', padding: '6px 10px', background: '#131820', borderRadius: 6, borderLeft: '3px solid #8b5cf6', fontSize: 'var(--font-xs)', lineHeight: 1.6 }}>
         {/* eslint-disable-next-line react/no-danger -- LLM-generated markdown rendered via our own renderMarkdown, not user HTML */}
         <div dangerouslySetInnerHTML={{ __html: html }} />
         {isStreaming && <span style={{ display: 'inline-block', width: 6, height: 14, background: '#8b5cf6', marginLeft: 2, animation: 'termBlink 1s infinite', verticalAlign: 'text-bottom' }} />}
@@ -254,16 +254,16 @@ export function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string
       <style>{`@keyframes termBlink { 0%, 50% { opacity: 1 } 51%, 100% { opacity: 0 } } @keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
       <div style={{ display: 'flex', alignItems: 'center', background: '#131820', borderBottom: '1px solid #1e2633', flexShrink: 0 }}>
         {sessions.map(s => (
-          <div key={s.id} onClick={() => setActiveSession(s.id)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 10, color: s.id === activeSession ? '#c9d1d9' : '#8b949e', borderBottom: s.id === activeSession ? '2px solid var(--scarlet)' : '2px solid transparent' }}>
+          <div key={s.id} onClick={() => setActiveSession(s.id)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 'var(--font-xs)', color: s.id === activeSession ? '#c9d1d9' : '#8b949e', borderBottom: s.id === activeSession ? '2px solid var(--scarlet)' : '2px solid transparent' }}>
             <span>{s.name}</span>
-            {s.aiHistory.length > 0 && <span style={{ fontSize: 7, color: '#8b5cf6', fontWeight: 700 }}>{Math.floor(s.aiHistory.length / 2)}</span>}
-            {sessions.length > 1 && <button onClick={e => { e.stopPropagation(); closeSession(s.id) }} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 9, padding: 0, opacity: 0.4 }}>&times;</button>}
+            {s.aiHistory.length > 0 && <span style={{ fontSize: 'var(--font-2xs)', color: '#8b5cf6', fontWeight: 700 }}>{Math.floor(s.aiHistory.length / 2)}</span>}
+            {sessions.length > 1 && <button onClick={e => { e.stopPropagation(); closeSession(s.id) }} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 'var(--font-2xs)', padding: 0, opacity: 0.4 }}>&times;</button>}
           </div>
         ))}
-        <button onClick={addSession} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>+</button>
+        <button onClick={addSession} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 'var(--font-sm)', padding: '4px 8px' }}>+</button>
         <div style={{ flex: 1 }} />
-        {runFile && <button onClick={handleRunFile} disabled={running} style={{ ...S.badge('#22c55e', true), border: 'none', fontSize: 9, marginRight: 4 } as any}>{running ? '...' : `Run ${runFile.split('/').pop()}`}</button>}
-        {aiEnabled && session.aiHistory.length > 0 && <span style={{ fontSize: 8, color: '#8b5cf6', marginRight: 8, opacity: 0.7 }}>{Math.floor(session.aiHistory.length / 2)} echanges</span>}
+        {runFile && <button onClick={handleRunFile} disabled={running} style={{ ...S.badge('#22c55e', true), border: 'none', fontSize: 'var(--font-2xs)', marginRight: 4 } as any}>{running ? '...' : `Run ${runFile.split('/').pop()}`}</button>}
+        {aiEnabled && session.aiHistory.length > 0 && <span style={{ fontSize: 'var(--font-2xs)', color: '#8b5cf6', marginRight: 8, opacity: 0.7 }}>{Math.floor(session.aiHistory.length / 2)} echanges</span>}
         <button
           onClick={() => setAiEnabled(v => !v)}
           title={aiEnabled ? 'Desactiver le chat IA (retour shell uniquement)' : 'Activer le chat IA (langage naturel + memoire de session)'}
@@ -272,7 +272,7 @@ export function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string
             border: `1px solid ${aiEnabled ? '#8b5cf6' : '#1e2633'}`,
             background: aiEnabled ? 'rgba(139, 92, 246, 0.12)' : 'transparent',
             color: aiEnabled ? '#c4b5fd' : '#8b949e',
-            cursor: 'pointer', fontSize: 9, fontWeight: 600,
+            cursor: 'pointer', fontSize: 'var(--font-2xs)', fontWeight: 600,
             padding: '2px 7px', borderRadius: 4, marginRight: 6,
             fontFamily: MONO,
           }}>
@@ -283,15 +283,15 @@ export function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string
           }} />
           Chat IA
         </button>
-        <button onClick={clearSession} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 9, marginRight: 4 }}>Clear</button>
-        <button onClick={onClose} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 11, marginRight: 8 }}>&times;</button>
+        <button onClick={clearSession} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 'var(--font-2xs)', marginRight: 4 }}>Clear</button>
+        <button onClick={onClose} style={{ border: 'none', background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 'var(--font-xs)', marginRight: 8 }}>&times;</button>
       </div>
-      <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: '4px 12px', fontFamily: MONO, fontSize: 11, lineHeight: 1.5 }}>
+      <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: '4px 12px', fontFamily: MONO, fontSize: 'var(--font-xs)', lineHeight: 1.5 }}>
         {session.history.length === 0 && (
           aiEnabled ? (
-            <div style={{ color: '#8b949e', fontSize: 10, padding: '4px 0', lineHeight: 1.8 }}>Terminal hybride conversationnel.<br /><span style={{ color: '#6b7280' }}>Commandes shell executees normalement. Questions en langage naturel = conversation IA avec memoire de session.<br />Prefixez <span style={{ color: 'var(--scarlet)' }}>$</span> pour forcer shell, <span style={{ color: '#8b5cf6' }}>?</span> pour forcer IA. L'IA se souvient du contexte de cette session.</span></div>
+            <div style={{ color: '#8b949e', fontSize: 'var(--font-xs)', padding: '4px 0', lineHeight: 1.8 }}>Terminal hybride conversationnel.<br /><span style={{ color: '#6b7280' }}>Commandes shell executees normalement. Questions en langage naturel = conversation IA avec memoire de session.<br />Prefixez <span style={{ color: 'var(--scarlet)' }}>$</span> pour forcer shell, <span style={{ color: '#8b5cf6' }}>?</span> pour forcer IA. L'IA se souvient du contexte de cette session.</span></div>
           ) : (
-            <div style={{ color: '#8b949e', fontSize: 10, padding: '4px 0', lineHeight: 1.8 }}>Terminal shell.<br /><span style={{ color: '#6b7280' }}>Les actions executees par l'agent s'affichent ici. Saisissez une commande pour l'executer.<br />Cochez <span style={{ color: '#8b5cf6' }}>Chat IA</span> pour activer la conversation en langage naturel dans ce terminal.</span></div>
+            <div style={{ color: '#8b949e', fontSize: 'var(--font-xs)', padding: '4px 0', lineHeight: 1.8 }}>Terminal shell.<br /><span style={{ color: '#6b7280' }}>Les actions executees par l'agent s'affichent ici. Saisissez une commande pour l'executer.<br />Cochez <span style={{ color: '#8b5cf6' }}>Chat IA</span> pour activer la conversation en langage naturel dans ce terminal.</span></div>
           )
         )}
         {session.history.map((h, i) => (
@@ -303,13 +303,13 @@ export function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string
             </div>
             {h.isAI ? (
               h.result.stdout ? renderAIBlock(h.result.stdout, h.streaming) :
-              h.result.stderr ? <pre style={{ color: '#f85149', margin: '2px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 11 }}>{h.result.stderr}</pre> :
+              h.result.stderr ? <pre style={{ color: '#f85149', margin: '2px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 'var(--font-xs)' }}>{h.result.stderr}</pre> :
               h.streaming ? renderAIBlock('', true) : null
             ) : (
               <>
                 {h.result.stdout && <pre style={{ color: '#c9d1d9', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{h.result.stdout}</pre>}
                 {h.result.stderr && <pre style={{ color: '#f85149', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{h.result.stderr}</pre>}
-                <div style={{ color: '#8b949e', fontSize: 9 }}><span style={{ color: h.result.ok ? '#22c55e' : '#f85149' }}>{h.result.ok ? '✓' : '✗'}</span> exit {h.result.exit_code} &mdash; {h.result.elapsed}s</div>
+                <div style={{ color: '#8b949e', fontSize: 'var(--font-2xs)' }}><span style={{ color: h.result.ok ? '#22c55e' : '#f85149' }}>{h.result.ok ? '✓' : '✗'}</span> exit {h.result.exit_code} &mdash; {h.result.elapsed}s</div>
               </>
             )}
           </div>
@@ -317,7 +317,7 @@ export function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string
       </div>
       <div style={{ display: 'flex', alignItems: 'center', padding: '4px 12px', borderTop: '1px solid #1e2633', flexShrink: 0 }}>
         <span style={{
-          fontFamily: MONO, fontSize: 10, marginRight: 6, fontWeight: 700, minWidth: 20, textAlign: 'center',
+          fontFamily: MONO, fontSize: 'var(--font-xs)', marginRight: 6, fontWeight: 700, minWidth: 20, textAlign: 'center',
           color: inputMode === 'ai' ? '#8b5cf6' : 'var(--scarlet)',
           transition: 'color 0.15s',
         }}>{inputMode === 'ai' ? 'IA' : '~$'}</span>
@@ -330,9 +330,9 @@ export function MultiTerminal({ runFile, onClose, filePath }: { runFile?: string
           }}
           placeholder={inputMode === 'ai' ? 'Posez votre question... (contexte de session)' : 'Commande...'}
           disabled={running}
-          style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: '#c9d1d9', fontFamily: MONO, fontSize: 11 }} />
-        {running && <button onClick={() => { if (abortRef.current) abortRef.current.abort(); setRunning(false) }} style={{ border: 'none', background: 'transparent', color: '#f85149', cursor: 'pointer', fontSize: 9, fontWeight: 700, marginRight: 4 }}>Stop</button>}
-        <span style={{ fontSize: 7, fontWeight: 600, color: inputMode === 'ai' ? '#8b5cf6' : '#6b7280', opacity: command.trim() ? 0.8 : 0, transition: 'opacity 0.15s', fontFamily: MONO }}>
+          style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: '#c9d1d9', fontFamily: MONO, fontSize: 'var(--font-xs)' }} />
+        {running && <button onClick={() => { if (abortRef.current) abortRef.current.abort(); setRunning(false) }} style={{ border: 'none', background: 'transparent', color: '#f85149', cursor: 'pointer', fontSize: 'var(--font-2xs)', fontWeight: 700, marginRight: 4 }}>Stop</button>}
+        <span style={{ fontSize: 'var(--font-2xs)', fontWeight: 600, color: inputMode === 'ai' ? '#8b5cf6' : '#6b7280', opacity: command.trim() ? 0.8 : 0, transition: 'opacity 0.15s', fontFamily: MONO }}>
           {inputMode === 'ai' ? 'IA' : 'SHELL'}
         </span>
       </div>

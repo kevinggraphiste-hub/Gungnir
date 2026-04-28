@@ -1662,7 +1662,7 @@ function VectorTab() {
   }
 
   const card = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }
-  const inputStyle = { background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 8, padding: '6px 10px', width: '100%', fontSize: 12 }
+  const inputStyle = { background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 8, padding: '6px 10px', width: '100%', fontSize: 'var(--font-sm)' }
   const selectStyle = { ...inputStyle, cursor: 'pointer' as const }
 
   if (!config) return <div style={{ color: 'var(--text-muted)' }}>Chargement...</div>

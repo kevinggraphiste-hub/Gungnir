@@ -937,19 +937,19 @@ export default function Settings() {
                       color: versionInfo?.available ? 'var(--accent-primary)' : 'var(--text-muted)',
                     }} />
                     <div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      <div style={{ fontSize: 'var(--font-md)', fontWeight: 600, color: 'var(--text-primary)' }}>
                         Gungnir v{versionInfo?.current || '…'}
                         {versionInfo?.available && versionInfo.latest && (
                           <span style={{
                             marginLeft: 8, padding: '1px 8px', borderRadius: 4,
-                            fontSize: 10, fontWeight: 700,
+                            fontSize: 'var(--font-xs)', fontWeight: 700,
                             background: 'var(--accent-primary)', color: '#fff',
                           }}>
                             v{versionInfo.latest} disponible
                           </span>
                         )}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 2 }}>
                         {versionLoading
                           ? 'Vérification…'
                           : versionInfo?.error
@@ -991,10 +991,10 @@ export default function Settings() {
                 {versionInfo?.available && versionInfo.body && (
                   <details style={{ marginTop: 10 }}>
                     <summary style={{
-                      fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer',
+                      fontSize: 'var(--font-xs)', color: 'var(--text-muted)', cursor: 'pointer',
                     }}>Voir les notes de version</summary>
                     <pre style={{
-                      fontSize: 11, color: 'var(--text-secondary)', marginTop: 6,
+                      fontSize: 'var(--font-xs)', color: 'var(--text-secondary)', marginTop: 6,
                       whiteSpace: 'pre-wrap', lineHeight: 1.5,
                       maxHeight: 200, overflowY: 'auto',
                       padding: 8, borderRadius: 6,
@@ -1387,7 +1387,7 @@ export default function Settings() {
                 <div className="mb-6">
                   <div className="flex items-center justify-between mb-3">
                     <label className="text-[var(--text-secondary)]">Taille du texte (UI globale)</label>
-                    <span style={{ fontSize: 12, fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', minWidth: 40, textAlign: 'right' }}>
+                    <span style={{ fontSize: 'var(--font-sm)', fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', minWidth: 40, textAlign: 'right' }}>
                       {Number(uiPrefs.font_size) || 14} px
                     </span>
                   </div>
@@ -1403,13 +1403,13 @@ export default function Settings() {
                       cursor: 'pointer',
                     }}
                   />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
                     <span>11 (compact)</span>
                     <span>14 (défaut)</span>
                     <span>18 (confort)</span>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
-                    Applique un zoom proportionnel à toute l'interface Gungnir. SpearCode garde son propre réglage indépendant.
+                  <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
+                    Change réellement la taille de toute la typographie (pas un zoom). SpearCode garde son propre réglage indépendant.
                   </div>
                 </div>
 
