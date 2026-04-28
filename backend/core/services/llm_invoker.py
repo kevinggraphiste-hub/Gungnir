@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable
 from backend.core.config.settings import Settings
 from backend.core.cost.manager import get_cost_manager
 from backend.core.db.engine import async_session
-from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key
+from backend.core.api.auth_helpers import get_user_settings, get_user_provider_key, get_provider_extras
 from backend.core.providers import get_provider, ChatMessage
 
 logger = logging.getLogger("gungnir.llm_invoker")
@@ -71,6 +71,7 @@ async def invoke_llm_for_user(
     # Resolve provider/model from per-user settings first, then global fallback
     api_key = None
     base_url = None
+    user_prov: dict | None = None
     user_active_provider = None
     user_active_model = None
     try:
@@ -115,7 +116,8 @@ async def invoke_llm_for_user(
     totals_out = 0
 
     try:
-        p = get_provider(provider_name, api_key, base_url)
+        provider_extras = get_provider_extras(provider_name, user_prov)
+        p = get_provider(provider_name, api_key, base_url, **provider_extras)
 
         # ── Text-only path (no tools wired) ──────────────────────────────────
         if not tools or not executors:

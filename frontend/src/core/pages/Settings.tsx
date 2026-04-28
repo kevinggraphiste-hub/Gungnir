@@ -136,7 +136,7 @@ export default function Settings() {
   const [isSaving, setIsSaving] = useState(false)
   const [langDropdownOpen, setLangDropdownOpen] = useState(false)
   const langDropdownRef = useRef<HTMLDivElement>(null)
-  const [providerConfigs, setProviderConfigs] = useState<Record<string, { api_key?: string; enabled: boolean; default_model?: string }>>({})
+  const [providerConfigs, setProviderConfigs] = useState<Record<string, { api_key?: string; enabled: boolean; default_model?: string; group_id?: string }>>({})
   // Live model lists per provider, fetched from /api/models/{name} when the
   // providers tab opens. Falls back to the static p.models list if the live
   // fetch fails or returns nothing.
@@ -406,11 +406,18 @@ export default function Settings() {
 
   useEffect(() => {
     if (config?.providers) {
-      const configs: Record<string, { api_key?: string; enabled: boolean; default_model?: string }> = {}
+      const configs: Record<string, { api_key?: string; enabled: boolean; default_model?: string; group_id?: string }> = {}
       Object.entries(config.providers).forEach(([name, p]: [string, any]) => {
         // For the user's active provider, show their selected model as default
         const userModel = (name === selectedProvider && selectedModel) ? selectedModel : ''
-        configs[name] = { enabled: p?.enabled || false, api_key: '', default_model: userModel || p?.default_model || '' }
+        configs[name] = {
+          enabled: p?.enabled || false,
+          api_key: '',
+          default_model: userModel || p?.default_model || '',
+          // group_id is cleartext (not a secret) and pre-filled so the user
+          // can see it's already configured. Only relevant for MiniMax for now.
+          group_id: p?.group_id || '',
+        }
       })
       setProviderConfigs(configs)
     }
@@ -1571,6 +1578,19 @@ export default function Settings() {
                     <input type="password" placeholder="API Key" value={providerConfigs[name]?.api_key || ''}
                       onChange={e => setProviderConfigs(prev => ({ ...prev, [name]: { ...prev[name], api_key: e.target.value } }))}
                       className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
+                    {/* MiniMax exige un GroupId obligatoire en plus de la clé API
+                        (cf. doc platform.minimax.io). Sans ça l'API renvoie 401
+                        même avec une clé valide. */}
+                    {name === 'minimax' && (
+                      <div>
+                        <input type="text" placeholder="Group ID (obligatoire)" value={providerConfigs[name]?.group_id || ''}
+                          onChange={e => setProviderConfigs(prev => ({ ...prev, [name]: { ...prev[name], group_id: e.target.value } }))}
+                          className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
+                        <p style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
+                          Trouvable sur platform.minimax.io → API Keys. Sans GroupId, MiniMax rejette la clé.
+                        </p>
+                      </div>
+                    )}
                     {name === selectedProvider && selectedModel && (
                       <p className="text-[10px] mt-1" style={{ color: 'var(--accent-primary)' }}>
                         ● Provider actif — modèle par défaut : {selectedModel}

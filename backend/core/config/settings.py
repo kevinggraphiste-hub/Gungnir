@@ -343,9 +343,16 @@ class Settings(BaseSettings):
             # bloquée hors Chine) → api.minimax.io (endpoint international
             # officiel). Les users en Chine peuvent toujours override avec
             # api.minimax.chat via base_url custom.
+            # Note : MiniMax exige aussi un GroupId (query param sur chaque
+            # appel), géré dans le provider via user_settings.provider_keys.
+            # La casse des noms de modèles est strictement respectée — l'API
+            # rejette `minimax-m2.7` (minuscule) même via la route OpenAI-compat.
             base_url="https://api.minimax.io/v1",
-            default_model="MiniMax-M1",
+            default_model="MiniMax-M2.7",
             models=[
+                "MiniMax-M2.7",
+                "MiniMax-M2.5",
+                "MiniMax-M2",
                 "MiniMax-M1",
                 "MiniMax-Text-01",
                 "abab6.5-chat",

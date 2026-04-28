@@ -914,13 +914,16 @@ async def _chat_impl(
     user_id = getattr(request.state, "user_id", None)
     _user_api_key = None
     _user_base_url = None
+    _user_extras: dict = {}
     if user_id:
         try:
+            from backend.core.api.auth_helpers import get_provider_extras
             user_settings = await get_user_settings(user_id, session)
             user_prov = get_user_provider_key(user_settings, provider_name)
             if user_prov and user_prov.get("api_key"):
                 _user_api_key = user_prov["api_key"]
                 _user_base_url = user_prov.get("base_url")
+                _user_extras = get_provider_extras(provider_name, user_prov)
         except Exception as e:
             print(f"[Wolf] User key lookup skipped: {e}")
 
@@ -942,7 +945,7 @@ async def _chat_impl(
     # Validation du modele : verifier qu'il existe chez le provider
     if model:
         try:
-            _provider_tmp = get_provider(provider_name, provider_config.api_key, provider_config.base_url)
+            _provider_tmp = get_provider(provider_name, provider_config.api_key, provider_config.base_url, **_user_extras)
             _live_models = await _provider_tmp.list_models()
             if _live_models and model not in _live_models:
                 # Chercher un match partiel (ex: "gemini-2.5-flash" dans "google/gemini-2.5-flash")
@@ -1123,6 +1126,7 @@ async def _chat_impl(
         provider_name,
         provider_config.api_key,
         provider_config.base_url,
+        **_user_extras,
     )
 
     try:
@@ -1820,6 +1824,7 @@ async def chat_stream(convo_id: int, data: dict, request: Request):
     _uid_stream = getattr(request.state, "user_id", None)
     _stream_api_key = None
     _stream_base_url = None
+    _stream_extras: dict = {}
     if _uid_stream:
         async for _stream_session in _get_session():
             try:
@@ -1828,6 +1833,8 @@ async def chat_stream(convo_id: int, data: dict, request: Request):
                 if _up and _up.get("api_key"):
                     _stream_api_key = _up["api_key"]
                     _stream_base_url = _up.get("base_url")
+                    from backend.core.api.auth_helpers import get_provider_extras
+                    _stream_extras = get_provider_extras(provider_name, _up)
             except Exception:
                 pass
             break
@@ -1840,6 +1847,7 @@ async def chat_stream(convo_id: int, data: dict, request: Request):
         provider_name,
         _stream_api_key,
         _stream_base_url or (provider_meta.base_url if provider_meta else None),
+        **_stream_extras,
     )
     provider_config = provider_meta or ProviderConfig()
 

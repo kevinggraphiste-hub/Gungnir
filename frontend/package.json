@@ -1,7 +1,7 @@
 {
   "name": "gungnir-frontend",
   "private": true,
-  "version": "2.97.8",
+  "version": "2.97.9",
   "type": "module",
   "scripts": {
     "dev": "vite",

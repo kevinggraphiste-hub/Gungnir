@@ -87,6 +87,23 @@ def get_user_provider_key(user_settings: UserSettings, provider_name: str) -> di
     return result
 
 
+def get_provider_extras(provider_name: str, user_prov: dict | None) -> dict:
+    """Return provider-specific kwargs to forward to ``get_provider()``.
+
+    Some providers need more than just (api_key, base_url) — e.g. MiniMax
+    requires a ``GroupId`` query param on every chat call. This helper keeps
+    that quirk in one place so each call site doesn't have to know about it.
+    """
+    if not user_prov:
+        return {}
+    extras: dict = {}
+    if provider_name == "minimax":
+        gid = (user_prov.get("group_id") or "").strip()
+        if gid:
+            extras["group_id"] = gid
+    return extras
+
+
 def get_user_service_key(user_settings: UserSettings, service_name: str) -> dict | None:
     """Get a user's service config with decrypted secrets."""
     if not user_settings or not user_settings.service_keys:

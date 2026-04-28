@@ -69,7 +69,7 @@ async def get_config(request: Request, session: AsyncSession = Depends(get_sessi
     # 1. Providers connus (Settings.providers) — clé API depuis user_settings
     for name, p in settings.providers.items():
         ucfg = user_provider_keys.get(name) or {}
-        providers_out[name] = {
+        entry = {
             "enabled": bool(ucfg.get("enabled", p.enabled)),
             "has_api_key": bool(ucfg.get("api_key")),
             "default_model": ucfg.get("default_model") or p.default_model,
@@ -77,13 +77,19 @@ async def get_config(request: Request, session: AsyncSession = Depends(get_sessi
             "models": ucfg.get("models") or p.models,
             "is_custom": False,
         }
+        # MiniMax requires a GroupId — surface it (cleartext, not a secret) so
+        # the UI can show the input pre-filled and the chat layer can know if
+        # it's configured. Hidden for other providers.
+        if name == "minimax":
+            entry["group_id"] = ucfg.get("group_id") or ""
+        providers_out[name] = entry
     # 2. Providers CUSTOM (présents en user_settings mais pas dans Settings.providers)
     #    Sans ce merge, un user qui ajoute "groq" ou "deepinfra-custom" ne
     #    le voit jamais réapparaître dans la liste après save.
     for name, ucfg in user_provider_keys.items():
         if name in providers_out:
             continue
-        providers_out[name] = {
+        entry = {
             "enabled": bool(ucfg.get("enabled", True)),
             "has_api_key": bool(ucfg.get("api_key")),
             "default_model": ucfg.get("default_model") or "",
@@ -91,6 +97,9 @@ async def get_config(request: Request, session: AsyncSession = Depends(get_sessi
             "models": ucfg.get("models") or [],
             "is_custom": True,
         }
+        if name == "minimax":
+            entry["group_id"] = ucfg.get("group_id") or ""
+        providers_out[name] = entry
 
     return {
         "is_configured": settings.is_configured,
@@ -676,6 +685,16 @@ async def save_user_provider(provider_name: str, request: Request, session: Asyn
     # passer une liste de models si l'user veut pré-peupler la dropdown.
     if isinstance(body.get("models"), list):
         existing["models"] = [str(m).strip() for m in body["models"] if m]
+    # MiniMax exige un GroupId obligatoire en query param sur chaque appel
+    # chat. C'est pas un secret au même niveau qu'une clé API (c'est un
+    # identifiant org), donc stocké en clair. Vide → on retire la clé pour
+    # ne pas envoyer un GroupId blanc qui ferait planter l'API.
+    if "group_id" in body:
+        gid = (body.get("group_id") or "").strip()
+        if gid:
+            existing["group_id"] = gid
+        else:
+            existing.pop("group_id", None)
 
     provider_keys[provider_name] = existing
     # Force SQLAlchemy to detect JSON change (PostgreSQL needs this)
