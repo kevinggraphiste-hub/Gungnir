@@ -1766,14 +1766,18 @@ Tu operes en mode **demande**. Comportement :
             except Exception:
                 pass
 
-        # Check if agent switched provider/model during this turn
+        # Check if agent switched provider/model during this turn.
+        # On accepte plusieurs tools (provider_manage legacy + model_switch
+        # nouveau du model_guide plugin). Détection générique via la
+        # présence de `switched: true` dans le result + provider/model.
         _switch_info = None
         for _evt in tool_events:
-            if _evt.get("tool") == "provider_manage":
-                _res = _evt.get("result", {})
-                if isinstance(_res, dict) and _res.get("switched"):
-                    _switch_info = {"provider": _res["provider"], "model": _res["model"]}
-                    break
+            _res = _evt.get("result", {})
+            if (isinstance(_res, dict) and _res.get("switched")
+                    and _res.get("provider") and _res.get("model")):
+                _switch_info = {"provider": _res["provider"], "model": _res["model"]}
+                # On garde le DERNIER switch du tour (si l'agent a basculé
+                # plusieurs fois, ce qui est rare mais possible).
 
         return {
             "content": response.content,
