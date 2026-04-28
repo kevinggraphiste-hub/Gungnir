@@ -75,8 +75,13 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
         const res = await apiFetch(`/api/models/${name}`)
         if (res.ok) {
           const data = await res.json()
-          if (Array.isArray(data.models) && data.models.length > 0) {
+          // Only mark as "live" when the backend confirms it actually fetched
+          // from the provider — avoids showing the static fallback as if it
+          // were the real catalog.
+          if (data.source === 'live' && Array.isArray(data.models) && data.models.length > 0) {
             setLiveModels(prev => ({ ...prev, [name]: data.models }))
+          } else if (data.error) {
+            console.warn(`ApiKeysModal: ${name} live fetch failed → ${data.error}`)
           }
         }
       } catch (err) {

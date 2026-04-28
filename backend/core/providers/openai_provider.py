@@ -54,8 +54,30 @@ class OpenAIProvider(LLMProvider):
                 yield chunk.choices[0].delta.content
 
     async def list_models(self) -> list[str]:
-        resp = await self.client.models.list()
-        return [m.id for m in resp.data]
+        """List models via OpenAI SDK, with a raw httpx fallback.
+
+        Some OpenAI-compat backends (DeepInfra, Groq, Together…) return a
+        /models payload that the openai SDK refuses to parse strictly. We
+        retry with a raw GET on `<base_url>/models` and accept any list-of-
+        objects with an `id` field.
+        """
+        try:
+            resp = await self.client.models.list()
+            return [m.id for m in resp.data]
+        except Exception as sdk_err:
+            import httpx, logging
+            log = logging.getLogger("gungnir.providers.openai_compat")
+            log.warning(f"OpenAI SDK list_models failed ({sdk_err!r}) — retrying via raw HTTP")
+            base = (self.base_url or "https://api.openai.com/v1").rstrip("/")
+            url = f"{base}/models"
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                r = await client.get(url, headers={"Authorization": f"Bearer {self.api_key}"})
+                r.raise_for_status()
+                payload = r.json()
+            items = payload.get("data") if isinstance(payload, dict) else payload
+            if not isinstance(items, list):
+                return []
+            return [str(it.get("id")) for it in items if isinstance(it, dict) and it.get("id")]
 
     async def generate_image(
         self,

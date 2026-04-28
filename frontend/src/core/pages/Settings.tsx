@@ -432,8 +432,10 @@ export default function Settings() {
         const res = await apiFetch(`/api/models/${name}`)
         if (res.ok) {
           const data = await res.json()
-          if (Array.isArray(data.models) && data.models.length > 0) {
+          if (data.source === 'live' && Array.isArray(data.models) && data.models.length > 0) {
             setLivePerProviderModels(prev => ({ ...prev, [name]: data.models }))
+          } else if (data.error) {
+            console.warn(`Settings: ${name} live fetch failed → ${data.error}`)
           }
         }
       } catch (err) {

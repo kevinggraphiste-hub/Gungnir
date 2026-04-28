@@ -273,7 +273,7 @@ async def list_models(provider_name: str, request: Request, session: AsyncSessio
             base_url = user_prov.get("base_url") or base_url
 
     if not api_key:
-        return {"models": static_models}
+        return {"models": static_models, "source": "static", "reason": "no_api_key"}
     try:
         provider = get_provider(provider_name, api_key, base_url)
         live_models = await provider.list_models()
@@ -283,11 +283,20 @@ async def list_models(provider_name: str, request: Request, session: AsyncSessio
             for m in static_models:
                 if m not in model_set:
                     live_models.append(m)
-            return {"models": sorted(live_models)}
-        return {"models": static_models}
+            return {"models": sorted(live_models), "source": "live"}
+        return {"models": static_models, "source": "static", "reason": "live_empty"}
     except Exception as e:
-        import logging; logging.getLogger("gungnir").error(f"Model fetch error: {e}")
-        return {"models": static_models, "error": "Erreur lors de la récupération des modèles"}
+        import logging; logging.getLogger("gungnir").error(
+            f"Model fetch error for {provider_name} (base={base_url}): {type(e).__name__}: {e}"
+        )
+        # Surface the actual exception class+message so the UI/console can
+        # show a useful hint instead of a generic "an error occurred".
+        return {
+            "models": static_models,
+            "source": "static",
+            "reason": "live_failed",
+            "error": f"{type(e).__name__}: {e}"[:300],
+        }
 
 
 @router.delete("/config/providers/{provider_name}")
