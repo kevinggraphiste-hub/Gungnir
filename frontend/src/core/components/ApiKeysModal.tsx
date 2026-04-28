@@ -23,7 +23,20 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
   const [providers, setProviders] = useState<Provider[]>([])
   const [saving, setSaving] = useState<string | null>(null)
   const [showKey, setShowKey] = useState<Record<string, boolean>>({})
-  const [newProvider, setNewProvider] = useState({ name: '', api_key: '' })
+  // Add-provider form. Deux modes :
+  // - 'preset' : provider connu (openrouter/anthropic/openai/google/...) déjà
+  //   configuré côté backend (base_url + models pré-définis). L'user fournit
+  //   juste sa clé.
+  // - 'custom' : provider arbitraire OpenAI-compatible (Groq, Together,
+  //   Fireworks, instance Ollama distante…). L'user fournit name + base_url
+  //   + api_key + (optionnellement) default_model.
+  const [newProvider, setNewProvider] = useState({
+    mode: 'preset' as 'preset' | 'custom',
+    name: '',
+    api_key: '',
+    base_url: '',
+    default_model: '',
+  })
   const [showAddForm, setShowAddForm] = useState(false)
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   // Live model lists per provider, fetched from /api/models/{name} when the
@@ -121,16 +134,31 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
   const handleAddProvider = async () => {
     const name = newProvider.name.trim().toLowerCase()
     if (!name || !newProvider.api_key.trim()) return
+    // En mode custom, base_url est requis (sinon le provider est inutilisable).
+    if (newProvider.mode === 'custom' && !newProvider.base_url.trim()) {
+      setMessage({ type: 'err', text: 'Base URL requise pour un provider personnalisé (ex: https://api.groq.com/openai/v1)' })
+      return
+    }
     setSaving('new')
     try {
-      await api.saveProvider(name, { enabled: true, api_key: newProvider.api_key.trim() })
+      const payload: any = {
+        enabled: true,
+        api_key: newProvider.api_key.trim(),
+      }
+      if (newProvider.mode === 'custom') {
+        payload.base_url = newProvider.base_url.trim()
+        if (newProvider.default_model.trim()) {
+          payload.default_model = newProvider.default_model.trim()
+        }
+      }
+      await api.saveProvider(name, payload)
       const newConfig = await api.getConfig()
       onConfigUpdate(newConfig)
       // Ajouter un provider = le choisir comme actif, avec son default_model.
       const defaultModel = newConfig?.providers?.[name]?.default_model
       setSelectedProvider(name)
       if (defaultModel) setSelectedModel(defaultModel)
-      setNewProvider({ name: '', api_key: '' })
+      setNewProvider({ mode: 'preset', name: '', api_key: '', base_url: '', default_model: '' })
       setShowAddForm(false)
       setMessage({ type: 'ok', text: `${name} ajouté` })
     } catch (err: any) {
@@ -138,6 +166,19 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
     }
     setSaving(null)
   }
+
+  // Liste des providers connus avec config pré-définie côté backend.
+  // Pour ceux-là, juste la clé suffit (base_url, models déjà connus).
+  const KNOWN_PROVIDER_PRESETS = [
+    { id: 'openrouter', label: 'OpenRouter', hint: 'Accès à 250+ modèles via une seule API' },
+    { id: 'anthropic',  label: 'Anthropic (Claude)', hint: 'Direct API Claude 4.x' },
+    { id: 'openai',     label: 'OpenAI (GPT)', hint: 'Direct API GPT-4/5, o1/o3' },
+    { id: 'google',     label: 'Google (Gemini)', hint: 'Gemini 2.x via Generative Language API' },
+    { id: 'mistral',    label: 'Mistral AI', hint: 'Direct API Mistral Large/Medium' },
+    { id: 'xai',        label: 'xAI (Grok)', hint: 'Direct API Grok 3/4' },
+    { id: 'minimax',    label: 'MiniMax', hint: 'API MiniMax M1/abab' },
+    { id: 'ollama',     label: 'Ollama (local)', hint: 'Pas de clé requise — instance locale' },
+  ]
 
   const updateProvider = (name: string, field: string, value: any) => {
     setProviders(prev => prev.map(p => p.name === name ? { ...p, [field]: value } : p))
@@ -271,21 +312,99 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
 
           {showAddForm ? (
             <div className="border border-dashed rounded-xl p-4 space-y-3" style={{ borderColor: 'var(--border)' }}>
-              <input type="text" placeholder="Nom du provider (ex: openrouter, anthropic...)"
-                value={newProvider.name} onChange={e => setNewProvider(prev => ({ ...prev, name: e.target.value }))}
-                className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
-                style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
-              <input type="password" placeholder="Clé API"
-                value={newProvider.api_key} onChange={e => setNewProvider(prev => ({ ...prev, api_key: e.target.value }))}
-                className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
-                style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+              {/* Toggle mode preset / custom */}
+              <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'var(--bg-tertiary)' }}>
+                <button onClick={() => setNewProvider(prev => ({ ...prev, mode: 'preset', name: '', base_url: '', default_model: '' }))}
+                  className="flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors"
+                  style={{
+                    background: newProvider.mode === 'preset' ? 'var(--accent-primary)' : 'transparent',
+                    color: newProvider.mode === 'preset' ? '#fff' : 'var(--text-secondary)',
+                  }}>
+                  Provider connu
+                </button>
+                <button onClick={() => setNewProvider(prev => ({ ...prev, mode: 'custom' }))}
+                  className="flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors"
+                  style={{
+                    background: newProvider.mode === 'custom' ? 'var(--accent-primary)' : 'transparent',
+                    color: newProvider.mode === 'custom' ? '#fff' : 'var(--text-secondary)',
+                  }}>
+                  Personnalisé (avancé)
+                </button>
+              </div>
+
+              {newProvider.mode === 'preset' ? (
+                <>
+                  {/* Mode preset : dropdown des providers connus + clé */}
+                  <select value={newProvider.name}
+                    onChange={e => setNewProvider(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                    <option value="">— Choisis un provider —</option>
+                    {KNOWN_PROVIDER_PRESETS
+                      .filter(p => !config?.providers?.[p.id]?.has_api_key)  // cache ceux déjà ajoutés
+                      .map(p => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
+                      ))}
+                  </select>
+                  {newProvider.name && (
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                      {KNOWN_PROVIDER_PRESETS.find(p => p.id === newProvider.name)?.hint}
+                    </div>
+                  )}
+                  <input type="password" placeholder={newProvider.name === 'ollama' ? 'Clé non requise (instance locale)' : 'Clé API'}
+                    value={newProvider.api_key} onChange={e => setNewProvider(prev => ({ ...prev, api_key: e.target.value }))}
+                    className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                </>
+              ) : (
+                <>
+                  {/* Mode custom : tous les champs nécessaires pour un provider OpenAI-compat */}
+                  <div>
+                    <label className="block text-[10px] mb-1" style={{ color: 'var(--text-muted)' }}>Identifiant (lowercase, sans espace)</label>
+                    <input type="text" placeholder="ex: groq, fireworks, together..."
+                      value={newProvider.name}
+                      onChange={e => setNewProvider(prev => ({ ...prev, name: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') }))}
+                      className="w-full rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
+                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] mb-1" style={{ color: 'var(--text-muted)' }}>Base URL <span style={{ color: 'var(--scarlet)' }}>*</span></label>
+                    <input type="text" placeholder="ex: https://api.groq.com/openai/v1"
+                      value={newProvider.base_url}
+                      onChange={e => setNewProvider(prev => ({ ...prev, base_url: e.target.value }))}
+                      className="w-full rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
+                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] mb-1" style={{ color: 'var(--text-muted)' }}>Clé API</label>
+                    <input type="password" placeholder="sk-... / gsk_... / ..."
+                      value={newProvider.api_key}
+                      onChange={e => setNewProvider(prev => ({ ...prev, api_key: e.target.value }))}
+                      className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] mb-1" style={{ color: 'var(--text-muted)' }}>Modèle par défaut <span style={{ color: 'var(--text-muted)' }}>(optionnel)</span></label>
+                    <input type="text" placeholder="ex: llama-3.3-70b-versatile"
+                      value={newProvider.default_model}
+                      onChange={e => setNewProvider(prev => ({ ...prev, default_model: e.target.value }))}
+                      className="w-full rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
+                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    Le provider doit être OpenAI-compatible (endpoint <code>/v1/chat/completions</code> et <code>/v1/models</code>).
+                    Si tu ne mets pas de modèle par défaut, Gungnir tentera <code>/v1/models</code> pour le détecter.
+                  </div>
+                </>
+              )}
+
               <div className="flex gap-2">
                 <button onClick={handleAddProvider} disabled={saving === 'new'}
                   className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm disabled:opacity-50"
                   style={{ background: 'linear-gradient(135deg, var(--accent-primary), var(--scarlet-dark))', color: 'var(--text-primary)' }}>
                   <Plus className="w-3.5 h-3.5" /> Ajouter
                 </button>
-                <button onClick={() => { setShowAddForm(false); setNewProvider({ name: '', api_key: '' }) }}
+                <button onClick={() => { setShowAddForm(false); setNewProvider({ mode: 'preset', name: '', api_key: '', base_url: '', default_model: '' }) }}
                   className="px-3 py-2 rounded-lg text-sm" style={{ color: 'var(--text-secondary)', background: 'var(--bg-tertiary)' }}>
                   Annuler
                 </button>

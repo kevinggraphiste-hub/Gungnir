@@ -390,7 +390,7 @@ export const api = {
     return config
   },
 
-  saveProvider: async (provider: string, data: { enabled?: boolean; api_key?: string; default_model?: string }) => {
+  saveProvider: async (provider: string, data: { enabled?: boolean; api_key?: string; default_model?: string; base_url?: string; models?: string[] }) => {
     // Save to per-user endpoint (each user manages their own keys)
     const response = await apiFetch(`${API_BASE}/config/user/providers/${provider}`, {
       method: 'POST',

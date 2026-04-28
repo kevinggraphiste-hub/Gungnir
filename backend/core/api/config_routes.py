@@ -625,7 +625,13 @@ async def save_user_provider(provider_name: str, request: Request, session: Asyn
     if "enabled" in body:
         existing["enabled"] = body["enabled"]
     if body.get("base_url"):
-        existing["base_url"] = body["base_url"]
+        existing["base_url"] = body["base_url"].strip()
+    if body.get("default_model"):
+        existing["default_model"] = body["default_model"].strip()
+    # Le custom providers (Groq, Together, Fireworks…) peuvent aussi
+    # passer une liste de models si l'user veut pré-peupler la dropdown.
+    if isinstance(body.get("models"), list):
+        existing["models"] = [str(m).strip() for m in body["models"] if m]
 
     provider_keys[provider_name] = existing
     # Force SQLAlchemy to detect JSON change (PostgreSQL needs this)
