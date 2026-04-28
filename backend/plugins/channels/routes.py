@@ -155,6 +155,32 @@ def _channel_owner(channel_id: str) -> Optional[int]:
     return int(uid) if uid is not None else None
 
 
+async def _assert_channel_access(channel_id: str, request: "Request") -> int:
+    """Resolve channel owner + enforce per-user isolation.
+
+    Raises 404 if unknown, 403 if caller is authenticated and isn't the owner
+    (admins bypass). Returns the owner uid for downstream loads.
+    """
+    owner_uid = _channel_owner(channel_id)
+    if owner_uid is None:
+        raise HTTPException(404, "Canal introuvable")
+    auth_user_id = getattr(request.state, "user_id", None)
+    if not auth_user_id:
+        return owner_uid
+    if int(auth_user_id) == owner_uid:
+        return owner_uid
+    try:
+        from backend.core.db.engine import async_session
+        from backend.core.db.models import User
+        async with async_session() as session:
+            user = await session.get(User, int(auth_user_id))
+            if user and user.is_admin:
+                return owner_uid
+    except Exception:
+        pass
+    raise HTTPException(403, "Accès refusé")
+
+
 def _register_channel_owner(channel_id: str, user_id: int) -> None:
     idx = _read_index()
     idx[channel_id] = int(user_id)
@@ -899,8 +925,9 @@ async def create_channel(data: ChannelConfig, request: Request):
 
 
 @router.get("/{channel_id}")
-async def get_channel(channel_id: str):
-    channels = _load_channels()
+async def get_channel(channel_id: str, request: Request):
+    owner_uid = await _assert_channel_access(channel_id, request)
+    channels = _load_user_channels(owner_uid)
     if channel_id not in channels:
         raise HTTPException(404, "Canal introuvable")
     return channels[channel_id]
@@ -944,10 +971,8 @@ async def update_channel(channel_id: str, data: dict, request: Request):
 
 
 @router.delete("/{channel_id}")
-async def delete_channel(channel_id: str):
-    owner_uid = _channel_owner(channel_id)
-    if owner_uid is None:
-        raise HTTPException(404, "Canal introuvable")
+async def delete_channel(channel_id: str, request: Request):
+    owner_uid = await _assert_channel_access(channel_id, request)
     channels = _load_user_channels(owner_uid)
     if channel_id not in channels:
         raise HTTPException(404, "Canal introuvable")
@@ -1531,7 +1556,8 @@ async def incoming_message(channel_id: str, data: IncomingMessage, request: Requ
 @router.get("/{channel_id}/widget-snippet")
 async def get_widget_snippet(channel_id: str, request: Request):
     """Retourne le snippet JS à intégrer sur un site."""
-    channels = _load_channels()
+    owner_uid = await _assert_channel_access(channel_id, request)
+    channels = _load_user_channels(owner_uid)
     ch = channels.get(channel_id)
     if not ch or ch.get("type") != "web_widget":
         raise HTTPException(404, "Canal Widget introuvable")
@@ -1562,8 +1588,9 @@ async def get_widget_snippet(channel_id: str, request: Request):
 
 # ── Channel stats ───────────────────────────────────────────────────
 @router.get("/{channel_id}/stats")
-async def get_channel_stats(channel_id: str):
-    channels = _load_channels()
+async def get_channel_stats(channel_id: str, request: Request):
+    owner_uid = await _assert_channel_access(channel_id, request)
+    channels = _load_user_channels(owner_uid)
     ch = channels.get(channel_id)
     if not ch:
         raise HTTPException(404, "Canal introuvable")
@@ -1580,7 +1607,8 @@ async def get_channel_stats(channel_id: str):
 @router.get("/{channel_id}/webhook-url")
 async def get_webhook_url(channel_id: str, request: Request):
     """Retourne l'URL du webhook à configurer côté plateforme."""
-    channels = _load_channels()
+    owner_uid = await _assert_channel_access(channel_id, request)
+    channels = _load_user_channels(owner_uid)
     ch = channels.get(channel_id)
     if not ch:
         raise HTTPException(404, "Canal introuvable")
@@ -1609,7 +1637,8 @@ async def get_webhook_url(channel_id: str, request: Request):
 @router.post("/{channel_id}/register-webhook")
 async def register_webhook(channel_id: str, request: Request):
     """Manually register the webhook for a channel (Telegram, etc.)."""
-    channels = _load_channels()
+    owner_uid = await _assert_channel_access(channel_id, request)
+    channels = _load_user_channels(owner_uid)
     ch = channels.get(channel_id)
     if not ch:
         raise HTTPException(404, "Canal introuvable")
@@ -1668,9 +1697,10 @@ async def clear_logs(request: Request):
 
 # ── Test channel connectivity ───────────────────────────────────────
 @router.post("/{channel_id}/test")
-async def test_channel(channel_id: str):
+async def test_channel(channel_id: str, request: Request):
     """Teste la connectivité d'un canal (vérifie le token/API key)."""
-    channels = _load_channels()
+    owner_uid = await _assert_channel_access(channel_id, request)
+    channels = _load_user_channels(owner_uid)
     ch = channels.get(channel_id)
     if not ch:
         raise HTTPException(404, "Canal introuvable")
@@ -1772,7 +1802,8 @@ SLACK_SCOPES = "channels:history,channels:read,chat:write,im:history,im:read,im:
 @router.get("/oauth/slack/start/{channel_id}")
 async def slack_oauth_start(channel_id: str, request: Request):
     """Generate Slack OAuth authorization URL. User clicks this to install the app."""
-    channels = _load_channels()
+    owner_uid = await _assert_channel_access(channel_id, request)
+    channels = _load_user_channels(owner_uid)
     ch = channels.get(channel_id)
     if not ch or ch.get("type") != "slack":
         raise HTTPException(404, "Canal Slack introuvable")
@@ -1894,7 +1925,8 @@ DISCORD_BOT_PERMISSIONS = "2048"  # Send Messages
 @router.get("/oauth/discord/start/{channel_id}")
 async def discord_oauth_start(channel_id: str, request: Request):
     """Generate Discord OAuth bot invite URL."""
-    channels = _load_channels()
+    owner_uid = await _assert_channel_access(channel_id, request)
+    channels = _load_user_channels(owner_uid)
     ch = channels.get(channel_id)
     if not ch or ch.get("type") != "discord":
         raise HTTPException(404, "Canal Discord introuvable")
