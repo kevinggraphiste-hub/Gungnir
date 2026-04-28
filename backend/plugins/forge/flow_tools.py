@@ -88,6 +88,17 @@ async def _http_request(url: str, method: str = "POST",
     method = (method or "POST").upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"):
         return {"ok": False, "error": f"Méthode HTTP non supportée : {method}"}
+
+    # SSRF check : bloque le réseau privé / metadata cloud / loopback.
+    # Réutilise le helper du registre WOLF (lazy import pour éviter les
+    # cycles, c'est le même check que _web_fetch).
+    try:
+        from backend.core.agents.wolf_tools import _is_private_url
+        if _is_private_url(url):
+            return {"ok": False, "error": "URL pointe vers un réseau privé/interne (bloqué pour SSRF)."}
+    except Exception:
+        pass
+
     try:
         import httpx
     except ImportError:
@@ -103,9 +114,44 @@ async def _http_request(url: str, method: str = "POST",
         req_kwargs["data"] = form
     if h:
         req_kwargs["headers"] = h
+
+    # Suit les redirects MANUELLEMENT pour re-check SSRF à chaque step
+    # (sinon un site externe légitime peut rediriger vers 127.0.0.1
+    # ou 169.254.169.254 = AWS metadata = leak credentials).
+    MAX_REDIRECTS = 10
+    current_url = url
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            resp = await client.request(method, url, **req_kwargs)
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            for hop in range(MAX_REDIRECTS + 1):
+                resp = await client.request(method, current_url, **req_kwargs)
+                # 301/302/303/307/308 → on suit MANUELLEMENT après check
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    next_url = resp.headers.get("location", "")
+                    if not next_url:
+                        break
+                    # Résolution relative si le Location est /path
+                    from urllib.parse import urljoin as _urljoin
+                    next_url = _urljoin(current_url, next_url)
+                    if _is_private_url(next_url):
+                        return {
+                            "ok": False,
+                            "error": (
+                                f"Redirect SSRF bloqué : '{current_url}' "
+                                f"redirigeait vers réseau privé '{next_url}'."
+                            ),
+                            "status": resp.status_code,
+                        }
+                    if hop >= MAX_REDIRECTS:
+                        return {"ok": False, "error": f"Trop de redirects (>{MAX_REDIRECTS})"}
+                    # 303 force GET sur le suivant ; sinon on garde le method
+                    if resp.status_code == 303:
+                        method = "GET"
+                        req_kwargs.pop("json", None)
+                        req_kwargs.pop("data", None)
+                    current_url = next_url
+                    continue
+                break
+
         text = resp.text or ""
         if max_chars and max_chars > 0:
             text = text[: int(max_chars)]

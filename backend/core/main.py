@@ -658,6 +658,44 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
+# Middleware anti-DoS : limite la taille des bodies sur les endpoints
+# publics (webhooks, callbacks OAuth) qui ne sont pas protégés par auth
+# Bearer. 10 MB suffit largement pour un payload légitime (Stripe, GitHub
+# events, Telegram updates) ; au-delà = abus probable.
+_MAX_PUBLIC_BODY = 10 * 1024 * 1024  # 10 MB
+_PUBLIC_BODY_LIMITED_PREFIXES = (
+    "/api/plugins/forge/webhook/",
+    "/api/plugins/channels/",  # Telegram/Discord/Slack webhooks
+)
+
+
+@app.middleware("http")
+async def public_body_size_limit(request, call_next):
+    """Reject les payloads >10 MB sur les endpoints publics (webhooks).
+
+    On lit le `Content-Length` annoncé par le client. Si absent (chunked
+    transfer) ou trop grand → 413. Pas de check sur les endpoints
+    authentifiés (rate limit + Bearer token suffisent).
+    """
+    path = request.url.path
+    if any(path.startswith(p) for p in _PUBLIC_BODY_LIMITED_PREFIXES):
+        cl_header = request.headers.get("content-length")
+        if cl_header:
+            try:
+                cl = int(cl_header)
+                if cl > _MAX_PUBLIC_BODY:
+                    return JSONResponse(
+                        {"error": f"Body trop volumineux ({cl} bytes, max {_MAX_PUBLIC_BODY})"},
+                        status_code=413,
+                    )
+            except ValueError:
+                return JSONResponse(
+                    {"error": "Content-Length invalide"},
+                    status_code=400,
+                )
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def security_headers(request, call_next):
     response = await call_next(request)
