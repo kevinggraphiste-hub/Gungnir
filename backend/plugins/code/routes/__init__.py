@@ -116,11 +116,68 @@ def _user_config_file() -> Path:
         return _CODE_CONFIG_ROOT / f"{uid}.json"
     return _LEGACY_CODE_CONFIG_FILE
 
-# Directories allowed as workspace roots (project + user home subfolders)
+# Répertoires sensibles dans data/ qui ne doivent JAMAIS être un workspace,
+# quel que soit le mode (auth / open). Sinon un user peut pointer son
+# workspace vers data/backups/<autre_uid>/ et zip-download les backups d'un
+# autre user (CVE-style cross-user data leak rapporté 2026-04-28).
+_SENSITIVE_DATA_SUBDIRS = {
+    "backups",          # data/backups/<uid>/ — secrets chiffrés en zip
+    "soul",             # data/soul/<uid>/   — soul.md + identity per-user
+    "kb",               # data/kb/<uid>/     — knowledge base per-user
+    "consciousness",    # data/consciousness/users/<uid>/ — état conscience
+    "channels",         # data/channels/<uid>/ — bot tokens Telegram/Discord
+    "code-config",      # data/code-config/<uid>.json — config SpearCode user
+    "huntr",            # data/huntr/ — historique recherches potentiellement sensible
+    "plugins_external", # data/plugins_external/ — code plugin tiers
+}
+
+
+def _is_path_in_sensitive_data(resolved: Path) -> bool:
+    """Bloque l'accès aux sous-dossiers per-user de data/ (cross-user leak)."""
+    try:
+        data_root = (PROJECT_ROOT / "data").resolve()
+        rel = resolved.relative_to(data_root)
+        if rel.parts and rel.parts[0] in _SENSITIVE_DATA_SUBDIRS:
+            return True
+    except ValueError:
+        pass
+    return False
+
+
+# Directories allowed as workspace roots (project + user home subfolders).
 def _is_allowed_workspace(p: Path) -> bool:
-    """Restrict workspace to project tree or user home subfolders (no system dirs)."""
+    """Restrict workspace to per-user tree (or project for open mode).
+
+    Sécurité (fix 2026-04-28) : pour un user authentifié, on autorise
+    UNIQUEMENT le sub-tree `data/workspace/<uid>/`. Sinon un user pouvait
+    overrider son workspace vers `data/backups/<autre_uid>/` et exfiltrer
+    les backups d'un autre user via /api/plugins/code/download.
+
+    Blacklist absolue (data/backups, data/soul, data/kb, data/consciousness,
+    data/channels…) en plus pour defense-in-depth, quel que soit le mode.
+    """
     resolved = p.resolve()
-    # Always allow within project
+
+    # Defense-in-depth : data/<dir-sensible> bloqué dans tous les cas.
+    if _is_path_in_sensitive_data(resolved):
+        return False
+
+    uid = _current_user_id.get(0) or 0
+
+    # Mode authentifié : workspace strict per-user
+    if uid > 0:
+        user_root = (DEFAULT_WORKSPACE / str(uid)).resolve()
+        # Le user_root lui-même ou un sub-folder dedans, OK
+        if resolved == user_root:
+            return True
+        try:
+            resolved.relative_to(user_root)
+            return True
+        except ValueError:
+            return False
+
+    # Mode open (single-user setup, pas d'auth) : comportement legacy
+    # Allow within project
     if str(resolved).startswith(str(PROJECT_ROOT)):
         return True
     # Allow user home subfolders (e.g. ~/projects/something)

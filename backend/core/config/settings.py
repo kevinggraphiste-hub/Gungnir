@@ -40,8 +40,21 @@ _CURRENT_KEY_VERSION = "v2"  # version Fernet courante (legacy)
 _GCM_KEY_VERSION = "v3"      # version GCM courante
 
 
+_SECRET_STRENGTH_WARNED = False
+
+
 def _derive_key_from_secret(secret: str) -> bytes:
-    """Dérive une clé 32 bytes depuis un secret texte (PBKDF2-HMAC-SHA256)."""
+    """Dérive une clé 32 bytes depuis un secret texte (PBKDF2-HMAC-SHA256).
+
+    Note sécurité : le SALT (`_ENCRYPTION_SALT`) est public dans le repo
+    (anti-rainbow-table, c'est son rôle). La sécurité repose ENTIÈREMENT
+    sur la force de `GUNGNIR_SECRET_KEY` :
+    - SECRET_KEY < 24 chars   → vulnérable au bruteforce dictionnaire
+                                 (PBKDF2 200k iter ≈ 50ms/try CPU)
+    - SECRET_KEY >= 32 bytes random → impossible à bruteforce
+    Recommandation : `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`
+    """
+    global _SECRET_STRENGTH_WARNED
     if not secret:
         # Fallback machine identity — instable mais évite un crash au boot
         # d'un setup non configuré.
@@ -50,6 +63,18 @@ def _derive_key_from_secret(secret: str) -> bytes:
         logging.getLogger("gungnir").warning(
             "GUNGNIR_SECRET_KEY not set — using fallback key derived from hostname. "
             "Set this env var in production for proper encryption!"
+        )
+    elif len(secret) < 24 and not _SECRET_STRENGTH_WARNED:
+        # Warn une seule fois au premier usage, pas à chaque encrypt.
+        _SECRET_STRENGTH_WARNED = True
+        import logging
+        logging.getLogger("gungnir").warning(
+            f"GUNGNIR_SECRET_KEY trop courte ({len(secret)} chars). "
+            "Avec le SALT public, une clé < 24 chars peut être bruteforcée si "
+            "un attaquant récupère un blob chiffré (ex: backup volé). "
+            "Recommandation : `python3 -c \"import secrets; print(secrets.token_urlsafe(48))\"` "
+            "puis remplace dans .env. Garde l'ancienne dans GUNGNIR_SECRET_KEY_PREV "
+            "pendant la migration douce des secrets en DB."
         )
     return hashlib.pbkdf2_hmac("sha256", secret.encode(), _ENCRYPTION_SALT, 100_000)
 

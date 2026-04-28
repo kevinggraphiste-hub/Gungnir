@@ -2582,6 +2582,32 @@ async def _bash_exec(command: str, timeout: int = 30, cwd: str = ".") -> dict:
         project_root = Path(__file__).parent.parent.parent.parent
         work_dir = (project_root / cwd).resolve()
 
+        # Sandbox per-user (fix 2026-04-28) : pour un user authentifié, on
+        # restreint cwd à son workspace `data/workspace/<uid>/`. Sinon un
+        # user pouvait `bash_exec(cwd="data/backups/3")` puis `cat *.zip`
+        # → exfiltration des backups d'un autre user. Open mode (uid=0) :
+        # comportement legacy, project_root entier autorisé.
+        _uid = get_user_context() or 0
+        if _uid > 0:
+            allowed_root = (project_root / "data" / "workspace" / str(_uid)).resolve()
+            allowed_root.mkdir(parents=True, exist_ok=True)
+            try:
+                work_dir.relative_to(allowed_root)
+                # OK, work_dir est dans le workspace per-user
+            except ValueError:
+                # Hors du workspace per-user → on force le retour au workspace racine
+                work_dir = allowed_root
+        # Defense-in-depth : bloque toujours les dirs data/<sensible>
+        # quel que soit le mode (cross-user data leak prevention).
+        try:
+            data_rel = work_dir.relative_to((project_root / "data").resolve())
+            sensitive = {"backups", "soul", "kb", "consciousness", "channels",
+                         "code-config", "plugins_external"}
+            if data_rel.parts and data_rel.parts[0] in sensitive:
+                return {"ok": False, "error": f"Accès refusé : data/{data_rel.parts[0]}/ est protégé (cross-user leak prevention)."}
+        except ValueError:
+            pass
+
         proc = await _asyncio.create_subprocess_shell(
             command,
             stdout=_asyncio.subprocess.PIPE,
