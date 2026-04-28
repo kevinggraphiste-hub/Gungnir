@@ -17,13 +17,43 @@ PROVIDERS: dict[str, type[LLMProvider]] = {
     "mistral": MistralProvider,
     "xai": XAIProvider,
     "ollama": OllamaProvider,
+    # Providers OpenAI-compatible — routés via OpenAIProvider avec leur
+    # base_url propre. Format /v1/chat/completions standard, donc l'adapter
+    # OpenAI marche tel quel sans avoir à dupliquer le code.
+    "deepinfra":  OpenAIProvider,
+    "groq":       OpenAIProvider,
+    "together":   OpenAIProvider,
+    "fireworks":  OpenAIProvider,
+    "perplexity": OpenAIProvider,
+    "deepseek":   OpenAIProvider,
 }
 
 
 def get_provider(name: str, api_key: str, base_url: str | None = None, **kwargs) -> LLMProvider:
+    """Résout un provider par nom.
+
+    Pour un nom inconnu (provider custom ajouté par l'user via Settings),
+    on fallback sur OpenAIProvider — la grande majorité des APIs LLM
+    sont OpenAI-compatible (Groq, Together, Fireworks, DeepInfra,
+    instances Ollama distantes, vLLM, etc.). L'user doit fournir un
+    base_url valide, sinon ça plantera au premier appel avec un message
+    clair côté HTTP.
+    """
     provider_cls = PROVIDERS.get(name)
     if not provider_cls:
-        raise ValueError(f"Provider inconnu: {name}. Disponibles: {list(PROVIDERS.keys())}")
+        if base_url:
+            # Custom provider : fallback OpenAI-compat
+            import logging as _log
+            _log.getLogger("gungnir.providers").info(
+                f"Provider inconnu '{name}' avec base_url custom → "
+                f"fallback OpenAIProvider sur {base_url}"
+            )
+            return OpenAIProvider(api_key=api_key, base_url=base_url, **kwargs)
+        raise ValueError(
+            f"Provider inconnu: {name}. Pour ajouter un provider custom, "
+            f"fournis aussi son base_url (Settings → Ajouter → Personnalisé). "
+            f"Providers connus : {list(PROVIDERS.keys())}"
+        )
     return provider_cls(api_key=api_key, base_url=base_url, **kwargs)
 
 

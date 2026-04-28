@@ -2599,10 +2599,17 @@ async def _bash_exec(command: str, timeout: int = 30, cwd: str = ".") -> dict:
                 work_dir = allowed_root
         # Defense-in-depth : bloque toujours les dirs data/<sensible>
         # quel que soit le mode (cross-user data leak prevention).
+        # Liste alignée avec backend/plugins/code/routes/__init__.py
+        # _SENSITIVE_DATA_SUBDIRS — audit complet 2026-04-28.
         try:
             data_rel = work_dir.relative_to((project_root / "data").resolve())
-            sensitive = {"backups", "soul", "kb", "consciousness", "channels",
-                         "code-config", "plugins_external"}
+            sensitive = {
+                "backups", "channels", "integrations", "webhooks",
+                "automata", "voice_sessions",
+                "soul", "kb", "consciousness",
+                "code_configs", "code_versions", "code_snippets", "huntr",
+                "plugins_external",
+            }
             if data_rel.parts and data_rel.parts[0] in sensitive:
                 return {"ok": False, "error": f"Accès refusé : data/{data_rel.parts[0]}/ est protégé (cross-user leak prevention)."}
         except ValueError:

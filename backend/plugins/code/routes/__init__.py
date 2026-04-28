@@ -118,16 +118,32 @@ def _user_config_file() -> Path:
 
 # Répertoires sensibles dans data/ qui ne doivent JAMAIS être un workspace,
 # quel que soit le mode (auth / open). Sinon un user peut pointer son
-# workspace vers data/backups/<autre_uid>/ et zip-download les backups d'un
-# autre user (CVE-style cross-user data leak rapporté 2026-04-28).
+# workspace vers data/<sensitive>/<autre_uid>/ et zip-download les données
+# d'un autre user (CVE-style cross-user data leak rapporté 2026-04-28).
+#
+# Audit complet 2026-04-28 : tous les sub-dirs per-user de data/ trouvés
+# par grep `data/<X>/<uid>/` dans le codebase sont ici.
 _SENSITIVE_DATA_SUBDIRS = {
+    # Sécu critique (clés API / OAuth tokens / secrets externes chiffrés)
     "backups",          # data/backups/<uid>/ — secrets chiffrés en zip
-    "soul",             # data/soul/<uid>/   — soul.md + identity per-user
-    "kb",               # data/kb/<uid>/     — knowledge base per-user
-    "consciousness",    # data/consciousness/users/<uid>/ — état conscience
-    "channels",         # data/channels/<uid>/ — bot tokens Telegram/Discord
-    "code-config",      # data/code-config/<uid>.json — config SpearCode user
-    "huntr",            # data/huntr/ — historique recherches potentiellement sensible
+    "channels",         # data/channels/<uid>/ — bot tokens Telegram/Discord/Slack
+    "integrations",     # data/integrations/<uid>/ — OAuth tokens GitHub/Notion/Drive/Gmail
+    "webhooks",         # data/webhooks/<uid>/ — MCP server tokens + webhook secrets
+    "automata",         # data/automata/<uid>/ — n8n API keys + tâches
+    "voice_sessions",   # data/voice_sessions/<uid>/ — custom voice providers (clés ElevenLabs etc.)
+
+    # Privacy critique (identité agent + données personnelles)
+    "soul",             # data/soul/<uid>/ — soul.md + identity per-user
+    "kb",               # data/kb/<uid>/ — knowledge base per-user (souvent perso)
+    "consciousness",    # data/consciousness/users/<uid>/ — état mental + working memory
+
+    # Code & config user
+    "code_configs",     # data/code_configs/<uid>.json — config SpearCode (workspace path, etc.)
+    "code_versions",    # data/code_versions/<uid>/ — historique versions fichiers
+    "code_snippets",    # data/code_snippets/<uid>.json — snippets persos
+    "huntr",            # data/huntr/ — historique recherches HuntR
+
+    # Code tiers
     "plugins_external", # data/plugins_external/ — code plugin tiers
 }
 
