@@ -2712,70 +2712,122 @@ async def _channel_manage(action: str, channel_type: str = None, channel_id: str
 
 async def _provider_manage(action: str, provider: str = None, api_key: str = None,
                            base_url: str = None, model: str = None, enabled: bool = True) -> dict:
-    """Manage LLM provider API keys and switch active model."""
-    import httpx
-    base = "http://127.0.0.1:8000/api/config"
+    """Manage LLM provider API keys and switch active model.
+
+    Lecture/écriture DB directes (PAS de HTTP loopback). Avant on faisait
+    `httpx.get('http://127.0.0.1:8000/api/config')` mais sans Authorization
+    Bearer le middleware retombait sur la config globale (sans les clés
+    user) → le tool voyait toujours has_key=False et refusait le switch
+    alors que l'user avait bien sa clé. Bug remonté 2026-04-28.
+    """
+    uid = get_user_context()
+    if not uid:
+        return {"ok": False, "error": "Utilisateur non authentifié."}
+
+    from backend.core.db.engine import async_session as _session_maker
+    from backend.core.config.settings import (
+        Settings, encrypt_value, decrypt_value,
+    )
+    from backend.core.api.auth_helpers import (
+        get_user_settings, get_user_provider_key,
+    )
+    from backend.core.db.models import UserSettings as _USRow
+    from sqlalchemy import select as _sql_select
+
+    settings = Settings.load()
+
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with _session_maker() as session:
+            user_settings = await get_user_settings(uid, session)
+
             if action == "list":
-                r = await client.get(f"{base}")
-                data = r.json()
-                providers = data.get("providers", {})
-                return {"ok": True, "providers": {
-                    name: {"enabled": p["enabled"], "has_key": p["has_api_key"],
-                           "default_model": p.get("default_model", ""),
-                           "models": p.get("models", [])}
-                    for name, p in providers.items()
-                }}
+                # Pour chaque provider Settings.providers, on regarde si l'user
+                # a une clé. has_key=True iff l'user a configuré sa clé.
+                out: dict = {}
+                for name, prov_meta in settings.providers.items():
+                    ucfg = get_user_provider_key(user_settings, name)
+                    has_key = bool(ucfg and ucfg.get("api_key"))
+                    user_enabled = bool(ucfg.get("enabled", True)) if ucfg else False
+                    default_model = (
+                        (ucfg or {}).get("default_model")
+                        or prov_meta.default_model
+                    )
+                    out[name] = {
+                        "enabled": user_enabled,
+                        "has_key": has_key,
+                        "default_model": default_model or "",
+                        "models": list(prov_meta.models or []),
+                    }
+                return {"ok": True, "providers": out}
 
             elif action == "save":
                 if not provider or not api_key:
                     return {"ok": False, "error": "provider et api_key requis pour save"}
-                payload = {"api_key": api_key, "enabled": enabled}
+                if provider not in settings.providers:
+                    return {"ok": False, "error": f"Provider '{provider}' inconnu (liste : {list(settings.providers.keys())})"}
+                # On garde les autres champs existants (base_url, default_model)
+                # pour ne pas écraser les choix de l'user.
+                provider_keys = dict(user_settings.provider_keys or {})
+                existing = provider_keys.get(provider) or {}
+                existing["api_key"] = encrypt_value(api_key.strip())
+                existing["enabled"] = bool(enabled)
                 if base_url:
-                    payload["base_url"] = base_url
-                r = await client.post(f"{base}/user/providers/{provider}",
-                                      json=payload, headers={"Content-Type": "application/json"})
-                if r.status_code == 200:
-                    return {"ok": True, "message": f"Clé API {provider} sauvegardée et activée."}
-                return {"ok": False, "error": r.text[:200]}
+                    existing["base_url"] = base_url
+                provider_keys[provider] = existing
+                user_settings.provider_keys = provider_keys
+                await session.commit()
+                return {"ok": True, "message": f"Clé API {provider} sauvegardée et activée."}
 
             elif action == "delete":
                 if not provider:
                     return {"ok": False, "error": "provider requis pour delete"}
-                r = await client.delete(f"{base}/user/providers/{provider}")
-                return {"ok": True, "message": f"Provider {provider} supprimé."}
+                provider_keys = dict(user_settings.provider_keys or {})
+                if provider in provider_keys:
+                    del provider_keys[provider]
+                    user_settings.provider_keys = provider_keys
+                    await session.commit()
+                    return {"ok": True, "message": f"Provider {provider} supprimé."}
+                return {"ok": True, "message": f"Provider {provider} déjà absent."}
 
             elif action == "switch":
                 if not provider:
                     return {"ok": False, "error": "provider requis pour switch"}
-                # Verify the provider is configured
-                r = await client.get(f"{base}")
-                data = r.json()
-                prov_info = data.get("providers", {}).get(provider)
-                if not prov_info:
-                    return {"ok": False, "error": f"Provider '{provider}' introuvable."}
-                if not prov_info.get("has_api_key") and not prov_info.get("enabled"):
-                    return {"ok": False, "error": f"Provider '{provider}' n'a pas de clé API configurée."}
-                # Resolve model
-                target_model = model or prov_info.get("default_model", "")
-                if not target_model and prov_info.get("models"):
-                    target_model = prov_info["models"][0]
+                if provider not in settings.providers:
+                    return {"ok": False, "error": f"Provider '{provider}' inconnu."}
+                ucfg = get_user_provider_key(user_settings, provider)
+                # Special case Ollama : pas de clé requise (local).
+                has_key = bool(ucfg and ucfg.get("api_key"))
+                if not has_key and provider != "ollama":
+                    return {"ok": False, "error": f"Provider '{provider}' n'a pas de clé API configurée pour cet utilisateur. Utilise action='save' avec api_key avant de switch."}
+                if ucfg and ucfg.get("enabled") is False:
+                    return {"ok": False, "error": f"Provider '{provider}' est désactivé. Réactive-le d'abord (save avec enabled=true)."}
+                # Resolve target model
+                prov_meta = settings.providers[provider]
+                target_model = (
+                    model
+                    or (ucfg or {}).get("default_model")
+                    or prov_meta.default_model
+                    or (list(prov_meta.models or [None])[0])
+                )
+                if not target_model:
+                    return {"ok": False, "error": f"Aucun modèle disponible pour {provider}."}
                 # Save to user app settings
-                payload = {"active_provider": provider, "active_model": target_model}
-                r = await client.post(f"{base}/user/app", json=payload,
-                                      headers={"Content-Type": "application/json"})
-                if r.status_code == 200:
-                    return {"ok": True, "switched": True,
-                            "provider": provider, "model": target_model,
-                            "message": f"Modèle changé : {provider} / {target_model}. Le prochain message utilisera ce modèle."}
-                return {"ok": False, "error": r.text[:200]}
+                user_settings.active_provider = provider
+                user_settings.active_model = target_model
+                await session.commit()
+                return {
+                    "ok": True, "switched": True,
+                    "provider": provider, "model": target_model,
+                    "message": f"Modèle changé : {provider} / {target_model}. Le prochain message utilisera ce modèle.",
+                }
 
             else:
                 return {"ok": False, "error": f"Action inconnue: {action}. Actions: list, save, delete, switch"}
 
     except Exception as e:
-        return {"ok": False, "error": str(e)[:300]}
+        import traceback as _tb
+        _tb.print_exc()
+        return {"ok": False, "error": f"provider_manage erreur : {str(e)[:300]}"}
 
 
 # ── Voice / TTS provider management ──────────────────────────────────────────
