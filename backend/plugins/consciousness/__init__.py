@@ -74,6 +74,136 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# ── Idle gate (cost reduction) ──────────────────────────────────────
+# Chaque boucle auto consomme 1 appel LLM par tick, à cadence fixe. Sans
+# garde-fou, on paye même quand l'utilisateur n'a rien fait depuis des
+# heures et que l'engine n'a aucun signal nouveau à traiter. Le gate
+# ci-dessous skippe silencieusement un tick quand :
+#   1. la boucle a déjà tourné depuis moins que sa cadence "effective"
+#      (cadence de base × 2^idle_streak, capée à ×4)
+#   2. aucun signal de "nouveauté" n'a bougé depuis le dernier succès
+#      de cette même boucle (interaction utilisateur, nouvelle pensée,
+#      nouveau finding, nouveau score…)
+# Quand un signal arrive, le streak retombe à 0 et la cadence reprend
+# sa valeur normale au tick suivant. Effort ~zéro qualité — on coupe
+# uniquement les passes "rien à dire".
+
+_IDLE_STREAK_CAP = 2  # 0,1,2 → multiplicateurs 1,2,4 (cap)
+_IDLE_MAX_MULTIPLIER = 4
+
+
+def _newest_signal_ts(engine, keys: list[str]) -> Optional[datetime]:
+    """Return the most recent timestamp among the requested signal keys.
+
+    Supported keys: ``last_interaction``, ``last_thought``, ``last_finding``,
+    ``last_score``, ``last_challenger``, ``last_simulation``. Findings and
+    scores are looked up in their own logs (which carry per-entry timestamps),
+    everything else is read from ``engine.state``.
+    """
+    state = getattr(engine, "state", {}) or {}
+    candidates: list[datetime] = []
+
+    for k in keys:
+        if k in ("last_interaction", "last_thought", "last_challenger", "last_simulation"):
+            ts = _parse_iso(state.get(k))
+            if ts:
+                candidates.append(ts)
+        elif k == "last_finding":
+            try:
+                findings = engine.get_recent_findings(1) if hasattr(engine, "get_recent_findings") else []
+                if findings:
+                    ts = _parse_iso(findings[0].get("timestamp"))
+                    if ts:
+                        candidates.append(ts)
+            except Exception:
+                pass
+        elif k == "last_score":
+            try:
+                scores = engine.get_recent_scores(1) if hasattr(engine, "get_recent_scores") else []
+                if scores:
+                    ts = _parse_iso(scores[0].get("timestamp"))
+                    if ts:
+                        candidates.append(ts)
+            except Exception:
+                pass
+    return max(candidates) if candidates else None
+
+
+def _should_run_loop(
+    engine,
+    loop_name: str,
+    base_interval_minutes: float,
+    novelty_keys: list[str],
+    *,
+    force: bool = False,
+) -> bool:
+    """Decide whether ``loop_name`` should fire this tick.
+
+    Skips silently when the cadence isn't elapsed yet or when nothing new has
+    happened since the last successful run. Mutates engine.state to track the
+    attempt timestamp + idle streak; the caller must invoke
+    ``_mark_loop_success(engine, loop_name)`` after a real LLM-backed pass so
+    the next tick's novelty check has a baseline to compare against.
+    """
+    if force:
+        return True
+
+    state = engine.state if isinstance(getattr(engine, "state", None), dict) else None
+    if state is None:
+        # Engine not fully booted — fall back to legacy interval check.
+        return True
+
+    now = _now()
+    streak = int(state.get(f"{loop_name}_idle_streak", 0))
+    multiplier = min(2 ** max(0, streak), _IDLE_MAX_MULTIPLIER)
+    effective_min = base_interval_minutes * multiplier
+
+    last_attempt = _parse_iso(state.get(f"last_{loop_name}_attempt"))
+    if last_attempt:
+        elapsed_min = (now - last_attempt).total_seconds() / 60
+        if elapsed_min < effective_min:
+            return False
+
+    # We're committing to consume a tick — record the attempt up front so the
+    # next caller sees a fresh timestamp even if we end up skipping for lack
+    # of novelty below.
+    state[f"last_{loop_name}_attempt"] = now.isoformat()
+
+    # Novelty: any of the requested signals newer than our last success.
+    last_success = _parse_iso(state.get(f"last_{loop_name}_success"))
+    last_signal = _newest_signal_ts(engine, novelty_keys)
+    has_novelty = last_success is None or (last_signal is not None and last_signal > last_success)
+
+    if not has_novelty:
+        state[f"{loop_name}_idle_streak"] = min(streak + 1, _IDLE_STREAK_CAP)
+        try:
+            engine.save_state()
+        except Exception:
+            pass
+        return False
+
+    state[f"{loop_name}_idle_streak"] = 0
+    try:
+        engine.save_state()
+    except Exception:
+        pass
+    return True
+
+
+def _mark_loop_success(engine, loop_name: str) -> None:
+    """Record a successful LLM-backed pass so the next novelty check has a
+    reference timestamp. Called from each loop right after the LLM result is
+    accepted (content non-empty)."""
+    state = engine.state if isinstance(getattr(engine, "state", None), dict) else None
+    if state is None:
+        return
+    state[f"last_{loop_name}_success"] = _now().isoformat()
+    try:
+        engine.save_state()
+    except Exception:
+        pass
+
+
 def _build_reflection_prompt(engine) -> tuple[str, str]:
     """Construct the system + user prompt for one background reflection."""
     recent_thoughts = engine.get_recent_thoughts(limit=5) if hasattr(engine, "get_recent_thoughts") else []
@@ -159,12 +289,16 @@ async def _think_for_user(user_id: int):
         return
 
     interval_minutes = int(bt_config.get("interval_minutes", DEFAULT_THINK_INTERVAL_MINUTES))
-    last_thought = _parse_iso((engine.state or {}).get("last_thought"))
     now = _now()
-    if last_thought is not None:
-        elapsed = (now - last_thought).total_seconds() / 60
-        if elapsed < interval_minutes:
-            return
+
+    # Idle gate: skip if cadence not elapsed OR if nothing new since the last
+    # successful think. Novelty for "think" excludes last_thought (its own
+    # output) to avoid self-feedback — we only react to user/finding/score.
+    if not _should_run_loop(
+        engine, "think", interval_minutes,
+        novelty_keys=["last_interaction", "last_finding", "last_score"],
+    ):
+        return
 
     # Respect an existing no-key cooldown (user hasn't configured a provider yet).
     cooldown_until = _parse_iso((engine.state or {}).get("background_think_cooldown_until"))
@@ -222,6 +356,8 @@ async def _think_for_user(user_id: int):
         except Exception:
             pass
 
+    _mark_loop_success(engine, "think")
+
     # Lazy auto-init du vector memory : sans ça, add_thought() incrémente
     # seulement le compteur mais n'écrit rien dans Qdrant (silencieux).
     try:
@@ -261,14 +397,19 @@ async def _challenger_for_user(user_id: int, force: bool = False) -> int:
         return 0
 
     now = _now()
-    if not force:
-        interval_minutes = int(auto.get("interval_minutes", DEFAULT_CHALLENGER_INTERVAL_MINUTES))
-        last_audit = _parse_iso((engine.state or {}).get("last_challenger"))
-        if last_audit is not None:
-            elapsed = (now - last_audit).total_seconds() / 60
-            if elapsed < interval_minutes:
-                return 0
+    interval_minutes = int(auto.get("interval_minutes", DEFAULT_CHALLENGER_INTERVAL_MINUTES))
 
+    # Idle gate: skip if cadence not elapsed OR if nothing to audit. Novelty
+    # for "challenger" includes user activity, new thoughts (the main thing
+    # to audit) and new scores.
+    if not _should_run_loop(
+        engine, "challenger", interval_minutes,
+        novelty_keys=["last_interaction", "last_thought", "last_score"],
+        force=force,
+    ):
+        return 0
+
+    if not force:
         # Respect a no-key cooldown to avoid spamming warnings.
         cooldown_until = _parse_iso((engine.state or {}).get("challenger_cooldown_until"))
         if cooldown_until and now < cooldown_until:
@@ -331,6 +472,8 @@ async def _challenger_for_user(user_id: int, force: bool = False) -> int:
             engine.save_state()
         except Exception:
             pass
+
+    _mark_loop_success(engine, "challenger")
 
     try:
         return engine.ingest_challenger_findings(result.get("content") or "")
@@ -456,14 +599,19 @@ async def _simulate_for_user(user_id: int, force: bool = False) -> int:
         return 0
 
     now = _now()
-    if not force:
-        interval_minutes = int(sim_cfg.get("interval_minutes", DEFAULT_SIMULATION_INTERVAL_MINUTES))
-        last_sim = _parse_iso((engine.state or {}).get("last_simulation"))
-        if last_sim is not None:
-            elapsed = (now - last_sim).total_seconds() / 60
-            if elapsed < interval_minutes:
-                return 0
+    interval_minutes = int(sim_cfg.get("interval_minutes", DEFAULT_SIMULATION_INTERVAL_MINUTES))
 
+    # Idle gate: skip if cadence not elapsed OR no fresh signal to anticipate.
+    # Novelty for "simulate" includes user activity, recent thoughts, recent
+    # findings — anything that suggests a new scenario is worth modeling.
+    if not _should_run_loop(
+        engine, "simulate", interval_minutes,
+        novelty_keys=["last_interaction", "last_thought", "last_finding"],
+        force=force,
+    ):
+        return 0
+
+    if not force:
         # Réutilise le cooldown no-key du background_think (même cause = pas de provider)
         cooldown_until = _parse_iso((engine.state or {}).get("background_think_cooldown_until"))
         if cooldown_until and now < cooldown_until:
@@ -500,6 +648,8 @@ async def _simulate_for_user(user_id: int, force: bool = False) -> int:
     if not scenarios:
         logger.warning(f"Simulation parse empty for user {user_id} (raw: {(result.get('content') or '')[:200]!r})")
         return 0
+
+    _mark_loop_success(engine, "simulate")
 
     added = 0
     for s in scenarios:
@@ -737,14 +887,19 @@ async def _goals_for_user(user_id: int, force: bool = False) -> int:
         return 0
 
     now = _now()
-    if not force:
-        interval_hours = float(goals_cfg.get("check_interval_hours", DEFAULT_GOALS_CHECK_INTERVAL_HOURS))
-        last_check = _parse_iso((engine.state or {}).get("last_goals_check"))
-        if last_check is not None:
-            elapsed_h = (now - last_check).total_seconds() / 3600
-            if elapsed_h < interval_hours:
-                return 0
+    interval_hours = float(goals_cfg.get("check_interval_hours", DEFAULT_GOALS_CHECK_INTERVAL_HOURS))
 
+    # Idle gate: skip if cadence not elapsed OR no fresh signal (interaction,
+    # finding, score). Goals already has a structural pre-filter below
+    # (has_signal); the gate adds cadence backoff on top of that.
+    if not _should_run_loop(
+        engine, "goals", interval_hours * 60,
+        novelty_keys=["last_interaction", "last_finding", "last_score"],
+        force=force,
+    ):
+        return 0
+
+    if not force:
         cooldown_until = _parse_iso((engine.state or {}).get("background_think_cooldown_until"))
         if cooldown_until and now < cooldown_until:
             return 0
@@ -817,6 +972,8 @@ async def _goals_for_user(user_id: int, force: bool = False) -> int:
         except Exception:
             pass
         return 0
+
+    _mark_loop_success(engine, "goals")
 
     added = 0
     for p in proposals:
@@ -983,20 +1140,24 @@ async def _impulse_for_user(user_id: int, force: bool = False) -> int:
         return 0
 
     now = _now()
+    check_interval = int(auto_cfg.get("check_interval_minutes", DEFAULT_IMPULSE_CHECK_INTERVAL_MINUTES))
+
     if not force:
         # Respect quiet hours
         if _in_quiet_hours(engine.config or {}, now):
             return 0
 
-        # Interval entre deux tentatives (le LLM coûte, inutile d'appeler
-        # toutes les 60s juste pour vérifier le seuil).
-        check_interval = int(auto_cfg.get("check_interval_minutes", DEFAULT_IMPULSE_CHECK_INTERVAL_MINUTES))
-        last_check = _parse_iso((engine.state or {}).get("last_impulse_check"))
-        if last_check is not None:
-            elapsed = (now - last_check).total_seconds() / 60
-            if elapsed < check_interval:
-                return 0
+    # Idle gate: skip if cadence not elapsed OR no fresh signal. Impulses
+    # only matter when something user-side or thought-side has shifted the
+    # need urgency.
+    if not _should_run_loop(
+        engine, "impulse", check_interval,
+        novelty_keys=["last_interaction", "last_thought"],
+        force=force,
+    ):
+        return 0
 
+    if not force:
         # Cooldown no-key partagé
         cooldown_until = _parse_iso((engine.state or {}).get("background_think_cooldown_until"))
         if cooldown_until and now < cooldown_until:
@@ -1091,6 +1252,8 @@ async def _impulse_for_user(user_id: int, force: bool = False) -> int:
         logger.exception(f"propose_impulse failed for user {user_id}: {e}")
         return 0
 
+    _mark_loop_success(engine, "impulse")
+
     logger.info(f"Impulse proposed for user {user_id}: [{top_name}] {parsed['action'][:80]}")
     return 1
 
@@ -1171,14 +1334,19 @@ async def _consolidate_for_user(user_id: int, force: bool = False) -> bool:
         return False
 
     now = _now()
-    if not force:
-        interval_hours = float(cons_cfg.get("interval_hours", DEFAULT_CONSOLIDATION_INTERVAL_HOURS))
-        last_cons = _parse_iso((engine.state or {}).get("last_consolidation"))
-        if last_cons is not None:
-            elapsed_h = (now - last_cons).total_seconds() / 3600
-            if elapsed_h < interval_hours:
-                return False
+    interval_hours = float(cons_cfg.get("interval_hours", DEFAULT_CONSOLIDATION_INTERVAL_HOURS))
 
+    # Idle gate: skip if cadence not elapsed OR no fresh thoughts to
+    # consolidate. Working memory only grows when something actively writes
+    # to it — last_thought is the cleanest signal here.
+    if not _should_run_loop(
+        engine, "consolidate", interval_hours * 60,
+        novelty_keys=["last_thought"],
+        force=force,
+    ):
+        return False
+
+    if not force:
         # Cooldown no-key partagé
         cooldown_until = _parse_iso((engine.state or {}).get("background_think_cooldown_until"))
         if cooldown_until and now < cooldown_until:
@@ -1256,6 +1424,8 @@ async def _consolidate_for_user(user_id: int, force: bool = False) -> bool:
         engine.save_state()
     except Exception:
         pass
+
+    _mark_loop_success(engine, "consolidate")
 
     logger.info(f"Consolidation stored for user {user_id} (id={memory_id})")
     return True

@@ -1,7 +1,7 @@
 {
   "name": "consciousness",
   "display_name": "Conscience",
-  "version": "3.17.0",
+  "version": "3.18.0",
   "icon": "Brain",
   "route": "/consciousness",
   "sidebar_position": 3,
