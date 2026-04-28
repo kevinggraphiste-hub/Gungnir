@@ -8,7 +8,11 @@ class MiniMaxProvider(LLMProvider):
     supports_streaming = True
     supports_tools = False
 
-    BASE_URL = "https://api.minimax.chat/v1"
+    # api.minimax.chat = endpoint Chine (souvent bloqué hors APAC)
+    # api.minimax.io   = endpoint international officiel (US/Europe)
+    # On défaut sur l'international ; l'user peut override via Settings
+    # → Provider → base_url custom s'il a besoin de l'endpoint chinois.
+    BASE_URL = "https://api.minimax.io/v1"
 
     def __init__(self, api_key: str, base_url: Optional[str] = None, **kwargs):
         super().__init__(api_key, base_url, **kwargs)

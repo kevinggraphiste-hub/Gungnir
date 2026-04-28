@@ -314,9 +314,19 @@ class Settings(BaseSettings):
             models=["grok-3-beta", "grok-3-mini-beta"]
         ),
         "minimax": ProviderConfig(
-            base_url="https://api.minimax.chat/v1",
-            default_model="minimax-m2.7",
-            models=["minimax-m2.7", "minimax-m2.5"]
+            # base_url corrigé : api.minimax.chat (ancienne URL souvent
+            # bloquée hors Chine) → api.minimax.io (endpoint international
+            # officiel). Les users en Chine peuvent toujours override avec
+            # api.minimax.chat via base_url custom.
+            base_url="https://api.minimax.io/v1",
+            default_model="MiniMax-M1",
+            models=[
+                "MiniMax-M1",
+                "MiniMax-Text-01",
+                "abab6.5-chat",
+                "abab6.5s-chat",
+                "abab6.5g-chat",
+            ],
         ),
         # Ollama: default base_url works for local dev (non-Docker). For Docker
         # production, the user must override this in settings — see the
@@ -324,6 +334,25 @@ class Settings(BaseSettings):
         "ollama": ProviderConfig(
             base_url="http://localhost:11434/v1",
             models=[]
+        ),
+        # DeepInfra : API OpenAI-compatible orientée open-source low-cost
+        # (Llama 3.x, Qwen 2.5/3, DeepSeek V3/R1, Mixtral, etc.). Très bon
+        # rapport qualité/prix pour les use cases batch ou self-hosted-like
+        # sans héberger soi-même les GPUs.
+        "deepinfra": ProviderConfig(
+            base_url="https://api.deepinfra.com/v1/openai",
+            default_model="meta-llama/Meta-Llama-3.3-70B-Instruct",
+            models=[
+                "meta-llama/Meta-Llama-3.3-70B-Instruct",
+                "meta-llama/Meta-Llama-3.1-405B-Instruct",
+                "meta-llama/Meta-Llama-3.1-70B-Instruct",
+                "Qwen/Qwen2.5-72B-Instruct",
+                "Qwen/Qwen2.5-Coder-32B-Instruct",
+                "deepseek-ai/DeepSeek-V3",
+                "deepseek-ai/DeepSeek-R1",
+                "mistralai/Mixtral-8x22B-Instruct-v0.1",
+                "google/gemma-2-27b-it",
+            ],
         ),
     })
     voice: dict[str, VoiceConfig] = Field(default_factory=lambda: {

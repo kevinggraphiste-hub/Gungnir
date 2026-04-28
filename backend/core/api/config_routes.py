@@ -45,23 +45,58 @@ async def get_config(request: Request, session: AsyncSession = Depends(get_sessi
     # Per-user language override
     language = settings.app.language
     user_id = getattr(request.state, "user_id", None)
+    user_settings = None
     if user_id:
         user_settings = await get_user_settings(user_id, session)
         if user_settings.language:
             language = user_settings.language
+    else:
+        # Open mode fallback : on charge l'user #1 si dispo (single-user setup)
+        fallback_uid = await open_mode_fallback_user_id(session)
+        if fallback_uid is not None:
+            user_settings = await get_user_settings(fallback_uid, session)
+
+    # Merge providers : config statique (Settings.providers, métadata
+    # base_url + models pré-définies) + provider_keys per-user (qui
+    # contient les clés API + les overrides + les providers custom).
+    # has_api_key reflète l'état USER, pas le store global (qui ne contient
+    # plus de clés depuis le passage strict per-user).
+    user_provider_keys: dict = {}
+    if user_settings and user_settings.provider_keys:
+        user_provider_keys = dict(user_settings.provider_keys)
+
+    providers_out: dict = {}
+    # 1. Providers connus (Settings.providers) — clé API depuis user_settings
+    for name, p in settings.providers.items():
+        ucfg = user_provider_keys.get(name) or {}
+        providers_out[name] = {
+            "enabled": bool(ucfg.get("enabled", p.enabled)),
+            "has_api_key": bool(ucfg.get("api_key")),
+            "default_model": ucfg.get("default_model") or p.default_model,
+            "base_url": ucfg.get("base_url") or p.base_url,
+            "models": ucfg.get("models") or p.models,
+            "is_custom": False,
+        }
+    # 2. Providers CUSTOM (présents en user_settings mais pas dans Settings.providers)
+    #    Sans ce merge, un user qui ajoute "groq" ou "deepinfra-custom" ne
+    #    le voit jamais réapparaître dans la liste après save.
+    for name, ucfg in user_provider_keys.items():
+        if name in providers_out:
+            continue
+        providers_out[name] = {
+            "enabled": bool(ucfg.get("enabled", True)),
+            "has_api_key": bool(ucfg.get("api_key")),
+            "default_model": ucfg.get("default_model") or "",
+            "base_url": ucfg.get("base_url") or "",
+            "models": ucfg.get("models") or [],
+            "is_custom": True,
+        }
+
     return {
         "is_configured": settings.is_configured,
         "language": language,
         "theme": settings.app.theme,
-        "providers": {
-            name: {
-                "enabled": p.enabled,
-                "has_api_key": bool(p.api_key),
-                "default_model": p.default_model,
-                "models": p.models,
-            }
-            for name, p in settings.providers.items()
-        },
+        "providers": providers_out,
         # Per-user voice config overlay. Reports whether THIS user has a key
         # configured for each built-in provider (no global fallback so the UI
         # can never show one user's config state to another).

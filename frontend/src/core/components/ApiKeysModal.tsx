@@ -177,6 +177,7 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
     { id: 'mistral',    label: 'Mistral AI', hint: 'Direct API Mistral Large/Medium' },
     { id: 'xai',        label: 'xAI (Grok)', hint: 'Direct API Grok 3/4' },
     { id: 'minimax',    label: 'MiniMax', hint: 'API MiniMax M1/abab' },
+    { id: 'deepinfra',  label: 'DeepInfra', hint: 'Open-source low-cost (Llama, Qwen, DeepSeek, Mixtral)' },
     { id: 'ollama',     label: 'Ollama (local)', hint: 'Pas de clé requise — instance locale' },
   ]
 
