@@ -192,10 +192,10 @@
   --app-font-family: 'OpenDyslexic', 'Atkinson Hyperlegible', Verdana, sans-serif;
 }
 
-/* Taille globale */
-[data-fontsize-pref="small"]  { --app-font-size: 13px; }
-[data-fontsize-pref="normal"] { --app-font-size: 15px; }
-[data-fontsize-pref="large"]  { --app-font-size: 17px; }
+/* Taille globale — `--app-font-size` posé dynamiquement par
+   useUIPreferences.applyToDOM (en px). Le zoom global est appliqué via
+   document.body.style.zoom dans le même hook. Plus besoin de mapper
+   small/normal/large ici (rétrocompat gérée côté JS). */
 
 /* Interligne */
 [data-linespacing="tight"]  { --app-line-height: 1.35; }

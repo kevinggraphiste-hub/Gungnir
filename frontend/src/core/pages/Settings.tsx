@@ -1378,29 +1378,36 @@ export default function Settings() {
                   )}
                 </div>
 
-                {/* Taille */}
+                {/* Taille de police globale — pattern SpearCode appliqué à
+                    toute l'UI Gungnir (sauf SpearCode lui-même qui a son
+                    propre slider indépendant). Slider 11-18 px, applique
+                    un zoom global au body via useUIPreferences. */}
                 <div className="mb-6">
-                  <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Taille du texte</label>
-                  <div className="grid grid-cols-3 gap-3">
-                    {[
-                      { id: 'small', label: 'Petite' },
-                      { id: 'normal', label: 'Normale' },
-                      { id: 'large', label: 'Grande' },
-                    ].map(opt => {
-                      const selected = uiPrefs.font_size === opt.id
-                      return (
-                        <button key={opt.id} onClick={() => updateUIPrefs({ font_size: opt.id as any })}
-                          className="px-4 py-3 rounded-lg border transition-all text-center"
-                          style={{
-                            borderColor: selected ? 'var(--accent-primary)' : 'var(--border)',
-                            background: selected ? 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' : 'var(--bg-primary)',
-                            color: selected ? 'var(--text-primary)' : 'var(--text-secondary)',
-                            fontSize: opt.id === 'small' ? 13 : opt.id === 'large' ? 17 : 15,
-                          }}>
-                          {opt.label}
-                        </button>
-                      )
-                    })}
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-[var(--text-secondary)]">Taille du texte (UI globale)</label>
+                    <span style={{ fontSize: 12, fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', minWidth: 40, textAlign: 'right' }}>
+                      {Number(uiPrefs.font_size) || 14} px
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={11}
+                    max={18}
+                    step={1}
+                    value={Number(uiPrefs.font_size) || 14}
+                    onChange={e => updateUIPrefs({ font_size: parseInt(e.target.value, 10) })}
+                    style={{
+                      width: '100%', accentColor: 'var(--accent-primary)',
+                      cursor: 'pointer',
+                    }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                    <span>11 (compact)</span>
+                    <span>14 (défaut)</span>
+                    <span>18 (confort)</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
+                    Applique un zoom proportionnel à toute l'interface Gungnir. SpearCode garde son propre réglage indépendant.
                   </div>
                 </div>
 

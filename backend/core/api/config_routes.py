@@ -826,7 +826,7 @@ async def save_user_app_settings(request: Request, session: AsyncSession = Depen
 _UI_DEFAULTS = {
     "font_family": "inter",       # inter | opendyslexic | atkinson
     "font_style": "sans",         # sans | serif
-    "font_size": "normal",        # small | normal | large
+    "font_size": 14,              # px (11-18) — int direct, plus small/normal/large
     "line_spacing": "normal",     # tight | normal | loose
     "letter_spacing": "normal",   # normal | wide | wider
     "word_spacing": "normal",     # normal | wide | wider
@@ -838,7 +838,8 @@ _UI_DEFAULTS = {
 _UI_ALLOWED = {
     "font_family": {"inter", "opendyslexic", "atkinson"},
     "font_style": {"sans", "serif"},
-    "font_size": {"small", "normal", "large"},
+    # `font_size` n'est pas dans les whitelists énumérées car maintenant
+    # un int (11-18). Validation custom dans le save handler.
     "line_spacing": {"tight", "normal", "loose"},
     "letter_spacing": {"normal", "wide", "wider"},
     "word_spacing": {"normal", "wide", "wider"},
@@ -847,6 +848,29 @@ _UI_ALLOWED = {
     # `timezone` n'est pas dans les whitelists énumérées — validation
     # dynamique via zoneinfo.ZoneInfo() dans le save handler.
 }
+
+# Backward-compat : convertit une éventuelle string legacy 'small'|'normal'|'large'
+# vers son équivalent px. Utilisé au save pour migrer en douceur les anciens
+# users sans casser les nouveaux qui envoient un int.
+_LEGACY_FONT_SIZE_MAP = {"small": 13, "normal": 14, "large": 17}
+
+
+def _coerce_font_size(v) -> int | None:
+    """Retourne un int valide entre 11 et 18 ou None si invalide."""
+    if isinstance(v, bool):  # bool est int en Python — on l'exclut
+        return None
+    if isinstance(v, str):
+        if v in _LEGACY_FONT_SIZE_MAP:
+            return _LEGACY_FONT_SIZE_MAP[v]
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            return None
+    if isinstance(v, (int, float)):
+        n = int(v)
+        if 11 <= n <= 18:
+            return n
+    return None
 
 
 def _is_valid_tz(value) -> bool:
@@ -900,6 +924,11 @@ async def save_user_ui_prefs(request: Request, session: AsyncSession = Depends(g
             # Validation dynamique IANA (pas de whitelist statique).
             if _is_valid_tz(v):
                 prefs[k] = v
+        elif k == "font_size":
+            # Int 11-18 OU legacy string small/normal/large (auto-migrée).
+            coerced = _coerce_font_size(v)
+            if coerced is not None:
+                prefs[k] = coerced
         elif k in _UI_ALLOWED and v in _UI_ALLOWED[k]:
             prefs[k] = v
     from sqlalchemy.orm.attributes import flag_modified
