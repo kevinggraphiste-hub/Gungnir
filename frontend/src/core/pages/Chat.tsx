@@ -2360,7 +2360,7 @@ export default function Chat() {
                 </div>
               )}
 
-              <div className="flex flex-col gap-1 max-w-[70%] items-stretch">
+              <div className="flex flex-col gap-1 max-w-[88%] sm:max-w-[78%] md:max-w-[70%] items-stretch">
                 {/* Header : pseudo + provider + compteur tokens (au-dessus de la bulle, pas accolé) */}
                 {(() => {
                   // Tokens : assistant → tokens_output propres ; user → tokens_input

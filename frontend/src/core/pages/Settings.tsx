@@ -901,20 +901,23 @@ export default function Settings() {
   ]
 
   return (
-    <div className="max-w-4xl mx-auto p-6 h-full overflow-y-auto">
+    <div className="max-w-4xl mx-auto p-4 md:p-6 h-full overflow-y-auto">
       <PageHeader
         icon={<SettingsIcon size={18} />}
         title={t('settings.title')}
         subtitle={t('settings.subtitle')}
       />
 
-      <div className="flex gap-6">
-        <aside className="w-48 flex-shrink-0">
-          <nav className="space-y-2">
+      {/* Layout responsive : tabs verticales en desktop (aside w-48), barre
+          horizontale scrollable en mobile (overflow-x-auto, snap). */}
+      <div className="flex flex-col md:flex-row gap-3 md:gap-6">
+        <aside className="md:w-48 md:flex-shrink-0">
+          <nav className="flex md:flex-col gap-2 overflow-x-auto md:overflow-visible -mx-4 px-4 md:mx-0 md:px-0 pb-2 md:pb-0">
             {tabs.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors"
+                className="flex-shrink-0 md:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors whitespace-nowrap"
                 style={{
+                  minHeight: 44,
                   background: activeTab === tab.id ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'transparent',
                   color: activeTab === tab.id ? 'var(--accent-primary)' : 'var(--text-muted)',
                   border: activeTab === tab.id ? '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)' : '1px solid transparent'
@@ -925,7 +928,7 @@ export default function Settings() {
           </nav>
         </aside>
 
-        <div className="flex-1 rounded-xl border p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
+        <div className="flex-1 rounded-xl border p-4 md:p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
           {/* -- General --------------------------------------------------- */}
           {activeTab === 'general' && (
             <div className="space-y-6">

@@ -5,7 +5,7 @@
  */
 import { Suspense, useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Menu } from 'lucide-react'
 
 import Sidebar from './components/Sidebar'
 import CommandPalette from './components/CommandPalette'
@@ -13,8 +13,10 @@ import { PluginErrorBoundary } from './components/ErrorBoundary'
 import { useStore } from './stores/appStore'
 import { api, apiFetch, clearAuthToken } from './services/api'
 import { usePluginStore } from './stores/pluginStore'
+import { useSidebarStore } from './stores/sidebarStore'
 import { useGlobalKeyboard } from './hooks/useKeyboard'
 import { useUIPreferences } from './hooks/useUIPreferences'
+import { useBreakpoint } from './hooks/useBreakpoint'
 import { getPluginComponent } from './services/pluginLoader'
 
 // ── Core pages (always bundled) ─────────────────────────────────────────────
@@ -30,6 +32,34 @@ function PluginLoading() {
     <div className="flex-1 flex items-center justify-center">
       <Loader2 className="w-6 h-6 animate-spin" style={{ color: 'var(--accent-primary)' }} />
     </div>
+  )
+}
+
+// ── Mobile top bar (burger + logo) ──────────────────────────────────────────
+// Uniquement visible sous 768px : la sidebar étant un drawer en mobile, il
+// faut un point d'entrée pour l'ouvrir + une présence permanente du logo.
+function MobileTopBar() {
+  const toggleMobileOpen = useSidebarStore((s) => s.toggleMobileOpen)
+  return (
+    <header
+      className="md:hidden flex items-center gap-2 px-3 border-b sticky top-0 z-30"
+      style={{
+        height: 56,
+        background: 'var(--bg-primary)',
+        borderColor: 'var(--border-subtle)',
+      }}
+    >
+      <button
+        onClick={toggleMobileOpen}
+        className="rounded-lg flex items-center justify-center"
+        style={{ width: 44, height: 44, color: 'var(--text-primary)' }}
+        aria-label="Ouvrir le menu"
+      >
+        <Menu className="w-5 h-5" />
+      </button>
+      <img src="/logo.png" alt="Gungnir" className="w-7 h-7 rounded-full object-contain" />
+      <span className="font-bold text-sm tracking-wide gradient-text">Gungnir</span>
+    </header>
   )
 }
 
@@ -179,15 +209,12 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
             </PluginErrorBoundary>
           </main>
         } />
-        {/* Mode normal : sidebar + main avec routes plugin classiques. */}
+        {/* Mode normal : sidebar + main avec routes plugin classiques.
+            Sur mobile (<768px), Sidebar devient un drawer overlay et on
+            ajoute une top bar avec burger pour l'ouvrir. */}
         <Route path="*" element={
-          <>
-            <Sidebar />
-            <main className="flex-1 h-screen overflow-hidden flex flex-col">
-              <RoutesShell plugins={plugins} pluginsLoaded={pluginsLoaded} />
-            </main>
-            <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-          </>
+          <ResponsiveShell plugins={plugins} pluginsLoaded={pluginsLoaded}
+            paletteOpen={paletteOpen} closePalette={() => setPaletteOpen(false)} />
         } />
       </Routes>
     </div>
@@ -199,6 +226,33 @@ function AppContent({ onLogout, showLogout }: { onLogout?: () => void; showLogou
 // (WebSocket LSP de CodeMirror dans SpearCode, listeners globaux non cleanés,
 // etc.) peuvent empêcher l'affichage du nouveau plugin alors que l'URL a déjà
 // changé — symptôme observé : URL change, contenu reste sur le plugin précédent.
+function ResponsiveShell({
+  plugins, pluginsLoaded, paletteOpen, closePalette,
+}: {
+  plugins: any[]; pluginsLoaded: boolean; paletteOpen: boolean; closePalette: () => void;
+}) {
+  // Sur mobile, la sidebar est un drawer overlay (position: fixed) — donc le
+  // <main> prend 100% de la largeur et ne se sert pas de marge gauche. Sur
+  // desktop, la sidebar est dans le flux et le flex-row se charge du layout.
+  const isMobile = useBreakpoint() === 'mobile'
+  return (
+    <>
+      <Sidebar />
+      <main
+        className="flex-1 overflow-hidden flex flex-col"
+        style={{
+          height: isMobile ? '100dvh' : '100vh',
+          width: isMobile ? '100%' : 'auto',
+        }}
+      >
+        <MobileTopBar />
+        <RoutesShell plugins={plugins} pluginsLoaded={pluginsLoaded} />
+      </main>
+      <CommandPalette open={paletteOpen} onClose={closePalette} />
+    </>
+  )
+}
+
 function RoutesShell({ plugins, pluginsLoaded }: { plugins: any[]; pluginsLoaded: boolean }) {
   const location = useLocation()
   return (

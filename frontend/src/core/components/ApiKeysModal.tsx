@@ -193,9 +193,9 @@ export default function ApiKeysModal({ isOpen, onClose, config, onConfigUpdate }
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="w-full max-w-lg rounded-2xl shadow-2xl max-h-[85vh] flex flex-col"
+        className="w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[92dvh] sm:max-h-[85vh] flex flex-col"
         style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)' }}
         onClick={e => e.stopPropagation()}
       >

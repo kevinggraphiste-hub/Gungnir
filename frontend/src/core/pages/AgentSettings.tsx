@@ -751,7 +751,7 @@ export default function AgentSettings() {
       <div className="rounded-xl border p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
         {activeTab === 'mode' && (
           <div className="space-y-6">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <button
                 onClick={() => setMode('autonomous')}
                 className="p-4 rounded-lg border-2 transition-colors"
@@ -1136,7 +1136,7 @@ export default function AgentSettings() {
                   <div>
                     <label className="text-[10px] uppercase tracking-widest mb-2 block" style={{ color: 'var(--text-muted)' }}>Exemples d'utilisation</label>
                     {newSkill.examples.map((ex, i) => (
-                      <div key={i} className="grid grid-cols-2 gap-2 mb-2">
+                      <div key={i} className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
                         <input type="text" placeholder="Question exemple" value={ex.prompt}
                           onChange={e => {
                             const exs = [...newSkill.examples]; exs[i] = { ...exs[i], prompt: e.target.value }
@@ -1352,7 +1352,7 @@ export default function AgentSettings() {
                           </select>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           <input type="text" placeholder="Auteur" value={editSkillForm.author}
                             onChange={e => setEditSkillForm({ ...editSkillForm, author: e.target.value })}
                             className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs focus:outline-none" style={{ color: 'var(--text-primary)' }} />
@@ -1465,7 +1465,7 @@ export default function AgentSettings() {
               )}
 
               {/* Champs essentiels */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input placeholder="Nom (ex: seo_expert)" value={newAgent.name}
                   onChange={e => setNewAgent({ ...newAgent, name: e.target.value })}
                   className="col-span-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
@@ -1532,7 +1532,7 @@ export default function AgentSettings() {
               </button>
 
               {showAdvancedAgent && (
-                <div className="p-3 rounded-lg border border-[var(--border)] grid grid-cols-3 gap-3" style={{ background: 'color-mix(in srgb, var(--bg-secondary) 50%, transparent)' }}>
+                <div className="p-3 rounded-lg border border-[var(--border)] grid grid-cols-1 sm:grid-cols-3 gap-3" style={{ background: 'color-mix(in srgb, var(--bg-secondary) 50%, transparent)' }}>
                   <div>
                     <label className="text-[10px] uppercase tracking-widest mb-1 block" style={{ color: 'var(--text-muted)' }}>Version</label>
                     <input type="text" value={newAgent.version} onChange={e => setNewAgent({ ...newAgent, version: e.target.value })}
@@ -1634,7 +1634,7 @@ export default function AgentSettings() {
                     {/* Formulaire édition inline */}
                     {isEditing && (
                       <div className="px-4 pb-4 space-y-3 pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <label className="text-[10px] uppercase tracking-widest block mb-1" style={{ color: 'var(--text-muted)' }}>Rôle</label>
                             <input value={editAgentForm.role} onChange={e => setEditAgentForm({ ...editAgentForm, role: e.target.value })}
