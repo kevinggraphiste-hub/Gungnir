@@ -751,14 +751,11 @@ export default function AgentSettings() {
   ]
 
   return (
-    // scrollbarGutter: stable réserve toujours la place de la scrollbar verticale
-    // même quand le contenu n'en a pas besoin. Sans ça, on voyait un saut de
-    // ~17 px entre onglet court (mode) et onglet long (skills) parce que la
-    // scrollbar apparaissait/disparaissait au switch.
-    <div
-      className="max-w-6xl mx-auto p-4 md:p-6 h-full overflow-y-auto overflow-x-hidden"
-      style={{ scrollbarGutter: 'stable' }}
-    >
+    // .stable-gutter (CSS) → scrollbar-gutter: stable, mais uniquement
+    // ≥ 768 px. Sur mobile certains navigateurs (Chrome Android) réservent
+    // l'espace même en overlay scrollbar, ce qui rognait ~15 px de largeur
+    // utile et faisait re-déborder les listes sub-agents.
+    <div className="max-w-6xl mx-auto p-4 md:p-6 h-full overflow-y-auto overflow-x-hidden stable-gutter">
       <PageHeader
         icon={<Bot size={18} />}
         title="Configuration Agent"

@@ -361,6 +361,17 @@ input, textarea {
   }
 }
 
+/* Réserve la place de la scrollbar verticale uniquement à partir du
+   breakpoint tablette (≥ 768 px). Évite le saut de ~17 px quand la
+   scrollbar apparaît/disparaît entre onglets sur desktop, sans rogner
+   la largeur utile sur mobile (où la scrollbar est en overlay et n'a
+   pas besoin d'espace réservé). */
+@media (min-width: 768px) {
+  .stable-gutter {
+    scrollbar-gutter: stable;
+  }
+}
+
 /* Glass effect */
 .glass {
   background: rgba(19, 19, 19, 0.85);
