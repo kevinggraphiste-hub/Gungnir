@@ -735,7 +735,7 @@ export default function AgentSettings() {
     { key: 'model', label: 'Modèle', icon: <Cpu className="w-3.5 h-3.5" /> },
     { key: 'skills', label: 'Skills', icon: <Sparkles className="w-3.5 h-3.5" /> },
     { key: 'subagents', label: 'Sous-agents', icon: <Users className="w-3.5 h-3.5" /> },
-    { key: 'personality', label: 'Personnalité', icon: <Bot className="w-3.5 h-3.5" /> },
+    { key: 'personality', label: 'Personnalités', icon: <Bot className="w-3.5 h-3.5" /> },
     { key: 'inter-agent', label: 'Conversations inter-agents', icon: <MessageSquare className="w-3.5 h-3.5" /> },
     {
       key: 'security',
@@ -751,11 +751,18 @@ export default function AgentSettings() {
   ]
 
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-6 h-full overflow-y-auto overflow-x-hidden">
+    // scrollbarGutter: stable réserve toujours la place de la scrollbar verticale
+    // même quand le contenu n'en a pas besoin. Sans ça, on voyait un saut de
+    // ~17 px entre onglet court (mode) et onglet long (skills) parce que la
+    // scrollbar apparaissait/disparaissait au switch.
+    <div
+      className="max-w-6xl mx-auto p-4 md:p-6 h-full overflow-y-auto overflow-x-hidden"
+      style={{ scrollbarGutter: 'stable' }}
+    >
       <PageHeader
         icon={<Bot size={18} />}
         title="Configuration Agent"
-        subtitle="Mode d'autonomie, modèles, skills, sous-agents, personnalité et sécurité"
+        subtitle="Mode d'autonomie, modèles, skills, sous-agents, personnalités et sécurité"
         version="1.0.1"
       />
 
