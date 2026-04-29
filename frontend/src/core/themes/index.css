@@ -729,14 +729,21 @@ input, textarea {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  /* Touch target ≥ 44px sur mobile pour respecter les guidelines iOS/Android. */
-  min-height: 44px;
   border-radius: 10px;
   color: var(--text-secondary);
   text-decoration: none;
   transition: all 0.2s ease;
   font-size: 14px;
   font-weight: 500;
+}
+
+/* Touch target ≥ 44 px uniquement sous le breakpoint md (sidebar drawer)
+   pour respecter iOS/Android. Sur desktop on garde la densité visuelle
+   d'origine (~40 px). */
+@media (max-width: 767px) {
+  .nav-item {
+    min-height: 44px;
+  }
 }
 
 .nav-item:hover {
