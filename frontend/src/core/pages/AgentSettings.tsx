@@ -1491,19 +1491,19 @@ export default function AgentSettings() {
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                 <input placeholder="Description courte" value={newAgent.description}
                   onChange={e => setNewAgent({ ...newAgent, description: e.target.value })}
-                  className="col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  className="col-span-1 sm:col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                 <input placeholder="Expertise (ex: référencement, mots-clés)" value={newAgent.expertise}
                   onChange={e => setNewAgent({ ...newAgent, expertise: e.target.value })}
-                  className="col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  className="col-span-1 sm:col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                 <textarea placeholder="System prompt (optionnel — généré automatiquement si vide)" value={newAgent.system_prompt}
                   onChange={e => setNewAgent({ ...newAgent, system_prompt: e.target.value })} rows={3}
-                  className="col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none resize-none font-mono"
+                  className="col-span-1 sm:col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none resize-none font-mono"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                 <input type="text" placeholder="Tags (séparés par virgule)" value={newAgent.tags}
                   onChange={e => setNewAgent({ ...newAgent, tags: e.target.value })}
-                  className="col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  className="col-span-1 sm:col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
               </div>
 
