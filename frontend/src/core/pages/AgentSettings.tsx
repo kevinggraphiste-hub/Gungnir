@@ -1243,7 +1243,7 @@ export default function AgentSettings() {
                       ...(activeSkillName === skill.name ? { boxShadow: '0 0 0 1px var(--accent-primary)' } : {}),
                     }}
                   >
-                    <div className="flex flex-wrap items-center gap-3 p-4">
+                    <div className="flex items-center gap-3 p-4">
                       <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         <GripVertical className="w-4 h-4" />
                       </div>
@@ -1314,7 +1314,7 @@ export default function AgentSettings() {
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
+                      <div className="flex items-center gap-1 flex-shrink-0">
                         <button
                           onClick={() => toggleActiveSkill(skill.name)}
                           className="px-2.5 py-1 rounded-lg text-xs font-medium border transition-all"
@@ -1430,7 +1430,7 @@ export default function AgentSettings() {
         )}
 
         {activeTab === 'subagents' && (
-          <div className="space-y-5 min-w-0">
+          <div className="space-y-5">
             {/* Intro */}
             <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               <span>Sous-agents</span>
@@ -1443,19 +1443,15 @@ export default function AgentSettings() {
               </InfoButton>
             </div>
 
-            {/* ── Formulaire création ──
-                min-w-0 + overflow-hidden : sans ça, un enfant en flex/grid
-                qui demande sa min-content size (ex. <select> avec <option>
-                longues, <textarea> avec placeholder long) peut forcer le
-                parent à grandir et déborder le viewport mobile. */}
-            <div className="rounded-xl border p-4 md:p-5 space-y-3 min-w-0 overflow-hidden" style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
-              <div className="flex flex-wrap items-center gap-2 justify-between mb-1">
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="p-1.5 rounded-lg flex-shrink-0" style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' }}><Users className="w-4 h-4" style={{ color: 'var(--accent-primary)' }} /></div>
-                  <h4 className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>Nouveau sous-agent</h4>
+            {/* ── Formulaire création ── */}
+            <div className="rounded-xl border p-5 space-y-3" style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg" style={{ background: 'color-mix(in srgb, var(--accent-primary) 10%, transparent)' }}><Users className="w-4 h-4" style={{ color: 'var(--accent-primary)' }} /></div>
+                  <h4 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Nouveau sous-agent</h4>
                 </div>
                 <button onClick={() => agentFileRef.current?.click()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:opacity-80 flex-shrink-0"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:opacity-80"
                   style={{ borderColor: 'var(--accent-primary)', color: 'var(--accent-primary)' }}>
                   <Upload className="w-3.5 h-3.5" /> Importer
                 </button>
@@ -1487,42 +1483,36 @@ export default function AgentSettings() {
                 </div>
               )}
 
-              {/* Champs essentiels — w-full min-w-0 sur chaque input pour
-                  éviter qu'un placeholder long impose une largeur intrinsèque
-                  qui force la grille parente à dépasser le viewport. */}
+              {/* Champs essentiels */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input placeholder="Nom (ex: seo_expert)" value={newAgent.name}
                   onChange={e => setNewAgent({ ...newAgent, name: e.target.value })}
-                  className="col-span-1 w-full min-w-0 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  className="col-span-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                 <input placeholder="Rôle (ex: Expert SEO)" value={newAgent.role}
                   onChange={e => setNewAgent({ ...newAgent, role: e.target.value })}
-                  className="col-span-1 w-full min-w-0 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  className="col-span-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                 <input placeholder="Description courte" value={newAgent.description}
                   onChange={e => setNewAgent({ ...newAgent, description: e.target.value })}
-                  className="col-span-1 sm:col-span-2 w-full min-w-0 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  className="col-span-1 sm:col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                 <input placeholder="Expertise (ex: référencement, mots-clés)" value={newAgent.expertise}
                   onChange={e => setNewAgent({ ...newAgent, expertise: e.target.value })}
-                  className="col-span-1 sm:col-span-2 w-full min-w-0 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  className="col-span-1 sm:col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                 <textarea placeholder="System prompt (optionnel — généré automatiquement si vide)" value={newAgent.system_prompt}
                   onChange={e => setNewAgent({ ...newAgent, system_prompt: e.target.value })} rows={3}
-                  className="col-span-1 sm:col-span-2 w-full min-w-0 rounded-lg px-3 py-2 text-sm focus:outline-none resize-none font-mono"
+                  className="col-span-1 sm:col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none resize-none font-mono"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                 <input type="text" placeholder="Tags (séparés par virgule)" value={newAgent.tags}
                   onChange={e => setNewAgent({ ...newAgent, tags: e.target.value })}
-                  className="col-span-1 sm:col-span-2 w-full min-w-0 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  className="col-span-1 sm:col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
               </div>
 
-              {/* Sélecteur modèle — min-w-0 sur la wrapper + max-w-full sur le
-                  select : sur Safari iOS, un select prend la largeur de sa
-                  plus longue <option>, ce qui peut largement dépasser le
-                  viewport mobile (ex. "openai/gpt-4.1-mini-something") et
-                  forcer la page entière à scroller horizontalement. */}
-              <div className="space-y-2 min-w-0">
+              {/* Sélecteur modèle */}
+              <div className="space-y-2">
                 <p className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Modèle du sous-agent</p>
                 <select
                   value={newAgent.model ? `${newAgent.provider}||${newAgent.model}` : ''}
@@ -1534,7 +1524,7 @@ export default function AgentSettings() {
                       setNewAgent({ ...newAgent, provider: prov, model: rest.join('||') })
                     }
                   }}
-                  className="w-full max-w-full min-w-0 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
                   <option value="">— Modèle par défaut du provider principal —</option>
                   {enabledProviders.map(prov => (
@@ -1591,9 +1581,8 @@ export default function AgentSettings() {
               </button>
             </div>
 
-            {/* ── Liste des sous-agents ── min-w-0 garde-fou pour que la liste
-                ne déborde pas du panel parent (espace-y-3 ne wrap pas seul). */}
-            <div className="space-y-3 min-w-0">
+            {/* ── Liste des sous-agents ── */}
+            <div className="space-y-3">
               {subAgents.length === 0 && (
                 <div className="text-center py-10 px-6 rounded-xl border border-dashed" style={{ borderColor: 'var(--border)', background: 'var(--bg-primary)' }}>
                   <Users className="w-8 h-8 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
@@ -1611,15 +1600,15 @@ export default function AgentSettings() {
                     style={{ background: 'var(--bg-primary)', borderColor: isEditing ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border-subtle)' }}>
 
                     {/* Header carte */}
-                    <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className="flex items-center justify-between px-4 py-3">
+                      <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                           style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 15%, transparent), color-mix(in srgb, var(--accent-secondary) 8%, transparent))' }}>
                           <Bot className="w-4 h-4" style={{ color: 'var(--accent-primary)' }} />
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{agent.name}</span>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{agent.name}</span>
                             {agent.version && <span className="text-[10px] px-1.5 py-0.5 rounded border" style={{ color: 'var(--accent-tertiary)', borderColor: 'color-mix(in srgb, var(--accent-tertiary) 30%, transparent)' }}>v{agent.version}</span>}
                           </div>
                           <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{agent.role}</div>
@@ -1633,7 +1622,7 @@ export default function AgentSettings() {
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-wrap ml-auto">
+                      <div className="flex items-center gap-2">
                         {/* Badge modèle */}
                         <span className="px-2 py-0.5 rounded text-[10px] font-medium" style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                           {agent.model ? agent.model.split('/').pop() : 'modèle défaut'}
@@ -1686,7 +1675,7 @@ export default function AgentSettings() {
                             style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
                         </div>
 
-                        <div className="space-y-1.5 min-w-0">
+                        <div className="space-y-1.5">
                           <label className="text-[10px] uppercase tracking-widest block" style={{ color: 'var(--text-muted)' }}>Modèle du sous-agent</label>
                           <select
                             value={editAgentForm.model ? `${editAgentForm.provider}||${editAgentForm.model}` : ''}
@@ -1698,7 +1687,7 @@ export default function AgentSettings() {
                                 setEditAgentForm({ ...editAgentForm, provider: prov, model: rest.join('||') })
                               }
                             }}
-                            className="w-full max-w-full min-w-0 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                            className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
                             style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                           >
                             <option value="">— Modèle par défaut du provider principal —</option>
@@ -1990,8 +1979,8 @@ export default function AgentSettings() {
                       }}
                   >
                     {/* Card header */}
-                    <div className="flex flex-wrap items-center gap-3 p-4">
-                      <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                    <div className="flex items-center gap-3 p-4">
+                      <div className="cursor-grab active:cursor-grabbing p-1 -ml-1" style={{ color: 'var(--text-muted)' }}>
                         <GripVertical className="w-4 h-4" />
                       </div>
                       <button
@@ -2015,7 +2004,7 @@ export default function AgentSettings() {
                         </div>
                         <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>{p.description}</p>
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
+                      <div className="flex items-center gap-1 flex-shrink-0">
                         <button
                           onClick={() => {
                             if (isEditing) {
