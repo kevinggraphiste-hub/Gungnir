@@ -308,6 +308,16 @@ export default function AgentSettings() {
   }, [activeTab])
 
   const loadData = async () => {
+    // Quand le backend renvoie une erreur (500, 401 transient, etc.), `r.json()`
+    // donne un objet `{detail: "..."}` que `setSkills` accepte volontiers — puis
+    // au prochain render `skills.map()` crashe avec "c.map is not a function"
+    // (variable minifiée). On guard chaque payload pour ne jamais sortir du
+    // contrat array, et on log les cas suspects pour qu'on les voit en console.
+    const safeArray = (data: any, label: string): any[] => {
+      if (Array.isArray(data)) return data
+      console.error(`AgentSettings: ${label} attendu array, reçu:`, data)
+      return []
+    }
     try {
       const [modeRes, skillsRes, agentsRes, persRes, secRes, activeSkillRes] = await Promise.all([
         apiFetch('/api/agent/mode').then(r => r.json()),
@@ -317,15 +327,20 @@ export default function AgentSettings() {
         apiFetch('/api/security/scan').then(r => r.json()),
         apiFetch('/api/skills/active').then(r => r.json()).catch(() => ({ active: null })),
       ])
-      setCurrentMode(modeRes.mode)
-      setSkills(skillsRes)
-      setSubAgents(agentsRes)
-      setPersonalities(persRes)
+      setCurrentMode(modeRes?.mode ?? 'autonomous')
+      setSkills(safeArray(skillsRes, 'skills'))
+      setSubAgents(safeArray(agentsRes, 'sub_agents'))
+      setPersonalities(safeArray(persRes, 'personalities'))
       setSecurityScan(secRes)
-      setPendingRequests(modeRes.pending_requests || [])
+      setPendingRequests(Array.isArray(modeRes?.pending_requests) ? modeRes.pending_requests : [])
       setActiveSkillName(activeSkillRes?.active || null)
     } catch (err) {
       console.error('Load error:', err)
+      // Reset à des valeurs sûres pour que l'UI ne crash pas en silence sur le
+      // tab d'après — l'ErrorBoundary garde une trace visible pour l'user.
+      setSkills([])
+      setSubAgents([])
+      setPersonalities([])
     }
   }
 
@@ -736,7 +751,7 @@ export default function AgentSettings() {
   ]
 
   return (
-    <div className="max-w-6xl mx-auto p-6 h-full overflow-y-auto">
+    <div className="max-w-6xl mx-auto p-4 md:p-6 h-full overflow-y-auto overflow-x-hidden">
       <PageHeader
         icon={<Bot size={18} />}
         title="Configuration Agent"
@@ -748,7 +763,7 @@ export default function AgentSettings() {
         <TabBar tabs={tabs} active={activeTab} onChange={setActiveTab} />
       </div>
 
-      <div className="rounded-xl border p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
+      <div className="rounded-xl border p-4 md:p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
         {activeTab === 'mode' && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -842,7 +857,7 @@ export default function AgentSettings() {
                 <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Activez un provider dans <strong style={{ color: 'var(--text-secondary)' }}>Paramètres &rarr; Providers</strong></p>
               </div>
             ) : (
-              <div className="bg-[var(--bg-primary)] rounded-xl border border-[var(--border)] p-5 flex flex-col" style={{ maxHeight: '480px' }}>
+              <div className="bg-[var(--bg-primary)] rounded-xl border border-[var(--border)] p-3 md:p-5 flex flex-col" style={{ maxHeight: '480px' }}>
                 {/* Search */}
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] mb-4 flex-shrink-0">
                   <Search className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
@@ -1224,7 +1239,7 @@ export default function AgentSettings() {
                       ...(activeSkillName === skill.name ? { boxShadow: '0 0 0 1px var(--accent-primary)' } : {}),
                     }}
                   >
-                    <div className="flex items-center gap-3 p-4">
+                    <div className="flex flex-wrap items-center gap-3 p-4">
                       <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         <GripVertical className="w-4 h-4" />
                       </div>
@@ -1295,7 +1310,7 @@ export default function AgentSettings() {
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                      <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
                         <button
                           onClick={() => toggleActiveSkill(skill.name)}
                           className="px-2.5 py-1 rounded-lg text-xs font-medium border transition-all"
@@ -1581,15 +1596,15 @@ export default function AgentSettings() {
                     style={{ background: 'var(--bg-primary)', borderColor: isEditing ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border-subtle)' }}>
 
                     {/* Header carte */}
-                    <div className="flex items-center justify-between px-4 py-3">
-                      <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
                         <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                           style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 15%, transparent), color-mix(in srgb, var(--accent-secondary) 8%, transparent))' }}>
                           <Bot className="w-4 h-4" style={{ color: 'var(--accent-primary)' }} />
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{agent.name}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{agent.name}</span>
                             {agent.version && <span className="text-[10px] px-1.5 py-0.5 rounded border" style={{ color: 'var(--accent-tertiary)', borderColor: 'color-mix(in srgb, var(--accent-tertiary) 30%, transparent)' }}>v{agent.version}</span>}
                           </div>
                           <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{agent.role}</div>
@@ -1603,7 +1618,7 @@ export default function AgentSettings() {
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap ml-auto">
                         {/* Badge modèle */}
                         <span className="px-2 py-0.5 rounded text-[10px] font-medium" style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                           {agent.model ? agent.model.split('/').pop() : 'modèle défaut'}
@@ -1960,8 +1975,8 @@ export default function AgentSettings() {
                       }}
                   >
                     {/* Card header */}
-                    <div className="flex items-center gap-3 p-4">
-                      <div className="cursor-grab active:cursor-grabbing p-1 -ml-1" style={{ color: 'var(--text-muted)' }}>
+                    <div className="flex flex-wrap items-center gap-3 p-4">
+                      <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         <GripVertical className="w-4 h-4" />
                       </div>
                       <button
@@ -1985,7 +2000,7 @@ export default function AgentSettings() {
                         </div>
                         <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>{p.description}</p>
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                      <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
                         <button
                           onClick={() => {
                             if (isEditing) {
