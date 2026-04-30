@@ -286,14 +286,44 @@ async def list_models(provider_name: str, request: Request, session: AsyncSessio
     try:
         provider = get_provider(provider_name, api_key, base_url)
         live_models = await provider.list_models()
+        # Tags agentique autoritatifs depuis le provider quand dispo.
+        # OpenRouter expose `supported_parameters: string[]` sur chaque
+        # modèle — si la liste contient "tools" (ou "tool_choice"), le
+        # modèle supporte officiellement le function calling natif.
+        # Plus fiable que des regex de noms, surtout pour les nouveaux
+        # modèles qui ne matchent aucun pattern hardcodé.
+        agentic_ids: list[str] = []
+        if provider_name == "openrouter" and hasattr(provider, "list_models_with_metadata"):
+            try:
+                meta = await provider.list_models_with_metadata()
+                for m in meta:
+                    sp = m.get("supported_parameters") or []
+                    if isinstance(sp, list) and ("tools" in sp or "tool_choice" in sp):
+                        mid = m.get("id")
+                        if mid:
+                            agentic_ids.append(mid)
+            except Exception as e:
+                import logging
+                logging.getLogger("gungnir").warning(
+                    f"OpenRouter agentic detection failed: {type(e).__name__}: {e}"
+                )
         if live_models:
             # Merge: modèles live + statiques manquants
             model_set = set(live_models)
             for m in static_models:
                 if m not in model_set:
                     live_models.append(m)
-            return {"models": sorted(live_models), "source": "live"}
-        return {"models": static_models, "source": "static", "reason": "live_empty"}
+            return {
+                "models": sorted(live_models),
+                "agentic_models": sorted(set(agentic_ids)),
+                "source": "live",
+            }
+        return {
+            "models": static_models,
+            "agentic_models": sorted(set(agentic_ids)),
+            "source": "static",
+            "reason": "live_empty",
+        }
     except Exception as e:
         import logging; logging.getLogger("gungnir").error(
             f"Model fetch error for {provider_name} (base={base_url}): {type(e).__name__}: {e}"

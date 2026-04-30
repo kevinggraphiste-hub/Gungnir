@@ -1,23 +1,21 @@
 /**
  * Gungnir — détection des modèles agentiques.
  *
- * Un modèle est dit "agentique" quand il supporte de manière fiable le
- * function calling / tool use natif. Ça importe parce que Gungnir est
- * conçu autour des outils (bash, code_*, web_fetch, scheduler…) — un
- * modèle qui ne sait pas appeler les outils nativement va répondre en
- * texte là où on attend un tool call, et l'utilisateur a l'impression
- * que "ça ne marche pas" alors que c'est juste un mauvais choix de
- * modèle.
+ * **Source autoritative** : flag `supported_parameters` exposé par
+ * OpenRouter (et certains autres providers) sur chaque modèle. Quand
+ * cette liste contient "tools" / "tool_choice", le modèle supporte
+ * officiellement le function calling natif. Le backend récupère cette
+ * info via `OpenRouterProvider.list_models_with_metadata()` et la
+ * passe au frontend dans la réponse `/api/models/{provider}` sous
+ * la forme `{ agentic_models: [id1, id2, ...] }`. Le runtime Set
+ * `_runtimeAgenticIds` ci-dessous est alimenté à chaque fetch et
+ * consulté EN PRIORITÉ par `classifyModel`.
  *
- * La taxonomie ici est basée sur l'observation production + les benchs
- * publics (BFCL, ToolBench). Critères :
- *  - Modèle annoncé "function calling" par son provider ✓
- *  - Score BFCL > 75 % sur tools simples
- *  - Famille connue pour bien tenir sur les boucles multi-tool
- *
- * Les "petits modèles" (≤ 3B params, hors Phi-3.5 mini-instruct qui
- * gère décemment) sont marqués non-agentiques par défaut — ils peuvent
- * répondre correctement en chat mais ratent souvent l'appel d'outil.
+ * **Fallback** : regex hardcodés sur les noms de modèles connus.
+ * Utile quand le provider ne fournit pas de metadata (Anthropic
+ * direct, OpenAI direct, providers custom OpenAI-compat). Couvre
+ * les familles courantes — agentique reconnu par observation prod
+ * + benchs publics (BFCL, ToolBench).
  */
 
 const AGENTIC_PATTERNS: RegExp[] = [
@@ -38,6 +36,10 @@ const AGENTIC_PATTERNS: RegExp[] = [
   /\bministral-(3b|8b)/i,
   /\bcodestral-/i,
   /\bpixtral-/i,
+  // Mistral Devstral — modèle entraîné spécifiquement pour l'agentic
+  // coding (SWE-bench, multi-step reasoning). Toutes les variantes
+  // (small, medium, dated 2507/2512, etc.) sont agentic-natives.
+  /\bdevstral-/i,
   // Llama 3.0/3.1/3.3 — tool use depuis 3.1 8B (officiel Meta).
   // Les versions 3B et inférieures rateront, mais ≥ 8B sont OK.
   /\bllama-3(\.[013])?-(8b|70b|405b)/i,
@@ -56,11 +58,18 @@ const AGENTIC_PATTERNS: RegExp[] = [
   /\bdeepseek-(v[23](\.[0-9]+)?|r[12]|chat|coder)/i,
   // xAI Grok 3+ (Grok 2 avait du function calling mais peu fiable)
   /\bgrok-[3-9]/i,
-  // MiniMax M1/M2.x + MiMo (Xiaomi MiMo-V2/V2.5/V3, agentic-oriented)
+  // MiniMax M1/M2.x + MiMo (Xiaomi MiMo, agentic-oriented).
+  // Pattern mimo permissif : tous les "mimo-*" sont agentic — la
+  // famille entière (V1, V2, V2.5, V2.5-Pro, V3, V3-Pro, mini, max…)
+  // est annoncée agentic-oriented par Xiaomi.
   /\bminimax-m[12](\.[0-9]+)?/i,
   /\bMiniMax-M[12](\.[0-9]+)?/,
-  /\bmimo-(v[12](\.[0-9]+)?|pro)/i,
-  /\bMiMo-/,
+  /\bmimo[-/]/i,
+  /\bMiMo[-/]/,
+  // Poolside AI Laguna (M.1, XS.2, futures L/XL) — agentic coding models
+  // MoE entraînés sur SWE-bench. Tool use + reasoning natifs.
+  /\blaguna[- ](xs|s|m|l|xl)\.?[0-9]/i,
+  /\bpoolside\/laguna/i,
   // Cohere Command R / R+ (function-calling natif)
   /\bcommand-r(-plus)?(-08-2024|-04-2024)?\b/i,
   /\bcommand-(a|r7b)/i,
@@ -133,13 +142,29 @@ const NON_AGENTIC_PATTERNS: RegExp[] = [
 
 export type AgenticTier = 'agentic' | 'chat-only' | 'unknown'
 
+// Runtime store des IDs agentic découverts via l'API provider (ex:
+// OpenRouter `supported_parameters`). Mis à jour par
+// `registerAgenticIds` à chaque fetch /api/models/{provider}.
+const _runtimeAgenticIds = new Set<string>()
+
+export function registerAgenticIds(ids: string[] | undefined | null): void {
+  if (!Array.isArray(ids)) return
+  for (const id of ids) {
+    if (typeof id === 'string' && id) _runtimeAgenticIds.add(id)
+  }
+}
+
 export function classifyModel(model: string): AgenticTier {
   if (!model) return 'unknown'
   const m = model.trim()
-  // Order: explicit non-agentic > agentic > unknown. Un nom qui
-  // matche les deux (rare) tombe en non-agentic par sécurité — on
-  // préfère sous-promettre qu'induire l'utilisateur en erreur.
+  // 1. Source autoritative : si le provider a explicitement signalé
+  //    le modèle comme supportant les tools, on fait confiance.
+  if (_runtimeAgenticIds.has(m)) return 'agentic'
+  // 2. Pattern non-agentic explicite : on ne ment jamais en disant
+  //    "agentic" à un petit modèle qui rate les outils.
   if (NON_AGENTIC_PATTERNS.some(re => re.test(m))) return 'chat-only'
+  // 3. Pattern agentic hardcodé (fallback pour les providers sans
+  //    metadata exposée).
   if (AGENTIC_PATTERNS.some(re => re.test(m))) return 'agentic'
   return 'unknown'
 }

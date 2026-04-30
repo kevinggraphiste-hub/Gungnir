@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { SecondaryButton } from '../components/ui'
 import VoiceModal from '../components/VoiceModal'
-import { classifyModel } from '../utils/agenticModels'
+import { classifyModel, registerAgenticIds } from '../utils/agenticModels'
 import ApiKeysModal from '../components/ApiKeysModal'
 import UserModal from '../components/UserModal'
 import ConversationMenu from '../components/ConversationMenu'
@@ -1330,8 +1330,15 @@ export default function Chat() {
     const enabledNames = Object.entries(config.providers).filter(([, p]) => (p as any).enabled || (p as any).has_api_key).map(([name]) => name)
     Promise.all(
       enabledNames.map(async (name) => {
-        try { const res = await apiFetch(`/api/models/${name}`); const data = await res.json(); return { name, models: (data.models || []) as string[] } }
-        catch { return { name, models: [] } }
+        try {
+          const res = await apiFetch(`/api/models/${name}`)
+          const data = await res.json()
+          // Enregistre les IDs agentic remontés par le backend (OpenRouter
+          // `supported_parameters`) pour que classifyModel les marque
+          // correctement même si le nom ne matche aucun pattern.
+          registerAgenticIds(data.agentic_models)
+          return { name, models: (data.models || []) as string[] }
+        } catch { return { name, models: [] } }
       })
     ).then(results => {
       setProviderModelsMap(prev => {
@@ -2654,9 +2661,13 @@ export default function Chat() {
                                   style={selectedModel === mod && selectedProvider === prov ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
                                   <span className="flex items-center gap-1.5 min-w-0 flex-1">
                                     {isAgenticFav && (
-                                      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                                      <span className="rounded-full flex-shrink-0"
                                         title="Agentique — supporte les outils Gungnir nativement"
-                                        style={{ background: 'var(--accent-success, #22c55e)' }} />
+                                        style={{
+                                          width: 8, height: 8,
+                                          background: '#22c55e',
+                                          boxShadow: '0 0 4px rgba(34, 197, 94, 0.5)',
+                                        }} />
                                     )}
                                     <span className="truncate">{mod.split('/').pop() || mod} <span style={{ color: 'var(--text-muted)' }}>({prov})</span></span>
                                   </span>

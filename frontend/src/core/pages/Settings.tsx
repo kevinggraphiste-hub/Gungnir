@@ -11,6 +11,7 @@ import {
 import InfoButton from '../components/InfoButton'
 import { PageHeader } from '../components/ui'
 import { useUIPreferences, detectBrowserTimezone } from '../hooks/useUIPreferences'
+import { registerAgenticIds } from '../utils/agenticModels'
 
 // Défauts pour les prefs TTS/PTT — utilisés en fallback si rien n'est
 // encore en localStorage ou si un champ manque (ajout rétrocompatible).
@@ -439,6 +440,8 @@ export default function Settings() {
         const res = await apiFetch(`/api/models/${name}`)
         if (res.ok) {
           const data = await res.json()
+          // Tags agentic depuis le provider (OpenRouter supported_parameters)
+          registerAgenticIds(data.agentic_models)
           if (data.source === 'live' && Array.isArray(data.models) && data.models.length > 0) {
             setLivePerProviderModels(prev => ({ ...prev, [name]: data.models }))
           } else if (data.error) {

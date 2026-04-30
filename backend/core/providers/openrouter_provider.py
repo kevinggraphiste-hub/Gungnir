@@ -90,6 +90,21 @@ class OpenRouterProvider(LLMProvider):
         data = resp.json()
         return [m["id"] for m in data.get("data", [])]
 
+    async def list_models_with_metadata(self) -> list[dict]:
+        """Retourne la liste complète des modèles OpenRouter avec leurs
+        metadata, dont ``supported_parameters`` qui permet de savoir si
+        un modèle supporte le function calling natif (présence de
+        ``tools`` ou ``tool_choice`` dans la liste).
+
+        Source : https://openrouter.ai/docs/models — chaque entrée a
+        un champ ``supported_parameters: string[]`` autoritatif depuis
+        le provider amont. Bien plus fiable que des regex de noms.
+        """
+        resp = await self.client.get("/models")
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("data") or []
+
     async def generate_image(
         self,
         prompt: str,

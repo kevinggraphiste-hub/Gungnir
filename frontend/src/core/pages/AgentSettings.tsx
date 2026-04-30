@@ -10,7 +10,7 @@ import { useStore } from '../stores/appStore'
 import { api, apiFetch } from '../services/api'
 import InfoButton from '../components/InfoButton'
 import { PageHeader, TabBar } from '../components/ui'
-import { classifyModel } from '../utils/agenticModels'
+import { classifyModel, registerAgenticIds } from '../utils/agenticModels'
 
 // Picker emoji complet via emoji-mart (≈1500 emojis, recherche FR/EN, catégories,
 // récents, skin tones). Remplace l'ancienne grille hardcodée de 25 emojis.
@@ -261,6 +261,8 @@ export default function AgentSettings() {
         try {
           const res = await apiFetch(`/api/models/${name}`)
           const data = await res.json()
+          // Tags agentic depuis le provider (OpenRouter supported_parameters)
+          registerAgenticIds(data.agentic_models)
           return { name, models: (data.models || []) as string[] }
         } catch {
           return { name, models: [] }
