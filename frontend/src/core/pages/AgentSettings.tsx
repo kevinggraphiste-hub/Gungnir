@@ -10,6 +10,7 @@ import { useStore } from '../stores/appStore'
 import { api, apiFetch } from '../services/api'
 import InfoButton from '../components/InfoButton'
 import { PageHeader, TabBar } from '../components/ui'
+import { classifyModel } from '../utils/agenticModels'
 
 // Picker emoji complet via emoji-mart (≈1500 emojis, recherche FR/EN, catégories,
 // récents, skin tones). Remplace l'ancienne grille hardcodée de 25 emojis.
@@ -895,6 +896,7 @@ export default function AgentSettings() {
                           const [prov, mod] = fav.split('::')
                           if (!prov || !mod) return null
                           const isSelected = selectedModel === mod && selectedProvider === prov
+                          const tier = classifyModel(mod)
                           return (
                             <button key={fav}
                               onClick={() => { setSelectedProvider(prov); setSelectedModel(mod) }}
@@ -908,6 +910,20 @@ export default function AgentSettings() {
                                   onClick={e => { e.stopPropagation(); toggleFavorite(prov, mod) }} />
                                 <span className="text-sm truncate">{mod.split('/').pop() || mod}</span>
                                 <span className="text-[10px] capitalize" style={{ color: 'var(--text-muted)' }}>{prov}</span>
+                                {tier === 'agentic' && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wide flex-shrink-0"
+                                    title="Function calling natif — supporte les outils Gungnir"
+                                    style={{ background: 'color-mix(in srgb, var(--accent-success, #22c55e) 18%, transparent)', color: 'var(--accent-success, #22c55e)' }}>
+                                    Agentique
+                                  </span>
+                                )}
+                                {tier === 'chat-only' && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wide flex-shrink-0"
+                                    title="Chat-only — gère mal les outils, éviter pour l'agent principal"
+                                    style={{ background: 'color-mix(in srgb, var(--text-muted) 15%, transparent)', color: 'var(--text-muted)' }}>
+                                    Chat seul
+                                  </span>
+                                )}
                               </div>
                               {isSelected && <Check className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--accent-primary)' }} />}
                             </button>
@@ -929,6 +945,7 @@ export default function AgentSettings() {
                             const isSelected = selectedModel === m && selectedProvider === p.name
                             const isDefault = m === p.defaultModel
                             const isFav = favoriteModels.includes(`${p.name}::${m}`)
+                            const tier = classifyModel(m)
                             return (
                               <button
                                 key={`${p.name}/${m}`}
@@ -944,6 +961,20 @@ export default function AgentSettings() {
                                     style={{ color: isFav ? 'var(--accent-tertiary)' : 'var(--border)' }}
                                     onClick={e => { e.stopPropagation(); toggleFavorite(p.name, m) }} />
                                   <span className="text-sm truncate">{m.split('/').pop()}</span>
+                                  {tier === 'agentic' && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wide flex-shrink-0"
+                                      title="Modèle qui supporte le function calling natif — gère les outils Gungnir (bash, code, web_fetch…)"
+                                      style={{ background: 'color-mix(in srgb, var(--accent-success, #22c55e) 18%, transparent)', color: 'var(--accent-success, #22c55e)' }}>
+                                      Agentique
+                                    </span>
+                                  )}
+                                  {tier === 'chat-only' && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wide flex-shrink-0"
+                                      title="Petit modèle ou modèle chat-only — risque de mal gérer les outils Gungnir, à éviter pour l'agent principal"
+                                      style={{ background: 'color-mix(in srgb, var(--text-muted) 15%, transparent)', color: 'var(--text-muted)' }}>
+                                      Chat seul
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                                   {isDefault && <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>défaut</span>}

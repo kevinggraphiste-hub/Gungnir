@@ -2545,6 +2545,35 @@ export default function Chat() {
             </div>
           )}
           <div className="max-w-4xl mx-auto">
+            {/* Banner inline "Configure ton provider" — affiché si AUCUN
+                provider n'a de clé API configurée. Filet pour les users qui
+                ont skip l'onboarding ou qui ont supprimé toutes leurs clés.
+                Non bloquant : on peut quand même taper, mais l'envoi
+                échouera avec un message clair. */}
+            {(() => {
+              const provs = (config?.providers || {}) as Record<string, any>
+              const hasAnyKey = Object.values(provs).some(p => p?.has_api_key)
+              if (hasAnyKey) return null
+              return (
+                <div className="mb-2 px-3 py-2 rounded-xl flex items-center gap-2 text-xs"
+                  style={{
+                    background: 'color-mix(in srgb, var(--scarlet) 8%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--scarlet) 30%, transparent)',
+                    color: 'var(--text-secondary)',
+                  }}>
+                  <span style={{ color: 'var(--scarlet)' }}>●</span>
+                  <span className="flex-1">
+                    Aucune clé API configurée — pour discuter avec moi, ajoute ta clé d'un provider.
+                  </span>
+                  <button onClick={() => navigate('/settings?tab=providers')}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors hover:opacity-90 flex-shrink-0"
+                    style={{ background: 'var(--scarlet)', color: '#fff' }}>
+                    Configurer →
+                  </button>
+                </div>
+              )
+            })()}
+
             {/* Aperçu fichiers joints (au-dessus de la boîte) */}
             {attachedFiles.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
