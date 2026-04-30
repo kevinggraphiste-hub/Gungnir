@@ -1661,8 +1661,8 @@ export default function AgentSettings() {
                             <span className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{agent.name}</span>
                             {agent.version && <span className="text-[10px] px-1.5 py-0.5 rounded border" style={{ color: 'var(--accent-tertiary)', borderColor: 'color-mix(in srgb, var(--accent-tertiary) 30%, transparent)' }}>v{agent.version}</span>}
                           </div>
-                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{agent.role}</div>
-                          {agent.description && <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{agent.description}</div>}
+                          <div className="text-xs break-words" style={{ color: 'var(--text-muted)' }}>{agent.role}</div>
+                          {agent.description && <div className="text-[10px] mt-0.5 break-words" style={{ color: 'var(--text-muted)' }}>{agent.description}</div>}
                           {agent.tags && agent.tags.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1">
                               {agent.tags.map((tag: string) => (
@@ -1693,10 +1693,15 @@ export default function AgentSettings() {
                       </div>
                     </div>
 
-                    {/* Expertise preview (collapsed) */}
+                    {/* Expertise preview (collapsed) — line-clamp-2 + break-words
+                        au lieu de truncate. Le truncate (white-space: nowrap +
+                        overflow) refuse les long textes sans contrainte parent
+                        stricte → poussait toute la card hors viewport mobile.
+                        line-clamp-2 wrappe normalement et coupe à 2 lignes max
+                        avec ellipsis, sans dépendre de la largeur parente. */}
                     {!isEditing && agent.expertise && (
                       <div className="px-4 pb-3">
-                        <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{agent.expertise}</p>
+                        <p className="text-xs line-clamp-2 break-words" style={{ color: 'var(--text-muted)' }}>{agent.expertise}</p>
                       </div>
                     )}
 

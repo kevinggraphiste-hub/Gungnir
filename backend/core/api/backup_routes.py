@@ -166,6 +166,11 @@ def _discover_user_data_roots(uid: int) -> list[str]:
     à `data/<root>/<uid>/...`. Le backup les inclut automatiquement sans
     nécessiter de modification du core. Retourne l'union de la liste connue
     (`_USER_DATA_ROOTS`) et de tout dossier supplémentaire détecté.
+
+    Variant supportée : `data/<root>/users/<uid>/` (le plugin conscience a
+    cette structure historique avec un `users/` intermédiaire). On expose
+    le root de la même façon, et `_user_files_to_archive` sait gérer les
+    deux layouts (avec et sans `users/`).
     """
     uid_str = str(uid)
     detected: set[str] = set(_USER_DATA_ROOTS)
@@ -173,7 +178,11 @@ def _discover_user_data_roots(uid: int) -> list[str]:
         for child in DATA_DIR.iterdir():
             if not child.is_dir():
                 continue
+            # Layout standard : data/<root>/<uid>/
             if (child / uid_str).is_dir():
+                detected.add(child.name)
+            # Layout legacy/conscience : data/<root>/users/<uid>/
+            elif (child / "users" / uid_str).is_dir():
                 detected.add(child.name)
     return sorted(detected)
 
@@ -191,16 +200,23 @@ def _user_files_to_archive(uid: int) -> list[tuple[Path, str]]:
     out: list[tuple[Path, str]] = []
     uid_str = str(uid)
     for root in _discover_user_data_roots(uid):
-        root_dir = DATA_DIR / root / uid_str
-        if not root_dir.exists() or not root_dir.is_dir():
-            continue
-        for p in root_dir.rglob("*"):
-            if p.is_file():
-                try:
-                    rel = p.relative_to(DATA_DIR)
-                    out.append((p, str(rel).replace("\\", "/")))
-                except Exception:
-                    continue
+        # Deux layouts possibles : data/<root>/<uid>/ (standard) ou
+        # data/<root>/users/<uid>/ (conscience). On essaie les deux et on
+        # archive ce qui existe — pas mutuellement exclusifs.
+        candidates = [
+            DATA_DIR / root / uid_str,
+            DATA_DIR / root / "users" / uid_str,
+        ]
+        for root_dir in candidates:
+            if not root_dir.exists() or not root_dir.is_dir():
+                continue
+            for p in root_dir.rglob("*"):
+                if p.is_file():
+                    try:
+                        rel = p.relative_to(DATA_DIR)
+                        out.append((p, str(rel).replace("\\", "/")))
+                    except Exception:
+                        continue
 
     code_cfg = DATA_DIR / "code_configs" / f"{uid}.json"
     if code_cfg.exists():
@@ -537,15 +553,23 @@ async def _import_user_db(session: AsyncSession, uid: int, export: dict) -> dict
 
 
 def _wipe_user_files(uid: int) -> None:
-    """Delete every file under the user's per-user filesystem locations."""
+    """Delete every file under the user's per-user filesystem locations.
+
+    Couvre les deux layouts en miroir de _user_files_to_archive :
+    `data/<root>/<uid>/` et `data/<root>/users/<uid>/`. Sans ça, un user
+    qui supprime son compte laisserait derrière lui sa state conscience
+    (qui vit à `data/consciousness/users/<uid>/`).
+    """
     uid_str = str(uid)
-    for root in _USER_DATA_ROOTS:
-        d = DATA_DIR / root / uid_str
-        if d.exists():
-            try:
-                shutil.rmtree(d)
-            except Exception as e:
-                logger.warning(f"Could not wipe {d}: {e}")
+    # Discovery dynamique pour aussi nettoyer les plugins tiers qui ont
+    # créé leur propre racine sous `data/<plugin>/<uid>/`.
+    for root in _discover_user_data_roots(uid):
+        for d in (DATA_DIR / root / uid_str, DATA_DIR / root / "users" / uid_str):
+            if d.exists():
+                try:
+                    shutil.rmtree(d)
+                except Exception as e:
+                    logger.warning(f"Could not wipe {d}: {e}")
     code_cfg = DATA_DIR / "code_configs" / f"{uid}.json"
     if code_cfg.exists():
         try:
