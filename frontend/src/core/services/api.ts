@@ -600,6 +600,11 @@ export const api = {
     return handleResponse(response)
   },
 
+  deleteMyAccount: async () => {
+    const response = await apiFetch(`${API_BASE}/users/me`, { method: 'DELETE' })
+    return handleResponse(response)
+  },
+
   impersonateUser: async (id: number) => {
     const response = await apiFetch(`${API_BASE}/users/${id}/impersonate`, { method: 'POST' })
     const result = await handleResponse(response)

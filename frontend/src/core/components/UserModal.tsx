@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, User, Plus, Trash2, Pencil, Check } from 'lucide-react'
+import { X, User, Plus, Trash2, Pencil, Check, AlertTriangle } from 'lucide-react'
 import { api, clearAuthToken } from '../services/api'
 
 interface UserData {
@@ -27,6 +27,11 @@ export default function UserModal({ isOpen, onClose, currentUser, onUserChange }
   const [showLogin, setShowLogin] = useState(false)
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [loading, setLoading] = useState(false)
+  // Self-delete : double confirmation pour éviter le clic compulsif. L'user
+  // doit ouvrir le panneau (showSelfDelete) puis taper le mot magique
+  // "supprimer" exact avant que le bouton rouge soit actif.
+  const [showSelfDelete, setShowSelfDelete] = useState(false)
+  const [selfDeleteConfirm, setSelfDeleteConfirm] = useState('')
 
   useEffect(() => { if (isOpen) loadUsers() }, [isOpen])
 
@@ -143,6 +148,30 @@ export default function UserModal({ isOpen, onClose, currentUser, onUserChange }
       setMessage(null)
       window.location.href = '/'
     }, 800)
+  }
+
+  const handleSelfDelete = async () => {
+    if (selfDeleteConfirm !== 'supprimer') return
+    setLoading(true)
+    try {
+      await api.deleteMyAccount()
+      // Compte supprimé : on dégage le token + cache local et on redirige
+      // vers / (qui repassera par le flow de login).
+      clearAuthToken()
+      onUserChange(null)
+      const userKeys = [
+        'gungnir_current_user', 'gungnir_favorite_models', 'gungnir_chat_sidebar',
+        'gungnir_titles_generated', 'gungnir_provider', 'gungnir_model',
+        'gungnir_agent_name', 'gungnir_theme', 'gungnir_fontsize',
+        'gungnir_custom_theme', 'gungnir_ui_prefs',
+      ]
+      userKeys.forEach(k => { try { localStorage.removeItem(k) } catch {} })
+      setMessage({ type: 'ok', text: 'Compte supprimé. Redirection…' })
+      setTimeout(() => { window.location.href = '/' }, 1200)
+    } catch (err: any) {
+      setMessage({ type: 'err', text: err.message || 'Erreur lors de la suppression' })
+      setLoading(false)
+    }
   }
 
   const startEditing = (user: UserData) => {
@@ -324,6 +353,58 @@ export default function UserModal({ isOpen, onClose, currentUser, onUserChange }
               style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
               <Plus className="w-4 h-4" /> Créer un utilisateur
             </button>
+          )}
+
+          {/* Zone de danger — visible uniquement si user authentifié.
+              Double confirmation : ouvre un panneau, puis demande de taper
+              "supprimer" exact. Refuse si l'user est le dernier admin. */}
+          {currentUser && (
+            <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+              {!showSelfDelete ? (
+                <button onClick={() => setShowSelfDelete(true)}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-sm transition-colors"
+                  style={{
+                    borderColor: 'color-mix(in srgb, var(--accent-danger, #ef4444) 30%, transparent)',
+                    color: 'var(--accent-danger, #ef4444)',
+                  }}>
+                  <AlertTriangle className="w-4 h-4" /> Supprimer mon compte
+                </button>
+              ) : (
+                <div className="rounded-xl p-4 space-y-3"
+                  style={{
+                    background: 'color-mix(in srgb, var(--accent-danger, #ef4444) 8%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--accent-danger, #ef4444) 30%, transparent)',
+                  }}>
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: 'var(--accent-danger, #ef4444)' }} />
+                    <div className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                      <strong style={{ color: 'var(--text-primary)' }}>Action irréversible.</strong> Toutes
+                      tes données (conversations, skills, personnalités, sous-agents,
+                      channels, intégrations, conscience, KB, workspace…) seront
+                      <strong> définitivement supprimées</strong>. Aucune récupération possible.
+                    </div>
+                  </div>
+                  <input type="text" value={selfDeleteConfirm}
+                    onChange={e => setSelfDeleteConfirm(e.target.value)}
+                    placeholder="Tape « supprimer » pour confirmer"
+                    className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  <div className="flex gap-2">
+                    <button onClick={handleSelfDelete}
+                      disabled={selfDeleteConfirm !== 'supprimer' || loading}
+                      className="flex-1 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      style={{ background: 'var(--accent-danger, #ef4444)', color: '#fff' }}>
+                      {loading ? 'Suppression…' : 'Supprimer définitivement'}
+                    </button>
+                    <button onClick={() => { setShowSelfDelete(false); setSelfDeleteConfirm('') }}
+                      className="px-3 py-2 rounded-lg text-sm transition-colors"
+                      style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}>
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

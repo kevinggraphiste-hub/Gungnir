@@ -1430,7 +1430,12 @@ export default function AgentSettings() {
         )}
 
         {activeTab === 'subagents' && (
-          <div className="space-y-5">
+          // Conteneur isolant : w-full + overflow-hidden + min-w-0 force le
+          // contenu sub-agents à se confiner à la largeur du parent. Combiné
+          // au clamp racine (html, body { max-width: 100vw } dans index.css),
+          // ça verrouille la section à la largeur du viewport, peu importe
+          // ce qu'un descendant essaie de pousser.
+          <div className="w-full min-w-0 overflow-hidden space-y-5">
             {/* Intro */}
             <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               <span>Sous-agents</span>

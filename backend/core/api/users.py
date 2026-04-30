@@ -196,6 +196,92 @@ async def impersonate_user(user_id: int, request: Request, session: AsyncSession
     }
 
 
+async def _perform_user_delete(session: AsyncSession, user: User) -> dict:
+    """Cascade-delete d'un user + toutes ses ressources (DB + fichiers +
+    caches). Refuse si c'est le dernier admin actif. Utilisé à la fois par
+    la route admin (DELETE /users/{id}) et la route self-delete (/users/me).
+    """
+    user_id = user.id
+    if user.is_admin:
+        admin_count_res = await session.execute(
+            select(User).where(User.is_admin == True, User.is_active == True)  # noqa: E712
+        )
+        admin_count = len(admin_count_res.scalars().all())
+        if admin_count <= 1:
+            return {"_error": "Impossible de supprimer le dernier administrateur de l'instance", "_status": 400}
+
+    # 1. Cascade delete every user-scoped row (reuses the backup helper).
+    from backend.core.api.backup_routes import _delete_user_db, _wipe_user_files
+    await _delete_user_db(session, user_id)
+
+    # 2. Remove the user's own backup directory so their zips go with them.
+    try:
+        import shutil
+        from backend.core.api.backup_routes import _user_backup_dir
+        d = _user_backup_dir(user_id)
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+
+    # 3. Delete the user row itself.
+    await session.delete(user)
+    await session.commit()
+
+    # 4. Wipe the per-user filesystem tree (automata, consciousness,
+    #    workspace, soul, kb, webhooks, integrations, code_configs…).
+    _wipe_user_files(user_id)
+
+    # 5. Evict per-user caches so nothing points at a ghost user.
+    try:
+        from backend.core.agents.mcp_client import mcp_manager as _mcp
+        await _mcp.stop_user_servers(user_id)
+    except Exception:
+        pass
+    try:
+        from backend.core.plugin_registry import evict_consciousness
+        evict_consciousness(user_id)
+    except Exception:
+        pass
+    try:
+        from backend.core.agents.mode_manager import mode_pool as _mp
+        _mp._instances.pop(user_id, None)
+    except Exception:
+        pass
+
+    return {"ok": True, "id": user_id}
+
+
+@router.delete("/users/me")
+async def delete_my_account(request: Request, session: AsyncSession = Depends(get_session)):
+    """Self-delete : un utilisateur authentifié peut supprimer son propre
+    compte (toutes ses données partent avec : conversations, skills, perso,
+    sub-agents, channels, intégrations, conscience, KB, workspace…). Refuse
+    si c'est le dernier admin pour ne pas verrouiller l'instance."""
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+    user = await session.get(User, int(uid))
+    if not user:
+        return JSONResponse({"error": "Utilisateur introuvable"}, status_code=404)
+    try:
+        result = await _perform_user_delete(session, user)
+        if "_error" in result:
+            return JSONResponse({"error": result["_error"]}, status_code=result.get("_status", 400))
+        return result
+    except Exception as e:
+        import logging
+        logging.getLogger("gungnir").error(f"Self-delete failed for uid={uid}: {e}", exc_info=True)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+        return JSONResponse(
+            {"error": f"Erreur lors de la suppression de votre compte: {str(e)[:200]}"},
+            status_code=500,
+        )
+
+
 @router.delete("/users/{user_id}")
 async def delete_user(user_id: int, request: Request, session: AsyncSession = Depends(get_session)):
     """Hard-delete a user and every row/file scoped to them.
@@ -215,60 +301,11 @@ async def delete_user(user_id: int, request: Request, session: AsyncSession = De
     if not user:
         return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
 
-    # Refuse to delete the last remaining admin — otherwise nobody can get
-    # back into admin-only features (providers catalog, backup, doctor…).
-    if user.is_admin:
-        admin_count_res = await session.execute(
-            select(User).where(User.is_admin == True, User.is_active == True)  # noqa: E712
-        )
-        admin_count = len(admin_count_res.scalars().all())
-        if admin_count <= 1:
-            return JSONResponse(
-                {"error": "Impossible de supprimer le dernier administrateur de l'instance"},
-                status_code=400,
-            )
-
     try:
-        # 1. Cascade delete every user-scoped row (reuses the backup helper).
-        from backend.core.api.backup_routes import _delete_user_db, _wipe_user_files
-        await _delete_user_db(session, user_id)
-
-        # 2. Remove the user's own backup directory so their zips go with them.
-        try:
-            import shutil
-            from backend.core.api.backup_routes import _user_backup_dir
-            d = _user_backup_dir(user_id)
-            if d.exists():
-                shutil.rmtree(d, ignore_errors=True)
-        except Exception as _berr:
-            pass
-
-        # 3. Delete the user row itself.
-        await session.delete(user)
-        await session.commit()
-
-        # 4. Wipe the per-user filesystem tree (automata, consciousness,
-        #    workspace, soul, kb, webhooks, integrations, code_configs…).
-        _wipe_user_files(user_id)
-
-        # 5. Evict per-user caches so nothing points at a ghost user.
-        try:
-            from backend.core.agents.mcp_client import mcp_manager as _mcp
-            await _mcp.stop_user_servers(user_id)
-        except Exception:
-            pass
-        try:
-            from backend.core.plugin_registry import evict_consciousness
-            evict_consciousness(user_id)
-        except Exception:
-            pass
-        try:
-            from backend.core.agents.mode_manager import mode_pool as _mp
-            _mp._instances.pop(user_id, None)
-        except Exception:
-            pass
-
-        return {"ok": True, "id": user_id}
+        result = await _perform_user_delete(session, user)
+        if "_error" in result:
+            return JSONResponse({"error": result["_error"]}, status_code=result.get("_status", 400))
+        return result
     except Exception as e:
         import logging
         logging.getLogger("gungnir").error(f"User delete failed for uid={user_id}: {e}", exc_info=True)
