@@ -51,22 +51,21 @@ class MiniMaxProvider(LLMProvider):
         **kwargs,
     ):
         super().__init__(api_key, base_url, **kwargs)
-        # GroupId est OBLIGATOIRE sur tous les appels chat MiniMax. On
-        # l'attache à la fois en query param `?GroupId=…` (route OpenAI-
-        # compat /v1/chat/completions) ET en header `MM-GroupId` (route
-        # native /v1/text/chatcompletion_v2). Source : doc officielle +
-        # diagnostic user 2026-04-29 ("Selon l'endpoint utilisé, query
-        # parameter OU header custom"). La double propagation rend le
-        # provider tolérant aux deux conventions sans risque (l'API
-        # ignore silencieusement le canal qu'elle n'attend pas).
+        # IMPORTANT — la doc officielle MiniMax sur la route OpenAI-compat
+        # `https://api.minimax.io/v1/chat/completions` ne demande PAS de
+        # GroupId : seule la clé API en Bearer suffit (cf.
+        # https://platform.minimax.io/docs/api-reference/text-openai-api).
+        # GroupId est requis uniquement sur l'ancienne route native
+        # `/v1/text/chatcompletion_v2` qu'on n'utilise pas. Garder
+        # group_id optionnel : si l'user le renseigne, on le passe en
+        # query param (zéro impact si l'API l'ignore), sinon on l'omet
+        # complètement plutôt que de bloquer la requête.
         self.api_key = (api_key or "").strip()
         self.group_id = (group_id or "").strip() or None
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        if self.group_id:
-            headers["MM-GroupId"] = self.group_id
         params = {"GroupId": self.group_id} if self.group_id else None
         self.client = httpx.AsyncClient(
             base_url=self.base_url or self.BASE_URL,
@@ -75,12 +74,28 @@ class MiniMaxProvider(LLMProvider):
             timeout=120.0,
         )
 
-    def _missing_group_id_error(self) -> ValueError:
-        return ValueError(
-            "MiniMax : Group ID manquant. Ajoute-le dans Paramètres → Providers → "
-            "MiniMax → 'Group ID' (à récupérer sur platform.minimax.io → API Keys). "
-            "Sans ce champ, l'API rejette toute requête même avec une clé valide."
-        )
+    @staticmethod
+    def _sanitize_kwargs(kwargs: dict) -> dict:
+        """Filtre les paramètres non-supportés par MiniMax (cf. doc OpenAI-compat).
+
+        L'API reject hard si on envoie :
+        - `n` autre que 1 (multiple completions non supporté)
+        - `temperature` à 0 ou > 1 (range officiel = (0, 1])
+        - `presence_penalty`, `frequency_penalty`, `logit_bias` (non gérés)
+        - `function_call` (déprécié, remplacé par `tool_choice`)
+        """
+        clean = {k: v for k, v in kwargs.items() if k not in {
+            "presence_penalty", "frequency_penalty", "logit_bias", "function_call",
+        }}
+        if "n" in clean and clean["n"] != 1:
+            clean["n"] = 1
+        t = clean.get("temperature")
+        if t is not None:
+            if t <= 0:
+                clean["temperature"] = 0.01  # MiniMax refuse 0 strict
+            elif t > 1:
+                clean["temperature"] = 1.0
+        return clean
 
     async def chat(
         self,
@@ -88,13 +103,11 @@ class MiniMaxProvider(LLMProvider):
         model: str,
         **kwargs
     ) -> ChatResponse:
-        if not self.group_id:
-            raise self._missing_group_id_error()
         payload = {
             "model": model,
             "messages": [m.to_openai_format() for m in messages],
             "stream": False,
-            **kwargs,
+            **self._sanitize_kwargs(kwargs),
         }
         resp = await self.client.post("/chat/completions", json=payload)
         # Surface du body MiniMax sur erreur HTTP — sans ça `raise_for_status`
@@ -133,13 +146,11 @@ class MiniMaxProvider(LLMProvider):
         model: str,
         **kwargs
     ) -> AsyncGenerator[str, None]:
-        if not self.group_id:
-            raise self._missing_group_id_error()
         payload = {
             "model": model,
             "messages": [m.to_openai_format() for m in messages],
             "stream": True,
-            **kwargs,
+            **self._sanitize_kwargs(kwargs),
         }
         async with self.client.stream("POST", "/chat/completions", json=payload) as resp:
             if resp.status_code != 200:
@@ -179,9 +190,16 @@ class MiniMaxProvider(LLMProvider):
     def _static_models() -> list[str]:
         # Fallback : casse exacte des modèles MiniMax — l'API rejette
         # les noms en minuscules même sur le routeur OpenAI-compat.
+        # Les variantes `-highspeed` sont des versions accélérées du même
+        # modèle (latence réduite, coût plus élevé) — listées dans la doc
+        # officielle aux côtés des versions standard.
         return [
             "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
             "MiniMax-M2.5",
+            "MiniMax-M2.5-highspeed",
+            "MiniMax-M2.1",
+            "MiniMax-M2.1-highspeed",
             "MiniMax-M2",
             "MiniMax-M1",
             "MiniMax-Text-01",

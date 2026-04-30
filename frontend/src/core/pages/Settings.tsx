@@ -1581,16 +1581,18 @@ export default function Settings() {
                     <input type="password" placeholder="API Key" value={providerConfigs[name]?.api_key || ''}
                       onChange={e => setProviderConfigs(prev => ({ ...prev, [name]: { ...prev[name], api_key: e.target.value } }))}
                       className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
-                    {/* MiniMax exige un GroupId obligatoire en plus de la clé API
-                        (cf. doc platform.minimax.io). Sans ça l'API renvoie 401
-                        même avec une clé valide. */}
+                    {/* GroupId MiniMax — OPTIONNEL sur la route OpenAI-compat
+                        que Gungnir utilise. La doc officielle
+                        (platform.minimax.io/docs/api-reference/text-openai-api)
+                        ne le mentionne pas. Champ conservé au cas où l'user
+                        en aurait besoin pour l'ancienne route native. */}
                     {name === 'minimax' && (
                       <div>
-                        <input type="text" placeholder="Group ID (obligatoire)" value={providerConfigs[name]?.group_id || ''}
+                        <input type="text" placeholder="Group ID (optionnel)" value={providerConfigs[name]?.group_id || ''}
                           onChange={e => setProviderConfigs(prev => ({ ...prev, [name]: { ...prev[name], group_id: e.target.value } }))}
                           className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-4 py-2 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                         <p style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
-                          Trouvable sur platform.minimax.io → API Keys. Sans GroupId, MiniMax rejette la clé.
+                          Pas requis pour la route OpenAI-compat actuelle. À renseigner uniquement si tu vises l'API native MiniMax.
                         </p>
                       </div>
                     )}

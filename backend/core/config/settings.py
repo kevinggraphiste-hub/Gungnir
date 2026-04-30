@@ -339,19 +339,24 @@ class Settings(BaseSettings):
             models=["grok-3-beta", "grok-3-mini-beta"]
         ),
         "minimax": ProviderConfig(
-            # base_url corrigé : api.minimax.chat (ancienne URL souvent
-            # bloquée hors Chine) → api.minimax.io (endpoint international
-            # officiel). Les users en Chine peuvent toujours override avec
-            # api.minimax.chat via base_url custom.
-            # Note : MiniMax exige aussi un GroupId (query param sur chaque
-            # appel), géré dans le provider via user_settings.provider_keys.
-            # La casse des noms de modèles est strictement respectée — l'API
-            # rejette `minimax-m2.7` (minuscule) même via la route OpenAI-compat.
+            # base_url : api.minimax.io (endpoint international officiel).
+            # Les users en Chine peuvent override avec api.minimax.chat via
+            # base_url custom.
+            # GroupId : OPTIONNEL sur la route OpenAI-compat (`/v1/chat/
+            # completions`) — la doc officielle (platform.minimax.io/docs/
+            # api-reference/text-openai-api) ne le mentionne pas. Il n'est
+            # requis que sur l'ancienne route native /v1/text/chatcompletion_v2
+            # qu'on n'utilise pas. Le champ reste exposé en UI au cas où.
+            # Casse exacte respectée — l'API rejette les noms en minuscules.
             base_url="https://api.minimax.io/v1",
             default_model="MiniMax-M2.7",
             models=[
                 "MiniMax-M2.7",
+                "MiniMax-M2.7-highspeed",
                 "MiniMax-M2.5",
+                "MiniMax-M2.5-highspeed",
+                "MiniMax-M2.1",
+                "MiniMax-M2.1-highspeed",
                 "MiniMax-M2",
                 "MiniMax-M1",
                 "MiniMax-Text-01",

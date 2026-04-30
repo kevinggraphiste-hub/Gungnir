@@ -72,6 +72,27 @@ const AGENTIC_PATTERNS: RegExp[] = [
   /\bpi-3\.[1-9]/i,
   // Reka Flash/Core — agentic confirmé
   /\breka-(flash|core)/i,
+  // AI21 Jamba (1.5 Large/Mini, 2.x) — function calling depuis fin 2024
+  /\bjamba-(1\.5|2)-/i,
+  /\bjamba-(large|mini|instruct)/i,
+  // Baidu ERNIE 4.x (function calling natif)
+  /\bernie-(4|x[0-9])/i,
+  // Tencent Hunyuan (Pro/Standard/Lite — tool use depuis 2024)
+  /\bhunyuan-(pro|standard|lite|turbo|large)/i,
+  // ByteDance Doubao (Pro 32k/128k — agentic)
+  /\bdoubao-(pro|lite)-/i,
+  // StepFun Step (step-1, step-2 — function calling)
+  /\bstep-[12]-/i,
+  // Baichuan (Baichuan2-Turbo, Baichuan3+, Baichuan4)
+  /\bbaichuan-?[234]/i,
+  // 360 Zhinao (function calling)
+  /\b360gpt-(pro|turbo)/i,
+  // SenseTime SenseChat (Sense-V5, V6+)
+  /\bsensechat-v[5-9]/i,
+  // 01.AI Yi-Lightning (en plus de Yi-Large)
+  /\byi-lightning/i,
+  // Snowflake Arctic Instruct (tool use limité mais OK)
+  /\barctic-instruct/i,
 ]
 
 const NON_AGENTIC_PATTERNS: RegExp[] = [
