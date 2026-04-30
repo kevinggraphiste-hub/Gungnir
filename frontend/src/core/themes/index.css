@@ -293,6 +293,16 @@ select:focus-visible,
   padding: 0;
 }
 
+/* Garde-fou racine — empêche n'importe quel descendant de pousser
+   l'arbre HTML au-delà du viewport sur mobile, peu importe la cause
+   (élément avec largeur intrinsèque, flex/grid mal contraint, etc.).
+   Sans ça un seul enfant trop large fait scroller toute la page
+   horizontalement. Avec, on clippe à la racine. */
+html, body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
 body {
   min-height: 100vh;
   background: var(--bg-primary);
