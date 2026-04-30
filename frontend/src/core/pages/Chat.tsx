@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { SecondaryButton } from '../components/ui'
 import VoiceModal from '../components/VoiceModal'
+import { classifyModel } from '../utils/agenticModels'
 import ApiKeysModal from '../components/ApiKeysModal'
 import UserModal from '../components/UserModal'
 import ConversationMenu from '../components/ConversationMenu'
@@ -2643,14 +2644,22 @@ export default function Chat() {
                             {favoriteModels.map(fav => {
                               const [prov, mod] = (fav || '').split('::')
                               if (!prov || !mod) return null
+                              const isAgenticFav = classifyModel(mod) === 'agentic'
                               return (
                                 <button key={fav} onClick={() => {
                                   if (!confirmExpensiveModelSwitch(prov, mod)) return
                                   setSelectedModel(mod); setSelectedProvider(prov); setShowModelMenu(false); setModelSearch('')
                                 }}
-                                  className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between"
+                                  className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between gap-2"
                                   style={selectedModel === mod && selectedProvider === prov ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
-                                  <span className="truncate">{mod.split('/').pop() || mod} <span style={{ color: 'var(--text-muted)' }}>({prov})</span></span>
+                                  <span className="flex items-center gap-1.5 min-w-0 flex-1">
+                                    {isAgenticFav && (
+                                      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                                        title="Agentique — supporte les outils Gungnir nativement"
+                                        style={{ background: 'var(--accent-success, #22c55e)' }} />
+                                    )}
+                                    <span className="truncate">{mod.split('/').pop() || mod} <span style={{ color: 'var(--text-muted)' }}>({prov})</span></span>
+                                  </span>
                                   <Star className="w-3 h-3 flex-shrink-0 fill-current" style={{ color: 'var(--accent-tertiary)' }}
                                     onClick={e => { e.stopPropagation(); toggleFavorite(prov, mod) }} />
                                 </button>
@@ -2670,14 +2679,22 @@ export default function Chat() {
                               </div>
                               {displayModels.map(m => {
                                 const isFav = favoriteModels.includes(`${group.name}::${m}`)
+                                const isAgenticModel = classifyModel(m) === 'agentic'
                                 return (
                                   <button key={m} onClick={() => {
                                     if (!confirmExpensiveModelSwitch(group.name, m)) return
                                     setSelectedModel(m); setSelectedProvider(group.name); setShowModelMenu(false); setModelSearch('')
                                   }}
-                                    className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between group"
+                                    className="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between gap-2 group"
                                     style={selectedModel === m ? { background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary-light)' } : { color: 'var(--text-secondary)' }}>
-                                    <span className="truncate">{m}</span>
+                                    <span className="flex items-center gap-1.5 min-w-0 flex-1">
+                                      {isAgenticModel && (
+                                        <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                                          title="Agentique — supporte les outils Gungnir nativement"
+                                          style={{ background: 'var(--accent-success, #22c55e)' }} />
+                                      )}
+                                      <span className="truncate">{m}</span>
+                                    </span>
                                     <Star className={`w-3 h-3 flex-shrink-0 cursor-pointer transition-colors ${isFav ? 'fill-current' : ''}`}
                                       style={{ color: isFav ? 'var(--accent-tertiary)' : 'var(--border)' }}
                                       onClick={e => { e.stopPropagation(); toggleFavorite(group.name, m) }} />

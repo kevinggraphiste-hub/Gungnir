@@ -21,27 +21,33 @@
  */
 
 const AGENTIC_PATTERNS: RegExp[] = [
-  // Anthropic — toutes les Sonnet/Opus/Haiku depuis 3.5 sont solides en tool use
-  /\bclaude-(3-5|3-7|opus-4|sonnet-4|haiku-4)\b/i,
-  /\bclaude-(opus|sonnet|haiku)-[45]/i,
-  // OpenAI — GPT-4, GPT-4.x, GPT-5, GPT-4o, o-series
-  /\bgpt-[45](\.[0-9]+)?(-?(o|mini|nano|turbo))?\b/i,
-  /\bo[1-9](-mini|-pro)?\b/i,
-  // Google — Gemini 1.5/2.x/3.x Pro/Flash (sauf Flash-8B trop léger)
+  // Anthropic — Claude 3 et au-delà supportent le tool use natif
+  // (claude-3-haiku-20240307 a été le premier à introduire `tools`)
+  /\bclaude-3(-5|-7)?\b/i,
+  /\bclaude-(opus|sonnet|haiku)-[3-9]/i,
+  // OpenAI — GPT-3.5-turbo (function calling depuis 2023), GPT-4+, o-series
+  /\bgpt-3\.5-turbo/i,
+  /\bgpt-[45-9](\.[0-9]+)?(-?(o|mini|nano|turbo))?\b/i,
+  /\bo[1-9](-mini|-pro|-preview)?\b/i,
+  // Google — Gemini 1.5/2.x/3.x+ Pro/Flash (sauf Flash-8B trop léger)
   /\bgemini-([12]\.[0-9]+|[3-9](\.[0-9]+)?)-(pro|flash)(?!-8b)/i,
-  // Mistral — Large, Medium, Small récents + Pixtral, Codestral
-  /\bmistral-(large|medium|small|pixtral)-/i,
+  // Mistral — Large, Medium, Small récents + Mixtral 8x*, Ministral,
+  // Pixtral, Codestral. Mixtral 8x7B/8x22B instruct ont du tool use.
+  /\bmistral-(large|medium|small|tiny|nemo|saba)-/i,
+  /\bmixtral-8x(7b|22b)/i,
+  /\bministral-(3b|8b)/i,
   /\bcodestral-/i,
   /\bpixtral-/i,
-  // Llama 3.1/3.3 70B+ et 405B (les <70B function-call inégalement)
-  /\bllama-3\.[13]-(70b|405b)/i,
-  /\bmeta-llama\/Meta-Llama-3\.[13]-(70B|405B)/i,
+  // Llama 3.0/3.1/3.3 — tool use depuis 3.1 8B (officiel Meta).
+  // Les versions 3B et inférieures rateront, mais ≥ 8B sont OK.
+  /\bllama-3(\.[013])?-(8b|70b|405b)/i,
+  /\bmeta-llama\/(Meta-)?Llama-3(\.[013])?-(8B|70B|405B)/i,
   // Llama 4 (Maverick / Scout / Behemoth) — tous agentic
   /\bllama-4-(maverick|scout|behemoth)/i,
   /\bmeta-llama\/Llama-4-/i,
-  // Qwen 2.5 32B+, Qwen3 (toutes tailles), QwQ (raisonnement+tools)
-  /\bqwen-?2\.5-(32b|72b)/i,
-  /\bQwen2\.5-(32B|72B)/,
+  // Qwen 2 / 2.5 / 3 — function calling depuis Qwen2 7B+
+  /\bqwen-?2(\.5)?-(7b|14b|32b|72b)/i,
+  /\bQwen2(\.5)?-(7B|14B|32B|72B)/,
   /\bqwen-?2\.5-coder/i,
   /\bqwen-?3-/i,
   /\bQwen3-/,
@@ -93,6 +99,21 @@ const AGENTIC_PATTERNS: RegExp[] = [
   /\byi-lightning/i,
   // Snowflake Arctic Instruct (tool use limité mais OK)
   /\barctic-instruct/i,
+  // Nous Research Hermes 2/3 (function calling natif fine-tuné)
+  /\bhermes-[234]-/i,
+  /\bnous(research)?\/.*hermes/i,
+  // WizardLM 2 (8x22b, 7b — function calling)
+  /\bwizardlm-2-(7b|8x22b)/i,
+  // OpenChat 3.5+ (function calling)
+  /\bopenchat-3\.[5-9]/i,
+  // Solar Mini (Upstage, function calling)
+  /\bsolar-(mini|pro)/i,
+  // Falcon 3 (TII) — function calling depuis novembre 2024
+  /\bfalcon3?-(7b|10b|40b|180b)/i,
+  // DBRX Instruct (Databricks)
+  /\bdbrx-instruct/i,
+  // Phind CodeLlama / Phind-V*
+  /\bphind-(v[0-9]+|codellama)/i,
 ]
 
 const NON_AGENTIC_PATTERNS: RegExp[] = [
