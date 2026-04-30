@@ -536,6 +536,15 @@ export const api = {
     return handleResponse(response)
   },
 
+  reorderSubAgents: async (order: string[]) => {
+    const response = await apiFetch(`${API_BASE}/sub-agents/reorder`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order }),
+    })
+    return handleResponse(response)
+  },
+
   toggleSkillFavorite: async (skillName: string) => {
     const response = await apiFetch(`${API_BASE}/skills/favorite/${skillName}`, {
       method: 'PUT',

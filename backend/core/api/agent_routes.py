@@ -384,6 +384,17 @@ async def import_sub_agent(request: Request, session: AsyncSession = Depends(get
     return await ud.create_sub_agent(session, _uid(request), name, agent_data)
 
 
+@router.put("/sub-agents/reorder")
+async def reorder_sub_agents(request: Request, data: dict, session: AsyncSession = Depends(get_session)):
+    """Réordonne les sous-agents (drag & drop UI). `order` est la liste des
+    noms dans l'ordre souhaité — la position en base est mise à jour pour
+    refléter cet ordre, et les prochains GET /sub-agents respectent ce tri."""
+    order = data.get("order", [])
+    if not order:
+        return {"success": False, "error": "Empty order"}
+    return await ud.reorder_sub_agents(session, _uid(request), order)
+
+
 @router.put("/sub-agents/{agent_name}")
 async def update_sub_agent(request: Request, agent_name: str, data: dict, session: AsyncSession = Depends(get_session)):
     updates = {}

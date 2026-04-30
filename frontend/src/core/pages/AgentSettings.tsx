@@ -157,10 +157,10 @@ export default function AgentSettings() {
   const personalityFileRef = useRef<HTMLInputElement>(null)
 
   // Drag-and-drop (shared for personalities and skills) — refs to avoid race conditions
-  const dragRef = useRef<{ idx: number; context: 'personality' | 'skill' } | null>(null)
+  const dragRef = useRef<{ idx: number; context: 'personality' | 'skill' | 'subagent' } | null>(null)
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null)
-  const [dragContext, setDragContext] = useState<'personality' | 'skill' | null>(null)
+  const [dragContext, setDragContext] = useState<'personality' | 'skill' | 'subagent' | null>(null)
 
   // Inter-agent conversations
   const [interAgentConvs, setInterAgentConvs] = useState<any[]>([])
@@ -1243,7 +1243,7 @@ export default function AgentSettings() {
                       ...(activeSkillName === skill.name ? { boxShadow: '0 0 0 1px var(--accent-primary)' } : {}),
                     }}
                   >
-                    <div className="flex items-center gap-3 p-4">
+                    <div className="flex flex-wrap items-center gap-3 p-4">
                       <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         <GripVertical className="w-4 h-4" />
                       </div>
@@ -1314,7 +1314,7 @@ export default function AgentSettings() {
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                      <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
                         <button
                           onClick={() => toggleActiveSkill(skill.name)}
                           className="px-2.5 py-1 rounded-lg text-xs font-medium border transition-all"
@@ -1593,22 +1593,67 @@ export default function AgentSettings() {
                 </div>
               )}
 
-              {subAgents.map((agent: any) => {
+              {subAgents.map((agent: any, idx: number) => {
                 const isEditing = editingAgent === agent.name
+                const isDragSource = dragContext === 'subagent' && draggedIdx === idx
+                const isDragTarget = dragContext === 'subagent' && dragOverIdx === idx && draggedIdx !== null && draggedIdx !== idx
                 return (
-                  <div key={agent.name} className="rounded-xl border overflow-hidden transition-all"
-                    style={{ background: 'var(--bg-primary)', borderColor: isEditing ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)' : 'var(--border-subtle)' }}>
+                  <div key={agent.name}
+                    draggable
+                    onDragStart={(e) => {
+                      dragRef.current = { idx, context: 'subagent' }
+                      setDraggedIdx(idx); setDragContext('subagent')
+                      e.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      if (dragRef.current?.context === 'subagent') setDragOverIdx(idx)
+                    }}
+                    onDragEnd={() => {
+                      dragRef.current = null
+                      setDraggedIdx(null); setDragOverIdx(null); setDragContext(null)
+                    }}
+                    onDrop={async () => {
+                      const drag = dragRef.current
+                      if (!drag || drag.context !== 'subagent' || drag.idx === idx) return
+                      const reordered = [...subAgents]
+                      const [moved] = reordered.splice(drag.idx, 1)
+                      reordered.splice(idx, 0, moved)
+                      setSubAgents(reordered)
+                      dragRef.current = null
+                      setDraggedIdx(null); setDragOverIdx(null); setDragContext(null)
+                      await api.reorderSubAgents(reordered.map((a: any) => a.name))
+                    }}
+                    className="rounded-xl border overflow-hidden transition-all"
+                    style={{
+                      background: isEditing
+                        ? 'color-mix(in srgb, var(--accent-primary) 4%, var(--bg-primary))'
+                        : 'var(--bg-primary)',
+                      borderColor: isEditing
+                        ? 'color-mix(in srgb, var(--accent-primary) 30%, transparent)'
+                        : isDragTarget
+                          ? 'var(--accent-primary)'
+                          : 'var(--border-subtle)',
+                      ...(isDragTarget ? { boxShadow: '0 0 0 1px var(--accent-primary)' } : {}),
+                      ...(isDragSource ? { opacity: 0.5 } : {}),
+                    }}>
 
-                    {/* Header carte */}
-                    <div className="flex items-center justify-between px-4 py-3">
-                      <div className="flex items-center gap-3">
+                    {/* Header carte — flex-wrap pour que les actions trailing
+                        passent en dessous sur mobile au lieu de pousser le
+                        contenu hors écran. */}
+                    <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+                      <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        <GripVertical className="w-4 h-4" />
+                      </div>
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
                         <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                           style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 15%, transparent), color-mix(in srgb, var(--accent-secondary) 8%, transparent))' }}>
                           <Bot className="w-4 h-4" style={{ color: 'var(--accent-primary)' }} />
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{agent.name}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{agent.name}</span>
                             {agent.version && <span className="text-[10px] px-1.5 py-0.5 rounded border" style={{ color: 'var(--accent-tertiary)', borderColor: 'color-mix(in srgb, var(--accent-tertiary) 30%, transparent)' }}>v{agent.version}</span>}
                           </div>
                           <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{agent.role}</div>
@@ -1622,7 +1667,7 @@ export default function AgentSettings() {
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap ml-auto">
                         {/* Badge modèle */}
                         <span className="px-2 py-0.5 rounded text-[10px] font-medium" style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                           {agent.model ? agent.model.split('/').pop() : 'modèle défaut'}
@@ -1979,8 +2024,8 @@ export default function AgentSettings() {
                       }}
                   >
                     {/* Card header */}
-                    <div className="flex items-center gap-3 p-4">
-                      <div className="cursor-grab active:cursor-grabbing p-1 -ml-1" style={{ color: 'var(--text-muted)' }}>
+                    <div className="flex flex-wrap items-center gap-3 p-4">
+                      <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         <GripVertical className="w-4 h-4" />
                       </div>
                       <button
@@ -2004,7 +2049,7 @@ export default function AgentSettings() {
                         </div>
                         <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>{p.description}</p>
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                      <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
                         <button
                           onClick={() => {
                             if (isEditing) {

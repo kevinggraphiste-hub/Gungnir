@@ -467,12 +467,14 @@ async def generate_conversation_title(convo_id: int, request: Request, session: 
         except Exception as e:
             _log.warning(f"Title gen: user settings lookup failed: {e}")
 
+    user_prov_for_extras: dict | None = None
     if user_settings_row is not None:
         # 1) Provider demandé par le front
         user_prov = get_user_provider_key(user_settings_row, req_provider)
         if user_prov and user_prov.get("api_key"):
             user_api_key = user_prov["api_key"]
             user_base_url = user_prov.get("base_url")
+            user_prov_for_extras = user_prov
         else:
             # 2) Premier provider per-user disponible
             for pname, pconf in (user_settings_row.provider_keys or {}).items():
@@ -481,6 +483,7 @@ async def generate_conversation_title(convo_id: int, request: Request, session: 
                     chosen_provider_name = pname
                     user_api_key = decoded["api_key"]
                     user_base_url = decoded.get("base_url")
+                    user_prov_for_extras = decoded
                     provider_meta = settings.providers.get(pname)
                     break
 
@@ -510,7 +513,9 @@ async def generate_conversation_title(convo_id: int, request: Request, session: 
     _log.info(f"Title gen: using {chosen_provider_name}/{title_model} for convo {convo_id} ({total} msgs)")
 
     _base_url = user_base_url or (provider_meta.base_url if provider_meta else None)
-    provider = get_provider(chosen_provider_name, user_api_key, _base_url)
+    from backend.core.api.auth_helpers import get_provider_extras
+    _extras = get_provider_extras(chosen_provider_name, user_prov_for_extras)
+    provider = get_provider(chosen_provider_name, user_api_key, _base_url, **_extras)
     provider_name = chosen_provider_name
 
     try:
@@ -645,16 +650,18 @@ async def summarize_conversation(convo_id: int, request: Request, session: Async
         except Exception:
             user_settings_row = None
 
-    providers_to_try: list[tuple[str, str, str | None, str | None]] = []
+    providers_to_try: list[tuple[str, str, str | None, str | None, dict]] = []
     if user_settings_row is not None:
         def _push(pname: str, model_pref: str | None):
+            from backend.core.api.auth_helpers import get_provider_extras
             decoded = get_user_provider_key(user_settings_row, pname)
             if not decoded or not decoded.get("api_key"):
                 return
             meta = settings.providers.get(pname)
             chosen = model_pref or (meta.default_model if meta else None) or ""
             base_url = decoded.get("base_url") or (meta.base_url if meta else None)
-            providers_to_try.append((pname, chosen, decoded["api_key"], base_url))
+            extras = get_provider_extras(pname, decoded)
+            providers_to_try.append((pname, chosen, decoded["api_key"], base_url, extras))
 
         _push(provider_name, model_name)
         for pname in (user_settings_row.provider_keys or {}).keys():
@@ -681,9 +688,9 @@ async def summarize_conversation(convo_id: int, request: Request, session: Async
     ]
 
     last_error = None
-    for pname, mname, _pkey, _pbu in providers_to_try:
+    for pname, mname, _pkey, _pbu, _pex in providers_to_try:
         try:
-            provider = get_provider(pname, _pkey, _pbu)
+            provider = get_provider(pname, _pkey, _pbu, **_pex)
             resp = await provider.chat(summary_messages, mname)
             if resp.content and len(resp.content.strip()) > 20:
                 return {"summary": resp.content, "tokens": resp.tokens_input + resp.tokens_output}
