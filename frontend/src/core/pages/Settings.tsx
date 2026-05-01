@@ -904,25 +904,44 @@ export default function Settings() {
   ]
 
   return (
-    <div className="max-w-4xl mx-auto p-4 md:p-6 h-full overflow-y-auto overflow-x-hidden">
+    <div className="max-w-4xl mx-auto p-3 md:p-6 h-full overflow-y-auto overflow-x-hidden">
       <PageHeader
         icon={<SettingsIcon size={18} />}
         title={t('settings.title')}
         subtitle={t('settings.subtitle')}
       />
 
-      {/* Layout responsive : tabs verticales en desktop (aside w-48), barre
-          horizontale scrollable en mobile (overflow-x-auto, snap).
-          min-w-0 sur le flex parent indispensable pour que les enfants
-          puissent shrinker en dessous de leur min-content size — sans ça
-          un input long ou une barre de tabs scrollable peut pousser le
-          wrapper hors viewport. */}
+      {/* Layout responsive :
+          - Desktop (≥md) : aside verticale 192px + contenu à droite
+          - Mobile (<md) : <select> natif full-width pour l'onglet actif
+            (7 tabs ne tiennent plus en barre horizontale même scrollable
+            sur un viewport ~500 px — le scroll-x cachait des onglets et
+            poussait visuellement le contenu adjacent hors écran). */}
       <div className="flex flex-col md:flex-row gap-3 md:gap-6 min-w-0">
-        <aside className="md:w-48 md:flex-shrink-0 min-w-0">
-          <nav className="flex md:flex-col gap-2 overflow-x-auto md:overflow-visible -mx-4 px-4 md:mx-0 md:px-0 pb-2 md:pb-0">
+        {/* Mobile : dropdown plein-écran */}
+        <div className="md:hidden min-w-0">
+          <select
+            value={activeTab}
+            onChange={e => setActiveTab(e.target.value)}
+            className="w-full rounded-lg px-4 py-3 focus:outline-none"
+            style={{
+              background: 'var(--bg-primary)',
+              border: '1px solid var(--border)',
+              color: 'var(--text-primary)',
+              minHeight: 44,
+            }}>
+            {tabs.map(tab => (
+              <option key={tab.id} value={tab.id}>{tab.label}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Desktop : aside verticale */}
+        <aside className="hidden md:block md:w-48 md:flex-shrink-0 min-w-0">
+          <nav className="flex flex-col gap-2">
             {tabs.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className="flex-shrink-0 md:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors whitespace-nowrap"
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors whitespace-nowrap"
                 style={{
                   minHeight: 44,
                   background: activeTab === tab.id ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)' : 'transparent',
@@ -935,7 +954,7 @@ export default function Settings() {
           </nav>
         </aside>
 
-        <div className="flex-1 min-w-0 max-w-full overflow-x-hidden rounded-xl border p-4 md:p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
+        <div className="flex-1 min-w-0 max-w-full overflow-x-hidden rounded-xl border p-3 md:p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
           {/* Wrapper isolant — pattern identique à AgentSettings sub-agents :
               force le contenu de chaque onglet à se confiner à la largeur
               du parent peu importe ce qu'un descendant essaie de pousser
