@@ -24,6 +24,9 @@ import Chat from './pages/Chat'
 import AgentSettings from './pages/AgentSettings'
 import Settings from './pages/Settings'
 import Login from './pages/Login'
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword from './pages/ResetPassword'
+import VerifyEmail from './pages/VerifyEmail'
 import { SpearCodeContent } from '../plugins/code/index'
 
 // ── Loading fallback ────────────────────────────────────────────────────────
@@ -284,6 +287,18 @@ function RoutesShell({ plugins, pluginsLoaded }: { plugins: any[]; pluginsLoaded
   )
 }
 
+// Routes publiques rendues avant le check d'auth (l'utilisateur qui clique
+// sur un lien email n'est par définition pas connecté). On lit le path
+// directement depuis window.location pour éviter d'avoir à wrapper le flow
+// needs_login dans un BrowserRouter complet.
+function publicAuthRoute() {
+  const path = window.location.pathname
+  if (path.startsWith('/forgot-password')) return <ForgotPassword />
+  if (path.startsWith('/reset-password')) return <ResetPassword />
+  if (path.startsWith('/verify-email')) return <VerifyEmail />
+  return null
+}
+
 export default function App() {
   const [authState, setAuthState] = useState<'checking' | 'logged_in' | 'needs_login' | 'no_auth'>('checking')
 
@@ -302,6 +317,11 @@ export default function App() {
     }
     checkAuth()
   }, [])
+
+  // Pages publiques : court-circuite le check d'auth (le user qui clique
+  // un lien dans un mail de récup n'est pas connecté).
+  const publicPage = publicAuthRoute()
+  if (publicPage) return publicPage
 
   const handleLogin = () => {
     setAuthState('logged_in')

@@ -1,17 +1,30 @@
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 import hashlib
+import re
 import secrets
+from datetime import datetime as _dt, timedelta as _td
 
 from backend.core.db.models import User
 from backend.core.db.engine import get_session
 from backend.core.api.auth_helpers import require_admin
+from backend.core.services import mail as mail_service
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 limiter = Limiter(key_func=get_remote_address)
+
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _normalize_email(raw: str) -> str:
+    return (raw or "").strip().lower()
+
+
+def _is_valid_email(value: str) -> bool:
+    return bool(value and EMAIL_RE.match(value) and len(value) <= 255)
 
 router = APIRouter()
 
@@ -76,16 +89,30 @@ async def list_users(request: Request, session: AsyncSession = Depends(get_sessi
 @router.post("/users")
 @limiter.limit("5/minute")
 async def create_user(request: Request, session: AsyncSession = Depends(get_session)):
-    """Crée un nouvel utilisateur."""
+    """Crée un nouvel utilisateur.
+
+    `email` est optionnel mais fortement recommandé : sans email vérifié,
+    la récupération de mot de passe est désactivée. Si fourni, on envoie
+    immédiatement un email de vérification (24h de validité)."""
     body = await request.json()
     username = body.get("username", "").strip()
     if not username:
         return JSONResponse({"error": "username requis"}, status_code=400)
 
-    # Check unique
+    email_raw = _normalize_email(body.get("email", ""))
+    if email_raw and not _is_valid_email(email_raw):
+        return JSONResponse({"error": "Format d'email invalide"}, status_code=400)
+
+    # Check unique username
     existing = await session.execute(select(User).where(User.username == username))
     if existing.scalars().first():
         return JSONResponse({"error": f"L'utilisateur '{username}' existe déjà"}, status_code=409)
+
+    # Check unique email (si fourni)
+    if email_raw:
+        e = await session.execute(select(User).where(User.email == email_raw))
+        if e.scalars().first():
+            return JSONResponse({"error": "Cette adresse email est déjà utilisée"}, status_code=409)
 
     password_hash = None
     if body.get("password"):
@@ -95,6 +122,15 @@ async def create_user(request: Request, session: AsyncSession = Depends(get_sess
     user_count = await session.execute(select(User))
     is_first_user = len(user_count.scalars().all()) == 0
 
+    # Email verification token (si email fourni)
+    verif_raw = None
+    verif_hash = None
+    verif_expires = None
+    if email_raw:
+        verif_raw = secrets.token_hex(32)
+        verif_hash = _hash_token(verif_raw)
+        verif_expires = _dt.utcnow() + _td(hours=24)
+
     user = User(
         username=username,
         display_name=body.get("display_name", username),
@@ -102,10 +138,24 @@ async def create_user(request: Request, session: AsyncSession = Depends(get_sess
         avatar_url=body.get("avatar_url", ""),
         is_active=True,
         is_admin=is_first_user,
+        email=email_raw or None,
+        email_verified=False,
+        email_verification_token=verif_hash,
+        email_verification_expires_at=verif_expires,
     )
     session.add(user)
     await session.commit()
     await session.refresh(user)
+
+    # Envoi du mail de vérif (best-effort, ne bloque pas la création).
+    if email_raw and verif_raw:
+        try:
+            await mail_service.send_email_verification(
+                to=email_raw, display_name=user.display_name or username, token=verif_raw,
+            )
+        except Exception as _e:
+            import logging
+            logging.getLogger("gungnir.users").warning(f"Email verif send failed for {email_raw}: {_e}")
 
     # Seed default skills, personalities, agents, automata, consciousness.
     # Each user gets their own copy of the basics at signup.
@@ -124,6 +174,8 @@ async def create_user(request: Request, session: AsyncSession = Depends(get_sess
         "avatar_url": user.avatar_url,
         "is_active": user.is_active,
         "is_admin": bool(user.is_admin),
+        "email": user.email,
+        "email_verified": bool(user.email_verified),
     }
 
 
@@ -339,6 +391,9 @@ async def get_current_user(request: Request, session: AsyncSession = Depends(get
             "display_name": user.display_name,
             "avatar_url": user.avatar_url,
             "is_admin": bool(user.is_admin),
+            "email": user.email,
+            "email_verified": bool(user.email_verified),
+            "pending_email": user.pending_email,
         }
     }
 
@@ -346,12 +401,23 @@ async def get_current_user(request: Request, session: AsyncSession = Depends(get
 @router.post("/users/login")
 @limiter.limit("5/minute")
 async def login_user(request: Request, session: AsyncSession = Depends(get_session)):
-    """Vérifie les identifiants d'un utilisateur."""
+    """Vérifie les identifiants d'un utilisateur.
+
+    Accepte au choix `email` ou `username` (option B hybride). Si les deux
+    sont fournis, `email` prime. Le matching email est case-insensitive.
+    """
     body = await request.json()
+    email_raw = _normalize_email(body.get("email", ""))
     username = body.get("username", "").strip()
     password = body.get("password", "")
 
-    result = await session.execute(select(User).where(User.username == username))
+    if not email_raw and not username:
+        return JSONResponse({"error": "Email ou nom d'utilisateur requis"}, status_code=400)
+
+    if email_raw:
+        result = await session.execute(select(User).where(User.email == email_raw))
+    else:
+        result = await session.execute(select(User).where(User.username == username))
     user = result.scalars().first()
 
     if not user:
@@ -369,7 +435,6 @@ async def login_user(request: Request, session: AsyncSession = Depends(get_sessi
 
     # Toujours générer un nouveau token (rotation — invalide les anciennes sessions)
     # Expiration 30j (fix sécu M1). L'utilisateur devra se reconnecter après.
-    from datetime import datetime as _dt, timedelta as _td
     raw_token = secrets.token_hex(32)
     user.api_token = _hash_token(raw_token)
     user.token_expires_at = _dt.utcnow() + _td(days=30)
@@ -385,6 +450,8 @@ async def login_user(request: Request, session: AsyncSession = Depends(get_sessi
             "display_name": user.display_name,
             "avatar_url": user.avatar_url,
             "is_admin": bool(user.is_admin),
+            "email": user.email,
+            "email_verified": bool(user.email_verified),
         }
     }
 
@@ -426,3 +493,232 @@ async def refresh_token(request: Request, session: AsyncSession = Depends(get_se
         "token": raw_token,
         "expires_at": user.token_expires_at.isoformat() + "Z",
     }
+
+
+# ── Email verification + password reset ─────────────────────────────────────
+
+
+@router.post("/users/forgot-password")
+@limiter.limit("3/minute")
+async def forgot_password(request: Request, session: AsyncSession = Depends(get_session)):
+    """Déclenche un email de récupération si l'adresse correspond à un compte
+    avec email vérifié.
+
+    Réponses :
+    - Toujours 200 OK avec ``{ok: true}`` pour ne pas révéler l'existence
+      ou non d'un compte (anti-enumeration).
+    - L'email n'est envoyé que si ``email_verified == true`` — sinon un
+      attaquant pourrait créer un compte avec l'adresse d'une victime
+      (sans la confirmer) et déclencher un reset sur ce faux compte.
+    """
+    body = await request.json()
+    email_raw = _normalize_email(body.get("email", ""))
+    if not _is_valid_email(email_raw):
+        return {"ok": True}
+
+    result = await session.execute(select(User).where(User.email == email_raw))
+    user = result.scalars().first()
+
+    if user and user.email_verified and user.is_active:
+        raw_token = secrets.token_hex(32)
+        user.password_reset_token = _hash_token(raw_token)
+        user.password_reset_expires_at = _dt.utcnow() + _td(hours=1)
+        await session.commit()
+        try:
+            await mail_service.send_password_reset(
+                to=email_raw,
+                display_name=user.display_name or user.username,
+                token=raw_token,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("gungnir.users").warning(f"Password reset mail failed for {email_raw}: {e}")
+
+    return {"ok": True}
+
+
+@router.post("/users/reset-password")
+@limiter.limit("5/minute")
+async def reset_password(request: Request, session: AsyncSession = Depends(get_session)):
+    """Consomme un token de reset + définit un nouveau mot de passe.
+
+    Le token est invalidé après usage et tous les Bearer tokens du user
+    sont rotatés (force la reconnexion des sessions actives).
+    """
+    body = await request.json()
+    token = (body.get("token") or "").strip()
+    new_password = body.get("password", "")
+    if not token or not new_password:
+        return JSONResponse({"error": "Token et nouveau mot de passe requis"}, status_code=400)
+    if len(new_password) < 8:
+        return JSONResponse({"error": "Mot de passe trop court (minimum 8 caractères)"}, status_code=400)
+
+    token_hash = _hash_token(token)
+    result = await session.execute(
+        select(User).where(User.password_reset_token == token_hash)
+    )
+    user = result.scalars().first()
+    if not user or not user.password_reset_expires_at or user.password_reset_expires_at < _dt.utcnow():
+        return JSONResponse({"error": "Lien invalide ou expiré"}, status_code=400)
+
+    user.password_hash = _hash_password(new_password)
+    user.password_reset_token = None
+    user.password_reset_expires_at = None
+    # Invalide la session courante — le user devra se reconnecter avec son
+    # nouveau mot de passe (et tout token volé devient inutile).
+    user.api_token = None
+    user.token_expires_at = None
+    await session.commit()
+    return {"ok": True}
+
+
+@router.post("/users/verify-email")
+@limiter.limit("10/minute")
+async def verify_email(request: Request, session: AsyncSession = Depends(get_session)):
+    """Confirme une adresse email à partir du token reçu par mail.
+
+    Couvre 2 cas :
+    1. Vérification initiale à la création de compte → marque
+       ``email_verified = true``.
+    2. Confirmation d'un changement d'email (``pending_email`` set) →
+       remplace ``email`` par ``pending_email`` puis vide ``pending_email``.
+    """
+    body = await request.json()
+    token = (body.get("token") or "").strip()
+    if not token:
+        return JSONResponse({"error": "Token requis"}, status_code=400)
+
+    token_hash = _hash_token(token)
+    result = await session.execute(
+        select(User).where(User.email_verification_token == token_hash)
+    )
+    user = result.scalars().first()
+    if not user or not user.email_verification_expires_at or user.email_verification_expires_at < _dt.utcnow():
+        return JSONResponse({"error": "Lien invalide ou expiré"}, status_code=400)
+
+    if user.pending_email:
+        # Re-check unicité au moment de la commit (un autre user a pu
+        # prendre l'adresse entre l'envoi et la confirm).
+        existing = await session.execute(
+            select(User).where(User.email == user.pending_email, User.id != user.id)
+        )
+        if existing.scalars().first():
+            user.pending_email = None
+            user.email_verification_token = None
+            user.email_verification_expires_at = None
+            await session.commit()
+            return JSONResponse({"error": "Cette adresse email est déjà utilisée par un autre compte"}, status_code=409)
+        user.email = user.pending_email
+        user.pending_email = None
+        user.email_verified = True
+    else:
+        user.email_verified = True
+
+    user.email_verification_token = None
+    user.email_verification_expires_at = None
+    await session.commit()
+    return {
+        "ok": True,
+        "email": user.email,
+        "email_verified": True,
+    }
+
+
+@router.post("/users/me/email")
+@limiter.limit("3/minute")
+async def change_email(request: Request, session: AsyncSession = Depends(get_session)):
+    """Démarre le flow de changement d'email pour le user courant.
+
+    L'email actuel reste actif tant que le nouveau n'est pas confirmé via
+    le lien reçu par mail (``pending_email`` est utilisé pour stocker
+    l'adresse en attente). Anti-hijack : si quelqu'un vole une session,
+    il ne peut pas remplacer l'email sans accès à la nouvelle boîte.
+    """
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+
+    body = await request.json()
+    new_email = _normalize_email(body.get("email", ""))
+    if not _is_valid_email(new_email):
+        return JSONResponse({"error": "Format d'email invalide"}, status_code=400)
+
+    user = await session.get(User, uid)
+    if not user:
+        return JSONResponse({"error": "Utilisateur introuvable"}, status_code=404)
+
+    if user.email and user.email == new_email and user.email_verified:
+        return JSONResponse({"error": "C'est déjà ton adresse actuelle"}, status_code=400)
+
+    # Unicité : pas un autre user
+    existing = await session.execute(
+        select(User).where(User.email == new_email, User.id != user.id)
+    )
+    if existing.scalars().first():
+        return JSONResponse({"error": "Cette adresse email est déjà utilisée"}, status_code=409)
+
+    raw_token = secrets.token_hex(32)
+    user.email_verification_token = _hash_token(raw_token)
+    user.email_verification_expires_at = _dt.utcnow() + _td(hours=24)
+
+    # Si le user n'avait pas encore d'email vérifié, on remplace direct
+    # (premier email du compte). Sinon on stocke en pending pour ne valider
+    # qu'après clic sur le lien.
+    if not user.email or not user.email_verified:
+        user.email = new_email
+        user.pending_email = None
+        user.email_verified = False
+    else:
+        user.pending_email = new_email
+
+    await session.commit()
+    try:
+        await mail_service.send_email_verification(
+            to=new_email,
+            display_name=user.display_name or user.username,
+            token=raw_token,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger("gungnir.users").warning(f"Email verif send failed for {new_email}: {e}")
+
+    return {
+        "ok": True,
+        "email": user.email,
+        "pending_email": user.pending_email,
+        "email_verified": bool(user.email_verified),
+    }
+
+
+@router.post("/users/me/resend-verification")
+@limiter.limit("3/minute")
+async def resend_verification(request: Request, session: AsyncSession = Depends(get_session)):
+    """Renvoie un mail de vérification pour l'email en cours (pending_email
+    s'il existe, sinon email actuel s'il n'est pas encore vérifié)."""
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Non authentifié"}, status_code=401)
+    user = await session.get(User, uid)
+    if not user:
+        return JSONResponse({"error": "Utilisateur introuvable"}, status_code=404)
+
+    target = user.pending_email or (user.email if not user.email_verified else None)
+    if not target:
+        return JSONResponse({"error": "Aucun email à vérifier"}, status_code=400)
+
+    raw_token = secrets.token_hex(32)
+    user.email_verification_token = _hash_token(raw_token)
+    user.email_verification_expires_at = _dt.utcnow() + _td(hours=24)
+    await session.commit()
+
+    try:
+        await mail_service.send_email_verification(
+            to=target,
+            display_name=user.display_name or user.username,
+            token=raw_token,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger("gungnir.users").warning(f"Email verif resend failed for {target}: {e}")
+
+    return {"ok": True}

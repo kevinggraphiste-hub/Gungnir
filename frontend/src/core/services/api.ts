@@ -577,7 +577,7 @@ export const api = {
     return handleResponse(response)
   },
 
-  createUser: async (data: { username: string; display_name?: string; password?: string; avatar_url?: string }) => {
+  createUser: async (data: { username: string; email?: string; display_name?: string; password?: string; avatar_url?: string }) => {
     const response = await apiFetch(`${API_BASE}/users`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -616,7 +616,7 @@ export const api = {
     return result
   },
 
-  loginUser: async (data: { username: string; password: string }) => {
+  loginUser: async (data: { username?: string; email?: string; password: string }) => {
     const response = await apiFetch(`${API_BASE}/users/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -628,6 +628,49 @@ export const api = {
       setAuthToken(result.token)
     }
     return result
+  },
+
+  forgotPassword: async (email: string) => {
+    const response = await apiFetch(`${API_BASE}/users/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    })
+    return handleResponse(response)
+  },
+
+  resetPassword: async (data: { token: string; password: string }) => {
+    const response = await apiFetch(`${API_BASE}/users/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    return handleResponse(response)
+  },
+
+  verifyEmail: async (token: string) => {
+    const response = await apiFetch(`${API_BASE}/users/verify-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    return handleResponse(response)
+  },
+
+  changeEmail: async (email: string) => {
+    const response = await apiFetch(`${API_BASE}/users/me/email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    })
+    return handleResponse(response)
+  },
+
+  resendVerification: async () => {
+    const response = await apiFetch(`${API_BASE}/users/me/resend-verification`, {
+      method: 'POST',
+    })
+    return handleResponse(response)
   },
 
   checkAuth: async () => {

@@ -134,6 +134,20 @@ class User(Base):
     avatar_url = Column(Text, default="")
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
+    # Email + récup mdp (option B hybride : optionnel, mais si défini sert
+    # d'identifiant alternatif au login + active la récup par mail).
+    email = Column(String(255), nullable=True, unique=True, index=True)
+    email_verified = Column(Boolean, default=False)
+    # Email en attente de vérif lors d'un changement (l'email actuel reste
+    # actif tant que le nouveau n'est pas confirmé — anti-hijack).
+    pending_email = Column(String(255), nullable=True)
+    # Token de vérif d'email (hashé sha256) + expiration. Couvre à la fois
+    # la confirm initiale et la confirm de changement d'email.
+    email_verification_token = Column(String(128), nullable=True)
+    email_verification_expires_at = Column(DateTime, nullable=True)
+    # Token de reset mdp (hashé sha256) + expiration courte (1h).
+    password_reset_token = Column(String(128), nullable=True)
+    password_reset_expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

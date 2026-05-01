@@ -127,6 +127,31 @@ async def lifespan(app: FastAPI):
             except Exception as _drop_err:
                 logger.debug(f"Drop provider_budgets_provider_key constraint: {_drop_err}")
 
+            # users.email + récup mdp (option B hybride).
+            # On ajoute les colonnes en nullable d'abord pour ne pas casser
+            # les users existants. L'unique sur email est posé séparément
+            # pour pouvoir gérer proprement les conflits.
+            for col, ddl in [
+                ("email", "ALTER TABLE users ADD COLUMN email VARCHAR(255)"),
+                ("email_verified", "ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT FALSE"),
+                ("pending_email", "ALTER TABLE users ADD COLUMN pending_email VARCHAR(255)"),
+                ("email_verification_token", "ALTER TABLE users ADD COLUMN email_verification_token VARCHAR(128)"),
+                ("email_verification_expires_at", "ALTER TABLE users ADD COLUMN email_verification_expires_at TIMESTAMP"),
+                ("password_reset_token", "ALTER TABLE users ADD COLUMN password_reset_token VARCHAR(128)"),
+                ("password_reset_expires_at", "ALTER TABLE users ADD COLUMN password_reset_expires_at TIMESTAMP"),
+            ]:
+                if not await _has_col("users", col):
+                    await conn.execute(text(ddl))
+                    logger.info(f"Migration: added {col} column to users")
+            # Index unique sur email (partial: ignore les NULL).
+            try:
+                await conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email_unique "
+                    "ON users (email) WHERE email IS NOT NULL"
+                ))
+            except Exception as _idx_err:
+                logger.debug(f"users.email unique index skipped: {_idx_err}")
+
             # forge_workflows.folder (Phase P2 — folders d'organisation).
             # Si le plugin Forge a déjà créé sa table avant ce migration check,
             # on ajoute la colonne sans toucher aux données.
@@ -743,6 +768,9 @@ async def security_headers(request, call_next):
 # Routes that don't require authentication
 PUBLIC_PATHS = {
     "/api/health", "/api/version", "/api/doctor", "/api/users/login", "/api/users/me", "/api/plugins/status",
+    # Récup mdp + vérif email — accessibles sans Bearer (le user n'est par
+    # définition pas encore connecté quand il clique sur un lien email).
+    "/api/users/forgot-password", "/api/users/reset-password", "/api/users/verify-email",
 }
 PUBLIC_PREFIXES = (
     "/api/webhook/",                        # Incoming webhooks have their own auth

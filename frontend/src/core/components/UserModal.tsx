@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, User, Plus, Trash2, Pencil, Check, AlertTriangle } from 'lucide-react'
+import { X, User, Plus, Trash2, Pencil, Check, AlertTriangle, Mail } from 'lucide-react'
 import { api, clearAuthToken } from '../services/api'
 
 interface UserData {
@@ -8,6 +8,12 @@ interface UserData {
   display_name: string
   avatar_url: string
   is_active: boolean
+}
+
+interface MeInfo {
+  email: string | null
+  email_verified: boolean
+  pending_email: string | null
 }
 
 interface Props {
@@ -32,11 +38,56 @@ export default function UserModal({ isOpen, onClose, currentUser, onUserChange }
   // "supprimer" exact avant que le bouton rouge soit actif.
   const [showSelfDelete, setShowSelfDelete] = useState(false)
   const [selfDeleteConfirm, setSelfDeleteConfirm] = useState('')
+  const [me, setMe] = useState<MeInfo | null>(null)
+  const [showEmailEdit, setShowEmailEdit] = useState(false)
+  const [newEmail, setNewEmail] = useState('')
 
-  useEffect(() => { if (isOpen) loadUsers() }, [isOpen])
+  useEffect(() => {
+    if (!isOpen) return
+    loadUsers()
+    loadMe()
+  }, [isOpen])
 
   const loadUsers = async () => {
     try { const data = await api.getUsers(); setUsers(data) } catch { /* ignore */ }
+  }
+
+  const loadMe = async () => {
+    try {
+      const r = await api.checkAuth()
+      if (r.ok && r.user) {
+        setMe({
+          email: r.user.email ?? null,
+          email_verified: !!r.user.email_verified,
+          pending_email: r.user.pending_email ?? null,
+        })
+      }
+    } catch { /* ignore */ }
+  }
+
+  const handleChangeEmail = async () => {
+    const trimmed = newEmail.trim().toLowerCase()
+    if (!trimmed.includes('@')) { setMessage({ type: 'err', text: "Format d'email invalide" }); return }
+    setLoading(true)
+    try {
+      await api.changeEmail(trimmed)
+      await loadMe()
+      setShowEmailEdit(false)
+      setNewEmail('')
+      setMessage({ type: 'ok', text: "Email enregistré. Clique sur le lien reçu par mail pour confirmer." })
+    } catch (err: any) {
+      setMessage({ type: 'err', text: err?.message || err?.error || 'Erreur' })
+    } finally { setLoading(false) }
+  }
+
+  const handleResendVerification = async () => {
+    setLoading(true)
+    try {
+      await api.resendVerification()
+      setMessage({ type: 'ok', text: "Email de vérification renvoyé. Vérifie ta boîte (et les spams)." })
+    } catch (err: any) {
+      setMessage({ type: 'err', text: err?.message || err?.error || 'Erreur' })
+    } finally { setLoading(false) }
   }
 
   const handleCreate = async () => {
@@ -237,6 +288,90 @@ export default function UserModal({ isOpen, onClose, currentUser, onUserChange }
               </div>
               <button onClick={handleLogout} className="px-3 py-1.5 text-xs rounded-lg transition-colors"
                 style={{ color: 'var(--text-secondary)', background: 'var(--bg-tertiary)' }}>Déconnecter</button>
+            </div>
+          )}
+
+          {/* Section email du compte courant : affiche l'email actuel + statut
+              vérifié, permet d'en ajouter un (si jamais saisi) ou de changer
+              (re-vérification obligatoire pour anti-hijack). */}
+          {currentUser && me && (
+            <div className="rounded-xl p-3"
+              style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-tertiary)' }}>
+              <div className="flex items-center gap-2 mb-2">
+                <Mail className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-secondary)' }}>
+                  Email
+                </span>
+                {me.email && (
+                  me.email_verified ? (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+                      style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e' }}>
+                      vérifié
+                    </span>
+                  ) : (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+                      style={{ background: 'rgba(234,179,8,0.15)', color: '#eab308' }}>
+                      non vérifié
+                    </span>
+                  )
+                )}
+              </div>
+
+              {!showEmailEdit ? (
+                <div className="space-y-2">
+                  {me.email ? (
+                    <div className="text-sm" style={{ color: 'var(--text-primary)' }}>{me.email}</div>
+                  ) : (
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      Aucun email associé. Ajoutes-en un pour activer la récupération de mot de passe.
+                    </div>
+                  )}
+                  {me.pending_email && (
+                    <div className="text-xs px-2 py-1.5 rounded"
+                      style={{ background: 'rgba(234,179,8,0.1)', color: '#eab308' }}>
+                      Changement en attente : <strong>{me.pending_email}</strong> — clique sur le lien reçu par mail pour confirmer.
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button onClick={() => { setShowEmailEdit(true); setNewEmail('') }}
+                      className="px-3 py-1.5 text-xs rounded-lg"
+                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                      {me.email ? 'Changer' : 'Ajouter'}
+                    </button>
+                    {me.email && !me.email_verified && (
+                      <button onClick={handleResendVerification} disabled={loading}
+                        className="px-3 py-1.5 text-xs rounded-lg disabled:opacity-50"
+                        style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                        Renvoyer la vérification
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input type="email" placeholder="vous@exemple.com" value={newEmail}
+                    onChange={e => setNewEmail(e.target.value)}
+                    className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    Tu recevras un lien de confirmation. {me.email && me.email_verified
+                      ? "Ton email actuel reste actif tant que le nouveau n'est pas confirmé."
+                      : ""}
+                  </p>
+                  <div className="flex gap-2">
+                    <button onClick={handleChangeEmail} disabled={loading || !newEmail.trim()}
+                      className="px-3 py-1.5 text-xs rounded-lg text-white disabled:opacity-50"
+                      style={{ background: 'var(--accent-primary)' }}>
+                      Envoyer le lien
+                    </button>
+                    <button onClick={() => { setShowEmailEdit(false); setNewEmail('') }}
+                      className="px-3 py-1.5 text-xs rounded-lg"
+                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
