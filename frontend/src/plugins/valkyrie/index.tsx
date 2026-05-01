@@ -1451,19 +1451,15 @@ export default function ValkyriePlugin() {
                 Aucune carte ne correspond aux filtres.
               </div>
             ) : (
-              <div style={{
+              <div className="valkyrie-grid" style={{
                 display: 'grid',
-                // 320 px min : à 260 px le badge "À faire" + 4 icônes
-                // d'actions trailing ne tenaient pas et débordaient quand
-                // 2 cards se trouvaient côte à côte sur écran ~540 px.
-                // 320 px force 1 col jusqu'à ~660 px (mobile + petite
-                // tablette portrait), 2 cols ensuite.
-                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-                // gridAutoRows minmax(260, auto) : les lignes gardent 260 px
-                // minimum pour préserver le layout kanban compact, MAIS
-                // peuvent s'étendre verticalement quand une carte expanded
-                // (mémo Gungnir long, description riche, beaucoup de
-                // sous-tâches) a besoin de plus.
+                // Grid strict via media queries (cf. valkyrie-grid dans
+                // index.css) : 1 col mobile, 2 cols ≥ 700px, 3 cols ≥ 1024,
+                // 4 cols ≥ 1400. Avec `minmax(0, 1fr)` on FORCE l'égalité
+                // des colonnes — sans ça, une card dont le contenu min-
+                // content dépasse la base (ex. titre long, badge non-wrap)
+                // se voyait attribuer une col plus large que sa voisine,
+                // d'où le déséquilibre "carré + rectangle compressé".
                 gridAutoRows: 'minmax(260px, auto)',
                 gridAutoFlow: 'row dense',
                 gap: 14,

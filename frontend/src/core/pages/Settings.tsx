@@ -935,7 +935,7 @@ export default function Settings() {
           </nav>
         </aside>
 
-        <div className="flex-1 min-w-0 rounded-xl border p-4 md:p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
+        <div className="flex-1 min-w-0 max-w-full overflow-x-hidden rounded-xl border p-4 md:p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
           {/* -- General --------------------------------------------------- */}
           {activeTab === 'general' && (
             <div className="space-y-6">

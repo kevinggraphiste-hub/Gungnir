@@ -382,6 +382,31 @@ input, textarea {
   }
 }
 
+/* Grille Valkyrie : breakpoints explicites + minmax(0, 1fr) pour FORCER
+   l'égalité des colonnes. Sans ça, une card avec un contenu min-content
+   plus large (titre long non-wrap, badge "À faire" trailing) prenait une
+   col plus large que sa voisine → déséquilibre visuel "carré + rectangle".
+   minmax(0, 1fr) permet à chaque col de shrinker en dessous de son
+   min-content (les enfants gèrent leur truncate / wrap eux-mêmes). */
+.valkyrie-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 700px) {
+  .valkyrie-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1024px) {
+  .valkyrie-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1400px) {
+  .valkyrie-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
 /* Glass effect */
 .glass {
   background: rgba(19, 19, 19, 0.85);
