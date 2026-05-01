@@ -2651,7 +2651,7 @@ export default function Chat() {
                             {favoriteModels.map(fav => {
                               const [prov, mod] = (fav || '').split('::')
                               if (!prov || !mod) return null
-                              const isAgenticFav = classifyModel(mod) === 'agentic'
+                              const isAgenticFav = classifyModel(mod, prov) === 'agentic'
                               return (
                                 <button key={fav} onClick={() => {
                                   if (!confirmExpensiveModelSwitch(prov, mod)) return
@@ -2690,7 +2690,7 @@ export default function Chat() {
                               </div>
                               {displayModels.map(m => {
                                 const isFav = favoriteModels.includes(`${group.name}::${m}`)
-                                const isAgenticModel = classifyModel(m) === 'agentic'
+                                const isAgenticModel = classifyModel(m, group.name) === 'agentic'
                                 return (
                                   <button key={m} onClick={() => {
                                     if (!confirmExpensiveModelSwitch(group.name, m)) return

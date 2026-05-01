@@ -898,7 +898,7 @@ export default function AgentSettings() {
                           const [prov, mod] = fav.split('::')
                           if (!prov || !mod) return null
                           const isSelected = selectedModel === mod && selectedProvider === prov
-                          const tier = classifyModel(mod)
+                          const tier = classifyModel(mod, prov)
                           return (
                             <button key={fav}
                               onClick={() => { setSelectedProvider(prov); setSelectedModel(mod) }}
@@ -947,7 +947,7 @@ export default function AgentSettings() {
                             const isSelected = selectedModel === m && selectedProvider === p.name
                             const isDefault = m === p.defaultModel
                             const isFav = favoriteModels.includes(`${p.name}::${m}`)
-                            const tier = classifyModel(m)
+                            const tier = classifyModel(m, p.name)
                             return (
                               <button
                                 key={`${p.name}/${m}`}

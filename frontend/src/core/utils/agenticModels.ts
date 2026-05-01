@@ -142,6 +142,19 @@ const NON_AGENTIC_PATTERNS: RegExp[] = [
 
 export type AgenticTier = 'agentic' | 'chat-only' | 'unknown'
 
+// Providers pour lesquels on a une source AUTORITATIVE par-modèle
+// (flag `supported_parameters` exposé). Pour ces providers, on
+// considère exclusivement le runtime Set — on n'applique PAS les
+// regex hardcodés par-dessus, sinon on tagge agentic des modèles que
+// le provider amont a explicitement marqués chat-only.
+const AUTHORITATIVE_PROVIDERS = new Set<string>([
+  'openrouter',
+  // Aliases OpenAI-compat routés via OpenRouter — tous bénéficient
+  // de la même source quand l'user les configure derrière OpenRouter.
+  // (Si l'user les configure en provider direct sans OpenRouter,
+  // le Set runtime sera vide et on retombera en 'unknown'.)
+])
+
 // Runtime store des IDs agentic découverts via l'API provider (ex:
 // OpenRouter `supported_parameters`). Mis à jour par
 // `registerAgenticIds` à chaque fetch /api/models/{provider}.
@@ -154,21 +167,31 @@ export function registerAgenticIds(ids: string[] | undefined | null): void {
   }
 }
 
-export function classifyModel(model: string): AgenticTier {
+export function classifyModel(model: string, providerHint?: string): AgenticTier {
   if (!model) return 'unknown'
   const m = model.trim()
-  // 1. Source autoritative : si le provider a explicitement signalé
-  //    le modèle comme supportant les tools, on fait confiance.
+  const provider = (providerHint || '').toLowerCase()
+
+  // Cas autoritatif : si on connaît la source officielle pour ce
+  // provider, on s'y tient strictement. Pas de fallback regex —
+  // le provider amont a déjà décidé. Si l'ID n'est pas dans le Set,
+  // c'est que le modèle n'est pas agentic (ou qu'on a fetch trop
+  // tôt et le Set est vide → 'unknown' est plus honnête que
+  // d'inventer via regex).
+  if (provider && AUTHORITATIVE_PROVIDERS.has(provider)) {
+    return _runtimeAgenticIds.has(m) ? 'agentic' : 'unknown'
+  }
+
+  // Cas best-effort : 1) Set runtime, 2) non-agentic explicite,
+  // 3) regex agentic hardcodé. Utilisé pour les providers directs
+  // (Anthropic, OpenAI, Google, Mistral, MiniMax) qui n'exposent pas
+  // de metadata par-modèle utilisable.
   if (_runtimeAgenticIds.has(m)) return 'agentic'
-  // 2. Pattern non-agentic explicite : on ne ment jamais en disant
-  //    "agentic" à un petit modèle qui rate les outils.
   if (NON_AGENTIC_PATTERNS.some(re => re.test(m))) return 'chat-only'
-  // 3. Pattern agentic hardcodé (fallback pour les providers sans
-  //    metadata exposée).
   if (AGENTIC_PATTERNS.some(re => re.test(m))) return 'agentic'
   return 'unknown'
 }
 
-export function isAgentic(model: string): boolean {
-  return classifyModel(model) === 'agentic'
+export function isAgentic(model: string, providerHint?: string): boolean {
+  return classifyModel(model, providerHint) === 'agentic'
 }
