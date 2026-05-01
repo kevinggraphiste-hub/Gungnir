@@ -904,7 +904,7 @@ export default function Settings() {
   ]
 
   return (
-    <div className="max-w-4xl mx-auto p-4 md:p-6 h-full overflow-y-auto">
+    <div className="max-w-4xl mx-auto p-4 md:p-6 h-full overflow-y-auto overflow-x-hidden">
       <PageHeader
         icon={<SettingsIcon size={18} />}
         title={t('settings.title')}
@@ -912,9 +912,13 @@ export default function Settings() {
       />
 
       {/* Layout responsive : tabs verticales en desktop (aside w-48), barre
-          horizontale scrollable en mobile (overflow-x-auto, snap). */}
-      <div className="flex flex-col md:flex-row gap-3 md:gap-6">
-        <aside className="md:w-48 md:flex-shrink-0">
+          horizontale scrollable en mobile (overflow-x-auto, snap).
+          min-w-0 sur le flex parent indispensable pour que les enfants
+          puissent shrinker en dessous de leur min-content size — sans ça
+          un input long ou une barre de tabs scrollable peut pousser le
+          wrapper hors viewport. */}
+      <div className="flex flex-col md:flex-row gap-3 md:gap-6 min-w-0">
+        <aside className="md:w-48 md:flex-shrink-0 min-w-0">
           <nav className="flex md:flex-col gap-2 overflow-x-auto md:overflow-visible -mx-4 px-4 md:mx-0 md:px-0 pb-2 md:pb-0">
             {tabs.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}
@@ -931,7 +935,7 @@ export default function Settings() {
           </nav>
         </aside>
 
-        <div className="flex-1 rounded-xl border p-4 md:p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
+        <div className="flex-1 min-w-0 rounded-xl border p-4 md:p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
           {/* -- General --------------------------------------------------- */}
           {activeTab === 'general' && (
             <div className="space-y-6">

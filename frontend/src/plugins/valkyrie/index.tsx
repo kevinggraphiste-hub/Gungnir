@@ -1453,13 +1453,17 @@ export default function ValkyriePlugin() {
             ) : (
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-                // `minmax(260px, auto)` : les lignes gardent 260px minimum pour
-                // préserver le layout kanban compact, MAIS peuvent s'étendre
-                // verticalement quand une carte expanded (mémo Gungnir long,
-                // description riche, beaucoup de sous-tâches) a besoin de
-                // plus. Avant : hauteur fixe 260 × span 2 = 520 max → contenu
-                // tronqué.
+                // 320 px min : à 260 px le badge "À faire" + 4 icônes
+                // d'actions trailing ne tenaient pas et débordaient quand
+                // 2 cards se trouvaient côte à côte sur écran ~540 px.
+                // 320 px force 1 col jusqu'à ~660 px (mobile + petite
+                // tablette portrait), 2 cols ensuite.
+                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                // gridAutoRows minmax(260, auto) : les lignes gardent 260 px
+                // minimum pour préserver le layout kanban compact, MAIS
+                // peuvent s'étendre verticalement quand une carte expanded
+                // (mémo Gungnir long, description riche, beaucoup de
+                // sous-tâches) a besoin de plus.
                 gridAutoRows: 'minmax(260px, auto)',
                 gridAutoFlow: 'row dense',
                 gap: 14,
