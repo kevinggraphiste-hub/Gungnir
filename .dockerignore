@@ -1,20 +1,81 @@
 # Gungnir Docker ignore
+# Garde l'image légère : on bake uniquement les seeds globaux
+# (data/*.json à la racine) + le code. Les sous-dossiers per-user
+# (data/<root>/<uid>/) sont créés à runtime et viennent du volume
+# host (compose mount ./data:/app/data). Pas la peine de les
+# embarquer dans l'image — ça gonfle inutilement et invalide le
+# cache Docker à chaque modif d'un user.
+
+# Git + outils dev
 .git
+.gitignore
 .claude
+.vscode
+.idea
+
+# Node / build artefacts
 node_modules
 frontend/node_modules
 frontend/dist
-__pycache__
-*.pyc
-*.pyo
-backups/
-deploy/certbot/
-deploy/backups/
-data/backups/*.zip
-data/gungnir.db
-data/gungnir.db-journal
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# Logs + env + secrets
 *.log
 .env
+.env.*
+
+# Docs internes (pas runtime)
 ABOUT.md
 COMPARATIF.md
 GUIDE.md
+ROADMAP.md
+
+# Backups locaux + certbot (deploy host-side)
+backups/
+deploy/certbot/
+deploy/backups/
+
+# ── data/ : exclure tout ce qui est per-user runtime ───────────
+# Les seeds globaux .json à la racine de data/ sont gardés
+# (data/agents.json, data/skills.json, data/personalities.json,
+# data/config.json, data/consciousness/config.json, etc.) —
+# l'app les utilise pour seed les nouveaux users au premier boot.
+
+# Backups + caches + uploads + logs (montés via volume)
+data/backups/
+data/cache/
+data/files/
+data/logs/
+data/workspace/
+
+# DB (Postgres tourne dans son propre conteneur, ce fichier sqlite
+# est legacy — recréé si besoin)
+data/gungnir.db
+data/gungnir.db-journal
+
+# Per-user dirs avec uid numérique en sous-dossier direct
+data/automata/[0-9]*/
+data/browser/[0-9]*/
+data/channels/[0-9]*/
+data/heartbeat/[0-9]*/
+data/huntr/[0-9]*/
+data/integrations/[0-9]*/
+data/kb/[0-9]*/
+data/personalities/[0-9]*/
+data/skills/[0-9]*/
+data/soul/[0-9]*/
+data/voice_sessions/[0-9]*/
+data/webhooks/[0-9]*/
+
+# Conscience : structure spéciale data/consciousness/users/<uid>/
+data/consciousness/users/
+
+# Plugins externes (téléchargés à runtime via le marketplace)
+data/plugins_external/
+
+# Code-frame plugin : configs + versions + snippets per-user
+data/code_configs/
+data/code_versions/
+data/code_snippets/
