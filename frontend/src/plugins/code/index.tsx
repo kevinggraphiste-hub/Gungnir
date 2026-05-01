@@ -12,6 +12,7 @@
  */
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import manifest from './manifest.json'
+import { MobileGate } from '@core/components/MobileDisclaimer'
 import type { OpenTab, FileData, GitStatus } from './types'
 import { apiFetch, IMAGE_EXTS } from './utils'
 import { loadSession, saveSession } from './session'
@@ -51,19 +52,24 @@ const PLUGIN_VERSION = (manifest as { version?: string }).version || '?'
 // JS → tout est nettoyé, garanti par la spec.
 export default function SpearCodePlugin() {
   return (
-    <iframe
-      src="/code-frame"
-      title="SpearCode"
-      style={{
-        flex: 1,
-        width: '100%',
-        height: '100%',
-        border: 'none',
-        background: 'var(--bg-primary)',
-      }}
-      // sandbox volontairement omis : on a besoin de l'auth (localStorage
-      // partagé via same-origin), des popups (export), et des downloads.
-    />
+    <MobileGate
+      pluginName="SpearCode"
+      reason="SpearCode est un IDE complet avec explorateur, éditeur multi-onglets, terminal et panneau IA — quatre zones de travail simultanées qui ne tiennent pas sur un écran < 768 px."
+    >
+      <iframe
+        src="/code-frame"
+        title="SpearCode"
+        style={{
+          flex: 1,
+          width: '100%',
+          height: '100%',
+          border: 'none',
+          background: 'var(--bg-primary)',
+        }}
+        // sandbox volontairement omis : on a besoin de l'auth (localStorage
+        // partagé via same-origin), des popups (export), et des downloads.
+      />
+    </MobileGate>
   )
 }
 

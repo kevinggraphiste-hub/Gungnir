@@ -846,7 +846,7 @@ export default function WebhooksPlugin() {
                 return (
                   <div key={catKey}>
                     <h4 className="text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>{catLabel}</h4>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {items.map(([key, entry]) => (
                         <button key={key} disabled={alreadyAdded.has(key) || actionLoading === key}
                           onClick={() => addIntegration(key)}

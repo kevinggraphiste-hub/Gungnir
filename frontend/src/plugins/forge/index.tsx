@@ -20,6 +20,7 @@ import { autocompletion, type CompletionContext, type CompletionResult } from '@
 import { Hammer, Workflow, Plus, Play, Trash2, RefreshCw, ChevronRight, Clock, Zap, AlertCircle, CheckCircle2, FileText, Code as CodeIcon, GitBranch, Upload, Download, Link as LinkIcon, Copy, X, Sparkles, History, RotateCcw, BookmarkPlus, Store, Star, Send, FlaskConical, Users, UserPlus } from 'lucide-react'
 import { PageHeader, TabBar, PrimaryButton, SecondaryButton } from '@core/components/ui'
 import InfoButton from '@core/components/InfoButton'
+import { MobileGate } from '@core/components/MobileDisclaimer'
 import { apiFetch } from '@core/services/api'
 import { ForgeCanvas, type ForgeTool as CanvasForgeTool } from './Canvas'
 import { humanizeTool, groupByCategory } from './toolLabels'
@@ -245,6 +246,10 @@ export default function ForgePlugin() {
   }, [])
 
   return (
+    <MobileGate
+      pluginName="Forge"
+      reason="Forge orchestre des workflows en mode canvas drag & drop, avec une bibliothèque latérale de ~130 outils et des nœuds connectés à la souris. Cette densité d'interaction n'est pas exploitable au doigt sur écran < 768 px."
+    >
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ padding: '16px 24px 0' }}>
         <PageHeader
@@ -270,6 +275,7 @@ export default function ForgePlugin() {
       {tab === 'runs' && <RunsTab />}
       {tab === 'tools' && <ToolsTab />}
     </div>
+    </MobileGate>
   )
 }
 
