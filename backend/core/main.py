@@ -771,9 +771,15 @@ PUBLIC_PATHS = {
     # Récup mdp + vérif email — accessibles sans Bearer (le user n'est par
     # définition pas encore connecté quand il clique sur un lien email).
     "/api/users/forgot-password", "/api/users/reset-password", "/api/users/verify-email",
+    # OAuth callback : la popup du provider (Google, GitHub…) revient ici
+    # sans Bearer token. L'auth se fait via le param ``state`` signé qui
+    # contient le user_id. Path exact (pas un préfixe) pour ne pas exposer
+    # /oauth/{provider}/authorize, /disconnect, etc.
+    "/api/plugins/webhooks/oauth/callback",
 }
 PUBLIC_PREFIXES = (
     "/api/webhook/",                        # Incoming webhooks have their own auth
+    "/api/plugins/webhooks/incoming/",      # Webhooks entrants — résolution user_id via webhook_id + HMAC optionnel
     "/api/plugins/channels/webhook/",       # Channel webhooks (Telegram, Discord, Slack, WhatsApp)
     "/api/plugins/channels/incoming/",      # Channel incoming messages (API channels with own auth)
     "/assets/", "/static/", "/favicon",

@@ -34,29 +34,94 @@ DATA_DIR = Path("data")
 # ══════════════════════════════════════════════════════════════════════════════
 # Per-user data isolation
 # ══════════════════════════════════════════════════════════════════════════════
+#
+# Toutes les écritures DOIVENT être scopées au user authentifié, sinon on
+# retombait sur ``data/<plugin>/0/`` (fallback uid=0) — partagé entre tous
+# les users en mode setup et exposé à un cross-user leak. Les helpers ici
+# raise 401 si l'appelant n'a pas de user_id valide. Pour la route entrante
+# publique ``/incoming/{webhook_id}`` qui ne peut pas exiger un Bearer (les
+# services externes type GitHub/Stripe/n8n ne l'envoient pas), on résout le
+# user_id depuis le webhook_id via :func:`_resolve_webhook_owner`.
+
+
+def _require_user_id(request: Request) -> int:
+    uid = getattr(request.state, "user_id", None)
+    if not uid or int(uid) <= 0:
+        raise HTTPException(status_code=401, detail="Authentification requise")
+    return int(uid)
+
 
 def _user_integrations_file(request: Request) -> Path:
-    """Return per-user integrations file path."""
-    uid = getattr(request.state, "user_id", None) or 0
+    """Return per-user integrations file path. 401 si pas authentifié."""
+    uid = _require_user_id(request)
     p = DATA_DIR / "integrations" / str(uid) / "integrations.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def _user_webhooks_file(request: Request) -> Path:
-    """Return per-user webhooks file path."""
-    uid = getattr(request.state, "user_id", None) or 0
+    """Return per-user webhooks file path. 401 si pas authentifié."""
+    uid = _require_user_id(request)
     p = DATA_DIR / "webhooks" / str(uid) / "webhooks.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def _user_webhook_logs_file(request: Request) -> Path:
-    """Return per-user webhook logs file path."""
-    uid = getattr(request.state, "user_id", None) or 0
+    """Return per-user webhook logs file path. 401 si pas authentifié."""
+    uid = _require_user_id(request)
     p = DATA_DIR / "webhooks" / str(uid) / "webhook_logs.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def _webhooks_file_for_uid(uid: int) -> Path:
+    """Variante qui prend un uid déjà résolu (pour les routes publiques type
+    /incoming/{webhook_id} où l'uid vient du webhook_id, pas du Bearer)."""
+    p = DATA_DIR / "webhooks" / str(int(uid)) / "webhooks.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _webhook_logs_file_for_uid(uid: int) -> Path:
+    p = DATA_DIR / "webhooks" / str(int(uid)) / "webhook_logs.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _resolve_webhook_owner(webhook_id: str) -> Optional[tuple[int, dict]]:
+    """Trouve le user qui possède ``webhook_id`` en scannant les dossiers
+    ``data/webhooks/<uid>/webhooks.json``. Renvoie ``(uid, webhook_dict)``
+    ou ``None`` si introuvable.
+
+    On ignore ``data/webhooks/0/`` (legacy / fallback partagé) — un webhook
+    qui aurait atterri là par accident ne sera pas servi, ce qui force une
+    re-création propre dans le dossier du user authentifié."""
+    base = DATA_DIR / "webhooks"
+    if not base.exists():
+        return None
+    for user_dir in base.iterdir():
+        if not user_dir.is_dir():
+            continue
+        try:
+            uid = int(user_dir.name)
+        except ValueError:
+            continue
+        if uid <= 0:
+            continue
+        webhooks_file = user_dir / "webhooks.json"
+        if not webhooks_file.exists():
+            continue
+        try:
+            data = json.loads(webhooks_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        for wh in data:
+            if isinstance(wh, dict) and wh.get("id") == webhook_id:
+                return uid, wh
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1171,12 +1236,28 @@ async def toggle_webhook(webhook_id: str, request: Request):
 
 @router.post("/incoming/{webhook_id}")
 async def receive_webhook(webhook_id: str, request: Request):
-    """Receive an incoming webhook call."""
-    webhooks_file = _user_webhooks_file(request)
-    webhooks = _load_json(webhooks_file, [])
-    wh = next((w for w in webhooks if w.get("id") == webhook_id), None)
-    if not wh:
+    """Receive an incoming webhook call.
+
+    Route publique par design : un service externe (GitHub, Stripe, n8n…)
+    appelle cette URL sans Bearer token. L'auth est assurée par :
+    - Le HMAC ``X-Webhook-Signature`` quand le webhook a un secret défini
+      (on encourage fortement à en mettre un côté UI)
+    - À défaut, l'opacité de l'UUID ``webhook_id`` qui sert de bearer
+      simple (mais n'a aucune valeur cryptographique : qui connaît l'URL
+      peut spammer l'endpoint, juste pas usurper les logs d'autres users
+      grâce à la résolution stricte ci-dessous)
+
+    Avant ce fix, on cherchait le webhook dans ``data/webhooks/0/`` à cause
+    du fallback uid=0 (le service externe n'envoie pas de Bearer → middleware
+    ne pose pas state.user_id). Conséquence : 404 systématique pour tous les
+    webhooks créés en mode auth-actif (ils sont dans ``data/webhooks/<uid>/``).
+    Ce fix résout l'owner via :func:`_resolve_webhook_owner` qui scanne tous
+    les dossiers users — et écrit les logs dans le dossier du bon owner.
+    """
+    resolution = _resolve_webhook_owner(webhook_id)
+    if not resolution:
         return JSONResponse({"error": "Webhook non trouvé"}, status_code=404)
+    owner_uid, wh = resolution
     if not wh.get("enabled", True):
         return JSONResponse({"error": "Webhook désactivé"}, status_code=403)
 
@@ -1195,8 +1276,9 @@ async def receive_webhook(webhook_id: str, request: Request):
     except Exception:
         body = {"raw": (await request.body()).decode()[:5000]}
 
-    # Log the event
-    logs_file = _user_webhook_logs_file(request)
+    # Log the event dans le dossier de l'owner du webhook (et pas un fallback
+    # /data/webhooks/0/ partagé entre tous les users).
+    logs_file = _webhook_logs_file_for_uid(owner_uid)
     logs = _load_json(logs_file, [])
     log_entry = {
         "id": str(uuid.uuid4())[:8],
@@ -1213,7 +1295,7 @@ async def receive_webhook(webhook_id: str, request: Request):
         logs = logs[:200]
     _save_json(logs_file, logs)
 
-    logger.info(f"Webhook received: {wh.get('name', webhook_id)}")
+    logger.info(f"Webhook received: {wh.get('name', webhook_id)} (owner uid={owner_uid})")
     return {"ok": True, "event_id": log_entry["id"]}
 
 

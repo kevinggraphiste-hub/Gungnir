@@ -32,8 +32,28 @@ DATA_DIR = Path("data")
 # ── Per-user data isolation ─────────────────────────────────────────────────
 
 def _get_user_id(request_or_ws) -> int:
-    """Extract user_id from Request or WebSocket state."""
+    """Extract user_id from Request or WebSocket state.
+
+    ⚠️ Retourne 0 si pas authentifié — à n'utiliser qu'avec un WebSocket déjà
+    validé par :func:`_authenticate_websocket` (qui rejette le WS sans token
+    en mode auth-actif). Pour les routes HTTP, préférer :func:`_require_user_id`
+    qui raise 401 — sinon les écritures atterrissent dans ``data/voice/0/``,
+    partagé entre tous les users."""
     return getattr(getattr(request_or_ws, "state", None), "user_id", None) or 0
+
+
+def _require_user_id(request_or_ws) -> int:
+    """Strict version : raise 401 si pas de user_id authentifié.
+
+    Empêche les routes HTTP voice d'écrire dans ``data/voice/0/`` quand le
+    middleware d'auth est en mode setup (avant qu'un user existe) ou laisse
+    passer une requête sans Bearer. Pour les WS, ce helper marche aussi
+    car :func:`_authenticate_websocket` set ``state.user_id`` à un entier > 0
+    après validation."""
+    uid = getattr(getattr(request_or_ws, "state", None), "user_id", None)
+    if not uid or int(uid) <= 0:
+        raise HTTPException(status_code=401, detail="Authentification requise")
+    return int(uid)
 
 
 def _extract_ws_token(websocket: WebSocket) -> str:
@@ -123,16 +143,19 @@ async def _authenticate_websocket(websocket: WebSocket) -> bool:
 
 
 def _user_sessions_file(request: Request) -> Path:
-    """Return per-user voice sessions file path."""
-    uid = _get_user_id(request)
+    """Return per-user voice sessions file path. 401 si pas authentifié."""
+    uid = _require_user_id(request)
     p = DATA_DIR / "voice_sessions" / str(uid) / "sessions.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def _user_custom_providers_file(request_or_ws) -> Path:
-    """Return per-user custom voice providers file path."""
-    uid = _get_user_id(request_or_ws)
+    """Return per-user custom voice providers file path. 401 si pas authentifié.
+
+    Accepte aussi un WebSocket — :func:`_authenticate_websocket` doit avoir
+    été appelé en amont (sinon le WS arrive ici avec uid=0 → 401)."""
+    uid = _require_user_id(request_or_ws)
     p = DATA_DIR / "voice_sessions" / str(uid) / "custom_providers.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
@@ -278,12 +301,15 @@ async def _get_voice_config_for_user(request_or_ws, provider: str = "elevenlabs"
 
     Order: per-user entry (if non-empty) → global. Prevents one user's API
     key from being handed to an anonymous caller or another user.
+
+    Raise 401 si appelé sans user authentifié — sinon un appelant anonyme
+    récupérerait potentiellement la config globale de Settings, contournant
+    l'isolation per-user.
     """
-    uid = _get_user_id(request_or_ws)
-    if uid:
-        per_user = await _load_user_voice_config(uid, provider)
-        if per_user and per_user.get("api_key"):
-            return per_user
+    uid = _require_user_id(request_or_ws)
+    per_user = await _load_user_voice_config(uid, provider)
+    if per_user and per_user.get("api_key"):
+        return per_user
     return _get_voice_config(provider)
 
 
@@ -565,7 +591,7 @@ async def convai_signed_url(request: Request):
 @router.post("/convai/create-agent")
 async def convai_create_agent(request: Request):
     """Create an ElevenLabs ConvAI agent with Gungnir personality (per-user)."""
-    uid = _get_user_id(request)
+    uid = _require_user_id(request)
     cfg = await _get_voice_config_for_user(request, "elevenlabs")
     api_key = cfg.get("api_key")
     voice_id = cfg.get("voice_id")
