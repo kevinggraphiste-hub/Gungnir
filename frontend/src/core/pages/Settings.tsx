@@ -936,6 +936,11 @@ export default function Settings() {
         </aside>
 
         <div className="flex-1 min-w-0 max-w-full overflow-x-hidden rounded-xl border p-4 md:p-6" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
+          {/* Wrapper isolant — pattern identique à AgentSettings sub-agents :
+              force le contenu de chaque onglet à se confiner à la largeur
+              du parent peu importe ce qu'un descendant essaie de pousser
+              (input, dropdown, grid, select avec long placeholder). */}
+          <div className="w-full min-w-0 overflow-hidden">
           {/* -- General --------------------------------------------------- */}
           {activeTab === 'general' && (
             <div className="space-y-6">
@@ -3202,6 +3207,7 @@ export default function Settings() {
               )}
             </div>
           )}
+          </div>
         </div>
       </div>
     </div>

@@ -382,19 +382,14 @@ input, textarea {
   }
 }
 
-/* Grille Valkyrie : breakpoints explicites + minmax(0, 1fr) pour FORCER
-   l'égalité des colonnes. Sans ça, une card avec un contenu min-content
-   plus large (titre long non-wrap, badge "À faire" trailing) prenait une
-   col plus large que sa voisine → déséquilibre visuel "carré + rectangle".
-   minmax(0, 1fr) permet à chaque col de shrinker en dessous de son
-   min-content (les enfants gèrent leur truncate / wrap eux-mêmes). */
+/* Grille Valkyrie — 2 cols dès le mobile (style kanban). minmax(0, 1fr)
+   FORCE l'égalité stricte des colonnes : sans le 0 en min, une card dont
+   le contenu min-content dépasse la base prenait une col plus large que
+   sa voisine et créait un déséquilibre visuel "carré + rectangle". Avec
+   minmax(0, 1fr), chaque col peut shrinker à 0 et les enfants gèrent leur
+   truncate/wrap eux-mêmes — résultat 100% symétrique. */
 .valkyrie-grid {
-  grid-template-columns: minmax(0, 1fr);
-}
-@media (min-width: 700px) {
-  .valkyrie-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 @media (min-width: 1024px) {
   .valkyrie-grid {
