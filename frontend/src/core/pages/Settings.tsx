@@ -1166,7 +1166,7 @@ export default function Settings() {
               <div>
                 <label className="flex items-center gap-3 text-[var(--text-secondary)] mb-3"><Palette className="w-4 h-4" />{t('settings.theme')}</label>
                 {/* 4 preset themes in 2x2 grid */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {[
                     { id: 'dark-scarlet', label: 'Dark Scarlet', color: '#CC1B1B', desc: t('settings.themeDarkScarlet') },
                     { id: 'dark-bronze', label: 'Dark Bronze', color: '#9B8260', desc: t('settings.themeDarkBronze') },
@@ -1259,7 +1259,7 @@ export default function Settings() {
                     </div>
 
                     {/* Color editors */}
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       {COLOR_ITEMS.map(item => {
                         const val = customThemeColors[item.key] || '#000000'
                         const hexVal = val.replace('#', '').toUpperCase()
@@ -1369,7 +1369,7 @@ export default function Settings() {
                 {/* Style sérif / sans-sérif — uniquement pertinent pour Inter */}
                 <div className="mb-6">
                   <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Style</label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {[
                       { id: 'sans', label: 'Sans empattement', desc: 'Neutre, moderne.' },
                       { id: 'serif', label: 'Avec empattement', desc: 'Classique, plus littéraire.' },
@@ -1433,7 +1433,7 @@ export default function Settings() {
                 {/* Interligne */}
                 <div>
                   <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Interligne</label>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {[
                       { id: 'tight', label: 'Serré', lh: 1.35 },
                       { id: 'normal', label: 'Normal', lh: 1.55 },
@@ -1460,7 +1460,7 @@ export default function Settings() {
                 {/* Espacement des lettres */}
                 <div className="mb-6">
                   <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Espacement des lettres</label>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {[
                       { id: 'normal', label: 'Normal', ls: '0' },
                       { id: 'wide',   label: 'Large',  ls: '0.04em' },
@@ -1487,7 +1487,7 @@ export default function Settings() {
                 {/* Espacement des mots */}
                 <div className="mb-6">
                   <label className="flex items-center gap-2 text-[var(--text-secondary)] mb-3">Espacement des mots</label>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {[
                       { id: 'normal', label: 'Normal', ws: '0' },
                       { id: 'wide',   label: 'Large',  ws: '0.12em' },
@@ -2271,7 +2271,7 @@ export default function Settings() {
                       {editingCustom.id ? `Modifier : ${editingCustom.display_name}` : 'Nouveau provider vocal'}
                     </h3>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {/* Basic info */}
                       <div>
                         <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>Nom affiché *</label>
@@ -2310,7 +2310,7 @@ export default function Settings() {
                             onChange={e => setEditingCustom((p: any) => ({ ...p, api_key: e.target.value }))}
                             className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                         </div>
-                        <div className="grid grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                           <div>
                             <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>Auth</label>
                             <select value={editingCustom.auth_method}
@@ -2340,7 +2340,7 @@ export default function Settings() {
                     {/* Audio format */}
                     <div className="border-t pt-3" style={{ borderColor: 'var(--border)' }}>
                       <h4 className="text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>Format audio</h4>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>Sample rate entrée (Hz)</label>
                           <input type="number" value={editingCustom.sample_rate_in}
@@ -2377,7 +2377,7 @@ export default function Settings() {
                                 onChange={e => setEditingCustom((p: any) => ({ ...p, send_audio_wrapper: e.target.value }))}
                                 className="w-full bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs font-mono focus:outline-none" style={{ color: 'var(--text-primary)' }} />
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               <div>
                                 <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>Dot-path audio reçu</label>
                                 <input type="text" value={editingCustom.recv_audio_path} placeholder="audio.data"
@@ -2709,7 +2709,7 @@ export default function Settings() {
               </div>
 
               {/* Live proof of life — last_tick + tick_count */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="p-3 rounded-lg border" style={{ background: 'var(--bg-primary)', borderColor: 'var(--border)' }}>
                   <div className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Dernier battement</div>
                   <div className="text-sm font-mono" style={{ color: hbStatus?.last_tick ? 'var(--text-primary)' : 'var(--text-muted)' }}>

@@ -1748,7 +1748,12 @@ function CardTile({
       onDragEnd={onDragEnd}
       onClick={selectMode ? (e) => { e.stopPropagation(); onToggleSelected() } : undefined}
       style={{
-        gridColumn: card.expanded ? 'span 2' : undefined,
+        // gridRow: span 2 quand expanded → la card prend 2 lignes pour
+        // afficher son contenu déplié (mémo, sous-tâches…). On NE met
+        // PAS gridColumn: span 2 : ça forçait CSS Grid à créer une 2e col
+        // implicite quand le breakpoint actif n'avait qu'1 seule col
+        // (mobile), résultat la rangée d'en dessous se retrouvait
+        // déséquilibrée (un slot étroit + un large).
         gridRow: card.expanded ? 'span 2' : undefined,
         background: 'var(--bg-tertiary)',
         border: `1px solid ${
