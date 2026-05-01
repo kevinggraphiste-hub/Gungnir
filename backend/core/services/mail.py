@@ -15,8 +15,8 @@ renvoie ``False`` sans crasher — la route appelante doit gérer le cas
 de SMTP côté client).
 
 Variables d'env supplémentaires (utiles dans tous les cas) :
-- ``MAIL_FROM`` (défaut: ``Gungnir <noreply@gungnir.scarletwolf.ch>``)
-- ``PUBLIC_BASE_URL`` (défaut: ``https://gungnir.scarletwolf.ch``) —
+- ``MAIL_FROM`` (défaut: ``Gungnir <noreply@gungnir.scarletwolf.cloud>``)
+- ``PUBLIC_BASE_URL`` (défaut: ``https://gungnir.scarletwolf.cloud``) —
   utilisé pour construire les liens dans les emails.
 """
 from __future__ import annotations
@@ -32,8 +32,8 @@ import httpx
 
 logger = logging.getLogger("gungnir.mail")
 
-DEFAULT_FROM: Final = "Gungnir <noreply@gungnir.scarletwolf.ch>"
-DEFAULT_BASE_URL: Final = "https://gungnir.scarletwolf.ch"
+DEFAULT_FROM: Final = "Gungnir <noreply@gungnir.scarletwolf.cloud>"
+DEFAULT_BASE_URL: Final = "https://gungnir.scarletwolf.cloud"
 
 
 def public_base_url() -> str:
