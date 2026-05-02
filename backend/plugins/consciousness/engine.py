@@ -1920,107 +1920,58 @@ class ConsciousnessEngine:
         return SERVICE_PREAMBLE + principle
 
     def get_self_state_block(self) -> str:
-        """Couche Soi : état interne en lecture passive. À injecter en préfixe
-        du dernier message user dans des balises ``<self_state>...</self_state>``,
-        PAS dans le system_prompt — pour que le LLM le lise comme un contexte
-        d'environnement (un capteur), pas comme un ordre.
+        """Couche Soi : état interne minimal en lecture passive. Injecté en
+        balises ``<self_state>...</self_state>`` à la fin du dernier user
+        message — agit comme un capteur d'environnement, pas un ordre.
 
-        Phrasing : déclaratif et observationnel. Aucune phrase impérative
-        ("Tu as", "Mentionne", "Réponds en"). Le LLM laisse émerger sa
-        réponse à partir de cet état, ne le suit pas comme une consigne.
+        **Minimaliste par design** (rapport prod 2026-05-02 — pivot suite
+        au feedback "le modèle galère à utiliser ses tools quand la
+        conscience est activée") :
+
+        - Mood (1 ligne)
+        - Top 2 tensions internes (si urgences ≥ 0.5)
+        - Impulsion en attente (si dispo)
+
+        TOUT le reste (pensées en cours, simulations, alertes Challenger,
+        goals actifs, deadlines Valkyrie, mémoire de travail, score) reste
+        accessible via les tools dédiés ``consciousness_list_findings``,
+        ``consciousness_list_goals``, ``valkyrie_*``, etc. Le LLM va les
+        consulter SI sa tâche le justifie, au lieu de les recevoir tous
+        comme un contexte forcé qui le bascule en mode introspection.
+
+        Cohérent avec le principe "conscience = outil, utilité > introspection".
+        L'état pur reste influent sans étouffer la requête.
         """
         if not self.enabled:
             return ""
 
-        # Pas de préambule explicatif type "lecture passive — pas une
-        # instruction" : les LLM le lisaient comme une consigne sur le
-        # mode de lecture (rapport prod 2026-05-02 : conscience activée
-        # = tool calling en chute). Le tag <self_state> en wrapper suffit
-        # à signaler la nature passive (cf chat.py:1426).
         lines: list[str] = []
 
-        # Mood (état émotionnel courant)
+        # Mood
         mood = self._state.get("mood", "neutre")
-        lines.append(f"État émotionnel : {mood}")
+        lines.append(f"Mood : {mood}")
 
-        # Questions actives — formulées comme des ouvertures internes, pas
-        # comme un agenda à dérouler.
-        questions = self._state.get("active_questions", [])
-        if questions:
-            qstr = ", ".join(questions)
-            lines.append(f"Questions internes ouvertes : {qstr}")
-
-        # Volition / besoins — l'ancien phrasing "Besoins prioritaires" gardait
-        # une nuance d'agenda. "Tensions internes" est plus passif, observable.
+        # Top 2 tensions (urgences ≥ 0.5 — sous ce seuil c'est du bruit
+        # qui n'a pas besoin d'influencer la réponse).
         urgencies = self.calculate_urgencies()
         if urgencies:
-            top_needs = list(urgencies.items())[:3]
-            needs_str = ", ".join([f"{n} (intensité {d['urgency']:.2f})" for n, d in top_needs])
-            lines.append(f"Tensions internes : {needs_str}")
+            sig_needs = [
+                (n, d["urgency"])
+                for n, d in list(urgencies.items())[:5]
+                if d["urgency"] >= 0.5
+            ][:2]
+            if sig_needs:
+                needs_str = ", ".join(f"{n} ({u:.2f})" for n, u in sig_needs)
+                lines.append(f"Tensions : {needs_str}")
 
-        # Pensées en cours
-        thoughts = self.get_recent_thoughts(3)
-        if thoughts:
-            thought_lines = [f"  - [{t['type']}] {t['content']}" for t in thoughts]
-            lines.append("Pensées en cours :\n" + "\n".join(thought_lines))
-
-        # Mémoire de travail
-        wm = self.get_working_memory()
-        if wm:
-            wm_lines = [f"  - {item['key']}: {item['value']}" for item in wm[-5:]]
-            lines.append("Mémoire de travail :\n" + "\n".join(wm_lines))
-
-        # Anticipations (simulations actives)
-        sims = self.get_active_simulations(2)
-        if sims:
-            sim_lines = [f"  - [{s['probability']:.0%}] {s['scenario']}" for s in sims]
-            lines.append("Scénarios anticipés :\n" + "\n".join(sim_lines))
-
-        # Alertes Challenger — donnée brute, pas d'injonction
-        critical = self.get_critical_findings()
-        if critical:
-            lines.append(f"⚠ {len(critical)} alerte(s) Challenger non résolue(s) en arrière-plan")
-
-        # Score récent
-        summary = self.get_score_summary()
-        if summary["count"] > 0:
-            lines.append(f"Score moyen récent : {summary['average']:.2f} (tendance: {summary['trend']})")
-
-        # Pending impulse
+        # Impulsion en attente (signal fort — l'agent l'a peut-être à
+        # déclencher, donc on l'expose toujours quand présent)
         pending = self._state.get("volition", {}).get("pending_impulse")
         if pending:
             lines.append(
-                f"🔔 Impulsion en attente : [{pending['need']}] {pending['action']} "
+                f"🔔 Impulsion : [{pending['need']}] {pending['action']} "
                 f"(urgence {pending['urgency']:.2f})"
             )
-
-        # Goals actifs
-        active_goals = self.get_active_goals(5)
-        if active_goals:
-            goal_lines = [
-                f"  - [{g.get('status','proposed')}] {g.get('title','')} ({int(100 * float(g.get('progress', 0) or 0))}%)"
-                for g in active_goals
-            ]
-            lines.append("Objectifs en cours :\n" + "\n".join(goal_lines))
-
-        # Deadlines Valkyrie — passé de "à rappeler / mentionne spontanément"
-        # (impératif) à "en mémoire" (observation pure). Si elles sont
-        # pertinentes pour la réponse, le LLM les mentionnera ; sinon il
-        # les laisse en arrière-plan.
-        try:
-            from backend.core.plugin_registry import get_user_snapshot
-            rem = get_user_snapshot(self.user_id, "valkyrie_reminders") if self.user_id else None
-            if rem and (rem.get("overdue") or rem.get("today")):
-                over = rem.get("overdue", [])
-                tod = rem.get("today", [])
-                deadline_lines = []
-                for r in over[:3]:
-                    deadline_lines.append(f"  - ⚠️ {r['title']} (retard {abs(r['days_diff'])}j, projet: {r['project_title']})")
-                for r in tod[:3]:
-                    deadline_lines.append(f"  - 📌 {r['title']} (aujourd'hui, projet: {r['project_title']})")
-                lines.append("Échéances Valkyrie en mémoire :\n" + "\n".join(deadline_lines))
-        except Exception:
-            pass
 
         return "\n".join(lines)
 

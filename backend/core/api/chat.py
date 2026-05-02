@@ -1316,7 +1316,7 @@ Tu operes en mode **demande**. Comportement :
         # - Couche Contexte : historique + tool results, gérée par chat
         consciousness_rules_block = ""
         self_state_block = ""
-        memories_lines: list[str] = []
+        memories_block = ""
         try:
             from backend.core.plugin_registry import get_consciousness_engine
             _user_consciousness = get_consciousness_engine(user_id or 0)
@@ -1324,27 +1324,25 @@ Tu operes en mode **demande**. Comportement :
                 consciousness_rules_block = _user_consciousness.get_consciousness_rules_block()
                 self_state_block = _user_consciousness.get_self_state_block()
                 _user_consciousness.record_interaction()
-                # Recall sémantique sur le message courant — parité avec les
-                # channels externes (commit 027dcad). Les souvenirs sont du
-                # contexte rétrospectif, pas de l'état interne courant ; on
-                # les agrège au self_state (lecture passive aussi).
+                # Recall sémantique sur le message courant. Les souvenirs
+                # sont du **contexte rétrospectif** (pas du Soi présent) →
+                # injectés dans le system_prompt comme une section dédiée,
+                # pas dans <self_state>. Évite que le RAG noie le state
+                # minimaliste (mood/tensions/impulsion).
                 try:
                     _memories = await _user_consciousness.vector_recall(
                         message, top_k=3, collection="memories"
                     )
                     if _memories:
-                        memories_lines = [
+                        _mem_lines = [
                             f"- {m.get('text') or m.get('content') or ''}".strip()[:200]
                             for m in _memories
                         ]
+                        memories_block = "\n\n## Souvenirs pertinents\n" + "\n".join(_mem_lines)
                 except Exception as _recall_err:
                     print(f"[Wolf] Vector recall skipped: {_recall_err}")
         except Exception:
             pass  # Plugin non chargé ou erreur — pas bloquant
-
-        if memories_lines:
-            mem_block = "\n\nSouvenirs ressurgis :\n" + "\n".join(memories_lines)
-            self_state_block = (self_state_block + mem_block) if self_state_block else mem_block
 
         # Welcome-chat onboarding injection (strictly per-user)
         onboarding_block = ""
@@ -1414,8 +1412,8 @@ Tu operes en mode **demande**. Comportement :
 
         full_system = (
             _soul_content.strip() + _personality_block + _skill_block
-            + temporal_block + consciousness_rules_block + tools_block
-            + mode_block + onboarding_block + tasks_block + style_block
+            + temporal_block + consciousness_rules_block + memories_block
+            + tools_block + mode_block + onboarding_block + tasks_block + style_block
         )
         chat_messages.insert(0, ChatMessage(role="system", content=full_system))
 
