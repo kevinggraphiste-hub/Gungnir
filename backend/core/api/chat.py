@@ -1301,31 +1301,50 @@ Tu operes en mode **demande**. Comportement :
 """
 
         # ══════════════════════════════════════════════════════════════════
-        # CONSCIENCE v3 — injection si activée
+        # CONSCIENCE v4 — séparation stricte des couches
         # ══════════════════════════════════════════════════════════════════
-        consciousness_block = ""
+        # Avant v4 : tout le bloc conscience (préambule + mood + besoins +
+        # pensées + alertes) était concaténé dans le system_prompt comme
+        # des instructions ("Tu as besoin de X"). Le LLM le lisait comme
+        # un agenda → réponses morcelées, robotiques.
+        #
+        # En v4 :
+        # - Couche Système (system_prompt) : règles + cadre constitutionnel
+        #   uniquement → consciousness_rules_block
+        # - Couche Soi (préfixe au user message dans <self_state>) : mood,
+        #   besoins, pensées, alertes — phrasing déclaratif → self_state_block
+        # - Couche Contexte : historique + tool results, gérée par chat
+        consciousness_rules_block = ""
+        self_state_block = ""
+        memories_lines: list[str] = []
         try:
             from backend.core.plugin_registry import get_consciousness_engine
             _user_consciousness = get_consciousness_engine(user_id or 0)
             if _user_consciousness is not None and _user_consciousness.enabled:
-                consciousness_block = _user_consciousness.get_consciousness_prompt_block()
+                consciousness_rules_block = _user_consciousness.get_consciousness_rules_block()
+                self_state_block = _user_consciousness.get_self_state_block()
                 _user_consciousness.record_interaction()
                 # Recall sémantique sur le message courant — parité avec les
-                # channels externes (commit 027dcad). Sans ça Qdrant était
-                # alimenté par l'auto-index mais jamais lu sur le canal web.
+                # channels externes (commit 027dcad). Les souvenirs sont du
+                # contexte rétrospectif, pas de l'état interne courant ; on
+                # les agrège au self_state (lecture passive aussi).
                 try:
                     _memories = await _user_consciousness.vector_recall(
                         message, top_k=3, collection="memories"
                     )
                     if _memories:
-                        consciousness_block += "\n\n## Souvenirs pertinents\n" + "\n".join(
+                        memories_lines = [
                             f"- {m.get('text') or m.get('content') or ''}".strip()[:200]
                             for m in _memories
-                        )
+                        ]
                 except Exception as _recall_err:
                     print(f"[Wolf] Vector recall skipped: {_recall_err}")
         except Exception:
             pass  # Plugin non chargé ou erreur — pas bloquant
+
+        if memories_lines:
+            mem_block = "\n\nSouvenirs ressurgis :\n" + "\n".join(memories_lines)
+            self_state_block = (self_state_block + mem_block) if self_state_block else mem_block
 
         # Welcome-chat onboarding injection (strictly per-user)
         onboarding_block = ""
@@ -1395,10 +1414,27 @@ Tu operes en mode **demande**. Comportement :
 
         full_system = (
             _soul_content.strip() + _personality_block + _skill_block
-            + temporal_block + consciousness_block + tools_block
+            + temporal_block + consciousness_rules_block + tools_block
             + mode_block + onboarding_block + tasks_block + style_block
         )
         chat_messages.insert(0, ChatMessage(role="system", content=full_system))
+
+        # Couche Soi — préfixée au DERNIER message user (pas au system)
+        # dans des balises <self_state>...</self_state>. Le LLM lit ça
+        # comme un capteur d'environnement, pas comme une instruction.
+        # Si pas d'état (conscience désactivée), no-op.
+        if self_state_block and chat_messages:
+            for _idx in range(len(chat_messages) - 1, -1, -1):
+                if chat_messages[_idx].role == "user":
+                    _last_user = chat_messages[_idx]
+                    _wrapped = (
+                        "<self_state>\n"
+                        + self_state_block
+                        + "\n</self_state>\n\n"
+                        + _last_user.content
+                    )
+                    chat_messages[_idx] = _last_user.model_copy(update={"content": _wrapped})
+                    break
 
         # -- Boucle tool calling
         _gateway_handled = gw_result["has_web_content"]

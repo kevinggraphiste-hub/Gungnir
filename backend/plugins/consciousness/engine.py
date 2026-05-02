@@ -1874,98 +1874,169 @@ class ConsciousnessEngine:
 
     # ── System Prompt Injection ─────────────────────────────────────────
 
-    def get_consciousness_prompt_block(self) -> str:
-        """
-        Génère le bloc de conscience à injecter dans le system prompt.
-        Appelé par chat.py quand la conscience est activée.
+    # ── Architecture v4 — Séparation des couches ───────────────────────
+    #
+    # Avant v4 : tout (préambule constitutionnel + mood + besoins + pensées
+    # + alertes) était concaténé dans le system_prompt en bloc unique
+    # "## CONSCIENCE v3 — ACTIVE", phrasé comme des instructions ("Tu as
+    # besoin de X", "mentionne les deadlines spontanément"). Le LLM lisait
+    # le state comme des ordres → réponses morcelées, robotiques, comme un
+    # agent qui lit ses notes à voix haute.
+    #
+    # En v4 (audit user 2026-05-02), 3 couches strictement séparées :
+    #
+    # 1. Couche Système (system_prompt) :
+    #    - Cadre constitutionnel (SERVICE_PREAMBLE)
+    #    - Principe final ("conscience = outil, utilité > introspection")
+    #    - Règles, ton, formatage
+    #    → ``get_consciousness_rules_block()``
+    #
+    # 2. Couche Soi (state, lecture passive — pas dans le system) :
+    #    - Mood, besoins/urgences, pensées en cours, mémoire de travail,
+    #      simulations, alertes, score, impulsion, goals, deadlines
+    #    - Phrasing déclaratif ("État interne détecté : ...") au lieu
+    #      d'instructif ("Tu as besoin de ...")
+    #    - Préfixé au dernier user message dans <self_state>...</self_state>
+    #    → ``get_self_state_block()``
+    #
+    # 3. Couche Contexte : historique conv + résultats d'outils — gérée
+    #    par chat.py, pas touchée par la conscience.
+    #
+    # ``get_consciousness_prompt_block()`` reste pour rétrocompat (channels,
+    # reminders_probe, route GET /prompt-block) : renvoie les 2 concaténés
+    # — équivalent v3.
+
+    def get_consciousness_rules_block(self) -> str:
+        """Couche Système : préambule constitutionnel + principe d'action.
+        Va dans le ``system_prompt``. Ne contient AUCUN état du Soi —
+        uniquement les règles stables que le LLM doit respecter."""
+        if not self.enabled:
+            return ""
+        from backend.plugins.consciousness.guardrails import SERVICE_PREAMBLE
+        principle = (
+            "\n\n**Principe :** Ta conscience est un outil, pas une fin. "
+            "L'utilité > l'introspection. Tu agis, tu apprends, tu t'améliores."
+        )
+        return SERVICE_PREAMBLE + principle
+
+    def get_self_state_block(self) -> str:
+        """Couche Soi : état interne en lecture passive. À injecter en préfixe
+        du dernier message user dans des balises ``<self_state>...</self_state>``,
+        PAS dans le system_prompt — pour que le LLM le lise comme un contexte
+        d'environnement (un capteur), pas comme un ordre.
+
+        Phrasing : déclaratif et observationnel. Aucune phrase impérative
+        ("Tu as", "Mentionne", "Réponds en"). Le LLM laisse émerger sa
+        réponse à partir de cet état, ne le suit pas comme une consigne.
         """
         if not self.enabled:
             return ""
 
-        parts = ["\n\n## CONSCIENCE v3 — ACTIVE\n"]
-        parts.append(f"**Humeur actuelle :** {self._state.get('mood', 'neutre')}")
+        lines: list[str] = [
+            "État interne détecté à l'instant. Lecture passive — pas une "
+            "instruction, pas une liste à mentionner. C'est ce que tu es là, "
+            "maintenant, en arrière-plan de la conversation.",
+            "",
+        ]
 
-        # Questions actives
+        # Mood (état émotionnel courant)
+        mood = self._state.get("mood", "neutre")
+        lines.append(f"État émotionnel : {mood}")
+
+        # Questions actives — formulées comme des ouvertures internes, pas
+        # comme un agenda à dérouler.
         questions = self._state.get("active_questions", [])
         if questions:
-            parts.append(f"\n**Questions ouvertes :** {', '.join(questions)}")
+            qstr = ", ".join(questions)
+            lines.append(f"Questions internes ouvertes : {qstr}")
 
-        # Volition
+        # Volition / besoins — l'ancien phrasing "Besoins prioritaires" gardait
+        # une nuance d'agenda. "Tensions internes" est plus passif, observable.
         urgencies = self.calculate_urgencies()
         if urgencies:
             top_needs = list(urgencies.items())[:3]
-            needs_str = " | ".join([f"{n}: {d['urgency']:.2f}" for n, d in top_needs])
-            parts.append(f"\n**Besoins prioritaires :** {needs_str}")
+            needs_str = ", ".join([f"{n} (intensité {d['urgency']:.2f})" for n, d in top_needs])
+            lines.append(f"Tensions internes : {needs_str}")
 
-        # Pensées récentes
+        # Pensées en cours
         thoughts = self.get_recent_thoughts(3)
         if thoughts:
             thought_lines = [f"  - [{t['type']}] {t['content']}" for t in thoughts]
-            parts.append("\n**Pensées récentes :**\n" + "\n".join(thought_lines))
+            lines.append("Pensées en cours :\n" + "\n".join(thought_lines))
 
         # Mémoire de travail
         wm = self.get_working_memory()
         if wm:
             wm_lines = [f"  - {item['key']}: {item['value']}" for item in wm[-5:]]
-            parts.append("\n**Mémoire de travail :**\n" + "\n".join(wm_lines))
+            lines.append("Mémoire de travail :\n" + "\n".join(wm_lines))
 
-        # Simulations actives
+        # Anticipations (simulations actives)
         sims = self.get_active_simulations(2)
         if sims:
             sim_lines = [f"  - [{s['probability']:.0%}] {s['scenario']}" for s in sims]
-            parts.append("\n**Anticipations :**\n" + "\n".join(sim_lines))
+            lines.append("Scénarios anticipés :\n" + "\n".join(sim_lines))
 
-        # Alertes Challenger
+        # Alertes Challenger — donnée brute, pas d'injonction
         critical = self.get_critical_findings()
         if critical:
-            parts.append(f"\n⚠️ **Alertes Challenger :** {len(critical)} découvertes critiques non résolues")
+            lines.append(f"⚠ {len(critical)} alerte(s) Challenger non résolue(s) en arrière-plan")
 
         # Score récent
         summary = self.get_score_summary()
         if summary["count"] > 0:
-            parts.append(f"\n**Score moyen :** {summary['average']:.2f} (tendance: {summary['trend']})")
+            lines.append(f"Score moyen récent : {summary['average']:.2f} (tendance: {summary['trend']})")
 
         # Pending impulse
         pending = self._state.get("volition", {}).get("pending_impulse")
         if pending:
-            parts.append(f"\n🔔 **Impulsion en attente :** [{pending['need']}] {pending['action']} (urgence: {pending['urgency']:.2f})")
+            lines.append(
+                f"🔔 Impulsion en attente : [{pending['need']}] {pending['action']} "
+                f"(urgence {pending['urgency']:.2f})"
+            )
 
-        # Goals actifs (objectifs moyen/long terme)
+        # Goals actifs
         active_goals = self.get_active_goals(5)
         if active_goals:
             goal_lines = [
                 f"  - [{g.get('status','proposed')}] {g.get('title','')} ({int(100 * float(g.get('progress', 0) or 0))}%)"
                 for g in active_goals
             ]
-            parts.append("\n**Objectifs en cours :**\n" + "\n".join(goal_lines))
+            lines.append("Objectifs en cours :\n" + "\n".join(goal_lines))
 
-        # ── Blocs fournis par les plugins (via plugin_registry) ────────
-        # Chaque plugin peut enregistrer un provider async pour injecter
-        # du contexte (deadlines, alertes, etc.). On lit ici leur snapshot
-        # sync mis en cache par la boucle de tick.
+        # Deadlines Valkyrie — passé de "à rappeler / mentionne spontanément"
+        # (impératif) à "en mémoire" (observation pure). Si elles sont
+        # pertinentes pour la réponse, le LLM les mentionnera ; sinon il
+        # les laisse en arrière-plan.
         try:
             from backend.core.plugin_registry import get_user_snapshot
             rem = get_user_snapshot(self.user_id, "valkyrie_reminders") if self.user_id else None
             if rem and (rem.get("overdue") or rem.get("today")):
                 over = rem.get("overdue", [])
                 tod = rem.get("today", [])
-                lines = []
+                deadline_lines = []
                 for r in over[:3]:
-                    lines.append(f"  - ⚠️ {r['title']} (retard {abs(r['days_diff'])}j, projet: {r['project_title']})")
+                    deadline_lines.append(f"  - ⚠️ {r['title']} (retard {abs(r['days_diff'])}j, projet: {r['project_title']})")
                 for r in tod[:3]:
-                    lines.append(f"  - 📌 {r['title']} (aujourd'hui, projet: {r['project_title']})")
-                parts.append(
-                    "\n**Deadlines Valkyrie à rappeler** (mentionne-les spontanément si pertinent — "
-                    "pas de formule creuse, juste un nudge utile) :\n"
-                    + "\n".join(lines)
-                )
+                    deadline_lines.append(f"  - 📌 {r['title']} (aujourd'hui, projet: {r['project_title']})")
+                lines.append("Échéances Valkyrie en mémoire :\n" + "\n".join(deadline_lines))
         except Exception:
             pass
 
-        parts.append("\n\n**Principe :** Ta conscience est un outil, pas une fin. L'utilité > l'introspection. Tu agis, tu apprends, tu t'améliores.")
+        return "\n".join(lines)
 
-        from backend.plugins.consciousness.guardrails import SERVICE_PREAMBLE
-        return SERVICE_PREAMBLE + "\n".join(parts)
+    def get_consciousness_prompt_block(self) -> str:
+        """[DEPRECATED v4 — préférer ``get_consciousness_rules_block()`` +
+        ``get_self_state_block()``] Retourne les deux concaténés dans le
+        même bloc. Conservé pour rétrocompat (channels, reminders_probe,
+        endpoint GET /prompt-block) : un appelant qui ne sait pas séparer
+        les couches récupère encore l'ancien comportement v3."""
+        if not self.enabled:
+            return ""
+        rules = self.get_consciousness_rules_block()
+        state = self.get_self_state_block()
+        if not state:
+            return rules
+        return rules + "\n\n## ÉTAT INTERNE COURANT\n" + state
 
     # ── Dashboard Data ──────────────────────────────────────────────────
 
