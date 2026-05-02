@@ -16,12 +16,15 @@ Composants :
 Toggle : OFF = agent standard | ON = conscience complète
 """
 
+import hashlib
 import json
 import asyncio
 import contextvars
 import logging
 import os
+import re
 import tempfile
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -321,6 +324,101 @@ def _save_json(path: Path, data: dict):
         except Exception:
             pass
         raise
+
+
+# ── Challenger finding helpers ──────────────────────────────────────────────
+# Placés au niveau module pour rester accessibles à la fois depuis l'engine et
+# depuis d'éventuels callers externes (tests, scripts de consolidation).
+
+# Stopwords FR + EN minimaux (couvre les mots vides courants des findings du
+# Challenger qui sont quelques phrases en FR généralement). Pas de lib externe
+# (NLTK/spaCy) pour rester self-contained — la liste est volontairement limitée
+# aux mots ultra-fréquents qui pollueraient le hashing sémantique sans rien
+# apporter à la discrimination.
+_FINDING_STOPWORDS = frozenset({
+    # FR
+    "le", "la", "les", "de", "des", "du", "un", "une", "et", "ou", "aux",
+    "ce", "ces", "cette", "sans", "avec", "pour", "par", "sur", "dans", "en",
+    "est", "sont", "etre", "avoir", "que", "qui", "quoi", "dont", "ou", "ne",
+    "pas", "plus", "moins", "mais", "donc", "car", "si", "au", "ses", "son",
+    "sa", "leur", "leurs", "mon", "ma", "mes", "ton", "ta", "tes", "nos",
+    "vos", "il", "elle", "ils", "elles", "on", "nous", "vous", "tu", "te",
+    "me", "se", "lui", "ca", "cela", "celui", "celle", "ceux", "celles",
+    "alors", "puis", "encore", "deja", "aussi", "tout", "tous", "toute",
+    "toutes", "meme", "tres", "trop", "bien", "mal", "fait", "faire", "peut",
+    "doit", "etait", "sera", "ete",
+    # EN
+    "the", "a", "an", "of", "and", "or", "to", "in", "on", "at", "is", "are",
+    "be", "was", "were", "with", "without", "for", "by", "that", "this", "it",
+    "not", "no", "but", "so", "because", "as", "from", "into", "over", "under",
+    "also", "its", "their", "they", "we", "you", "he", "she", "i", "do",
+    "does", "did", "has", "have", "had", "will", "would", "could", "should",
+})
+
+
+# Suffixes mophologiques communs FR + EN, ordre IMPORTANT : du plus long au plus
+# court pour ne pas tronquer "ations" en "ation" alors qu'on visait le suffixe
+# entier. Pas un vrai Porter/Snowball — règle "pragma" suffisante pour matcher
+# boucle/boucles, métacognitive/métacognition, impulsion/impulses, etc.
+_FINDING_STEM_SUFFIXES = (
+    "ations", "ation", "tions", "iques", "ique", "ments", "ment",
+    "euses", "euse", "eurs", "eur", "tion", "sion",
+    "ees", "ée", "ee", "es", "er", "ed", "ing", "ant",
+    "ive", "ives", "if", "ifs",
+    "s",
+)
+
+
+def _stem(w: str) -> str:
+    """Stemmer ultra-léger : retire un suffixe morphologique FR/EN si le radical
+    restant fait au moins 4 caractères. Pas exhaustif (over-stemming possible
+    sur des mots rares) mais suffit pour le dédoublonnage des findings où
+    on veut juste matcher boucle = boucles et métacognitive = métacognition.
+
+    Note : on n'agrège qu'un seul suffixe par mot — pas de chaînage type
+    Porter, ce qui suffit à 95% des cas pratiques."""
+    if len(w) <= 4:
+        return w
+    for suffix in _FINDING_STEM_SUFFIXES:
+        if w.endswith(suffix) and len(w) - len(suffix) >= 4:
+            return w[:-len(suffix)]
+    return w
+
+
+def _finding_keywords(text: str, max_keywords: int = 12) -> set:
+    """Extrait un set de mots-clés normalisés et stemmés d'un finding du
+    Challenger. Sert de base pour comparer 2 findings sémantiquement même si
+    le phrasing varie.
+
+    Pipeline :
+    1. Lowercase + suppression des accents (NFKD)
+    2. Suppression de la ponctuation
+    3. Filtrage des mots < 3 lettres et des stopwords FR/EN
+    4. Stemming (suffix stripping FR/EN minimal — boucle = boucles =
+       boucler ; métacognitive = métacognition)
+    5. Cap à 12 keywords (mots les plus longs = proxy de discrimination)
+
+    Pourquoi ce dédoublonnage est nécessaire : le Challenger LLM reformule à
+    chaque tick → 6 phrasings différents pour le même problème → 6 ``_sig``
+    MD5 différents → 6 entrées au lieu d'une seule avec ``_count=6`` (rapport
+    prod 2026-05-02 : 60% de redondance constatée).
+    """
+    if not text:
+        return set()
+    nfkd = unicodedata.normalize("NFKD", text.lower())
+    ascii_text = "".join(c for c in nfkd if not unicodedata.combining(c))
+    cleaned = re.sub(r"[^\w\s]", " ", ascii_text, flags=re.UNICODE)
+    words = [
+        _stem(w) for w in cleaned.split()
+        if len(w) >= 3 and w not in _FINDING_STOPWORDS
+    ]
+    # Le stemming peut produire des doublons (boucle/boucles → boucl) — set les supprime.
+    unique = {w for w in words if len(w) >= 3}
+    if not unique:
+        return set()
+    if len(unique) > max_keywords:
+        unique = set(sorted(unique, key=lambda w: (-len(w), w))[:max_keywords])
+    return unique
 
 
 # ── Core Engine ─────────────────────────────────────────────────────────────
@@ -1131,14 +1229,66 @@ class ConsciousnessEngine:
 
     @staticmethod
     def _finding_signature(finding_type: str, finding: str) -> str:
-        """Signature courte type+préfixe normalisé pour détecter les doublons.
+        """Signature canonique stable sur le phrasing : ``type | keywords triés``.
 
-        Deux findings du même type qui commencent par les 80 mêmes caractères
-        (après normalisation espaces/casse) sont traités comme doublon.
+        Avant ce helper, le Challenger générait jusqu'à 6 findings différents
+        pour le même problème (ex: "Question reset sans réponse") parce que
+        sa formulation variait à chaque tick → 6 ``_sig`` MD5 différents → 6
+        entrées au lieu d'une seule avec ``_count = 6``. La nouvelle sig est
+        calculée sur le set des mots-clés normalisés (lowercase, sans accents,
+        sans stopwords FR/EN) → invariante au phrasing.
+
+        Si le finding ne produit pas de keywords (texte trop court / que des
+        stopwords), fallback sur le hash du texte normalisé pour ne pas tout
+        merger en un seul finding générique. Préfixe ``kw|`` vs ``tx|`` pour
+        distinguer les deux modes dans la signature.
         """
-        import hashlib, re
-        norm = re.sub(r"\s+", " ", (finding or "").strip().lower())[:80]
-        return hashlib.md5(f"{finding_type}|{norm}".encode("utf-8")).hexdigest()[:12]
+        kw = _finding_keywords(finding)
+        if kw:
+            canon = f"{finding_type}|kw|{'|'.join(sorted(kw))}"
+        else:
+            norm = re.sub(r"\s+", " ", (finding or "").strip().lower())[:80]
+            canon = f"{finding_type}|tx|{norm}"
+        return hashlib.md5(canon.encode("utf-8")).hexdigest()[:12]
+
+    @staticmethod
+    def _finding_jaccard(prev_kw: set, new_kw: set, threshold: float = 0.5) -> bool:
+        """Filet de sécurité quand l'extraction de keywords a varié entre deux
+        passes (ex: un mot rare est passé sous le cap dans un cas et pas dans
+        l'autre, ou le LLM Challenger a reformulé entièrement). Jaccard ≥ 0.5
+        ≈ "au moins la moitié des keywords en commun" — tolère une reformulation
+        modérée. À 0.6 on rate les paraphrases sévères ("réponse" vs "répondue"
+        comptés comme tokens différents), à 0.4 on commence à fusionner des
+        problèmes distincts qui partagent un thème."""
+        if not prev_kw or not new_kw:
+            return False
+        inter = len(prev_kw & new_kw)
+        union = len(prev_kw | new_kw)
+        return (inter / union) >= threshold if union else False
+
+    def _merge_into_finding(self, prev: dict, new_kw: set):
+        """Marque un doublon : refresh timestamp, +1 count, rouvre si résolu,
+        émet le pattern récurrent au seuil."""
+        prev["timestamp"] = _now()
+        prev["_count"] = int(prev.get("_count", 1)) + 1
+        # Stocke les keywords si absent (compat findings d'avant ce fix) — facilite
+        # les futurs matchs sans avoir à recalculer.
+        if "_keywords" not in prev and new_kw:
+            prev["_keywords"] = sorted(new_kw)
+        if prev.get("resolved_at"):
+            prev.pop("resolved_at", None)
+            prev.pop("resolved_by", None)
+        _save_json(self._paths["challenger_log"], self._challenger_log)
+        if prev["_count"] >= 3:
+            try:
+                from backend.plugins.consciousness.triggers import emit_trigger_sync
+                emit_trigger_sync(
+                    self.user_id or 0, "new_pattern",
+                    entity_id=prev.get("_sig", ""),
+                    cooldown_seconds=12 * 3600,
+                )
+            except Exception:
+                pass
 
     def _prune_stale_findings(self, max_age_hours: int = 168) -> int:
         """Supprime les findings plus vieux que max_age_hours (défaut : 7 jours)."""
@@ -1169,44 +1319,49 @@ class ConsciousnessEngine:
     def add_finding(self, finding_type: str, severity: str, finding: str, evidence: list = None, action: str = ""):
         """Enregistre une découverte du Challenger.
 
-        Deux garde-fous :
-        - Dédup : on ignore un finding dont la signature (type + préfixe
-          normalisé) existe déjà dans les 10 derniers. Évite que le LLM
-          re-poste 40 fois la même alerte "verbosity" cycle après cycle.
-        - TTL : purge les findings de plus de 7 jours avant l'ajout.
+        Trois étapes de dédup (du moins coûteux au plus coûteux) :
+        1. Match par ``_sig`` exact sur **tous** les findings non résolus du
+           même type (avant : 10 derniers seulement → ratait les doublons plus
+           anciens). Comme ``_sig`` est désormais calculé sur les keywords
+           triés (cf :meth:`_finding_signature`), la grande majorité des
+           doublons sémantiques produit le même sig et matche ici.
+        2. Match par Jaccard ≥ 0.6 sur les findings non résolus du même type
+           (50 derniers max pour borner le coût). Filet de sécurité quand
+           l'extraction de keywords a varié.
+        3. Sinon, nouvel enregistrement avec ``_count = 1`` et stockage des
+           keywords pour les futurs matchs. TTL : purge des findings > 7 jours.
         """
         sig = self._finding_signature(finding_type, finding)
-        recent = self._challenger_log.get("findings", [])[-10:]
-        for prev in recent:
+        new_kw = _finding_keywords(finding)
+        findings_list = self._challenger_log.get("findings", [])
+
+        # 1. Match exact par sig (le plus fréquent maintenant que sig est canonique)
+        for prev in findings_list:
+            if prev.get("type") != finding_type:
+                continue
+            if prev.get("resolved_at"):
+                continue
             if prev.get("_sig") == sig:
-                # Doublon détecté : on met à jour le timestamp (fraîcheur)
-                # plutôt que de créer une nouvelle entrée.
-                prev["timestamp"] = _now()
-                prev["_count"] = int(prev.get("_count", 1)) + 1
-                # Si le finding avait été résolu (auto ou user) mais que le
-                # Challenger le re-signale, on le rouvre — il n'était donc pas
-                # vraiment résolu.
-                if prev.get("resolved_at"):
-                    prev.pop("resolved_at", None)
-                    prev.pop("resolved_by", None)
-                _save_json(self._paths["challenger_log"], self._challenger_log)
-                # Pattern récurrent (≥ 3 occurrences du même finding) →
-                # comprehension. Cooldown par signature pour ne pas re-émettre
-                # à chaque incrément au-delà du seuil.
-                if prev["_count"] >= 3:
-                    try:
-                        from backend.plugins.consciousness.triggers import emit_trigger_sync
-                        emit_trigger_sync(
-                            self.user_id or 0, "new_pattern",
-                            entity_id=sig,
-                            cooldown_seconds=12 * 3600,
-                        )
-                    except Exception:
-                        pass
+                self._merge_into_finding(prev, new_kw)
                 return
 
-        self._prune_stale_findings()
+        # 2. Match sémantique Jaccard (fallback) — coûteux, on borne aux 50 derniers
+        if new_kw:
+            for prev in reversed(findings_list[-50:]):
+                if prev.get("type") != finding_type or prev.get("resolved_at"):
+                    continue
+                prev_kw_raw = prev.get("_keywords")
+                if isinstance(prev_kw_raw, list):
+                    prev_kw = set(prev_kw_raw)
+                else:
+                    # Recalcule à la volée pour les findings d'avant ce fix
+                    prev_kw = _finding_keywords(prev.get("finding", ""))
+                if self._finding_jaccard(prev_kw, new_kw):
+                    self._merge_into_finding(prev, new_kw)
+                    return
 
+        # 3. Nouveau finding
+        self._prune_stale_findings()
         entry = {
             "timestamp": _now(),
             "type": finding_type,  # contradiction | unkept_promise | bias | trend | verbosity
@@ -1215,6 +1370,7 @@ class ConsciousnessEngine:
             "evidence": evidence or [],
             "action_suggested": action,
             "_sig": sig,
+            "_keywords": sorted(new_kw),
             "_count": 1,
         }
         self._challenger_log["findings"].append(entry)
@@ -1226,6 +1382,80 @@ class ConsciousnessEngine:
 
         _save_json(self._paths["challenger_log"], self._challenger_log)
         self.save_state()
+
+    def consolidate_findings(self) -> dict:
+        """Passe one-shot pour fusionner les doublons accumulés avant le fix
+        sémantique : recalcule le ``_sig`` de chaque finding non résolu, regroupe
+        ceux qui matchent (sig exact ou Jaccard ≥ 0.6), additionne les ``_count``,
+        garde le timestamp le plus récent, fusionne les listes ``evidence``.
+
+        Renvoie un résumé ``{before, after, merged}`` pour l'admin/UI.
+        """
+        findings = self._challenger_log.get("findings", [])
+        if not findings:
+            return {"before": 0, "after": 0, "merged": 0}
+        before = len(findings)
+
+        # Sépare résolus / non-résolus : on ne touche pas aux résolus (ils
+        # peuvent porter des sig "anciens" qu'on veut garder pour audit).
+        resolved = [f for f in findings if f.get("resolved_at")]
+        active = [f for f in findings if not f.get("resolved_at")]
+
+        # Re-bake _sig + _keywords sur tous les actifs
+        for f in active:
+            f["_sig"] = self._finding_signature(f.get("type", ""), f.get("finding", ""))
+            f["_keywords"] = sorted(_finding_keywords(f.get("finding", "")))
+
+        # Group by (type, sig) en additionnant les counts
+        groups: dict[tuple, dict] = {}
+        merged_count = 0
+        for f in active:
+            key = (f.get("type", ""), f.get("_sig", ""))
+            if key not in groups:
+                groups[key] = dict(f)
+                continue
+            keeper = groups[key]
+            keeper["_count"] = int(keeper.get("_count", 1)) + int(f.get("_count", 1))
+            # Garde le timestamp le plus récent
+            if (f.get("timestamp") or "") > (keeper.get("timestamp") or ""):
+                keeper["timestamp"] = f["timestamp"]
+                keeper["finding"] = f.get("finding") or keeper.get("finding")
+            # Merge evidence (cap 20 entrées pour éviter l'explosion)
+            ev = list(keeper.get("evidence") or []) + list(f.get("evidence") or [])
+            keeper["evidence"] = ev[-20:]
+            merged_count += 1
+
+        # Pass 2 : fusion Jaccard sur les groupes restants (cas où sig diffère
+        # mais keywords se chevauchent à ≥ 60%)
+        bucket = list(groups.values())
+        consolidated: list[dict] = []
+        for f in bucket:
+            f_kw = set(f.get("_keywords") or [])
+            matched = None
+            for c in consolidated:
+                if c.get("type") != f.get("type"):
+                    continue
+                c_kw = set(c.get("_keywords") or [])
+                if self._finding_jaccard(c_kw, f_kw):
+                    matched = c
+                    break
+            if matched is None:
+                consolidated.append(f)
+            else:
+                matched["_count"] = int(matched.get("_count", 1)) + int(f.get("_count", 1))
+                if (f.get("timestamp") or "") > (matched.get("timestamp") or ""):
+                    matched["timestamp"] = f["timestamp"]
+                    matched["finding"] = f.get("finding") or matched.get("finding")
+                ev = list(matched.get("evidence") or []) + list(f.get("evidence") or [])
+                matched["evidence"] = ev[-20:]
+                merged_count += 1
+
+        new_findings = consolidated + resolved
+        # Tri chronologique (plus récent en dernier, comme l'append d'origine)
+        new_findings.sort(key=lambda x: x.get("timestamp") or "")
+        self._challenger_log["findings"] = new_findings
+        _save_json(self._paths["challenger_log"], self._challenger_log)
+        return {"before": before, "after": len(new_findings), "merged": merged_count}
 
         # Trigger : un bias `high` détecté par le Challenger pousse le besoin
         # `integrity`. Best-effort — on ne bloque jamais add_finding sur ça.

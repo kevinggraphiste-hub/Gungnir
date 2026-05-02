@@ -482,6 +482,18 @@ async def reopen_finding(sig: str, request: Request):
     return {"ok": ok}
 
 
+@router.post("/challenger/findings/consolidate")
+async def consolidate_findings(request: Request):
+    """Passe one-shot pour fusionner les doublons accumulés avant le fix
+    sémantique du dédup (rapport prod 2026-05-02 : 60% de redondance dans
+    le challenger_log d'un user). Recalcule les ``_sig`` avec la nouvelle
+    signature canonique (keywords triés au lieu du texte préfixé), regroupe
+    les findings actifs qui matchent (sig exact + Jaccard ≥ 0.6 en fallback),
+    additionne les ``_count``. Les findings résolus ne sont pas touchés."""
+    c = _get_consciousness(request)
+    return {"ok": True, **c.consolidate_findings()}
+
+
 @router.get("/challenger/llm-options")
 async def challenger_llm_options(request: Request):
     """Return the LLM picker payload for the Challenger settings UI.
