@@ -1917,9 +1917,11 @@ export default function Chat() {
                   <span className="font-bold text-base tracking-wide gradient-text" style={{ color: 'var(--text-primary)' }}>{agentName.toUpperCase()}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={handleNewChat} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors" style={{ color: 'var(--text-muted)' }} title={t('chat.newChat')}>
-                    <Plus className="w-4 h-4" />
-                  </button>
+                  {/* "+" déplacé près du label "Conversations" plus bas pour
+                      cohérence avec "Dossiers [+]" (UX user 2026-05-02 : le
+                      bouton création est contextuel à la section, pas au
+                      header global). Le header garde uniquement le toggle
+                      collapse, qui est lui à juste titre global. */}
                   <button onClick={toggleSidebar} className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors" style={{ color: 'var(--text-muted)' }} title={`${t('nav.collapse')} (Ctrl+B)`}>
                     <ChevronLeft className="w-4 h-4" />
                   </button>
@@ -2027,8 +2029,11 @@ export default function Chat() {
                   })}
                 </div>
 
-                <div className="px-3 py-1 mb-1">
+                <div className="px-3 py-1 mb-1 flex items-center justify-between">
                   <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Conversations</span>
+                  <button onClick={handleNewChat} className="p-0.5 rounded transition-colors" title={t('chat.newChat')} style={{ color: 'var(--text-muted)' }}>
+                    <Plus className="w-3 h-3" />
+                  </button>
                 </div>
                 {filteredConversations.map(convo => {
                   const isActive = currentConversation === convo.id
