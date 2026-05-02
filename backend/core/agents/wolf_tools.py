@@ -310,7 +310,15 @@ WOLF_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "subagent_invoke_parallel",
-            "description": "Délègue plusieurs tâches à plusieurs sous-agents EN PARALLÈLE (asyncio.gather). Usage réservé à agent_coordinator pour orchestrer une tâche complexe multi-domaines. Retourne un dict {nom_agent: résultat}. Max 4 invocations simultanées.",
+            "description": (
+                "Délègue plusieurs tâches à plusieurs sous-agents EN PARALLÈLE "
+                "(asyncio.gather) avec Message Bus inter-agents. Usage réservé "
+                "à agent_coordinator. Retourne {results, bus} où `bus` liste "
+                "les messages échangés entre agents pendant le cycle (snapshot "
+                "des messages 'approved' à des targets) — tu peux décider d'un "
+                "round 2 en relançant un agent qui a reçu des messages. Max 4 "
+                "invocations simultanées."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -326,10 +334,43 @@ WOLF_TOOL_SCHEMAS = [
                             "required": ["name", "task"],
                         },
                     },
+                    "shared_context": {
+                        "type": "object",
+                        "description": (
+                            "Optionnel : dict de contexte commun injecté dans le "
+                            "system prompt de chaque sous-agent (ex: "
+                            "{\"projet\": \"...\", \"deadline\": \"...\"}). "
+                            "Évite de dupliquer le contexte dans chaque task."
+                        ),
+                    },
                 },
                 "required": ["invocations"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "bus_post",
+            "description": (
+                "Poste un message court à un autre sous-agent via le Message "
+                "Bus inter-agents. À utiliser SEULEMENT si tu as besoin d'une "
+                "info ou d'une coordination avec un autre agent qui tourne en "
+                "parallèle. Le message n'est PAS livré immédiatement — il est "
+                "queué et exposé à Gungnir (le coordinateur) qui décidera de "
+                "relancer le target. Garde-fous : max 3 messages par cycle, "
+                "≤ 600 chars, timeout 30s. N'abuse pas — privilégie d'écrire "
+                "ton résultat normalement et laisse Gungnir orchestrer."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "description": "Nom du sous-agent destinataire"},
+                    "msg": {"type": "string", "description": "Message court (max 600 chars) — question, précision, demande de coordination"},
+                },
+                "required": ["target", "msg"],
+            },
+        },
     },
     {
         "type": "function",
@@ -1299,6 +1340,8 @@ def _get_tools_for_agent(agent_tools: list[str] | None) -> list[dict]:
         "kb_write", "kb_read", "kb_list",
         # Inter-agent communication: sub-agents can delegate to other sub-agents
         "subagent_invoke", "subagent_list", "subagent_invoke_parallel",
+        # Message Bus : post court à un autre sub-agent (queue + supervision Gungnir)
+        "bus_post",
     }
     return [s for s in WOLF_TOOL_SCHEMAS if s["function"]["name"] in web_tool_names]
 
@@ -1389,10 +1432,12 @@ Pour appeler un outil, écris ce format dans ta réponse :
 - **subagent_invoke** : Déléguer UNE tâche à UN sous-agent. Params: name, task
 - **subagent_invoke_parallel** : Déléguer PLUSIEURS tâches en PARALLÈLE à plusieurs sous-agents (réservé à l'orchestration, max 4). Params: invocations=[{name, task}, ...]
 - **kb_write** / **kb_read** / **kb_list** : Base de connaissances partagée (tous les agents y ont accès)
+- **bus_post** : Poste un message court à un autre sous-agent qui tourne en parallèle (queue + supervisé par Gungnir). Params: target, msg. Max 3 messages par cycle, ≤ 600 chars.
 
 ## COLLABORATION INTER-AGENTS
 - Tu peux **déléguer** une sous-tâche à un autre sous-agent si sa spécialité correspond mieux
 - Tu peux **lire/écrire dans la KB** pour partager des résultats avec les autres agents
+- Tu peux **poster un message** à un autre sous-agent via `bus_post` si tu as besoin d'une précision ou d'une info — mais ce n'est PAS un canal temps-réel. Le message est queué et c'est Gungnir qui décide de relancer le target. Privilégie d'écrire ton résultat normalement et laisse Gungnir orchestrer.
 - Commence par `subagent_list` si tu as besoin de savoir qui est disponible
 - Ne délègue que si c'est pertinent — si tu peux faire le travail toi-même, fais-le
 
@@ -1541,14 +1586,30 @@ async def _tq_status() -> dict:
     return {"ok": True, "tasks": list_tasks(uid)}
 
 
-async def _subagent_invoke_parallel(invocations: list) -> dict:
-    """Invoque plusieurs sous-agents en PARALLÈLE via asyncio.gather.
+async def _subagent_invoke_parallel(
+    invocations: list,
+    shared_context: dict | None = None,
+) -> dict:
+    """Invoque plusieurs sous-agents en PARALLÈLE via asyncio.gather, avec
+    Message Bus inter-agents (validé Kevin 2026-05-02, option A : approbation
+    par règles, cf ``message_bus.py``).
 
     Usage : réservé à `agent_coordinator` pour orchestrer une tâche complexe.
-    Chaque invocation = {name, task}. Retourne {results: [...], errors: [...]}.
-    Les invocations sont limitées à 4 simultanées (sécurité cout + contexte).
+    Chaque invocation = ``{name, task}``. Retourne ``{ok, count, results, bus}``
+    où ``bus`` est le snapshot des messages échangés (statut, sender, target,
+    contenu) — Gungnir peut décider d'un round 2 en relançant un agent dont
+    le snapshot montre des messages approuvés à son adresse.
+
+    Param optionnel ``shared_context`` : dict injecté dans le system_prompt
+    de chaque sous-agent au format markdown. Sert à donner un contexte commun
+    (ex: ``{"projet": "...", "deadline": "..."}``) sans dupliquer dans chaque
+    ``task``.
+
+    Limites : max 4 invocations simultanées (sécurité coût + contexte).
     """
     import asyncio
+    from backend.core.agents.message_bus import get_bus
+
     if not isinstance(invocations, list) or not invocations:
         return {"ok": False, "error": "`invocations` doit être une liste non vide de {name, task}."}
     if len(invocations) > 4:
@@ -1561,20 +1622,91 @@ async def _subagent_invoke_parallel(invocations: list) -> dict:
             return {"ok": False, "error": f"Invocation #{i} invalide : attendu {{name, task}}."}
         valid.append((str(inv["name"]), str(inv["task"])))
 
+    # Bus per-(user, conversation). Si pas de conversation_id, on utilise 0
+    # (cas rare : invocation hors d'un chat). Reset du compteur de cycle
+    # avant le gather pour que chaque cycle ait sa propre quota de messages.
+    uid = get_user_context() or 0
+    convo_id = get_conversation_context() or 0
+    bus = get_bus(uid, convo_id)
+    bus.reset_cycle()
+
+    # Pre-flight : auto-approve d'éventuels messages laissés en pending au
+    # cycle précédent + pré-livre à chaque agent ses messages reçus.
+    bus.auto_approve()
+
+    # Inject shared_context + messages reçus dans le `task` de chaque agent.
+    enriched: list[tuple[str, str]] = []
+    pending_per_agent: dict[str, list[str]] = {}
+    for (name, task) in valid:
+        prefix_parts: list[str] = []
+        if shared_context:
+            try:
+                ctx_lines = "\n".join(f"- **{k}** : {v}" for k, v in shared_context.items())
+                prefix_parts.append(f"## Contexte partagé\n{ctx_lines}")
+            except Exception:
+                pass
+        pendings = bus.get_pending_for_agent(name)
+        if pendings:
+            msg_lines = "\n".join(
+                f"- de **{m['sender']}** : {m['content']}"
+                for m in pendings
+            )
+            prefix_parts.append(
+                f"## Messages reçus d'autres agents\n{msg_lines}\n"
+                "Prends-en compte si pertinent pour ta tâche."
+            )
+            pending_per_agent[name] = [m["id"] for m in pendings]
+        enriched_task = task
+        if prefix_parts:
+            enriched_task = "\n\n".join(prefix_parts) + "\n\n---\n\n" + task
+        enriched.append((name, enriched_task))
+
+    # Mark delivered (les agents vont les voir dans leur task)
+    for ag_name, ids in pending_per_agent.items():
+        bus.mark_delivered(ids, ag_name)
+
     # Lance toutes les invocations en parallèle. Les exceptions d'un agent
     # n'empêchent pas les autres — chaque agent retourne son propre dict.
+    # asyncio.gather copie le contextvars du caller dans chaque task (PEP 567)
+    # → set_current_sender() à l'intérieur de _safe ne fuit pas vers les
+    # autres tâches concurrentes.
     async def _safe(name: str, task: str) -> dict:
         try:
+            from backend.core.agents.message_bus import set_current_sender
+            set_current_sender(name)
             return await _subagent_invoke(name, task)
         except Exception as e:
             return {"ok": False, "agent": name, "error": f"Exception: {type(e).__name__}: {e}"}
 
-    outcomes = await asyncio.gather(*[_safe(n, t) for (n, t) in valid])
+    outcomes = await asyncio.gather(*[_safe(n, t) for (n, t) in enriched])
+
+    # Post-flight : approuve les nouveaux messages postés pendant ce cycle.
+    bus.auto_approve()
+
     return {
         "ok": True,
         "count": len(outcomes),
         "results": outcomes,
+        "bus": bus.snapshot(),
     }
+
+
+async def _bus_post(target: str, msg: str) -> dict:
+    """Permet à un sous-agent de poster un message court à un autre sous-agent
+    via le Message Bus inter-agents. Le message n'est PAS livré immédiatement
+    (les autres agents tournent en parallèle, indépendamment) — il est queué
+    et exposé à Gungnir dans le snapshot retourné par
+    ``subagent_invoke_parallel``. C'est Gungnir qui décide s'il relance le
+    target avec ce message dans son task enrichi (round 2 explicite).
+
+    Garde-fous : max 3 messages par agent par cycle, contenu ≤ 600 chars,
+    timeout 30s avant drop. Cf ``message_bus.py`` pour le détail.
+    """
+    from backend.core.agents.message_bus import get_bus
+    uid = get_user_context() or 0
+    convo_id = get_conversation_context() or 0
+    bus = get_bus(uid, convo_id)
+    return bus.post_message(target, msg)
 
 
 async def _subagent_update(name: str, role: str = None, expertise: str = None, system_prompt: str = None, tools: list = None) -> dict:
@@ -3568,6 +3700,7 @@ WOLF_EXECUTORS: dict[str, Any] = {
     "subagent_invoke":       _subagent_invoke,
     "subagent_run":          _subagent_invoke,  # alias anti-hallucination LLM
     "subagent_invoke_parallel": _subagent_invoke_parallel,
+    "bus_post":              _bus_post,
     "task_queue_enqueue":    _tq_enqueue,
     "task_queue_results":    _tq_results,
     "task_queue_status":     _tq_status,
