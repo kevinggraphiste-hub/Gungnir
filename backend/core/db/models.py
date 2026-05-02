@@ -4,7 +4,7 @@ Gungnir — Core database models
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Date,
-    Boolean, Float, ForeignKey, JSON, func
+    Boolean, Float, ForeignKey, JSON, UniqueConstraint, func
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -296,6 +296,31 @@ class UserPersonality(Base):
     position = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class UserPluginSetting(Base):
+    """Per-user plugin enable/disable state.
+
+    Le manifest plugin pose un défaut (``enabled_by_default``). Cette table
+    porte l'override per-user — si une ligne existe pour ``(user_id,
+    plugin_name)``, sa valeur prime. Pas de ligne = le défaut du manifest
+    s'applique. Permet à chaque user d'activer/désactiver indépendamment
+    sans toucher aux autres.
+
+    Les plugins marqués ``core_required: true`` dans leur manifest ne sont
+    pas désactivables (refusé côté API toggle).
+    """
+    __tablename__ = "user_plugin_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    plugin_name = Column(String(100), nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "plugin_name", name="uq_user_plugin"),
+    )
 
 
 class UserSubAgent(Base):

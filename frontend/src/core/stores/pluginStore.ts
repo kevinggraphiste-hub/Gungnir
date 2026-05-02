@@ -16,13 +16,14 @@ export interface PluginManifest {
   sidebar_position: number
   sidebar_section: string
   enabled: boolean
+  core_required?: boolean
 }
 
 interface PluginState {
   plugins: PluginManifest[]
   pluginsLoaded: boolean
   setPlugins: (plugins: PluginManifest[]) => void
-  togglePlugin: (name: string) => void
+  togglePlugin: (name: string, enabled?: boolean) => Promise<{ ok: boolean; error?: string }>
   isPluginEnabled: (name: string) => boolean
   loadPlugins: () => Promise<void>
 }
@@ -32,12 +33,27 @@ export const usePluginStore = create<PluginState>((set, get) => ({
   pluginsLoaded: false,
   setPlugins: (plugins) => set({ plugins }),
 
-  togglePlugin: (name) =>
-    set((state) => ({
-      plugins: state.plugins.map((p) =>
-        p.name === name ? { ...p, enabled: !p.enabled } : p
-      ),
-    })),
+  togglePlugin: async (name, enabled) => {
+    // Optimistic update + rollback en cas d'erreur backend
+    const before = get().plugins
+    const target = before.find(p => p.name === name)
+    if (!target) return { ok: false, error: 'Plugin introuvable' }
+    if (target.core_required) {
+      return { ok: false, error: `Plugin '${name}' est protégé (core_required) — ne peut pas être désactivé.` }
+    }
+    const next = enabled === undefined ? !target.enabled : enabled
+    set({ plugins: before.map(p => (p.name === name ? { ...p, enabled: next } : p)) })
+    try {
+      const { api } = await import('../services/api')
+      const r = await api.togglePlugin(name, next)
+      if (r?.ok) return { ok: true }
+      set({ plugins: before })
+      return { ok: false, error: r?.error || 'Erreur backend' }
+    } catch (err: any) {
+      set({ plugins: before })
+      return { ok: false, error: err?.message || 'Erreur réseau' }
+    }
+  },
 
   isPluginEnabled: (name) => {
     return get().plugins.some((p) => p.name === name && p.enabled)

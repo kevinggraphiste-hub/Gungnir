@@ -31,6 +31,11 @@ class PluginManifest:
     enabled_by_default: bool = True
     dependencies: list[str] = field(default_factory=list)
     lifecycle_hooks: bool = False
+    # Plugins protégés : ne peuvent pas être désactivés via l'API
+    # toggle. Conscience est référencée par tout le moteur core (mémoire,
+    # urgences, hooks). Forge et Valkyrie sont marqués core par sécurité
+    # — peut être révisé plus tard si on veut ouvrir leur désactivation.
+    core_required: bool = False
     # Injecté par discover_plugins : "core" (backend/plugins) ou "external"
     # (data/plugins_external) — utilisé par mount_plugin_routes pour
     # résoudre le module Python.
@@ -57,6 +62,11 @@ def discover_plugins(plugins_dir: Path,
                 continue
             try:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                # Whiteliste les clés connues pour ne pas crasher si un
+                # manifest porte un champ supplémentaire (ex: doc, author…)
+                # qui n'est pas modélisé dans PluginManifest.
+                _allowed = {f.name for f in PluginManifest.__dataclass_fields__.values()}
+                data = {k: v for k, v in data.items() if k in _allowed}
                 manifest = PluginManifest(**data)
                 manifest.source = source  # type: ignore[attr-defined]
                 manifests.append(manifest)

@@ -6,12 +6,13 @@ import {
   Settings as SettingsIcon, Globe, Palette, Key, Mic, RefreshCw,
   HeartPulse, HardDrive, Download, Upload, Trash2, CheckCircle, AlertCircle, Type, User,
   Server, Database, Cloud, MessageSquare, GitBranch, Zap, Search as SearchIcon, Loader2, Plus,
-  Stethoscope, Pipette, ChevronDown, ChevronRight, Sparkles, ExternalLink, Clock
+  Stethoscope, Pipette, ChevronDown, ChevronRight, Sparkles, ExternalLink, Clock, Puzzle, Lock
 } from 'lucide-react'
 import InfoButton from '../components/InfoButton'
 import { PageHeader } from '../components/ui'
 import { useUIPreferences, detectBrowserTimezone } from '../hooks/useUIPreferences'
 import { registerAgenticIds } from '../utils/agenticModels'
+import { usePluginStore } from '../stores/pluginStore'
 
 // Défauts pour les prefs TTS/PTT — utilisés en fallback si rien n'est
 // encore en localStorage ou si un champ manque (ajout rétrocompatible).
@@ -898,6 +899,7 @@ export default function Settings() {
     { id: 'providers', label: t('settings.providers'), icon: Key },
     { id: 'voice', label: t('settings.voice'), icon: Mic },
     { id: 'services', label: t('settings.services'), icon: Server },
+    { id: 'plugins', label: 'Plugins', icon: Puzzle },
     { id: 'heartbeat', label: t('settings.heartbeat'), icon: HeartPulse },
     { id: 'backup', label: t('settings.backup'), icon: HardDrive },
     { id: 'doctor', label: t('settings.doctor'), icon: Stethoscope },
@@ -2693,6 +2695,13 @@ export default function Settings() {
           )}
 
 
+          {/* -- Plugins ----------------------------------------------------
+              Liste des plugins chargés avec toggle on/off per-user. Les
+              plugins core_required (Conscience, Valkyrie, Forge) sont
+              affichés mais leur toggle est verrouillé. */}
+          {activeTab === 'plugins' && <PluginsTab />}
+
+
           {/* -- Heartbeat ------------------------------------------------- */}
           {activeTab === 'heartbeat' && (
             <div className="space-y-6">
@@ -3229,6 +3238,132 @@ export default function Settings() {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+
+// ── Plugins tab ─────────────────────────────────────────────────────────────
+// Toggle per-user des plugins. Les core_required sont en lecture seule (badge
+// cadenas). Refresh du store après chaque toggle pour synchroniser la sidebar.
+
+function PluginsTab() {
+  const plugins = usePluginStore(s => s.plugins)
+  const togglePluginStore = usePluginStore(s => s.togglePlugin)
+  const reload = usePluginStore(s => s.loadPlugins)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState<string>('')
+
+  useEffect(() => { reload() }, [reload])
+
+  const handleToggle = async (name: string) => {
+    setErr('')
+    setBusy(name)
+    const r = await togglePluginStore(name)
+    setBusy(null)
+    if (!r.ok) setErr(r.error || 'Erreur')
+  }
+
+  // Group par section pour lecture facile
+  const grouped: Record<string, typeof plugins> = {}
+  for (const p of plugins) {
+    const sec = p.sidebar_section || 'tools'
+    if (!grouped[sec]) grouped[sec] = []
+    grouped[sec].push(p)
+  }
+  const sectionOrder = ['core', 'tools', 'integrations', 'admin']
+  const sectionLabel: Record<string, string> = {
+    core: 'Coeur', tools: 'Outils', integrations: 'Intégrations', admin: 'Admin',
+  }
+  const orderedSections = [
+    ...sectionOrder.filter(s => grouped[s]),
+    ...Object.keys(grouped).filter(s => !sectionOrder.includes(s)),
+  ]
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-2">
+        <Puzzle className="w-5 h-5" style={{ color: 'var(--accent-primary)' }} />
+        <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Plugins</h2>
+        <InfoButton>
+          <strong>Activer / désactiver un plugin</strong><br />
+          Chaque plugin peut être désactivé pour ton compte sans impacter les autres utilisateurs. La désactivation cache la page de la sidebar et bloque les routes API ; les plugins marqués <em>core_required</em> sont protégés (le coeur en dépend).
+        </InfoButton>
+      </div>
+
+      {err && (
+        <div className="flex items-center gap-2 p-3 rounded-lg text-sm"
+          style={{ background: 'rgba(220,38,38,0.1)', color: '#ef4444' }}>
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span>{err}</span>
+        </div>
+      )}
+
+      {plugins.length === 0 && (
+        <div className="text-sm text-center py-8" style={{ color: 'var(--text-muted)' }}>
+          Aucun plugin chargé.
+        </div>
+      )}
+
+      {orderedSections.map(section => (
+        <div key={section}>
+          <div className="text-xs font-semibold uppercase tracking-wider mb-2"
+            style={{ color: 'var(--text-muted)' }}>
+            {sectionLabel[section] || section}
+          </div>
+          <div className="space-y-2">
+            {grouped[section].map(p => {
+              const isCore = !!p.core_required
+              const isBusy = busy === p.name
+              return (
+                <div key={p.name}
+                  className="flex items-center justify-between gap-3 p-3 rounded-lg"
+                  style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <Puzzle className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                        {p.display_name}
+                        <span className="ml-2 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>v{p.version}</span>
+                      </div>
+                      <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                        {p.name}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {isCore && (
+                      <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider"
+                        style={{ background: 'color-mix(in srgb, var(--accent-primary) 12%, transparent)', color: 'var(--accent-primary)' }}>
+                        <Lock className="w-3 h-3" /> core
+                      </span>
+                    )}
+                    <button
+                      onClick={() => !isCore && !isBusy && handleToggle(p.name)}
+                      disabled={isCore || isBusy}
+                      title={isCore ? 'Plugin protégé : non désactivable' : (p.enabled ? 'Désactiver' : 'Activer')}
+                      className="relative inline-flex items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{
+                        width: 40, height: 22,
+                        background: p.enabled
+                          ? 'var(--accent-primary)'
+                          : 'var(--bg-tertiary)',
+                        cursor: (isCore || isBusy) ? 'not-allowed' : 'pointer',
+                      }}>
+                      <span
+                        className="inline-block rounded-full bg-white transition-transform"
+                        style={{
+                          width: 16, height: 16,
+                          transform: p.enabled ? 'translateX(21px)' : 'translateX(3px)',
+                        }} />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

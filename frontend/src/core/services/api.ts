@@ -673,6 +673,15 @@ export const api = {
     return handleResponse(response)
   },
 
+  togglePlugin: async (name: string, enabled?: boolean) => {
+    const response = await apiFetch(`${API_BASE}/plugins/${encodeURIComponent(name)}/toggle`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(enabled === undefined ? {} : { enabled }),
+    })
+    return handleResponse(response)
+  },
+
   checkAuth: async () => {
     // Renvoie un objet explicite plutôt que de throw, pour que App.tsx puisse
     // distinguer 'pas loggué' (needs_login) de 'backend ko' (no_auth) sans

@@ -9,6 +9,7 @@
   "backend_routes": true,
   "backend_prefix": "/api/plugins/forge",
   "enabled_by_default": true,
+  "core_required": true,
   "dependencies": [],
   "lifecycle_hooks": true
 }

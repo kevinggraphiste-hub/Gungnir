@@ -127,6 +127,22 @@ async def lifespan(app: FastAPI):
             except Exception as _drop_err:
                 logger.debug(f"Drop provider_budgets_provider_key constraint: {_drop_err}")
 
+            # user_plugin_settings : override per-user de l'état activé/désactivé
+            # de chaque plugin (le manifest pose le défaut, cette table porte
+            # le choix utilisateur). SQLAlchemy.create_all sur le metadata fait
+            # le travail si on importe le modèle ; ici on est en migration
+            # incrémentale sans Alembic, donc CREATE IF NOT EXISTS suffit.
+            await conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS user_plugin_settings ("
+                " id SERIAL PRIMARY KEY,"
+                " user_id INTEGER NOT NULL REFERENCES users(id),"
+                " plugin_name VARCHAR(100) NOT NULL,"
+                " enabled BOOLEAN NOT NULL DEFAULT TRUE,"
+                " updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+                " CONSTRAINT uq_user_plugin UNIQUE (user_id, plugin_name)"
+                ")"
+            ))
+
             # users.email + récup mdp (option B hybride).
             # On ajoute les colonnes en nullable d'abord pour ne pas casser
             # les users existants. L'unique sur email est posé séparément
@@ -845,6 +861,43 @@ async def token_auth_middleware(request, call_next):
             # Inject user info into request state for downstream use
             request.state.user_id = user.id
             request.state.username = user.username
+
+            # Filtre per-user activation des plugins. Routes /api/plugins/<name>/...
+            # sont 403 si le user a désactivé le plugin via l'UI Settings (ou
+            # toggle API). Les plugins core_required (consciousness/valkyrie/
+            # forge) ne sont jamais désactivables → ce check ne les bloquera
+            # jamais. Les routes /api/plugins/status et /toggle elles-mêmes
+            # restent toujours accessibles.
+            if path.startswith("/api/plugins/") and not (
+                path == "/api/plugins/status"
+                or path.endswith("/toggle")
+            ):
+                # Extraction du nom du plugin (segment après /api/plugins/)
+                rest = path[len("/api/plugins/"):]
+                plugin_name = rest.split("/", 1)[0] if "/" in rest else rest
+                if plugin_name:
+                    try:
+                        from backend.core.db.models import UserPluginSetting as _UPS
+                        ovr = await session.execute(
+                            select(_UPS).where(
+                                _UPS.user_id == user.id,
+                                _UPS.plugin_name == plugin_name,
+                            )
+                        )
+                        row = ovr.scalar_one_or_none()
+                        if row is not None and not row.enabled:
+                            return JSONResponse(
+                                {
+                                    "error": f"Plugin '{plugin_name}' désactivé pour ton compte.",
+                                    "plugin": plugin_name,
+                                    "enabled": False,
+                                },
+                                status_code=403,
+                            )
+                    except Exception as _e:
+                        # Best-effort — un échec de lecture override ne bloque
+                        # pas la requête (le défaut manifest s'applique).
+                        logger.debug(f"plugin override check failed: {_e}")
             return await call_next(request)
     except Exception as e:
         logger.warning(f"Auth middleware error (denying request): {e}")
@@ -878,9 +931,30 @@ for _manifest in _manifests:
 
 
 # ── Plugin status endpoint ───────────────────────────────────────────────────
+from fastapi import Request as _FastAPIRequest
+
 @app.get("/api/plugins/status")
-async def plugins_status():
-    """List all loaded plugins and their status."""
+async def plugins_status(request: _FastAPIRequest):
+    """List all loaded plugins and their state per-user.
+
+    L'état ``enabled`` retourné est l'état effectif pour le user courant :
+    override DB si présent, sinon ``enabled_by_default`` du manifest. Si
+    aucun user en contexte (mode setup), tout est ``enabled = True``.
+    """
+    overrides: dict[str, bool] = {}
+    uid = getattr(request.state, "user_id", None)
+    if uid:
+        try:
+            from sqlalchemy import select
+            from backend.core.db.engine import async_session
+            from backend.core.db.models import UserPluginSetting
+            async with async_session() as session:
+                rows = (await session.execute(
+                    select(UserPluginSetting).where(UserPluginSetting.user_id == int(uid))
+                )).scalars().all()
+                overrides = {r.plugin_name: bool(r.enabled) for r in rows}
+        except Exception as e:
+            logger.warning(f"plugins_status: read overrides failed: {e}")
     return {
         "plugins": [
             {
@@ -891,11 +965,83 @@ async def plugins_status():
                 "route": p.route,
                 "sidebar_position": p.sidebar_position,
                 "sidebar_section": p.sidebar_section,
-                "enabled": True,
+                "enabled": overrides.get(p.name, p.enabled_by_default),
+                "core_required": getattr(p, "core_required", False),
             }
             for p in _loaded_plugins
         ]
     }
+
+
+@app.put("/api/plugins/{plugin_name}/toggle")
+async def toggle_plugin(plugin_name: str, request: _FastAPIRequest):
+    """Active/désactive un plugin pour le user courant.
+
+    - Refuse si le plugin est ``core_required`` (manifest)
+    - Refuse si le plugin n'est pas chargé (typo, plugin externe absent)
+    - Body optionnel : ``{enabled: bool}`` pour forcer une valeur explicite.
+      Sans body, toggle (inverse l'état courant).
+    """
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import select
+    from backend.core.db.engine import async_session
+    from backend.core.db.models import UserPluginSetting
+
+    uid = getattr(request.state, "user_id", None)
+    if not uid:
+        return JSONResponse({"error": "Authentification requise"}, status_code=401)
+
+    manifest = next((p for p in _loaded_plugins if p.name == plugin_name), None)
+    if manifest is None:
+        return JSONResponse(
+            {"error": f"Plugin '{plugin_name}' introuvable ou non chargé"},
+            status_code=404,
+        )
+    if getattr(manifest, "core_required", False):
+        return JSONResponse(
+            {
+                "error": (
+                    f"Plugin '{plugin_name}' est marqué core_required — il est "
+                    "référencé par le coeur du système et ne peut pas être désactivé."
+                )
+            },
+            status_code=403,
+        )
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    async with async_session() as session:
+        row = (await session.execute(
+            select(UserPluginSetting).where(
+                UserPluginSetting.user_id == int(uid),
+                UserPluginSetting.plugin_name == plugin_name,
+            )
+        )).scalar_one_or_none()
+
+        if "enabled" in body:
+            new_state = bool(body["enabled"])
+        elif row is not None:
+            new_state = not row.enabled
+        else:
+            # Pas de ligne → on inverse le défaut du manifest
+            new_state = not manifest.enabled_by_default
+
+        if row is None:
+            row = UserPluginSetting(
+                user_id=int(uid),
+                plugin_name=plugin_name,
+                enabled=new_state,
+            )
+            session.add(row)
+        else:
+            row.enabled = new_state
+        await session.commit()
+
+    return {"ok": True, "plugin": plugin_name, "enabled": new_state}
 
 
 # ── Frontend SPA serving (middleware — never conflicts with API routes) ──────
