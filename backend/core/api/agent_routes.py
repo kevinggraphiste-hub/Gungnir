@@ -314,6 +314,34 @@ async def update_skill(request: Request, skill_name: str, data: dict, session: A
     return await ud.update_skill(session, _uid(request), skill_name, updates)
 
 
+@router.delete("/skills/auto-clean")
+async def auto_clean_skills(request: Request, session: AsyncSession = Depends(get_session)):
+    """Purge les skills auto-créés par ``skill_synthesizer`` (marqueur
+    ``data_json.author == 'gungnir-auto'``). Utilisé pour vider en une fois
+    les dizaines de skills redondants accumulés avant le guardrail
+    anti-doublon (rapport user 2026-05-02). Renvoie la liste des noms
+    supprimés pour audit côté UI.
+
+    Ne touche pas aux skills shipped dans les defaults (ceux-là ne portent
+    pas l'auteur ``gungnir-auto``) ni aux skills créés par le user lui-même
+    via l'UI.
+
+    DOIT être déclarée AVANT ``DELETE /skills/{skill_name}`` — sinon le
+    matcher FastAPI capture ``auto-clean`` comme valeur de ``skill_name``."""
+    uid = _uid(request)
+    skills = await ud.list_skills(session, uid)
+    deleted: list[str] = []
+    for s in skills:
+        if s.get("author") == "gungnir-auto":
+            name = s.get("name")
+            if not name:
+                continue
+            res = await ud.delete_skill(session, uid, name)
+            if res.get("success"):
+                deleted.append(name)
+    return {"ok": True, "deleted_count": len(deleted), "names": deleted}
+
+
 @router.delete("/skills/{skill_name}")
 async def delete_skill(request: Request, skill_name: str, session: AsyncSession = Depends(get_session)):
     return await ud.delete_skill(session, _uid(request), skill_name)

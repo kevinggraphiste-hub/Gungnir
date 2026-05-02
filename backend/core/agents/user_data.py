@@ -219,6 +219,73 @@ async def _seed_sub_agents(session: AsyncSession, user_id: int):
 
 # ── Skills CRUD ──────────────────────────────────────────────────────────────
 
+
+# Cache des noms de tools natifs (extrait de WOLF_TOOL_SCHEMAS au premier appel,
+# pas au top-level pour éviter le circular import wolf_tools → user_data).
+_NATIVE_TOOL_NAMES: set[str] | None = None
+
+
+def _native_tool_names() -> set[str]:
+    global _NATIVE_TOOL_NAMES
+    if _NATIVE_TOOL_NAMES is None:
+        try:
+            from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS
+            _NATIVE_TOOL_NAMES = {
+                s.get("function", {}).get("name", "")
+                for s in WOLF_TOOL_SCHEMAS
+                if s.get("function", {}).get("name")
+            }
+        except Exception:
+            _NATIVE_TOOL_NAMES = set()
+    return _NATIVE_TOOL_NAMES
+
+
+def _is_native_action_duplicate(name: str) -> str | None:
+    """Détecte si ``name`` duplique un tool natif. Renvoie le nom du tool en
+    conflit, ou None.
+
+    Le skill_synthesizer générait régulièrement des noms style
+    ``create_valkyrie_card`` ou ``valkyrie_create_card_skill`` qui faisaient
+    doublon avec les tools natifs (``valkyrie_create_card`` ici). On bloque
+    ces patterns au niveau create_skill (DB) — couvre à la fois l'UI et
+    l'auto-synthesizer sans avoir à corriger les 2 chemins.
+
+    Patterns détectés (case-insensitive, après normalisation des underscores) :
+    1. ``name == tool`` exact
+    2. ``name`` est un suffixe/préfixe du tool, ou inversement, avec ≥ 80%
+       de tokens en commun (capture les variantes ``create_valkyrie_*``)
+    3. ``name`` contient ``tool`` comme substring ≥ 12 chars (anti-faux
+       positifs sur des tools courts type ``kb_read``)
+    """
+    if not name:
+        return None
+    norm_name = name.lower().replace("-", "_").strip("_")
+    name_tokens = set(t for t in norm_name.split("_") if len(t) >= 3)
+    if not name_tokens:
+        return None
+
+    for tool in _native_tool_names():
+        norm_tool = tool.lower().replace("-", "_").strip("_")
+        if not norm_tool:
+            continue
+        # 1. Exact (post-normalization)
+        if norm_name == norm_tool:
+            return tool
+        # 2. Tokens overlap ≥ 80% AND tool name long enough (anti faux positif
+        # sur tools courts type "kb_read" qui matcheraient trop facilement).
+        if len(norm_tool) >= 8:
+            tool_tokens = set(t for t in norm_tool.split("_") if len(t) >= 3)
+            if tool_tokens and tool_tokens.issubset(name_tokens):
+                # Tous les tokens du tool sont dans le name → forte présomption
+                # de doublon (ex: name="create_valkyrie_card" contient tous les
+                # tokens de "valkyrie_create_card").
+                return tool
+        # 3. Substring ≥ 12 chars (capture les variantes type _skill / skill_)
+        if len(norm_tool) >= 12 and norm_tool in norm_name:
+            return tool
+    return None
+
+
 async def list_skills(session: AsyncSession, user_id: int, category: str = None) -> list[dict]:
     """List all skills for a user, seeding defaults if needed."""
     await _seed_skills(session, user_id)
@@ -258,6 +325,21 @@ async def create_skill(session: AsyncSession, user_id: int, name: str, data: dic
     )
     if existing.scalars().first():
         return {"success": False, "error": f"Skill '{name}' existe déjà"}
+
+    # Guardrail anti-doublon avec actions natives. Le skill_synthesizer générait
+    # des skills "create_valkyrie_card" qui dupliquaient le tool natif
+    # `valkyrie_create_card` → l'agent finissait par invoquer le skill au lieu
+    # du tool, ce qui fait perdre du temps + pollue l'UI.
+    conflict = _is_native_action_duplicate(name)
+    if conflict:
+        return {
+            "success": False,
+            "error": (
+                f"Le nom '{name}' duplique l'action native '{conflict}' — "
+                "utilise directement le tool natif, pas besoin de skill."
+            ),
+            "conflicting_tool": conflict,
+        }
 
     # Get max position
     max_pos = await session.execute(

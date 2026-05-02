@@ -1260,6 +1260,37 @@ async def _skill_delete(name: str) -> dict:
 
 
 async def _skill_list() -> dict:
+    """Liste les skills du user courant. Source canonique = DB ``UserSkill``
+    (per-user, alimentée à la fois par l'UI et par ``skill_synthesizer``).
+
+    Avant ce fix, on lisait uniquement ``skill_library`` (file legacy
+    ``data/skills.json``, global) — donc le tool LLM ne voyait jamais les
+    skills auto-créés (qui vont en DB) ni ceux créés via l'UI. L'agent
+    croyait qu'il n'y avait aucun skill et finissait par en recréer,
+    polluant l'UI (rapport user 2026-05-02 : dizaines de doublons
+    "gungnir-auto"). Fallback sur ``skill_library`` uniquement quand on
+    est hors contexte user (setup, tests).
+    """
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            async with async_session() as session:
+                skills_db = await ud.list_skills(session, uid)
+            return {
+                "skills": [
+                    {
+                        "name": s.get("name", ""),
+                        "description": s.get("description", ""),
+                        "category": s.get("category", "general"),
+                        "author": s.get("author", "user"),
+                    }
+                    for s in skills_db
+                ]
+            }
+        except Exception as e:
+            print(f"[skill_list] DB read failed, fallback legacy: {e}")
     from backend.core.agents.skills import skill_library
     skills = skill_library.list_skills()
     return {"skills": [{"name": s.name, "description": s.description, "category": s.category} for s in skills]}
