@@ -1219,7 +1219,47 @@ WOLF_TOOL_SCHEMAS = [
 
 # ── Exécuteurs ─────────────────────────────────────────────────────────────────
 
+# Tools skill_* — source canonique = DB UserSkill (per-user, alimentée
+# par l'UI ET par skill_synthesizer). Avant ce fix (rapport user 2026-05-02)
+# ces 3 tools opéraient sur skill_library (data/skills.json legacy global)
+# → l'agent supprimait dans le file mais la DB restait intacte → l'UI ne
+# voyait jamais le delete, idem pour create/update. Symptôme : "Gungnir
+# dit qu'il a supprimé mais le skill est toujours là côté UI". Fallback
+# skill_library hors contexte user (mode setup, tests).
+
 async def _skill_create(name: str, description: str, prompt: str, category: str = "general") -> dict:
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            async with async_session() as session:
+                res = await ud.create_skill(
+                    session, uid, name,
+                    {
+                        "description": description,
+                        "prompt": prompt,
+                        "tools": [],
+                        "category": category,
+                        "tags": [],
+                        "version": "1.0.0",
+                        "author": "user",
+                        "license": "MIT",
+                        "examples": [],
+                        "output_format": "text",
+                        "annotations": {},
+                        "icon": "",
+                        "is_favorite": False,
+                        "usage_count": 0,
+                    },
+                )
+                if not res.get("success"):
+                    return {"ok": False, "error": res.get("error", "create failed"), "conflicting_tool": res.get("conflicting_tool")}
+                await session.commit()
+            return {"ok": True, "skill": name, "message": f"Skill '{name}' créé et sauvegardé."}
+        except Exception as e:
+            print(f"[skill_create] DB write failed, fallback legacy: {e}")
+    # Fallback legacy
     from backend.core.agents.skills import skill_library, Skill
     skill = Skill(
         id=str(uuid.uuid4())[:8],
@@ -1228,17 +1268,30 @@ async def _skill_create(name: str, description: str, prompt: str, category: str 
         created_at=datetime.utcnow()
     )
     skill_library.add_skill(skill)
-    # Persister dans un fichier .md pour traçabilité
-    skill_file = DATA_DIR / "skills" / f"{name}.md"
-    skill_file.parent.mkdir(exist_ok=True)
-    skill_file.write_text(
-        f"# Skill : {name}\n\n**Catégorie :** {category}\n\n**Description :** {description}\n\n## Prompt\n\n{prompt}\n",
-        encoding="utf-8"
-    )
-    return {"ok": True, "skill": name, "message": f"Skill '{name}' créé et sauvegardé."}
+    return {"ok": True, "skill": name, "message": f"Skill '{name}' créé (legacy mode)."}
 
 
 async def _skill_update(name: str, description: str = None, prompt: str = None, category: str = None) -> dict:
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            updates: dict = {}
+            if description is not None: updates["description"] = description
+            if prompt is not None:      updates["prompt"] = prompt
+            if category is not None:    updates["category"] = category
+            if not updates:
+                return {"ok": False, "error": "Aucun champ à mettre à jour"}
+            async with async_session() as session:
+                res = await ud.update_skill(session, uid, name, updates)
+                if not res.get("success"):
+                    return {"ok": False, "error": res.get("error", "update failed")}
+                await session.commit()
+            return {"ok": True, "skill": name, "message": f"Skill '{name}' mis à jour."}
+        except Exception as e:
+            print(f"[skill_update] DB write failed, fallback legacy: {e}")
+    # Fallback legacy
     from backend.core.agents.skills import skill_library
     skill = skill_library.get_skill(name)
     if not skill:
@@ -1247,16 +1300,30 @@ async def _skill_update(name: str, description: str = None, prompt: str = None, 
     if prompt:      skill.prompt = prompt
     if category:    skill.category = category
     skill_library._save()
-    return {"ok": True, "skill": name, "message": f"Skill '{name}' mis à jour."}
+    return {"ok": True, "skill": name, "message": f"Skill '{name}' mis à jour (legacy mode)."}
 
 
 async def _skill_delete(name: str) -> dict:
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            async with async_session() as session:
+                res = await ud.delete_skill(session, uid, name)
+                if not res.get("success"):
+                    return {"ok": False, "error": res.get("error", "delete failed")}
+                await session.commit()
+            return {"ok": True, "message": f"Skill '{name}' supprimé."}
+        except Exception as e:
+            print(f"[skill_delete] DB write failed, fallback legacy: {e}")
+    # Fallback legacy
     from backend.core.agents.skills import skill_library
     skill_library.remove_skill(name)
     skill_file = DATA_DIR / "skills" / f"{name}.md"
     if skill_file.exists():
         skill_file.unlink()
-    return {"ok": True, "message": f"Skill '{name}' supprimé."}
+    return {"ok": True, "message": f"Skill '{name}' supprimé (legacy mode)."}
 
 
 async def _skill_list() -> dict:
@@ -1296,7 +1363,32 @@ async def _skill_list() -> dict:
     return {"skills": [{"name": s.name, "description": s.description, "category": s.category} for s in skills]}
 
 
+# Tools personality_* — même règle que skill_* : source canonique = DB
+# UserPersonality. Avant ce fix, opéraient sur personality_manager
+# (singleton in-memory + JSON legacy global) → l'agent croyait avoir
+# créé/supprimé une personnalité mais l'UI ne voyait rien.
+
 async def _personality_create(name: str, description: str, system_prompt: str, traits: list = None) -> dict:
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            async with async_session() as session:
+                res = await ud.create_personality(
+                    session, uid, name,
+                    {
+                        "description": description,
+                        "system_prompt": system_prompt,
+                        "traits": traits or [],
+                    },
+                )
+                if not res.get("success"):
+                    return {"ok": False, "error": res.get("error", "create failed")}
+                await session.commit()
+            return {"ok": True, "personality": name, "message": f"Personnalité '{name}' créée et sauvegardée."}
+        except Exception as e:
+            print(f"[personality_create] DB write failed, fallback legacy: {e}")
     from backend.core.agents.skills import personality_manager, Personality
     p = Personality(
         id=str(uuid.uuid4())[:8],
@@ -1306,26 +1398,71 @@ async def _personality_create(name: str, description: str, system_prompt: str, t
         created_at=datetime.utcnow()
     )
     personality_manager.add_personality(p)
-    return {"ok": True, "personality": name, "message": f"Personnalité '{name}' créée et sauvegardée."}
+    return {"ok": True, "personality": name, "message": f"Personnalité '{name}' créée (legacy mode)."}
 
 
 async def _personality_update(name: str, description: str = None, system_prompt: str = None, traits: list = None) -> dict:
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            updates: dict = {}
+            if description is not None: updates["description"] = description
+            if system_prompt is not None: updates["system_prompt"] = system_prompt
+            if traits is not None: updates["traits"] = traits
+            if not updates:
+                return {"ok": False, "error": "Aucun champ à mettre à jour"}
+            async with async_session() as session:
+                res = await ud.update_personality(session, uid, name, updates)
+                if not res.get("success"):
+                    return {"ok": False, "error": res.get("error", "update failed")}
+                await session.commit()
+            return {"ok": True, "personality": name, "message": f"Personnalité '{name}' mise à jour."}
+        except Exception as e:
+            print(f"[personality_update] DB write failed, fallback legacy: {e}")
     from backend.core.agents.skills import personality_manager
     ok = personality_manager.update_personality(name, description=description, system_prompt=system_prompt, traits=traits)
     if not ok:
         return {"ok": False, "error": f"Personnalité '{name}' introuvable."}
-    return {"ok": True, "personality": name, "message": f"Personnalité '{name}' mise à jour."}
+    return {"ok": True, "personality": name, "message": f"Personnalité '{name}' mise à jour (legacy mode)."}
 
 
 async def _personality_delete(name: str) -> dict:
     if name == "professional":
         return {"ok": False, "error": "La personnalité 'professional' ne peut pas être supprimée."}
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            async with async_session() as session:
+                res = await ud.delete_personality(session, uid, name)
+                if not res.get("success"):
+                    return {"ok": False, "error": res.get("error", "delete failed")}
+                await session.commit()
+            return {"ok": True, "message": f"Personnalité '{name}' supprimée."}
+        except Exception as e:
+            print(f"[personality_delete] DB write failed, fallback legacy: {e}")
     from backend.core.agents.skills import personality_manager
     ok = personality_manager.remove_personality(name)
-    return {"ok": ok, "message": f"Personnalité '{name}' {'supprimée' if ok else 'introuvable'}."}
+    return {"ok": ok, "message": f"Personnalité '{name}' {'supprimée' if ok else 'introuvable'} (legacy mode)."}
 
 
 async def _personality_set_active(name: str) -> dict:
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            async with async_session() as session:
+                res = await ud.set_active_personality(session, uid, name)
+                if not res.get("success"):
+                    return {"ok": False, "error": res.get("error", "set active failed")}
+                await session.commit()
+            return {"ok": True, "message": f"Personnalité active : '{name}'."}
+        except Exception as e:
+            print(f"[personality_set_active] DB write failed, fallback legacy: {e}")
     from backend.core.agents.skills import personality_manager
     ok = personality_manager.set_active(name)
     return {"ok": ok, "message": f"Personnalité active : '{name}'." if ok else f"Personnalité '{name}' introuvable."}
@@ -1333,9 +1470,32 @@ async def _personality_set_active(name: str) -> dict:
 
 async def _subagent_create(name: str, role: str, expertise: str, system_prompt: str,
                            tools: list = None, provider: str = "openrouter", model: str = "") -> dict:
-    from backend.core.agents.skills import subagent_library, SubAgent
     if not name.startswith("agent_"):
         name = f"agent_{name}"
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            async with async_session() as session:
+                res = await ud.create_sub_agent(
+                    session, uid, name,
+                    {
+                        "role": role,
+                        "expertise": expertise,
+                        "system_prompt": system_prompt,
+                        "tools": tools or [],
+                        "provider": provider,
+                        "model": model,
+                    },
+                )
+                if not res.get("success"):
+                    return {"ok": False, "error": res.get("error", "create failed")}
+                await session.commit()
+            return {"ok": True, "agent": name, "message": f"Sous-agent '{name}' créé (modèle: {model or 'défaut'})."}
+        except Exception as e:
+            print(f"[subagent_create] DB write failed, fallback legacy: {e}")
+    from backend.core.agents.skills import subagent_library, SubAgent
     agent = SubAgent(
         id=str(uuid.uuid4())[:8],
         name=name, role=role, expertise=expertise,
@@ -1346,7 +1506,7 @@ async def _subagent_create(name: str, role: str, expertise: str, system_prompt: 
         created_at=datetime.utcnow()
     )
     subagent_library.add_agent(agent)
-    return {"ok": True, "agent": name, "message": f"Sous-agent '{name}' créé (modèle: {model or 'défaut'})."}
+    return {"ok": True, "agent": name, "message": f"Sous-agent '{name}' créé (legacy mode)."}
 
 
 def _get_tools_for_agent(agent_tools: list[str] | None) -> list[dict]:
@@ -1402,7 +1562,40 @@ async def _subagent_invoke(name: str, task: str) -> dict:
     if sum(_active_invocations.values()) >= _MAX_DELEGATION_DEPTH:
         return {"ok": False, "error": f"Profondeur max de délégation atteinte ({_MAX_DELEGATION_DEPTH}). Résous la tâche toi-même."}
 
-    agent = subagent_library.get_agent(name)
+    # Lookup agent : DB UserSubAgent en priorité (per-user, alimenté par
+    # l'UI ET par les tools subagent_*) → fallback legacy subagent_library.
+    # Sans cette double lecture, un agent créé via UI ou via tool DB ne
+    # serait pas visible à l'invocation (rapport user 2026-05-02).
+    agent = None
+    _uid_for_lookup = get_user_context() or 0
+    if _uid_for_lookup > 0:
+        try:
+            from backend.core.db.engine import async_session as _lookup_sm
+            from backend.core.agents import user_data as _lookup_ud
+            from backend.core.agents.skills import SubAgent
+            async with _lookup_sm() as _lookup_s:
+                _ag_dict = await _lookup_ud.get_sub_agent(_lookup_s, _uid_for_lookup, name)
+            if _ag_dict:
+                agent = SubAgent(
+                    id=_ag_dict.get("id") or str(uuid.uuid4())[:8],
+                    name=_ag_dict.get("name", name),
+                    role=_ag_dict.get("role", ""),
+                    expertise=_ag_dict.get("expertise", ""),
+                    system_prompt=_ag_dict.get("system_prompt", ""),
+                    tools=_ag_dict.get("tools", []) or [],
+                    provider=_ag_dict.get("provider", "openrouter") or "openrouter",
+                    model=_ag_dict.get("model", "") or "",
+                    description=_ag_dict.get("description", "") or "",
+                    version=_ag_dict.get("version", "1.0.0") or "1.0.0",
+                    tags=_ag_dict.get("tags", []) or [],
+                    max_iterations=int(_ag_dict.get("max_iterations", 5) or 5),
+                    author=_ag_dict.get("author", "user") or "user",
+                    model_profile=_ag_dict.get("model_profile", "general") or "general",
+                )
+        except Exception as _lookup_err:
+            print(f"[subagent_invoke] DB lookup failed, fallback legacy: {_lookup_err}")
+    if agent is None:
+        agent = subagent_library.get_agent(name)
     if not agent:
         return {"ok": False, "error": f"Sous-agent '{name}' introuvable."}
 
@@ -1741,6 +1934,26 @@ async def _bus_post(target: str, msg: str) -> dict:
 
 
 async def _subagent_update(name: str, role: str = None, expertise: str = None, system_prompt: str = None, tools: list = None) -> dict:
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            updates: dict = {}
+            if role is not None: updates["role"] = role
+            if expertise is not None: updates["expertise"] = expertise
+            if system_prompt is not None: updates["system_prompt"] = system_prompt
+            if tools is not None: updates["tools"] = tools
+            if not updates:
+                return {"ok": False, "error": "Aucun champ à mettre à jour"}
+            async with async_session() as session:
+                res = await ud.update_sub_agent(session, uid, name, updates)
+                if not res.get("success"):
+                    return {"ok": False, "error": res.get("error", "update failed")}
+                await session.commit()
+            return {"ok": True, "agent": name, "message": f"Sous-agent '{name}' mis à jour."}
+        except Exception as e:
+            print(f"[subagent_update] DB write failed, fallback legacy: {e}")
     from backend.core.agents.skills import subagent_library
     agent = subagent_library.get_agent(name)
     if not agent:
@@ -1750,16 +1963,48 @@ async def _subagent_update(name: str, role: str = None, expertise: str = None, s
     if system_prompt: agent.system_prompt = system_prompt
     if tools is not None: agent.tools = tools
     subagent_library._save()
-    return {"ok": True, "agent": name, "message": f"Sous-agent '{name}' mis à jour."}
+    return {"ok": True, "agent": name, "message": f"Sous-agent '{name}' mis à jour (legacy mode)."}
 
 
 async def _subagent_delete(name: str) -> dict:
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            async with async_session() as session:
+                res = await ud.delete_sub_agent(session, uid, name)
+                if not res.get("success"):
+                    return {"ok": False, "error": res.get("error", "delete failed")}
+                await session.commit()
+            return {"ok": True, "message": f"Sous-agent '{name}' supprimé."}
+        except Exception as e:
+            print(f"[subagent_delete] DB write failed, fallback legacy: {e}")
     from backend.core.agents.skills import subagent_library
     subagent_library.remove_agent(name)
-    return {"ok": True, "message": f"Sous-agent '{name}' supprimé."}
+    return {"ok": True, "message": f"Sous-agent '{name}' supprimé (legacy mode)."}
 
 
 async def _subagent_list() -> dict:
+    uid = get_user_context() or 0
+    if uid > 0:
+        try:
+            from backend.core.db.engine import async_session
+            from backend.core.agents import user_data as ud
+            async with async_session() as session:
+                agents = await ud.list_sub_agents(session, uid)
+            return {
+                "agents": [
+                    {
+                        "name": a.get("name", ""),
+                        "role": a.get("role", ""),
+                        "expertise": a.get("expertise", ""),
+                    }
+                    for a in agents
+                ]
+            }
+        except Exception as e:
+            print(f"[subagent_list] DB read failed, fallback legacy: {e}")
     from backend.core.agents.skills import subagent_library
     agents = subagent_library.list_agents()
     return {"agents": [{"name": a.name, "role": a.role, "expertise": a.expertise} for a in agents]}
