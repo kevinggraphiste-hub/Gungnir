@@ -111,15 +111,39 @@ async def synthesize_skill(
             seen.add(t)
             used_tools.append(t)
 
+    # Standard de qualité aligné sur la doc officielle Claude Skills
+    # (rapport user 2026-05-02). Avant : "5-15 lignes" → produisait des
+    # "skill-stubs" trop courts pour vraiment guider l'IA. Maintenant :
+    # 40-150 lignes structurées en 6 sections obligatoires (rôle,
+    # méthodologie, règles, format, critères de succès, exemples).
     system = (
-        "Tu écris des skills réutilisables pour un agent IA nommé Gungnir. "
-        "À partir d'une interaction où l'agent a réussi une tâche, tu produis "
-        "un mini-mode-d'emploi qui permettra à l'agent de re-résoudre des "
-        "tâches similaires plus efficacement. Critères de QUALITÉ d'un skill : "
-        "généralisable (pas spécifique à un cas unique), actionnable (étapes "
-        "claires), concis (5-15 lignes), s'appuie sur des tools existants. "
+        "Tu écris des skills réutilisables pour un agent IA nommé Gungnir, "
+        "alignés sur le standard officiel Anthropic Claude Skills. À partir "
+        "d'une interaction où l'agent a réussi une tâche, tu produis un mode "
+        "d'emploi détaillé qui permettra à l'agent de re-résoudre des tâches "
+        "similaires plus efficacement.\n\n"
+        "## Critères de QUALITÉ d'un skill\n"
+        "- **Étoffé** : 40 à 150 lignes (pas un stub de 5 lignes)\n"
+        "- **Généralisable** : couvre une famille de tâches, pas un cas unique\n"
+        "- **Actionnable** : méthodologie en étapes numérotées explicites\n"
+        "- **Cite les tools** existants utilisés (web_search, kb_write, etc.)\n"
+        "- **Vérifiable** : critères de succès en fin de tâche\n\n"
+        "## Structure obligatoire du champ `prompt` (6 sections)\n"
+        "1. **Rôle + posture** — Qui est le skill, expertise, ton\n"
+        "   ex: \"Tu es un expert SEO senior avec 10 ans d'expérience...\"\n"
+        "2. **Méthodologie** — Étapes numérotées (3 à 7 étapes)\n"
+        "   ex: \"### 1. Analyse du sujet\\n- Identifier le mot-clé principal...\"\n"
+        "3. **Règles strictes** — Anti-patterns à éviter, qualité attendue\n"
+        "   ex: \"- Pas de générique \\\"selon les experts\\\"\\n- Toujours sourcer\"\n"
+        "4. **Format de sortie imposé** — Sections markdown, longueur, ton\n"
+        "   ex: \"## Format de sortie\\nMarkdown structuré : H1 titre, H2 sections...\"\n"
+        "5. **Critères de succès** — Checklist vérifiable en fin de tâche\n"
+        "   ex: \"## Vérifications\\n- [ ] Sources citées\\n- [ ] 3+ exemples concrets\"\n"
+        "6. **2 à 3 exemples** — Mini cas d'usage avec input → output attendu\n"
+        "   ex: \"## Exemples\\n\\n### Cas 1: ...\\n**Input:** ...\\n**Output:** ...\"\n\n"
         "Si l'interaction est trop spécifique pour être généralisée, retourne "
-        '{"skip": true, "reason": "..."}. Réponds STRICTEMENT en JSON valide.'
+        "{\"skip\": true, \"reason\": \"<justif>\"}. "
+        "Réponds STRICTEMENT en JSON valide (pas de prose autour)."
     )
     user_prompt = (
         f"## Demande user\n{(user_msg or '')[:500]}\n\n"
@@ -131,7 +155,7 @@ async def synthesize_skill(
         '  "description": "<1 phrase, ce que fait le skill>",\n'
         '  "category": "<general|development|research|automation|writing|other>",\n'
         '  "tags": ["<3 tags max>"],\n'
-        '  "prompt": "<recette : 5-15 lignes décrivant la procédure étape par étape, citant les tools>"\n'
+        '  "prompt": "<contenu structuré 40-150 lignes avec les 6 sections — utilise \\n pour les sauts de ligne dans le JSON>"\n'
         "}\n"
         "OU si non-généralisable : {\"skip\": true, \"reason\": \"<courte justif>\"}"
     )
@@ -171,8 +195,13 @@ async def synthesize_skill(
 
     name = _slugify(str(data.get("name") or ""))
     description = str(data.get("description") or "").strip()[:300]
-    prompt_text = str(data.get("prompt") or "").strip()[:4000]
-    if not name or not prompt_text:
+    # Cap 8k chars : ~150 lignes possibles (la nouvelle structure 6 sections
+    # demande 40-150 lignes). 4k précédent caillait à ~80 lignes max.
+    prompt_text = str(data.get("prompt") or "").strip()[:8000]
+    # Plancher minimal : un skill doit faire au moins 200 chars (≈ 5 lignes)
+    # pour ne pas dégénérer en stub. Sinon, skip — mieux vaut pas de skill
+    # qu'un skill creux qui pollue.
+    if not name or not prompt_text or len(prompt_text) < 200:
         return None
 
     # Anti-doublon — vérifie qu'aucun skill similaire n'existe
