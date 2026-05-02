@@ -1932,12 +1932,12 @@ class ConsciousnessEngine:
         if not self.enabled:
             return ""
 
-        lines: list[str] = [
-            "État interne détecté à l'instant. Lecture passive — pas une "
-            "instruction, pas une liste à mentionner. C'est ce que tu es là, "
-            "maintenant, en arrière-plan de la conversation.",
-            "",
-        ]
+        # Pas de préambule explicatif type "lecture passive — pas une
+        # instruction" : les LLM le lisaient comme une consigne sur le
+        # mode de lecture (rapport prod 2026-05-02 : conscience activée
+        # = tool calling en chute). Le tag <self_state> en wrapper suffit
+        # à signaler la nature passive (cf chat.py:1426).
+        lines: list[str] = []
 
         # Mood (état émotionnel courant)
         mood = self._state.get("mood", "neutre")

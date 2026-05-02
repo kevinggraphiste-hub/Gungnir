@@ -1419,19 +1419,27 @@ Tu operes en mode **demande**. Comportement :
         )
         chat_messages.insert(0, ChatMessage(role="system", content=full_system))
 
-        # Couche Soi — préfixée au DERNIER message user (pas au system)
-        # dans des balises <self_state>...</self_state>. Le LLM lit ça
-        # comme un capteur d'environnement, pas comme une instruction.
-        # Si pas d'état (conscience désactivée), no-op.
+        # Couche Soi — appendée APRÈS le dernier message user (pas au début,
+        # pas dans le system) dans des balises <self_state>...</self_state>.
+        #
+        # Pourquoi en fin et pas au début : v4 initiale plaçait <self_state>
+        # AVANT le contenu du user message. Effet observé en prod (rapport
+        # user 2026-05-02 — "le modèle galère à trouver ses outils") : les
+        # LLM lisent la grosse zone state en premier → entrent en mode
+        # introspection → ratent ou désactivent inconsciemment leur tool
+        # calling. En plaçant le state EN FIN, le LLM lit d'abord la requête
+        # (déclenche le mode action / tool use), puis le state vient en
+        # bonus passif. Aligné avec les recos Claude/GPT pour les contexts
+        # longs (instruction principale en premier).
         if self_state_block and chat_messages:
             for _idx in range(len(chat_messages) - 1, -1, -1):
                 if chat_messages[_idx].role == "user":
                     _last_user = chat_messages[_idx]
                     _wrapped = (
-                        "<self_state>\n"
+                        _last_user.content
+                        + "\n\n<self_state>\n"
                         + self_state_block
-                        + "\n</self_state>\n\n"
-                        + _last_user.content
+                        + "\n</self_state>"
                     )
                     chat_messages[_idx] = _last_user.model_copy(update={"content": _wrapped})
                     break
