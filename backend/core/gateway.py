@@ -194,10 +194,50 @@ class WebGateway:
             fetched = await self._fetch_urls(intent.urls[:3])
             web_content.extend(fetched)
 
-        # Phase 2: Si recherche détectée ET pas d'URLs (ou URLs vides), search
-        if intent.search_query and not web_content:
+        # Phase 2: Search fallback — UNIQUEMENT si AUCUNE URL explicite n'a
+        # été donnée. Avant ce fix, on fallbackait sur search dès que la
+        # phase 1 ne ramenait rien, même si une URL avait été donnée mais
+        # avait échoué (ex: loki.omniatek.fr → 403). Le top résultat search
+        # ramenait alors le domaine racine (omniatek.fr) → l'agent croyait
+        # avoir le contenu du sous-domaine alors que c'était le mauvais site.
+        # Désormais : URL explicite + échec = on remonte l'erreur, pas un
+        # substitut trompeur. L'agent peut alors retry via browser_navigate
+        # (Playwright passe parfois les 403/Cloudflare/anti-bot).
+        if intent.search_query and not web_content and not intent.urls:
             searched = await self._search_and_fetch(intent.search_query)
             web_content.extend(searched)
+
+        # Cas spécial : URLs explicites toutes échouées → expose les erreurs
+        # à l'agent (pas de fallback silencieux) pour qu'il propose un retry
+        # via un autre tool plutôt que de halluciner sur du mauvais contenu.
+        if intent.urls and not web_content:
+            failed = [
+                e for e in self.tool_events
+                if e.get("tool") == "gateway:web_fetch"
+                and not e.get("result", {}).get("ok")
+            ]
+            if failed:
+                lines = [
+                    f"- **{e.get('args', {}).get('url', '?')}** → "
+                    f"{e.get('result', {}).get('error', 'erreur inconnue')}"
+                    for e in failed
+                ]
+                error_block = (
+                    "## ⚠️ Fetch direct des URLs en échec\n\n"
+                    + "\n".join(lines)
+                    + "\n\nL'URL est peut-être protégée (Cloudflare, anti-bot, "
+                    "auth requise) ou réellement inaccessible. Tu peux essayer "
+                    "`browser_navigate` (real browser Playwright qui passe les "
+                    "filtres anti-bot) ou demander des credentials au user. "
+                    "**Ne devine pas le contenu ; ne fallback pas sur le domaine racine.**"
+                )
+                return {
+                    "enriched_message": message + "\n\n" + error_block,
+                    "original_message": message,
+                    "web_content": [],
+                    "tool_events": self.tool_events,
+                    "has_web_content": True,
+                }
 
         if not web_content:
             print(f"[Gateway] No web content retrieved despite intent")
