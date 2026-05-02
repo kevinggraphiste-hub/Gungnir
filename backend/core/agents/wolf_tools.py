@@ -1227,7 +1227,23 @@ WOLF_TOOL_SCHEMAS = [
 # dit qu'il a supprimé mais le skill est toujours là côté UI". Fallback
 # skill_library hors contexte user (mode setup, tests).
 
+# Plancher minimal de qualité pour les skills (≈ 5 lignes utiles).
+# Symétrie avec skill_synthesizer.py qui applique le même plancher
+# côté auto-création. Mieux vaut renvoyer une erreur explicite au LLM
+# (qui réessaiera avec un prompt étoffé) que stocker un stub creux.
+_SKILL_MIN_PROMPT_CHARS = 200
+_SKILL_QUALITY_HINT = (
+    "Skill trop court (min 200 chars). Un skill utile doit faire 40-150 "
+    "lignes structurées en 6 sections : (1) rôle + posture, (2) méthodologie "
+    "en étapes numérotées, (3) règles strictes, (4) format de sortie imposé, "
+    "(5) critères de succès vérifiables, (6) 2-3 exemples concrets. "
+    "Réessaie avec un prompt complet."
+)
+
+
 async def _skill_create(name: str, description: str, prompt: str, category: str = "general") -> dict:
+    if not prompt or len(prompt.strip()) < _SKILL_MIN_PROMPT_CHARS:
+        return {"ok": False, "error": _SKILL_QUALITY_HINT, "min_chars": _SKILL_MIN_PROMPT_CHARS}
     uid = get_user_context() or 0
     if uid > 0:
         try:
@@ -1272,6 +1288,11 @@ async def _skill_create(name: str, description: str, prompt: str, category: str 
 
 
 async def _skill_update(name: str, description: str = None, prompt: str = None, category: str = None) -> dict:
+    # Plancher de qualité aussi sur l'update : si on remplace le prompt,
+    # le nouveau doit aussi être ≥ 200 chars (sinon downgrade silencieux
+    # d'un skill complet vers un stub).
+    if prompt is not None and len(prompt.strip()) < _SKILL_MIN_PROMPT_CHARS:
+        return {"ok": False, "error": _SKILL_QUALITY_HINT, "min_chars": _SKILL_MIN_PROMPT_CHARS}
     uid = get_user_context() or 0
     if uid > 0:
         try:
