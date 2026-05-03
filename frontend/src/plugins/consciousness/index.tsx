@@ -403,8 +403,12 @@ export default function ConsciousnessPage() {
           </div>
         )}
 
-        {/* ── Tabs ────────────────────────────────────────────────────── */}
-        <div className="flex gap-1 overflow-x-auto pb-1">
+        {/* ── Tabs ──────────────────────────────────────────────────────
+            flex-wrap au lieu d'overflow-x-auto : les onglets wrappent sur
+            2 lignes si besoin (avec 10 tabs ça déborde sinon) au lieu de
+            scroller horizontalement (rapport user 2026-05-03 : "il faut
+            que le menu n'ait plus de scroll"). */}
+        <div className="flex flex-wrap gap-1.5">
           {TABS.map(t => (
             <button key={t.id} onClick={() => setTab(t.id as any)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-colors"
