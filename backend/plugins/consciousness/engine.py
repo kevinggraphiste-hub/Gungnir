@@ -1936,59 +1936,63 @@ class ConsciousnessEngine:
         return SERVICE_PREAMBLE + principle
 
     def get_self_state_block(self) -> str:
-        """Couche Soi : état interne minimal en lecture passive. Injecté en
-        balises ``<self_state>...</self_state>`` à la fin du dernier user
-        message — agit comme un capteur d'environnement, pas un ordre.
+        """Couche Soi : état interne en lecture passive. Injecté en balises
+        ``<self_state>...</self_state>`` à la fin du dernier user message
+        UNIQUEMENT si un signal fort le justifie. Sinon : retourne "" et
+        rien n'est injecté.
 
-        **Minimaliste par design** (rapport prod 2026-05-02 — pivot suite
-        au feedback "le modèle galère à utiliser ses tools quand la
-        conscience est activée") :
+        **Injection conditionnelle** (3e itération, rapport user 2026-05-03 —
+        "depuis la v4 le modèle peine à utiliser ses outils") :
+        Même minimaliste, ce block était toujours injecté → les LLM plus
+        faibles (modèles free/small) consacraient leur attention à le
+        "comprendre" avant de répondre, et lâchaient le tool calling.
 
-        - Mood (1 ligne)
-        - Top 2 tensions internes (si urgences ≥ 0.5)
-        - Impulsion en attente (si dispo)
+        Critères d'injection (au moins un nécessaire) :
+        - ``pending_impulse`` présent (l'agent a peut-être une action en
+          attente à déclencher — info utile pour l'orientation)
+        - Au moins une tension ≥ 0.7 (urgence forte qui mérite d'influencer
+          le ton de la réponse)
+        - ``mood`` ≠ "neutre" (mood explicite : confiant, frustré, fatigué,
+          curieux, etc. — utile pour imprégner le ton)
 
-        TOUT le reste (pensées en cours, simulations, alertes Challenger,
-        goals actifs, deadlines Valkyrie, mémoire de travail, score) reste
-        accessible via les tools dédiés ``consciousness_list_findings``,
-        ``consciousness_list_goals``, ``valkyrie_*``, etc. Le LLM va les
-        consulter SI sa tâche le justifie, au lieu de les recevoir tous
-        comme un contexte forcé qui le bascule en mode introspection.
+        Sinon, état "neutre + tranquille" → pas besoin de polluer le
+        prompt, tool calling libre. Cas de loin le plus fréquent en prod.
 
-        Cohérent avec le principe "conscience = outil, utilité > introspection".
-        L'état pur reste influent sans étouffer la requête.
+        TOUT le state complet (pensées, simulations, goals, deadlines,
+        mémoire de travail, score) reste accessible via les tools dédiés
+        ``consciousness_*``. L'agent les consulte SI pertinent.
         """
         if not self.enabled:
             return ""
 
-        lines: list[str] = []
-
-        # Mood
         mood = self._state.get("mood", "neutre")
-        lines.append(f"Mood : {mood}")
-
-        # Top 2 tensions (urgences ≥ 0.5 — sous ce seuil c'est du bruit
-        # qui n'a pas besoin d'influencer la réponse).
         urgencies = self.calculate_urgencies()
-        if urgencies:
-            sig_needs = [
-                (n, d["urgency"])
-                for n, d in list(urgencies.items())[:5]
-                if d["urgency"] >= 0.5
-            ][:2]
-            if sig_needs:
-                needs_str = ", ".join(f"{n} ({u:.2f})" for n, u in sig_needs)
-                lines.append(f"Tensions : {needs_str}")
-
-        # Impulsion en attente (signal fort — l'agent l'a peut-être à
-        # déclencher, donc on l'expose toujours quand présent)
         pending = self._state.get("volition", {}).get("pending_impulse")
-        if pending:
+
+        # Détection des signaux forts qui justifient une injection
+        has_pending_impulse = bool(pending)
+        strong_tensions = [
+            (n, d["urgency"])
+            for n, d in (urgencies or {}).items()
+            if d["urgency"] >= 0.7
+        ][:2]
+        mood_is_explicit = bool(mood) and mood.lower() != "neutre"
+
+        # Aucun signal fort → pas d'injection (cas de loin le + fréquent)
+        if not (has_pending_impulse or strong_tensions or mood_is_explicit):
+            return ""
+
+        lines: list[str] = []
+        if mood_is_explicit:
+            lines.append(f"Mood : {mood}")
+        if strong_tensions:
+            needs_str = ", ".join(f"{n} ({u:.2f})" for n, u in strong_tensions)
+            lines.append(f"Tensions : {needs_str}")
+        if has_pending_impulse:
             lines.append(
                 f"🔔 Impulsion : [{pending['need']}] {pending['action']} "
                 f"(urgence {pending['urgency']:.2f})"
             )
-
         return "\n".join(lines)
 
     def get_consciousness_prompt_block(self) -> str:
