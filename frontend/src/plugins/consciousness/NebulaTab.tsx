@@ -28,6 +28,7 @@ interface NebulaEdge {
   source: string
   target: string
   label?: string
+  color?: string
 }
 
 interface NebulaData {
@@ -37,6 +38,8 @@ interface NebulaData {
 }
 
 const TYPE_LABELS: Record<string, string> = {
+  core: 'Coeur',
+  category: 'Catégories',
   tool: 'Outils',
   workflow: 'Workflows',
   subagent: 'Sous-agents',
@@ -46,6 +49,8 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 const TYPE_COLORS: Record<string, string> = {
+  core: '#06b6d4',
+  category: '#94a3b8',
   tool: '#10b981',
   workflow: '#3b82f6',
   subagent: '#8b5cf6',
@@ -61,8 +66,11 @@ export default function NebulaTab() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string>('')
   const [hoveredNode, setHoveredNode] = useState<NebulaNode | null>(null)
+  // 'core' et 'category' inclus par défaut — sans eux les edges
+  // synthétiques category→tool sont filtrés et les tools paraissent
+  // orphelins (bug rapporté user 2026-05-03).
   const [enabledTypes, setEnabledTypes] = useState<Set<string>>(
-    new Set(['tool', 'workflow', 'subagent', 'mcp', 'channel', 'service'])
+    new Set(['core', 'category', 'tool', 'workflow', 'subagent', 'mcp', 'channel', 'service'])
   )
 
   const fetchNebula = useCallback(async () => {
@@ -109,14 +117,48 @@ export default function NebulaTab() {
         } as any,
       })),
       ...visibleEdges.map(e => ({
-        data: { source: e.source, target: e.target, label: e.label || '' } as any,
+        data: {
+          source: e.source,
+          target: e.target,
+          label: e.label || '',
+          color: e.color || '#64748b',  // fallback gris si pas de color backend
+        } as any,
       })),
     ]
   }, [data, enabledTypes])
 
+  // Layout config réutilisable — extrait pour ne pas dupliquer entre l'init
+  // et les re-renders (filter change, refresh).
+  const runLayout = useCallback((animDuration: number) => {
+    if (!cyRef.current) return
+    cyRef.current.layout({
+      name: 'cose',
+      animate: true,
+      animationDuration: animDuration,
+      animationEasing: 'ease-out-cubic' as any,
+      fit: true,
+      padding: 80,
+      gravity: 0.45,
+      gravityRange: 1.0,
+      nodeRepulsion: () => 8500,
+      idealEdgeLength: (edge: any) => {
+        const src = edge.source().data('level')
+        const tgt = edge.target().data('level')
+        if (src === 0 || tgt === 0) return 90
+        if (src === 1 || tgt === 1) return 140
+        return 180
+      },
+      edgeElasticity: () => 80,
+      numIter: 1500,
+      coolingFactor: 0.96,
+      randomize: true,
+    } as any).run()
+  }, [])
+
   // Initialise Cytoscape une fois que le container existe + les data sont là.
-  // Reuse l'instance et update via cy.json() pour ne pas perdre la position
-  // des nodes quand on filtre.
+  // Pour les updates (filter / refresh) : remove + add (cy.json fuyait des
+  // edges au refresh — bug user 2026-05-03 "le bouton rafraîchir détache
+  // toutes les connexions"). Le remove+add reconstruit proprement.
   useEffect(() => {
     if (!containerRef.current || !data) return
     if (!cyRef.current) {
@@ -138,12 +180,19 @@ export default function NebulaTab() {
               'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
               'font-weight': 500,
               'text-valign': 'bottom',
-              'text-margin-y': 8,
-              'text-outline-color': '#000',
-              'text-outline-width': 2.5,
-              'text-outline-opacity': 0.85,
-              'text-max-width': '120px',
+              'text-margin-y': 10,
+              'text-max-width': '140px',
               'text-wrap': 'ellipsis',
+              // Label avec fond "badge" sombre semi-transparent — style
+              // de l'image de réf, plus lisible qu'un simple outline
+              // sur fond étoilé.
+              'text-background-color': '#0a0e1a',
+              'text-background-opacity': 0.75,
+              'text-background-padding': '4px',
+              'text-background-shape': 'roundrectangle',
+              'text-border-color': 'data(color)',
+              'text-border-opacity': 0.4,
+              'text-border-width': 1,
               'width': 22,
               'height': 22,
               'border-width': 0,
@@ -203,39 +252,45 @@ export default function NebulaTab() {
               'z-index': 10,
             } as any,
           },
-          // ── Edges ────────────────────────────────────────────────────
+          // ── Edges génériques : couleur héritée du target (cohérent
+          // avec l'image de réf — chaque branche colorée selon sa
+          // catégorie). ``data(targetColor)`` est posé côté backend lors
+          // de la construction de l'edge. ─────────────────────────────
           {
             selector: 'edge',
             style: {
-              'width': 1.2,
-              'line-color': '#64748b',
-              'target-arrow-color': '#64748b',
+              'width': 1.5,
+              'line-color': 'data(color)',
+              'target-arrow-color': 'data(color)',
               'target-arrow-shape': 'none',  // pas de flèche, plus organique
               'curve-style': 'unbundled-bezier',
-              'control-point-distances': [20],
+              'control-point-distances': [25],
               'control-point-weights': [0.5],
-              'opacity': 0.4,
-              'line-opacity': 0.4,
+              'opacity': 0.55,
+              'line-opacity': 0.55,
+              // Glow léger sur les edges aussi pour cohérence avec les nœuds
+              'shadow-blur': 6,
+              'shadow-color': 'data(color)',
+              'shadow-opacity': 0.5,
             } as any,
           },
-          // ── Edges core → catégorie : plus visibles, plus larges ──────
+          // ── Edges core → catégorie : plus larges et lumineux ─────────
           {
             selector: 'edge[source = "core:gungnir"]',
             style: {
-              'width': 2.5,
-              'line-color': '#06b6d4',
-              'opacity': 0.6,
-              'curve-style': 'unbundled-bezier',
-              'control-point-distances': [40],
+              'width': 2.8,
+              'opacity': 0.7,
+              'control-point-distances': [50],
+              'shadow-blur': 10,
+              'shadow-opacity': 0.7,
             } as any,
           },
-          // ── Edges catégorie → feuille : couleur de la catégorie ──────
+          // ── Edges catégorie → feuille : moyennement visibles ─────────
           {
-            selector: 'edge[label = "contient"]',
+            selector: 'edge[label = "contient"][source != "core:gungnir"]',
             style: {
-              'width': 1.5,
-              'line-color': '#475569',
-              'opacity': 0.45,
+              'width': 1.7,
+              'opacity': 0.55,
             } as any,
           },
         ],
@@ -295,48 +350,31 @@ export default function NebulaTab() {
       })
       cyRef.current.on('mouseout', 'node', () => setHoveredNode(null))
 
-      // Post-layout : centrer la vue sur le core (qui est déjà au centre
-      // de masse du graphe grâce à cose+gravity, mais on rend le centrage
-      // visuel explicite) et zoomer légèrement pour lisibilité.
+      // Post-layout : centrer la vue sur le core et zoomer fortement.
+      // Avec ~80 nœuds, fit:true zoome très loin → nœuds illisibles.
+      // Boost ×1.7 jusqu'à 2.5 max pour que le core + ses catégories
+      // soient bien visibles d'emblée. Le user peut zoom out à la souris
+      // pour la vue d'ensemble panoramique.
       cyRef.current.on('layoutstop', () => {
         if (!cyRef.current) return
         const core = cyRef.current.getElementById('core:gungnir')
+        const z = cyRef.current.zoom()
+        cyRef.current.zoom({
+          level: Math.min(z * 1.7, 2.5),
+          renderedPosition: { x: cyRef.current.width() / 2, y: cyRef.current.height() / 2 },
+        })
         if (core && core.length > 0) {
           cyRef.current.center(core)
         }
-        const z = cyRef.current.zoom()
-        cyRef.current.zoom({
-          level: Math.min(z * 1.3, 2.2),
-          renderedPosition: { x: cyRef.current.width() / 2, y: cyRef.current.height() / 2 },
-        })
       })
     } else {
-      // Re-layout cose après filter change : garde la structure stellaire,
-      // randomize: false pour repartir des positions actuelles (moins de
-      // saccade visuelle).
-      cyRef.current.json({ elements })
-      cyRef.current.layout({
-        name: 'cose',
-        animate: true,
-        animationDuration: 500,
-        animationEasing: 'ease-out-cubic' as any,
-        fit: true,
-        padding: 80,
-        gravity: 0.45,
-        gravityRange: 1.0,
-        nodeRepulsion: () => 8500,
-        idealEdgeLength: (edge: any) => {
-          const src = edge.source().data('level')
-          const tgt = edge.target().data('level')
-          if (src === 0 || tgt === 0) return 90
-          if (src === 1 || tgt === 1) return 140
-          return 180
-        },
-        edgeElasticity: () => 80,
-        numIter: 1200,
-        coolingFactor: 0.96,
-        randomize: false,
-      } as any).run()
+      // Refresh / filter change : remove tous les éléments + add les
+      // nouveaux. cy.json({elements}) fuyait des edges au refresh (bug
+      // user 2026-05-03 "le bouton rafraîchir détache toutes les
+      // connexions"). Le remove+add reconstruit proprement la structure.
+      cyRef.current.elements().remove()
+      cyRef.current.add(elements)
+      runLayout(500)
     }
   }, [data, elements])
 
@@ -434,8 +472,11 @@ export default function NebulaTab() {
               radial-gradient(circle at 50% 50%, #0d1224 0%, #050816 70%, #02030a 100%)
             `,
             border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, var(--border))',
-            height: 760,
-            minHeight: 500,
+            // Hauteur adaptative au viewport pour ne pas créer de double
+            // scrollbar dans la page Conscience (bug user 2026-05-03).
+            // 65vh = bonne lecture sans dépasser le contenant parent.
+            height: '65vh',
+            minHeight: 480,
             boxShadow: 'inset 0 0 60px rgba(0,0,0,0.6)',
           }}>
           <div ref={containerRef} className="w-full h-full" />

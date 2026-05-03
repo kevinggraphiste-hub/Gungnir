@@ -174,9 +174,15 @@ async def build_nebula_graph(user_id: int) -> dict:
         "level": 0,
     })
 
+    # Mémorise la couleur de chaque catégorie pour pouvoir la propager aux
+    # edges qui pointent vers ses feuilles (rendu coloré par branche, comme
+    # l'image de référence).
+    cat_color_by_id: dict[str, str] = {}
+
     def _ensure_category(cat: str, color: str) -> str:
         """Crée le nœud catégorie s'il n'existe pas, retourne son id."""
         cat_id = f"category:{cat}"
+        cat_color_by_id[cat_id] = color
         if cat in seen_categories:
             return cat_id
         seen_categories.add(cat)
@@ -189,11 +195,14 @@ async def build_nebula_graph(user_id: int) -> dict:
             "description": _CATEGORY_DESCRIPTIONS.get(cat, ""),
             "level": 1,
         })
-        # Tous les nœuds catégorie sont reliés au core
+        # Tous les nœuds catégorie sont reliés au core. La couleur de
+        # l'edge suit la catégorie pour donner ces "rayons colorés"
+        # comme dans la carte mentale de référence.
         edges.append({
             "source": "core:gungnir",
             "target": cat_id,
             "label": "regroupe",
+            "color": color,
         })
         return cat_id
 
@@ -218,12 +227,13 @@ async def build_nebula_graph(user_id: int) -> dict:
                 "description": (fn.get("description") or "")[:300],
                 "level": 2,
             })
-            # Edge synthétique tool → catégorie (assure que tout tool est
-            # connecté à au moins 1 point — pas d'orphelin dans le graphe).
+            # Edge synthétique catégorie → tool. Couleur héritée de la
+            # catégorie pour le rendu coloré par branche.
             edges.append({
                 "source": cat_id,
                 "target": nid,
                 "label": "contient",
+                "color": color,
             })
     except Exception as e:
         logger.warning(f"nebula: load WOLF_TOOL_SCHEMAS failed: {e}")
@@ -250,19 +260,22 @@ async def build_nebula_graph(user_id: int) -> dict:
                     "enabled": bool(wf.enabled),
                     "level": 2,
                 })
-                # Rattachement à la catégorie workflow
+                # Rattachement à la catégorie workflow (bleu)
                 edges.append({
                     "source": cat_id,
                     "target": wf_id,
                     "label": "contient",
+                    "color": "#3b82f6",
                 })
-                # Edges vers les tools référencés dans le YAML
+                # Edges vers les tools référencés dans le YAML — couleur
+                # bleu workflow pour signaler "ce workflow utilise ce tool".
                 for tool_name in _extract_tools_from_yaml(wf.yaml_def or ""):
                     if tool_name in seen_tool_ids:
                         edges.append({
                             "source": wf_id,
                             "target": f"tool:{tool_name}",
                             "label": "utilise",
+                            "color": "#3b82f6",
                         })
     except Exception as e:
         logger.debug(f"nebula: forge workflows skipped: {e}")
@@ -289,6 +302,7 @@ async def build_nebula_graph(user_id: int) -> dict:
                 "source": cat_id,
                 "target": ag_id,
                 "label": "contient",
+                "color": "#8b5cf6",
             })
             for tool_name in (a.get("tools") or []):
                 if tool_name in seen_tool_ids:
@@ -296,6 +310,7 @@ async def build_nebula_graph(user_id: int) -> dict:
                         "source": ag_id,
                         "target": f"tool:{tool_name}",
                         "label": "utilise",
+                        "color": "#8b5cf6",
                     })
     except Exception as e:
         logger.debug(f"nebula: subagents skipped: {e}")
@@ -322,7 +337,7 @@ async def build_nebula_graph(user_id: int) -> dict:
                     "enabled": bool(m.enabled),
                     "level": 2,
                 })
-                edges.append({"source": cat_id, "target": mcp_nid, "label": "contient"})
+                edges.append({"source": cat_id, "target": mcp_nid, "label": "contient", "color": "#ec4899"})
     except Exception as e:
         logger.debug(f"nebula: mcp skipped: {e}")
 
@@ -351,7 +366,7 @@ async def build_nebula_graph(user_id: int) -> dict:
                         "enabled": bool(c.get("enabled")),
                         "level": 2,
                     })
-                    edges.append({"source": cat_id, "target": ch_nid, "label": "contient"})
+                    edges.append({"source": cat_id, "target": ch_nid, "label": "contient", "color": "#f59e0b"})
     except Exception as e:
         logger.debug(f"nebula: channels skipped: {e}")
 
@@ -379,7 +394,7 @@ async def build_nebula_graph(user_id: int) -> dict:
                             "description": f"Service externe : {svc_name}",
                             "level": 2,
                         })
-                        edges.append({"source": cat_id, "target": svc_nid, "label": "contient"})
+                        edges.append({"source": cat_id, "target": svc_nid, "label": "contient", "color": "#06b6d4"})
     except Exception as e:
         logger.debug(f"nebula: services skipped: {e}")
 
