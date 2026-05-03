@@ -239,30 +239,51 @@ export default function NebulaTab() {
             } as any,
           },
         ],
-        // Layout concentric : level 0 au centre, level 1 en orbite proche,
-        // level 2 en orbite externe. Cohérent avec la spec user "core
-        // central + tout gravite autour" et l'image de référence.
+        // Layout cose force-directed : "étoile/nébuleuse" organique. Le
+        // nœud le plus connecté (le core, qui a le plus haut degré via
+        // ses 12+ edges vers les catégories) est attiré naturellement au
+        // centre par la gravité combinée des forces. Les nœuds peu
+        // connectés (tools degree=1) finissent en périphérie. Pas de
+        // cercles imposés — disposition stellaire libre comme une vraie
+        // nébuleuse (spec user 2026-05-03).
         layout: {
-          name: 'concentric',
+          name: 'cose',
           animate: true,
           animationDuration: 900,
           animationEasing: 'ease-out-quart' as any,
           fit: true,
-          padding: 60,
-          // Plus le level est petit (= plus proche du core), plus la
-          // concentricity est élevée → orbite plus proche du centre.
-          concentric: (node: any) => 10 - (node.data('level') ?? 2),
-          levelWidth: () => 1,
-          minNodeSpacing: 25,
-          spacingFactor: 1.3,
-          startAngle: -Math.PI / 2,  // commence en haut pour symétrie
-          // Avoid overlap au sein d'une même orbite
-          avoidOverlap: true,
+          padding: 80,
+          // Gravity forte → le centre de masse est tiré vers les nœuds
+          // les plus connectés (= le core qui a 12+ edges sortants).
+          gravity: 0.45,
+          gravityRange: 1.0,
+          // Repulsion adaptée : assez fort pour que les feuilles
+          // s'écartent (rendu "étoile" non chevauché) sans exploser le
+          // graphe.
+          nodeRepulsion: () => 8500,
+          idealEdgeLength: (edge: any) => {
+            // Edges core→catégorie courts (rapproche les catégories du
+            // centre), edges catégorie→feuille plus longs (étire les
+            // tools vers la périphérie).
+            const src = edge.source().data('level')
+            const tgt = edge.target().data('level')
+            if (src === 0 || tgt === 0) return 90
+            if (src === 1 || tgt === 1) return 140
+            return 180
+          },
+          edgeElasticity: () => 80,
+          numIter: 2500,
+          coolingFactor: 0.96,
+          initialTemp: 200,
+          // Pas de randomization → les nodes partent de positions
+          // existantes (utile pour les re-layout après filter change).
+          randomize: true,
         } as any,
         wheelSensitivity: 0.3,
         minZoom: 0.15,
         maxZoom: 4,
       })
+
 
       // Hover : update le panel droite
       cyRef.current.on('mouseover', 'node', (evt) => {
@@ -274,33 +295,47 @@ export default function NebulaTab() {
       })
       cyRef.current.on('mouseout', 'node', () => setHoveredNode(null))
 
-      // Zoom-in après le layout : `fit: true` zoom out pour faire tenir
-      // tout le graphe → avec 60+ nœuds en orbite externe ça donne un
-      // rendu minuscule. On fait un zoom factor 1.3 post-layout pour
-      // que les nœuds soient lisibles d'emblée. Le user peut zoom out
-      // à la souris pour la vue d'ensemble.
-      cyRef.current.one('layoutstop', () => {
+      // Post-layout : centrer la vue sur le core (qui est déjà au centre
+      // de masse du graphe grâce à cose+gravity, mais on rend le centrage
+      // visuel explicite) et zoomer légèrement pour lisibilité.
+      cyRef.current.on('layoutstop', () => {
         if (!cyRef.current) return
+        const core = cyRef.current.getElementById('core:gungnir')
+        if (core && core.length > 0) {
+          cyRef.current.center(core)
+        }
         const z = cyRef.current.zoom()
-        cyRef.current.zoom({ level: Math.min(z * 1.4, 2.5), renderedPosition: { x: cyRef.current.width() / 2, y: cyRef.current.height() / 2 } })
+        cyRef.current.zoom({
+          level: Math.min(z * 1.3, 2.2),
+          renderedPosition: { x: cyRef.current.width() / 2, y: cyRef.current.height() / 2 },
+        })
       })
     } else {
-      // Update les éléments en gardant la structure orbitale ; ré-applique
-      // concentric pour reflow après filter change.
+      // Re-layout cose après filter change : garde la structure stellaire,
+      // randomize: false pour repartir des positions actuelles (moins de
+      // saccade visuelle).
       cyRef.current.json({ elements })
       cyRef.current.layout({
-        name: 'concentric',
+        name: 'cose',
         animate: true,
         animationDuration: 500,
         animationEasing: 'ease-out-cubic' as any,
         fit: true,
-        padding: 60,
-        concentric: (node: any) => 10 - (node.data('level') ?? 2),
-        levelWidth: () => 1,
-        minNodeSpacing: 25,
-        spacingFactor: 1.3,
-        startAngle: -Math.PI / 2,
-        avoidOverlap: true,
+        padding: 80,
+        gravity: 0.45,
+        gravityRange: 1.0,
+        nodeRepulsion: () => 8500,
+        idealEdgeLength: (edge: any) => {
+          const src = edge.source().data('level')
+          const tgt = edge.target().data('level')
+          if (src === 0 || tgt === 0) return 90
+          if (src === 1 || tgt === 1) return 140
+          return 180
+        },
+        edgeElasticity: () => 80,
+        numIter: 1200,
+        coolingFactor: 0.96,
+        randomize: false,
       } as any).run()
     }
   }, [data, elements])
