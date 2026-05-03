@@ -137,20 +137,24 @@ export default function NebulaTab() {
       animationDuration: animDuration,
       animationEasing: 'ease-out-cubic' as any,
       fit: true,
-      padding: 80,
-      gravity: 0.45,
+      padding: 120,
+      // Plus d'espacement pour la lecture + halos "feu d'artifice" plus
+      // larges qui demandent plus d'air autour (rapport user 2026-05-03) :
+      // - nodeRepulsion ×1.6 (8500 → 14000) → écarte mieux les feuilles
+      // - idealEdgeLength bumpées partout pour donner de l'air
+      gravity: 0.4,
       gravityRange: 1.0,
-      nodeRepulsion: () => 8500,
+      nodeRepulsion: () => 14000,
       idealEdgeLength: (edge: any) => {
         const src = edge.source().data('level')
         const tgt = edge.target().data('level')
-        if (src === 0 || tgt === 0) return 90
-        if (src === 1 || tgt === 1) return 140
-        return 180
+        if (src === 0 || tgt === 0) return 130
+        if (src === 1 || tgt === 1) return 200
+        return 250
       },
-      edgeElasticity: () => 80,
-      numIter: 1500,
-      coolingFactor: 0.96,
+      edgeElasticity: () => 60,
+      numIter: 2000,
+      coolingFactor: 0.97,
       randomize: true,
     } as any).run()
   }, [])
@@ -175,80 +179,89 @@ export default function NebulaTab() {
             style: {
               'background-color': 'data(color)',
               'label': 'data(label)',
-              'color': '#f1f5f9',
+              'color': '#f8fafc',
               'font-size': '11px',
               'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
               'font-weight': 500,
               'text-valign': 'bottom',
-              'text-margin-y': 10,
+              'text-margin-y': 12,
               'text-max-width': '140px',
               'text-wrap': 'ellipsis',
-              // Label avec fond "badge" sombre semi-transparent — style
-              // de l'image de réf, plus lisible qu'un simple outline
-              // sur fond étoilé.
               'text-background-color': '#0a0e1a',
-              'text-background-opacity': 0.75,
-              'text-background-padding': '4px',
+              'text-background-opacity': 0.78,
+              'text-background-padding': '5px',
               'text-background-shape': 'roundrectangle',
               'text-border-color': 'data(color)',
-              'text-border-opacity': 0.4,
+              'text-border-opacity': 0.45,
               'text-border-width': 1,
-              'width': 22,
-              'height': 22,
-              'border-width': 0,
-              'shadow-blur': 26,
+              'width': 18,
+              'height': 18,
+              // Halo interne flou via border colorée semi-transparente
+              // (effet "couronne" autour du noyau lumineux). Combiné avec
+              // shadow-blur très large, ça donne l'effet "feu d'artifice"
+              // (rapport user 2026-05-03).
+              'border-width': 8,
+              'border-color': 'data(color)',
+              'border-opacity': 0.35,
+              'shadow-blur': 55,
               'shadow-color': 'data(color)',
-              'shadow-opacity': 0.85,
+              'shadow-opacity': 1,
               'shadow-offset-x': 0,
               'shadow-offset-y': 0,
-              'background-blacken': -0.15,
-              'transition-property': 'shadow-blur shadow-opacity width height',
-              'transition-duration': 200,
+              // Centre saturé : lift de luminosité pour effet "étincelle"
+              // (vs couleur plate). Cytoscape "background-blacken"
+              // négatif éclaircit la background-color.
+              'background-blacken': -0.35,
+              'transition-property': 'shadow-blur shadow-opacity width height border-width border-opacity',
+              'transition-duration': 220,
             } as any,
           },
-          // ── Level 1 : catégories — gros nœuds en orbite proche ───────
+          // ── Level 1 : catégories — gros, halo très étendu ────────────
           {
             selector: 'node[level = 1]',
             style: {
-              'width': 50,
-              'height': 50,
+              'width': 46,
+              'height': 46,
               'font-size': '14px',
               'font-weight': 'bold',
-              'text-margin-y': 10,
-              'shadow-blur': 50,
-              'shadow-opacity': 0.95,
-              'background-blacken': -0.25,
+              'text-margin-y': 14,
+              'border-width': 14,
+              'border-opacity': 0.32,
+              'shadow-blur': 90,
+              'shadow-opacity': 1,
+              'background-blacken': -0.4,
             } as any,
           },
-          // ── Level 0 : core — énorme au centre, halo cyan vif ─────────
+          // ── Level 0 : core — explosion centrale ──────────────────────
           {
             selector: 'node[level = 0]',
             style: {
-              'width': 90,
-              'height': 90,
+              'width': 80,
+              'height': 80,
               'font-size': '18px',
               'font-weight': 'bold',
               'text-valign': 'center',
               'text-halign': 'center',
               'color': '#fff',
               'text-margin-y': 0,
-              'shadow-blur': 80,
-              'shadow-opacity': 1,
-              'background-blacken': -0.3,
-              'border-width': 3,
+              'text-background-opacity': 0,
+              'text-border-opacity': 0,
+              'border-width': 24,
               'border-color': '#67e8f9',
-              'border-opacity': 0.8,
+              'border-opacity': 0.3,
+              'shadow-blur': 140,
+              'shadow-opacity': 1,
+              'background-blacken': -0.45,
             } as any,
           },
-          // ── Hover ────────────────────────────────────────────────────
+          // ── Hover : l'étincelle "explose" (shadow + border bondissent)
           {
             selector: 'node:active, node:selected',
             style: {
-              'shadow-blur': 60,
+              'shadow-blur': 100,
               'shadow-opacity': 1,
-              'border-width': 2,
-              'border-color': '#fff',
-              'border-opacity': 0.9,
+              'border-width': 16,
+              'border-opacity': 0.6,
               'z-index': 10,
             } as any,
           },
