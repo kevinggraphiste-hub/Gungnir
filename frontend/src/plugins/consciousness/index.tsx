@@ -316,15 +316,15 @@ export default function ConsciousnessPage() {
   }
 
   const TABS = [
-    { id: 'overview', label: 'Vue d\'ensemble', icon: Brain },
+    { id: 'overview', label: 'Vue', icon: Brain },
     { id: 'volition', label: 'Volition', icon: Target },
     { id: 'thoughts', label: 'Pensées', icon: Lightbulb },
     { id: 'reward', label: 'Reward', icon: Star },
     { id: 'challenger', label: 'Challenger', icon: Shield },
     { id: 'simulation', label: 'Simulation', icon: Radio },
     { id: 'goals', label: 'Goals', icon: Target },
-    { id: 'memories', label: 'Mémoire long-terme', icon: Heart },
-    { id: 'vector', label: 'Mémoire vectorielle', icon: Database },
+    { id: 'memories', label: 'Souvenirs', icon: Heart },
+    { id: 'vector', label: 'Vecteurs', icon: Database },
     { id: 'nebula', label: 'Nébuleuse', icon: Network },
   ] as const
 
@@ -404,39 +404,25 @@ export default function ConsciousnessPage() {
         )}
 
         {/* ── Tabs ──────────────────────────────────────────────────────
-            10 onglets ne tiennent pas sur une ligne avec leurs labels →
-            ni scroll horizontal (rapport user 2026-05-03), ni wrap sur
-            2 lignes (refusé aussi). Solution : icônes seules pour les
-            onglets inactifs (tooltip au hover), label visible UNIQUEMENT
-            sur l'onglet actif qui s'élargit fluide. Compact et clair.
-            */}
-        <div className="flex gap-1.5 items-center">
-          {TABS.map(t => {
-            const isActive = tab === t.id
-            return (
-              <button key={t.id} onClick={() => setTab(t.id as any)}
-                title={t.label}
-                aria-label={t.label}
-                className="flex items-center gap-1.5 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-all duration-200 overflow-hidden"
-                style={{
-                  paddingLeft: isActive ? 12 : 10,
-                  paddingRight: isActive ? 12 : 10,
-                  background: isActive
-                    ? 'color-mix(in srgb, var(--accent-primary) 15%, transparent)'
-                    : 'transparent',
-                  color: isActive ? 'var(--accent-primary)' : 'var(--text-muted)',
-                  border: isActive
-                    ? '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)'
-                    : '1px solid transparent',
-                  // Largeur max différente : actif s'étend pour le label,
-                  // inactifs restent compacts (icône + petit padding).
-                  maxWidth: isActive ? 240 : 36,
-                }}>
-                <t.icon className="w-3.5 h-3.5 flex-shrink-0" />
-                {isActive && <span>{t.label}</span>}
-              </button>
-            )
-          })}
+            Charte standard (icône + label visibles partout, comme les
+            autres pages) mais compressée : padding réduit, font 11px,
+            gap minimal, labels longs raccourcis (Mémoire long-terme →
+            Souvenirs / Mémoire vectorielle → Vecteurs). Tient sur 1
+            ligne sur la majorité des écrans. */}
+        <div className="flex flex-wrap gap-1 items-center">
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id as any)}
+              title={t.label}
+              className="flex items-center gap-1 px-2 py-1.5 rounded-lg font-medium whitespace-nowrap transition-colors"
+              style={{
+                fontSize: 11,
+                ...(tab === t.id
+                  ? { background: 'color-mix(in srgb, var(--accent-primary) 15%, transparent)', color: 'var(--accent-primary)', border: '1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent)' }
+                  : { color: 'var(--text-muted)', border: '1px solid transparent' }),
+              }}>
+              <t.icon className="w-3 h-3" />{t.label}
+            </button>
+          ))}
         </div>
 
         {/* ── Tab Content ─────────────────────────────────────────────── */}
