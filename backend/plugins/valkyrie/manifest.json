@@ -1,7 +1,7 @@
 {
   "name": "valkyrie",
   "display_name": "Valkyrie",
-  "version": "1.10.3",
+  "version": "1.10.4",
   "icon": "LayoutGrid",
   "route": "/valkyrie",
   "sidebar_position": 4,

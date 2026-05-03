@@ -402,6 +402,17 @@ input, textarea {
   }
 }
 
+/* Card expanded en desktop (≥ 1024px) : prend 2 colonnes pour une
+   meilleure lecture du contenu déplié (mémo + sous-tâches qui sinon
+   sont écrasés à ~250px de large). On ne le fait pas en mobile/tablet
+   < 1024px parce que la grille n'a que 2 colonnes là, donc span 2 =
+   toute la largeur, ce qui casse le kanban (rangées hétérogènes). */
+@media (min-width: 1024px) {
+  .valkyrie-grid > [data-card-expanded="true"] {
+    grid-column: span 2;
+  }
+}
+
 /* Glass effect */
 .glass {
   background: rgba(19, 19, 19, 0.85);

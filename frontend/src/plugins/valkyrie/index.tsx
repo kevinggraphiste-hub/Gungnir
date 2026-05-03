@@ -1747,13 +1747,18 @@ function CardTile({
       onDrop={onDrop}
       onDragEnd={onDragEnd}
       onClick={selectMode ? (e) => { e.stopPropagation(); onToggleSelected() } : undefined}
+      // Attribut data-card-expanded lu par index.css pour appliquer
+      // grid-column: span 2 UNIQUEMENT en desktop (≥ 1024px). Empêche
+      // la régression mobile (où la grille n'a que 2 cols et span 2
+      // casse le kanban).
+      data-card-expanded={card.expanded ? 'true' : undefined}
       style={{
         // gridRow: span 2 quand expanded → la card prend 2 lignes pour
-        // afficher son contenu déplié (mémo, sous-tâches…). On NE met
-        // PAS gridColumn: span 2 : ça forçait CSS Grid à créer une 2e col
-        // implicite quand le breakpoint actif n'avait qu'1 seule col
-        // (mobile), résultat la rangée d'en dessous se retrouvait
-        // déséquilibrée (un slot étroit + un large).
+        // afficher son contenu déplié (mémo, sous-tâches…).
+        // gridColumn: span 2 est appliqué via CSS media query dans
+        // index.css (.valkyrie-grid > [data-card-expanded="true"]) —
+        // uniquement en ≥ 1024px pour éviter les colonnes implicites
+        // sur mobile/tablet (rapport user 2026-05-03).
         gridRow: card.expanded ? 'span 2' : undefined,
         background: 'var(--bg-tertiary)',
         border: `1px solid ${
