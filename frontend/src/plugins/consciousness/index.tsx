@@ -12,10 +12,11 @@ import {
   TrendingUp, TrendingDown, Minus, RefreshCw, Trash2, Plus, Check, X,
   Activity, Lightbulb, Clock, ChevronDown, ChevronUp, Info, Star,
   BarChart3, Layers, MessageSquare, Radio, Database, Search, Plug, Save,
-  Heart, ShieldAlert
+  Heart, ShieldAlert, Network
 } from 'lucide-react'
 import InfoButton from '@core/components/InfoButton'
 import manifest from './manifest.json'
+import NebulaTab from './NebulaTab'
 
 const API = '/api/plugins/consciousness'
 const PLUGIN_VERSION = (manifest as { version?: string }).version || '?'
@@ -173,7 +174,7 @@ function timeAgo(iso: string): string {
 export default function ConsciousnessPage() {
   const [data, setData] = useState<Dashboard | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'overview' | 'volition' | 'thoughts' | 'reward' | 'challenger' | 'simulation' | 'goals' | 'vector' | 'memories'>('overview')
+  const [tab, setTab] = useState<'overview' | 'volition' | 'thoughts' | 'reward' | 'challenger' | 'simulation' | 'goals' | 'vector' | 'memories' | 'nebula'>('overview')
   const [reactivating, setReactivating] = useState(false)
   const [toggling, setToggling] = useState(false)
   const [newQuestion, setNewQuestion] = useState('')
@@ -324,6 +325,7 @@ export default function ConsciousnessPage() {
     { id: 'goals', label: 'Goals', icon: Target },
     { id: 'memories', label: 'Mémoire long-terme', icon: Heart },
     { id: 'vector', label: 'Mémoire vectorielle', icon: Database },
+    { id: 'nebula', label: 'Nébuleuse', icon: Network },
   ] as const
 
   return (
@@ -438,6 +440,8 @@ export default function ConsciousnessPage() {
         {tab === 'memories' && <MemoriesTab data={data} updateConfig={updateConfig} />}
 
         {tab === 'vector' && <VectorTab />}
+
+        {tab === 'nebula' && <NebulaTab />}
 
       </div>
     </div>

@@ -494,6 +494,25 @@ async def consolidate_findings(request: Request):
     return {"ok": True, **c.consolidate_findings()}
 
 
+@router.get("/nebula")
+async def get_nebula(request: Request):
+    """Graphe de l'écosystème Gungnir pour visualisation Cytoscape.js
+    (spec user 2026-05-03 — onglet Nébuleuse dans la page Conscience).
+
+    Agrège per-user :
+    - Tous les outils natifs (WOLF_TOOL_SCHEMAS) catégorisés et colorés
+    - Workflows Forge + edges workflow→tool (parsing YAML léger)
+    - Sub-agents user + edges subagent→tool
+    - MCP servers, channels, services connectés
+
+    Format ``{nodes, edges, stats}`` directement consommable par
+    Cytoscape.js. ``stats`` donne les compteurs par type pour le panneau
+    de filtres frontend."""
+    from backend.plugins.consciousness.nebula import build_nebula_graph
+    c = _get_consciousness(request)
+    return await build_nebula_graph(c.user_id or 0)
+
+
 @router.get("/system-pulse")
 async def get_system_pulse(request: Request):
     """Renvoie le dernier snapshot system_pulse stocké (disque, RAM, load,
