@@ -91,7 +91,30 @@ export default function NebulaTab() {
     }
   }, [])
 
+  // Fetch silencieux pour le polling auto : ne touche pas `loading` (pas
+  // de spinner principal qui apparaît toutes les minutes), n'efface pas
+  // les erreurs (un poll qui échoue ne masque pas une erreur affichée
+  // par le fetch initial). Best-effort, ignore les erreurs réseau.
+  const silentFetch = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/plugins/consciousness/nebula')
+      if (!res.ok) return
+      const json = await res.json()
+      setData(json)
+    } catch { /* polling silencieux : on ignore */ }
+  }, [])
+
+  // Fetch initial au mount + re-fetch au remount (= switch sur onglet
+  // Nébuleuse, vu que le composant est démonté quand on quitte le tab).
   useEffect(() => { fetchNebula() }, [fetchNebula])
+
+  // Polling 60s tant que le composant est monté (= onglet Nébuleuse
+  // ouvert). Le cleanup au unmount stoppe automatiquement le timer →
+  // pas de fetch en arrière-plan quand le user est sur un autre onglet.
+  useEffect(() => {
+    const interval = setInterval(silentFetch, 60_000)
+    return () => clearInterval(interval)
+  }, [silentFetch])
 
   // Construit les éléments Cytoscape filtrés par type activé. Reconstruit
   // le graphe à chaque changement de filtre — Cytoscape gère la diff
@@ -436,11 +459,19 @@ export default function NebulaTab() {
             {data?.stats && Object.entries(data.stats).filter(([k]) => k !== 'edges').reduce((s, [, v]) => s + (v as number), 0)} nœuds / {data?.stats?.edges || 0} liens
           </span>
         </div>
-        <button onClick={fetchNebula} disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50"
-          style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}>
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Rafraîchir
-        </button>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}
+            title="Auto-sync : le graphe se rafraîchit toutes les 60s tant que cet onglet est ouvert">
+            <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse"
+              style={{ background: '#10b981' }} />
+            Auto-sync 60s
+          </span>
+          <button onClick={fetchNebula} disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50"
+            style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}>
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Rafraîchir
+          </button>
+        </div>
       </div>
 
       {/* Filtres par type */}
