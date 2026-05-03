@@ -346,8 +346,9 @@ def _parse_text_tool_calls(text: str) -> list[dict] | None:
     """Parse tool calls from text when model doesn't use native function calling.
     Supports multiple formats:
       1. <tool_call>{"name": "web_fetch", "arguments": {"url": "..."}}</tool_call>
-      2. tool_name("arg") or tool_name(key="val")
-      3. ```json {"name": "tool_name", ...} ```
+      2. <tool_call>NAME<tool_sep>JSON_ARGS</tool_call>  (Hermes/Wolverine format)
+      3. tool_name("arg") or tool_name(key="val")
+      4. ```json {"name": "tool_name", ...} ```
     """
     if not text:
         return None
@@ -371,6 +372,44 @@ def _parse_text_tool_calls(text: str) -> list[dict] | None:
                 })
         except Exception:
             pass
+
+    if parsed:
+        return parsed
+
+    # Pattern 0.5: <tool_call>NAME<tool_sep>ARGS</tool_call> — format Hermes /
+    # Wolverine / certains modèles distillés (notamment hy3-preview free).
+    # Le LLM écrit un tool call valide mais dans son format custom (chevauche
+    # avec ChatML mais pas JSON). Sans ce pattern, l'agent paraît "lâcher
+    # ses tools" alors qu'il les appelle correctement (rapport user
+    # 2026-05-03 sur hy3-preview).
+    _hermes_re = _re_mod.compile(
+        r'<tool_call>\s*([\w_-]+)\s*<tool_sep>(.*?)</tool_call>',
+        _re_mod.DOTALL,
+    )
+    for match in _hermes_re.finditer(text):
+        name = match.group(1).strip()
+        if name not in tool_names:
+            continue
+        raw_args = match.group(2).strip()
+        args: dict = {}
+        if raw_args:
+            # Tolère JSON object, valeur simple, ou key=value (rare en Hermes
+            # mais des distillations peuvent mélanger les conventions).
+            try:
+                if raw_args.startswith("{"):
+                    args = json.loads(raw_args)
+                else:
+                    args = _parse_raw_args(name, raw_args)
+            except Exception:
+                # Si le parsing échoue, on tente l'appel sans args plutôt
+                # que de rater le tool call complètement (un tool comme
+                # valkyrie_list_projects n'a pas d'args requis).
+                args = {}
+        parsed.append({
+            "id": f"textparse-{_uuid_mod.uuid4().hex[:8]}",
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        })
 
     if parsed:
         return parsed
