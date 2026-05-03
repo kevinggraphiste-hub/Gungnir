@@ -21,6 +21,7 @@ interface NebulaNode {
   color: string
   description?: string
   enabled?: boolean
+  level?: number  // 0 = core, 1 = catégorie, 2 = feuille (tool/workflow/agent…)
 }
 
 interface NebulaEdge {
@@ -104,6 +105,7 @@ export default function NebulaTab() {
           color: n.color,
           description: n.description || '',
           enabled: n.enabled,
+          level: n.level ?? 2,
         } as any,
       })),
       ...visibleEdges.map(e => ({
@@ -121,68 +123,79 @@ export default function NebulaTab() {
       cyRef.current = cytoscape({
         container: containerRef.current,
         elements,
-        // Style "nébuleuse spatiale" : halos lumineux colorés sur fond
-        // sombre, edges fines et translucides pour laisser respirer les
-        // nœuds. Cytoscape 3.20+ supporte shadow-* qui fait le glow
-        // proprement via le canvas (pas de DOM hack).
+        // Style "nébuleuse spatiale" hiérarchique : core gros au centre,
+        // catégories en orbite proche, feuilles (tools/workflows/agents) en
+        // orbite externe. Halos lumineux colorés pour effet "carte stellaire".
         style: [
+          // ── Style de base (level 2 par défaut, le plus fréquent) ─────
           {
             selector: 'node',
             style: {
               'background-color': 'data(color)',
               'label': 'data(label)',
               'color': '#f1f5f9',
-              'font-size': '10px',
+              'font-size': '11px',
               'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
               'font-weight': 500,
               'text-valign': 'bottom',
-              'text-margin-y': 6,
+              'text-margin-y': 8,
               'text-outline-color': '#000',
               'text-outline-width': 2.5,
               'text-outline-opacity': 0.85,
-              'width': 14,
-              'height': 14,
+              'text-max-width': '120px',
+              'text-wrap': 'ellipsis',
+              'width': 22,
+              'height': 22,
               'border-width': 0,
-              // Halo lumineux : la couleur du shadow suit la couleur du
-              // nœud → effet "étoile colorée" cohérent avec la sémantique
-              // (vert pour web, rouge pour valkyrie, etc.).
-              'shadow-blur': 18,
+              'shadow-blur': 26,
               'shadow-color': 'data(color)',
-              'shadow-opacity': 0.75,
+              'shadow-opacity': 0.85,
               'shadow-offset-x': 0,
               'shadow-offset-y': 0,
-              'background-blacken': -0.15,  // léger lift pour rendre la couleur plus vibrante
+              'background-blacken': -0.15,
               'transition-property': 'shadow-blur shadow-opacity width height',
               'transition-duration': 200,
             } as any,
           },
+          // ── Level 1 : catégories — gros nœuds en orbite proche ───────
           {
-            // Workflows / sous-agents = "cores" plus gros, halo plus large.
-            selector: 'node[type = "workflow"], node[type = "subagent"]',
+            selector: 'node[level = 1]',
             style: {
-              'width': 26,
-              'height': 26,
-              'font-size': '12px',
+              'width': 50,
+              'height': 50,
+              'font-size': '14px',
               'font-weight': 'bold',
-              'shadow-blur': 28,
-              'shadow-opacity': 0.85,
+              'text-margin-y': 10,
+              'shadow-blur': 50,
+              'shadow-opacity': 0.95,
+              'background-blacken': -0.25,
             } as any,
           },
+          // ── Level 0 : core — énorme au centre, halo cyan vif ─────────
           {
-            selector: 'node[type = "mcp"], node[type = "channel"], node[type = "service"]',
+            selector: 'node[level = 0]',
             style: {
-              'width': 20,
-              'height': 20,
-              'font-size': '11px',
-              'shadow-blur': 22,
-              'shadow-opacity': 0.8,
+              'width': 90,
+              'height': 90,
+              'font-size': '18px',
+              'font-weight': 'bold',
+              'text-valign': 'center',
+              'text-halign': 'center',
+              'color': '#fff',
+              'text-margin-y': 0,
+              'shadow-blur': 80,
+              'shadow-opacity': 1,
+              'background-blacken': -0.3,
+              'border-width': 3,
+              'border-color': '#67e8f9',
+              'border-opacity': 0.8,
             } as any,
           },
+          // ── Hover ────────────────────────────────────────────────────
           {
-            // Hover : intensifie le halo + grossit légèrement
             selector: 'node:active, node:selected',
             style: {
-              'shadow-blur': 36,
+              'shadow-blur': 60,
               'shadow-opacity': 1,
               'border-width': 2,
               'border-color': '#fff',
@@ -190,53 +203,65 @@ export default function NebulaTab() {
               'z-index': 10,
             } as any,
           },
+          // ── Edges ────────────────────────────────────────────────────
           {
             selector: 'edge',
             style: {
-              'width': 1,
-              'line-color': '#475569',
-              'target-arrow-color': '#475569',
-              'target-arrow-shape': 'triangle',
-              'arrow-scale': 0.7,
+              'width': 1.2,
+              'line-color': '#64748b',
+              'target-arrow-color': '#64748b',
+              'target-arrow-shape': 'none',  // pas de flèche, plus organique
               'curve-style': 'unbundled-bezier',
-              'control-point-distances': [10],
+              'control-point-distances': [20],
               'control-point-weights': [0.5],
-              'opacity': 0.35,
-              'line-opacity': 0.35,
+              'opacity': 0.4,
+              'line-opacity': 0.4,
             } as any,
           },
+          // ── Edges core → catégorie : plus visibles, plus larges ──────
           {
-            // Edges qui touchent un nœud sélectionné se mettent en avant
-            selector: 'edge:selected, node:selected ~ edge, edge[selected]',
+            selector: 'edge[source = "core:gungnir"]',
             style: {
-              'line-color': '#94a3b8',
-              'target-arrow-color': '#94a3b8',
-              'opacity': 0.9,
-              'width': 1.6,
+              'width': 2.5,
+              'line-color': '#06b6d4',
+              'opacity': 0.6,
+              'curve-style': 'unbundled-bezier',
+              'control-point-distances': [40],
+            } as any,
+          },
+          // ── Edges catégorie → feuille : couleur de la catégorie ──────
+          {
+            selector: 'edge[label = "contient"]',
+            style: {
+              'width': 1.5,
+              'line-color': '#475569',
+              'opacity': 0.45,
             } as any,
           },
         ],
-        // Animation douce à l'init pour donner vie au graphe.
+        // Layout concentric : level 0 au centre, level 1 en orbite proche,
+        // level 2 en orbite externe. Cohérent avec la spec user "core
+        // central + tout gravite autour" et l'image de référence.
         layout: {
-          name: 'cose',
+          name: 'concentric',
           animate: true,
-          animationDuration: 800,
+          animationDuration: 900,
           animationEasing: 'ease-out-quart' as any,
           fit: true,
-          padding: 50,
-          nodeRepulsion: () => 6500,
-          idealEdgeLength: () => 110,
-          edgeElasticity: () => 100,
-          gravity: 0.3,
-          numIter: 1500,
-          coolingFactor: 0.95,
+          padding: 60,
+          // Plus le level est petit (= plus proche du core), plus la
+          // concentricity est élevée → orbite plus proche du centre.
+          concentric: (node: any) => 10 - (node.data('level') ?? 2),
+          levelWidth: () => 1,
+          minNodeSpacing: 25,
+          spacingFactor: 1.3,
+          startAngle: -Math.PI / 2,  // commence en haut pour symétrie
+          // Avoid overlap au sein d'une même orbite
+          avoidOverlap: true,
         } as any,
-        wheelSensitivity: 0.2,
-        // Désactive le min/max zoom contraignant pour que le user puisse
-        // explorer librement (zoom in pour les détails, out pour la
-        // vue d'ensemble).
-        minZoom: 0.2,
-        maxZoom: 3,
+        wheelSensitivity: 0.3,
+        minZoom: 0.15,
+        maxZoom: 4,
       })
 
       // Hover : update le panel droite
@@ -248,23 +273,34 @@ export default function NebulaTab() {
         })
       })
       cyRef.current.on('mouseout', 'node', () => setHoveredNode(null))
+
+      // Zoom-in après le layout : `fit: true` zoom out pour faire tenir
+      // tout le graphe → avec 60+ nœuds en orbite externe ça donne un
+      // rendu minuscule. On fait un zoom factor 1.3 post-layout pour
+      // que les nœuds soient lisibles d'emblée. Le user peut zoom out
+      // à la souris pour la vue d'ensemble.
+      cyRef.current.one('layoutstop', () => {
+        if (!cyRef.current) return
+        const z = cyRef.current.zoom()
+        cyRef.current.zoom({ level: Math.min(z * 1.4, 2.5), renderedPosition: { x: cyRef.current.width() / 2, y: cyRef.current.height() / 2 } })
+      })
     } else {
-      // Update les éléments en gardant les positions existantes ; layout
-      // animé léger pour ré-équilibrer après filter change sans saccade.
+      // Update les éléments en gardant la structure orbitale ; ré-applique
+      // concentric pour reflow après filter change.
       cyRef.current.json({ elements })
       cyRef.current.layout({
-        name: 'cose',
+        name: 'concentric',
         animate: true,
-        animationDuration: 400,
+        animationDuration: 500,
         animationEasing: 'ease-out-cubic' as any,
         fit: true,
-        padding: 50,
-        nodeRepulsion: () => 6500,
-        idealEdgeLength: () => 110,
-        edgeElasticity: () => 100,
-        gravity: 0.3,
-        numIter: 800,
-        coolingFactor: 0.95,
+        padding: 60,
+        concentric: (node: any) => 10 - (node.data('level') ?? 2),
+        levelWidth: () => 1,
+        minNodeSpacing: 25,
+        spacingFactor: 1.3,
+        startAngle: -Math.PI / 2,
+        avoidOverlap: true,
       } as any).run()
     }
   }, [data, elements])
@@ -363,8 +399,8 @@ export default function NebulaTab() {
               radial-gradient(circle at 50% 50%, #0d1224 0%, #050816 70%, #02030a 100%)
             `,
             border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, var(--border))',
-            height: 600,
-            minHeight: 400,
+            height: 760,
+            minHeight: 500,
             boxShadow: 'inset 0 0 60px rgba(0,0,0,0.6)',
           }}>
           <div ref={containerRef} className="w-full h-full" />

@@ -32,6 +32,42 @@ DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 # Une convention de couleur cohérente facilite la lecture du graphe.
 # Inspirée du thème scarlet de Gungnir + une palette cool pour les autres.
 
+# Labels / descriptions humains des catégories pour les nœuds level 1
+_CATEGORY_LABELS: dict[str, str] = {
+    "web": "Web",
+    "browser": "Navigateur",
+    "valkyrie": "Valkyrie",
+    "workflow": "Workflows",
+    "agents": "Agents & Skills",
+    "memory": "Mémoire & KB",
+    "system": "Système",
+    "automation": "Automatisation",
+    "manage": "Gestion",
+    "service": "Services externes",
+    "consciousness": "Conscience",
+    "code": "Code",
+    "meta": "Méta",
+    "mcp": "MCP",
+    "channel": "Canaux",
+    "other": "Autres",
+}
+
+_CATEGORY_DESCRIPTIONS: dict[str, str] = {
+    "web": "Recherche, fetch et crawl web (DuckDuckGo, scraping, APIs HTTP)",
+    "browser": "Browser Playwright — navigation, clic, formulaires, JS dynamique",
+    "valkyrie": "Plugin Valkyrie — gestion de cartes, projets, tâches",
+    "workflow": "Plugin Forge — workflows YAML orchestrés",
+    "agents": "Skills, personnalités, sous-agents, communication inter-agents",
+    "memory": "Base de connaissances et identité (kb_*, soul_*)",
+    "system": "Système de fichiers, exécution bash sandboxée",
+    "automation": "Tâches planifiées, queue background, todo conversation",
+    "manage": "Gestion providers, channels, MCP, voice",
+    "service": "Connexions externes (n8n, GitHub, Notion, Slack…)",
+    "consciousness": "Outils introspection (recall, findings, goals)",
+    "code": "SpearCode — édition projet, git, exécution",
+    "meta": "Diagnostic, onboarding",
+}
+
 _TOOL_CATEGORIES: list[tuple[str, str, str]] = [
     # (préfixe ou nom exact, category_id, color)
     ("web_", "web", "#10b981"),
@@ -103,21 +139,65 @@ def _extract_tools_from_yaml(yaml_def: str) -> list[str]:
 async def build_nebula_graph(user_id: int) -> dict:
     """Agrège le graphe complet pour ``user_id``. Renvoie ``{nodes, edges, stats}``.
 
-    Sections :
-    1. Tools (depuis WOLF_TOOL_SCHEMAS — toujours présents)
-    2. Workflows Forge + edges workflow→tool (parsing YAML léger)
-    3. Sub-agents user + edges subagent→tool (depuis ``data_json.tools``)
-    4. MCP servers user (DB ``mcp_server_configs``)
-    5. Channels user (filesystem JSON)
-    6. Services connectés user (UserSettings.service_keys)
+    Structure hiérarchique en 3 niveaux pour layout radial/concentric
+    (spec user 2026-05-03 — "core central + tout gravite autour, tout
+    relié à au moins un point") :
+
+    - **Level 0** (centre) : 1 nœud ``core:gungnir`` — le coeur du système
+    - **Level 1** (orbite proche) : nœuds catégorie (web, valkyrie,
+      workflow, agents, memory, system, automation, manage, service,
+      consciousness, code, browser…) — créés synthétiquement, regroupent
+      les tools de chaque famille. Edges core → category.
+    - **Level 2** (orbite externe) : tools individuels + workflows Forge +
+      sub-agents user + MCP + channels + services. Edges category → tool
+      (chaque tool est rattaché à sa catégorie → zéro orphelin) +
+      workflow→tool quand le tool est utilisé + subagent→tool idem.
+
+    Le ``level`` est posé sur chaque nœud pour que le frontend puisse
+    appliquer un layout concentric (cytoscape ``concentric`` ou tree).
 
     Best-effort : un échec sur une section ne casse pas les autres.
     """
     nodes: list[dict] = []
     edges: list[dict] = []
     seen_tool_ids: set[str] = set()
+    seen_categories: set[str] = set()
 
-    # ── 1. Tools natifs ─────────────────────────────────────────────────────
+    # ── Level 0 : Core ──────────────────────────────────────────────────────
+    nodes.append({
+        "id": "core:gungnir",
+        "label": "Gungnir",
+        "type": "core",
+        "category": "core",
+        "color": "#06b6d4",  # cyan vif comme le core de l'image de réf
+        "description": "Coeur du système — toute l'écosystème gravite autour",
+        "level": 0,
+    })
+
+    def _ensure_category(cat: str, color: str) -> str:
+        """Crée le nœud catégorie s'il n'existe pas, retourne son id."""
+        cat_id = f"category:{cat}"
+        if cat in seen_categories:
+            return cat_id
+        seen_categories.add(cat)
+        nodes.append({
+            "id": cat_id,
+            "label": _CATEGORY_LABELS.get(cat, cat.title()),
+            "type": "category",
+            "category": cat,
+            "color": color,
+            "description": _CATEGORY_DESCRIPTIONS.get(cat, ""),
+            "level": 1,
+        })
+        # Tous les nœuds catégorie sont reliés au core
+        edges.append({
+            "source": "core:gungnir",
+            "target": cat_id,
+            "label": "regroupe",
+        })
+        return cat_id
+
+    # ── 1. Tools natifs (level 2) reliés à leur catégorie (level 1) ────────
     try:
         from backend.core.agents.wolf_tools import WOLF_TOOL_SCHEMAS
         for s in WOLF_TOOL_SCHEMAS:
@@ -126,6 +206,7 @@ async def build_nebula_graph(user_id: int) -> dict:
             if not name:
                 continue
             cat, color = _classify_tool(name)
+            cat_id = _ensure_category(cat, color)
             nid = f"tool:{name}"
             seen_tool_ids.add(name)
             nodes.append({
@@ -135,6 +216,14 @@ async def build_nebula_graph(user_id: int) -> dict:
                 "category": cat,
                 "color": color,
                 "description": (fn.get("description") or "")[:300],
+                "level": 2,
+            })
+            # Edge synthétique tool → catégorie (assure que tout tool est
+            # connecté à au moins 1 point — pas d'orphelin dans le graphe).
+            edges.append({
+                "source": cat_id,
+                "target": nid,
+                "label": "contient",
             })
     except Exception as e:
         logger.warning(f"nebula: load WOLF_TOOL_SCHEMAS failed: {e}")
@@ -150,6 +239,7 @@ async def build_nebula_graph(user_id: int) -> dict:
             )
             for wf in rs.scalars().all():
                 wf_id = f"workflow:{wf.id}"
+                cat_id = _ensure_category("workflow", "#3b82f6")
                 nodes.append({
                     "id": wf_id,
                     "label": wf.name or f"Workflow #{wf.id}",
@@ -158,6 +248,13 @@ async def build_nebula_graph(user_id: int) -> dict:
                     "color": "#3b82f6",
                     "description": (wf.description or "")[:300],
                     "enabled": bool(wf.enabled),
+                    "level": 2,
+                })
+                # Rattachement à la catégorie workflow
+                edges.append({
+                    "source": cat_id,
+                    "target": wf_id,
+                    "label": "contient",
                 })
                 # Edges vers les tools référencés dans le YAML
                 for tool_name in _extract_tools_from_yaml(wf.yaml_def or ""):
@@ -178,6 +275,7 @@ async def build_nebula_graph(user_id: int) -> dict:
             agents = await ud.list_sub_agents(session, user_id)
         for a in agents:
             ag_id = f"agent:{a.get('name', '?')}"
+            cat_id = _ensure_category("agents", "#8b5cf6")
             nodes.append({
                 "id": ag_id,
                 "label": a.get("name", "?"),
@@ -185,6 +283,12 @@ async def build_nebula_graph(user_id: int) -> dict:
                 "category": "agents",
                 "color": "#8b5cf6",
                 "description": (a.get("role") or a.get("expertise") or "")[:300],
+                "level": 2,
+            })
+            edges.append({
+                "source": cat_id,
+                "target": ag_id,
+                "label": "contient",
             })
             for tool_name in (a.get("tools") or []):
                 if tool_name in seen_tool_ids:
@@ -206,15 +310,19 @@ async def build_nebula_graph(user_id: int) -> dict:
                 select(MCPServerConfig).where(MCPServerConfig.user_id == user_id)
             )
             for m in rs.scalars().all():
+                cat_id = _ensure_category("mcp", "#ec4899")
+                mcp_nid = f"mcp:{m.name}"
                 nodes.append({
-                    "id": f"mcp:{m.name}",
+                    "id": mcp_nid,
                     "label": m.name,
                     "type": "mcp",
                     "category": "mcp",
                     "color": "#ec4899",
                     "description": f"{m.command} {' '.join(list(m.args_json or [])[:3])}"[:300],
                     "enabled": bool(m.enabled),
+                    "level": 2,
                 })
+                edges.append({"source": cat_id, "target": mcp_nid, "label": "contient"})
     except Exception as e:
         logger.debug(f"nebula: mcp skipped: {e}")
 
@@ -231,15 +339,19 @@ async def build_nebula_graph(user_id: int) -> dict:
                     cid = c.get("id") or ""
                     if not cid:
                         continue
+                    cat_id = _ensure_category("channel", "#f59e0b")
+                    ch_nid = f"channel:{cid}"
                     nodes.append({
-                        "id": f"channel:{cid}",
+                        "id": ch_nid,
                         "label": c.get("name") or cid,
                         "type": "channel",
                         "category": "channel",
                         "color": "#f59e0b",
                         "description": f"{c.get('type', '?')} — {'enabled' if c.get('enabled') else 'disabled'}",
                         "enabled": bool(c.get("enabled")),
+                        "level": 2,
                     })
+                    edges.append({"source": cat_id, "target": ch_nid, "label": "contient"})
     except Exception as e:
         logger.debug(f"nebula: channels skipped: {e}")
 
@@ -256,14 +368,18 @@ async def build_nebula_graph(user_id: int) -> dict:
             if us and us.service_keys:
                 for svc_name, cfg in (us.service_keys or {}).items():
                     if isinstance(cfg, dict) and (cfg.get("api_key") or cfg.get("token")):
+                        cat_id = _ensure_category("service", "#06b6d4")
+                        svc_nid = f"service:{svc_name}"
                         nodes.append({
-                            "id": f"service:{svc_name}",
+                            "id": svc_nid,
                             "label": svc_name,
                             "type": "service",
                             "category": "service",
                             "color": "#06b6d4",
                             "description": f"Service externe : {svc_name}",
+                            "level": 2,
                         })
+                        edges.append({"source": cat_id, "target": svc_nid, "label": "contient"})
     except Exception as e:
         logger.debug(f"nebula: services skipped: {e}")
 
