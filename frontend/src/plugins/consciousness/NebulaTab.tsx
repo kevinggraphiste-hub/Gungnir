@@ -121,66 +121,122 @@ export default function NebulaTab() {
       cyRef.current = cytoscape({
         container: containerRef.current,
         elements,
+        // Style "nébuleuse spatiale" : halos lumineux colorés sur fond
+        // sombre, edges fines et translucides pour laisser respirer les
+        // nœuds. Cytoscape 3.20+ supporte shadow-* qui fait le glow
+        // proprement via le canvas (pas de DOM hack).
         style: [
           {
             selector: 'node',
             style: {
               'background-color': 'data(color)',
               'label': 'data(label)',
-              'color': '#e5e7eb',
+              'color': '#f1f5f9',
               'font-size': '10px',
+              'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+              'font-weight': 500,
               'text-valign': 'bottom',
-              'text-margin-y': 4,
-              'text-outline-color': '#0a0a0a',
-              'text-outline-width': 2,
-              'width': 18,
-              'height': 18,
-              'border-width': 1,
-              'border-color': '#1f1f1f',
-              'border-opacity': 0.6,
-            },
+              'text-margin-y': 6,
+              'text-outline-color': '#000',
+              'text-outline-width': 2.5,
+              'text-outline-opacity': 0.85,
+              'width': 14,
+              'height': 14,
+              'border-width': 0,
+              // Halo lumineux : la couleur du shadow suit la couleur du
+              // nœud → effet "étoile colorée" cohérent avec la sémantique
+              // (vert pour web, rouge pour valkyrie, etc.).
+              'shadow-blur': 18,
+              'shadow-color': 'data(color)',
+              'shadow-opacity': 0.75,
+              'shadow-offset-x': 0,
+              'shadow-offset-y': 0,
+              'background-blacken': -0.15,  // léger lift pour rendre la couleur plus vibrante
+              'transition-property': 'shadow-blur shadow-opacity width height',
+              'transition-duration': 200,
+            } as any,
           },
           {
-            // Workflows / sous-agents plus gros pour les distinguer
+            // Workflows / sous-agents = "cores" plus gros, halo plus large.
             selector: 'node[type = "workflow"], node[type = "subagent"]',
-            style: { 'width': 28, 'height': 28, 'font-size': '11px', 'font-weight': 'bold' as any },
+            style: {
+              'width': 26,
+              'height': 26,
+              'font-size': '12px',
+              'font-weight': 'bold',
+              'shadow-blur': 28,
+              'shadow-opacity': 0.85,
+            } as any,
           },
           {
             selector: 'node[type = "mcp"], node[type = "channel"], node[type = "service"]',
-            style: { 'width': 24, 'height': 24, 'font-size': '11px' },
+            style: {
+              'width': 20,
+              'height': 20,
+              'font-size': '11px',
+              'shadow-blur': 22,
+              'shadow-opacity': 0.8,
+            } as any,
+          },
+          {
+            // Hover : intensifie le halo + grossit légèrement
+            selector: 'node:active, node:selected',
+            style: {
+              'shadow-blur': 36,
+              'shadow-opacity': 1,
+              'border-width': 2,
+              'border-color': '#fff',
+              'border-opacity': 0.9,
+              'z-index': 10,
+            } as any,
           },
           {
             selector: 'edge',
             style: {
-              'width': 1.2,
-              'line-color': '#3a3a3a',
-              'target-arrow-color': '#3a3a3a',
+              'width': 1,
+              'line-color': '#475569',
+              'target-arrow-color': '#475569',
               'target-arrow-shape': 'triangle',
-              'curve-style': 'bezier',
-              'opacity': 0.6,
-            },
+              'arrow-scale': 0.7,
+              'curve-style': 'unbundled-bezier',
+              'control-point-distances': [10],
+              'control-point-weights': [0.5],
+              'opacity': 0.35,
+              'line-opacity': 0.35,
+            } as any,
           },
           {
-            selector: 'node:selected',
+            // Edges qui touchent un nœud sélectionné se mettent en avant
+            selector: 'edge:selected, node:selected ~ edge, edge[selected]',
             style: {
-              'border-width': 3,
-              'border-color': '#fff',
-              'border-opacity': 1,
-            },
+              'line-color': '#94a3b8',
+              'target-arrow-color': '#94a3b8',
+              'opacity': 0.9,
+              'width': 1.6,
+            } as any,
           },
         ],
+        // Animation douce à l'init pour donner vie au graphe.
         layout: {
           name: 'cose',
-          // Force-directed avec gravité douce. animate=false pour rendu
-          // immédiat plutôt qu'animation qui lag à grand graphe.
-          animate: false,
+          animate: true,
+          animationDuration: 800,
+          animationEasing: 'ease-out-quart' as any,
           fit: true,
-          padding: 30,
-          nodeRepulsion: () => 4500,
-          idealEdgeLength: () => 80,
-          gravity: 0.25,
+          padding: 50,
+          nodeRepulsion: () => 6500,
+          idealEdgeLength: () => 110,
+          edgeElasticity: () => 100,
+          gravity: 0.3,
+          numIter: 1500,
+          coolingFactor: 0.95,
         } as any,
         wheelSensitivity: 0.2,
+        // Désactive le min/max zoom contraignant pour que le user puisse
+        // explorer librement (zoom in pour les détails, out pour la
+        // vue d'ensemble).
+        minZoom: 0.2,
+        maxZoom: 3,
       })
 
       // Hover : update le panel droite
@@ -193,11 +249,22 @@ export default function NebulaTab() {
       })
       cyRef.current.on('mouseout', 'node', () => setHoveredNode(null))
     } else {
-      // Update les éléments en gardant les positions
+      // Update les éléments en gardant les positions existantes ; layout
+      // animé léger pour ré-équilibrer après filter change sans saccade.
       cyRef.current.json({ elements })
       cyRef.current.layout({
-        name: 'cose', animate: false, fit: true, padding: 30,
-        nodeRepulsion: () => 4500, idealEdgeLength: () => 80, gravity: 0.25,
+        name: 'cose',
+        animate: true,
+        animationDuration: 400,
+        animationEasing: 'ease-out-cubic' as any,
+        fit: true,
+        padding: 50,
+        nodeRepulsion: () => 6500,
+        idealEdgeLength: () => 110,
+        edgeElasticity: () => 100,
+        gravity: 0.3,
+        numIter: 800,
+        coolingFactor: 0.95,
       } as any).run()
     }
   }, [data, elements])
@@ -278,13 +345,27 @@ export default function NebulaTab() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        {/* Graphe principal */}
-        <div className="md:col-span-3 rounded-lg overflow-hidden"
+        {/* Graphe principal — fond spatial : dégradé radial sombre + grain
+            de poussière d'étoiles via radial-gradients superposés (CSS pur,
+            zéro asset). Donne la profondeur "espace" au glow Cytoscape
+            qui ressort dessus. */}
+        <div className="md:col-span-3 rounded-lg overflow-hidden relative"
           style={{
-            background: 'var(--bg-primary)',
-            border: '1px solid var(--border-subtle)',
+            background: `
+              radial-gradient(1.5px 1.5px at 12% 18%, rgba(255,255,255,0.55), transparent 50%),
+              radial-gradient(1px 1px at 23% 73%, rgba(255,255,255,0.35), transparent 60%),
+              radial-gradient(1.5px 1.5px at 45% 38%, rgba(255,255,255,0.4), transparent 50%),
+              radial-gradient(1px 1px at 67% 13%, rgba(255,255,255,0.3), transparent 60%),
+              radial-gradient(1.5px 1.5px at 80% 60%, rgba(255,255,255,0.45), transparent 50%),
+              radial-gradient(1px 1px at 33% 88%, rgba(255,255,255,0.25), transparent 60%),
+              radial-gradient(1.5px 1.5px at 92% 92%, rgba(255,255,255,0.4), transparent 50%),
+              radial-gradient(1px 1px at 58% 50%, rgba(255,255,255,0.3), transparent 60%),
+              radial-gradient(circle at 50% 50%, #0d1224 0%, #050816 70%, #02030a 100%)
+            `,
+            border: '1px solid color-mix(in srgb, var(--accent-primary) 20%, var(--border))',
             height: 600,
             minHeight: 400,
+            boxShadow: 'inset 0 0 60px rgba(0,0,0,0.6)',
           }}>
           <div ref={containerRef} className="w-full h-full" />
         </div>
