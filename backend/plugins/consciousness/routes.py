@@ -494,6 +494,30 @@ async def consolidate_findings(request: Request):
     return {"ok": True, **c.consolidate_findings()}
 
 
+@router.get("/system-pulse")
+async def get_system_pulse(request: Request):
+    """Renvoie le dernier snapshot system_pulse stocké (disque, RAM, load,
+    erreurs récentes). Mis à jour par le tick conscience toutes les 60s
+    quand ``system_pulse.enabled`` (default ON). Retourne ``null`` si le
+    pulse n'a jamais tourné pour ce user."""
+    c = _get_consciousness(request)
+    return {
+        "ok": True,
+        "metrics": c._state.get("system_metrics") or None,
+        "enabled": bool((c._config.get("system_pulse") or {}).get("enabled", True)),
+    }
+
+
+@router.post("/system-pulse/run")
+async def run_system_pulse(request: Request):
+    """Déclenche manuellement un system_pulse (debug/test). En prod, le
+    tick consciousness le fait toutes les 60s automatiquement."""
+    from backend.plugins.consciousness.system_pulse import system_pulse_for_user
+    c = _get_consciousness(request)
+    snapshot = await system_pulse_for_user(c.user_id or 0)
+    return {"ok": True, "snapshot": snapshot}
+
+
 @router.get("/challenger/llm-options")
 async def challenger_llm_options(request: Request):
     """Return the LLM picker payload for the Challenger settings UI.

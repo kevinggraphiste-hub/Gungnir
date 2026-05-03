@@ -189,6 +189,22 @@ DEFAULT_CONFIG = {
         # en faire un signal structurel (goal "corriger ce pattern").
         "recurrent_finding_min_count": 3,
     },
+    "system_pulse": {
+        # Étape no-LLM du tick — surveille disque/RAM/erreurs runtime et
+        # émet des triggers conscience (disk_low / error_in_logs) qui font
+        # monter les urgences correspondantes. Permet à la conscience de
+        # rester active entre les messages user sans consommer de tokens.
+        # Default ON car gratuit (lectures stdlib uniquement).
+        "enabled": True,
+        "thresholds": {
+            "disk_warning_pct": 75,
+            "disk_critical_pct": 90,
+            "memory_warning_pct": 80,
+            "memory_critical_pct": 92,
+            "errors_recent_warning": 3,
+            "errors_recent_critical": 10,
+        },
+    },
     "vector_memory": {
         "vector_provider": "none",
         "embedding_provider": "google",
@@ -2021,6 +2037,7 @@ class ConsciousnessEngine:
             "goals": self.get_goals(30),
             "active_goals": self.get_active_goals(10),
             "safety": safety,
+            "system_metrics": self._state.get("system_metrics") or None,
         }
 
     # ── Reset ───────────────────────────────────────────────────────────

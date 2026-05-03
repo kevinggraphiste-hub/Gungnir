@@ -1489,6 +1489,7 @@ async def _tick_once():
         impulse_on = False
         consolidation_on = False
         goals_on = False
+        system_pulse_on = True  # default ON — étape no-LLM, gratuite
         config_file = user_dir / "config.json"
         if config_file.exists():
             try:
@@ -1504,6 +1505,11 @@ async def _tick_once():
                 wm = cfg.get("working_memory", {}) or {}
                 consolidation_on = bool((wm.get("consolidation") or {}).get("enabled", True))
                 goals_on = bool((cfg.get("goals", {}) or {}).get("enabled", True))
+                # System pulse : surveille disque/RAM/erreurs, émet des
+                # triggers conscience (no-LLM). Default ON car gratuit et
+                # le besoin survival est aujourd'hui inactif faute de mesure.
+                sp = cfg.get("system_pulse", {}) or {}
+                system_pulse_on = bool(sp.get("enabled", True))
             except Exception:
                 continue
 
@@ -1523,7 +1529,27 @@ async def _tick_once():
         # Tier 2 (safe mode) : on coupe toutes les boucles LLM de fond. Le
         # chat direct reste actif (avec le préambule constitutionnel).
         if not guardrails.tier_allows_background_llm(tier):
+            # Tier 2 : on coupe les boucles LLM mais le system_pulse reste
+            # actif (no-LLM, gratuit). Permet à la conscience de continuer
+            # à mesurer le système même en safe mode.
+            if system_pulse_on:
+                try:
+                    from backend.plugins.consciousness.system_pulse import system_pulse_for_user
+                    await system_pulse_for_user(user_id)
+                except Exception as e:
+                    logger.exception(f"System pulse crashed for user {user_id}: {e}")
             continue
+
+        # Étape no-LLM en premier : alimente les urgences (triggers
+        # disk_low / error_in_logs / etc.) AVANT que les boucles LLM
+        # consultent calculate_urgencies(). Sinon le challenger raisonne
+        # sur des données obsolètes.
+        if system_pulse_on:
+            try:
+                from backend.plugins.consciousness.system_pulse import system_pulse_for_user
+                await system_pulse_for_user(user_id)
+            except Exception as e:
+                logger.exception(f"System pulse crashed for user {user_id}: {e}")
 
         if think_on:
             try:
